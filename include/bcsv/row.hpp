@@ -18,7 +18,7 @@ namespace bcsv {
     
     inline void Row::setValue(const std::string& fieldName, const FieldValue& value) {
         if (columnLayout_) {
-            size_t index = columnLayout_->getColumnIndex(fieldName);
+            size_t index = columnLayout_->getIndex(fieldName);
             if (index != SIZE_MAX && index < values_.size()) {
                 values_[index] = value;
             }
@@ -33,7 +33,7 @@ namespace bcsv {
     
     inline FieldValue Row::getValue(const std::string& fieldName) const {
         if (columnLayout_) {
-            size_t index = columnLayout_->getColumnIndex(fieldName);
+            size_t index = columnLayout_->getIndex(fieldName);
             if (index != SIZE_MAX && index < values_.size()) {
                 return values_[index];
             }

@@ -37,21 +37,21 @@ namespace bcsv {
         void setColumns(const std::vector<std::pair<std::string, ColumnDataType>>& columns);
         std::vector<std::pair<std::string, ColumnDataType>> getColumns() const;
         
-        std::vector<std::string> getColumnNames() const;
-        std::vector<ColumnDataType> getColumnTypes() const;
-        std::vector<std::string> getColumnTypeStrings() const;
+        std::vector<std::string> getNames() const;
+        std::vector<ColumnDataType> getDataTypes() const;
+        std::vector<std::string> getDataTypesAsString() const;
         
         size_t getColumnCount() const { return column_names_.size(); }
         
-        ColumnDataType getColumnType(size_t index) const;
-        std::string getColumnTypeString(size_t index) const;
+        ColumnDataType getDataType(size_t index) const;
+        std::string getDataTypeAsString(size_t index) const;
         
-        size_t getColumnIndex(const std::string& columnName) const;
-        std::string getColumnName(size_t index) const;
+        size_t getIndex(const std::string& columnName) const;
+        std::string getName(size_t index) const;
         
         // Column management
-        void setColumnName(size_t index, const std::string& name);
-        void setColumnType(size_t index, ColumnDataType type);
+        void setName(size_t index, const std::string& name);
+        void setDataType(size_t index, ColumnDataType type);
         
         void removeColumn(size_t index);
         void clear();
@@ -64,8 +64,8 @@ namespace bcsv {
         std::unordered_map<std::string, size_t> column_name_index_;
         
         // Helper functions for type conversion
-        static ColumnDataType stringToColumnDataType(const std::string& typeString);
-        static std::string columnDataTypeToString(ColumnDataType type);
+        static ColumnDataType stringToDataType(const std::string& typeString);
+        static std::string dataTypeToString(ColumnDataType type);
         
         // Helper function to update the index map
         void updateIndexMap();

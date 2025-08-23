@@ -20,6 +20,7 @@ namespace bcsv {
 
     // Constants for the binary file format
     constexpr uint32_t BCSV_MAGIC = 0x56534342; // "BCSV" in little-endian
+    constexpr uint32_t PCKT_MAGIC = 0xDEADBEEF; // "PCKT" in little-endian
     constexpr size_t MAX_COLUMN_WIDTH = 65535;  // Maximum width of column content
     constexpr size_t MAX_COLUMN_COUNT = 65535;
 

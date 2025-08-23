@@ -15,10 +15,10 @@ int main() {
         columnLayout.addColumn("name", bcsv::ColumnDataType::STRING);
         
         assert(columnLayout.getColumnCount() == 2);
-        assert(columnLayout.getColumnType(0) == bcsv::ColumnDataType::INT32);
-        assert(columnLayout.getColumnType(1) == bcsv::ColumnDataType::STRING);
-        assert(columnLayout.getColumnIndex("id") == 0);
-        assert(columnLayout.getColumnIndex("name") == 1);
+        assert(columnLayout.getDataType(0) == bcsv::ColumnDataType::INT32);
+        assert(columnLayout.getDataType(1) == bcsv::ColumnDataType::STRING);
+        assert(columnLayout.getIndex("id") == 0);
+        assert(columnLayout.getIndex("name") == 1);
         assert(columnLayout.hasColumn("id") == true);
         assert(columnLayout.hasColumn("unknown") == false);
         

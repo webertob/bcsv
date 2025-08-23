@@ -103,41 +103,45 @@ namespace bcsv {
 
     // FileHeader method implementations that require ColumnLayout definition
     inline size_t FileHeader::getBinarySize(const ColumnLayout& columnLayout) const {
-        size_t size = sizeof(FixedSizeStruct);                           // Fixed header
+        size_t size = sizeof(FileHeaderStruct);                           // Fixed header
         size += columnLayout.getColumnCount() * sizeof(uint16_t);        // Column data types
         size += columnLayout.getColumnCount() * sizeof(uint16_t);        // Column name lengths
         for (size_t i = 0; i < columnLayout.getColumnCount(); ++i) {     // Column names
-            size += columnLayout.getColumnName(i).length();
+            size += columnLayout.getName(i).length();
         }
         return size;
     }
 
     inline bool FileHeader::writeToBinary(std::ostream& stream, const ColumnLayout& columnLayout) const {
         // Update header with current column count
-        FixedSizeStruct tempHeader = header_;
-        tempHeader.columnCount = static_cast<uint16_t>(columnLayout.getColumnCount());
-        
+        FileHeaderStruct tempHeader = header_;
+        tempHeader.columnCount = static_cast<uint16_t>(std::min(columnLayout.getColumnCount(), MAX_COLUMN_COUNT)); // ensure no overflow takes place
+        //warn if column count was truncated
+        if (tempHeader.columnCount < columnLayout.getColumnCount()) {
+            std::cerr << "Warning: Column count truncated from " << columnLayout.getColumnCount() << " to " << tempHeader.columnCount << std::endl;
+        }
+
         // Write fixed header
         stream.write(reinterpret_cast<const char*>(&tempHeader), sizeof(tempHeader));
         if (!stream.good()) return false;
 
         // Write column data types
         for (size_t i = 0; i < columnLayout.getColumnCount(); ++i) {
-            uint16_t typeValue = static_cast<uint16_t>(columnLayout.getColumnType(i));
+            uint16_t typeValue = static_cast<uint16_t>(columnLayout.getDataType(i));
             stream.write(reinterpret_cast<const char*>(&typeValue), sizeof(typeValue));
             if (!stream.good()) return false;
         }
 
         // Write column name lengths
         for (size_t i = 0; i < columnLayout.getColumnCount(); ++i) {
-            uint16_t nameLength = static_cast<uint16_t>(columnLayout.getColumnName(i).length());
+            uint16_t nameLength = static_cast<uint16_t>(columnLayout.getName(i).length());
             stream.write(reinterpret_cast<const char*>(&nameLength), sizeof(nameLength));
             if (!stream.good()) return false;
         }
 
         // Write column names (without null terminator)
         for (size_t i = 0; i < columnLayout.getColumnCount(); ++i) {
-            const std::string& name = columnLayout.getColumnName(i);
+            const std::string& name = columnLayout.getName(i);
             if (!name.empty()) {
                 stream.write(name.c_str(), name.length());
                 if (!stream.good()) return false;
@@ -207,17 +211,17 @@ namespace bcsv {
         std::cout << "  Columns:     " << static_cast<uint16_t>(columnLayout.getColumnCount()) << " (2 bytes)\n";
         std::cout << "  Column Data Types: " << columnLayout.getColumnCount() * sizeof(uint16_t) << " bytes\n";
         for (size_t i = 0; i < columnLayout.getColumnCount(); ++i) {
-            std::cout << "    [" << i << "]: " << static_cast<uint16_t>(columnLayout.getColumnType(i)) << "\n";
+            std::cout << "    [" << i << "]: " << static_cast<uint16_t>(columnLayout.getDataType(i)) << "\n";
         }
         std::cout << "  Column Name Lengths: " << columnLayout.getColumnCount() * sizeof(uint16_t) << " bytes\n";
         size_t totalNameBytes = 0;
         for (size_t i = 0; i < columnLayout.getColumnCount(); ++i) {
-            std::cout << "    [" << i << "]: " << columnLayout.getColumnName(i).length() << " bytes\n";
-            totalNameBytes += columnLayout.getColumnName(i).length();
+            std::cout << "    [" << i << "]: " << columnLayout.getName(i).length() << " bytes\n";
+            totalNameBytes += columnLayout.getName(i).length();
         }
         std::cout << "  Column Names: " << totalNameBytes << " bytes\n";
         for (size_t i = 0; i < columnLayout.getColumnCount(); ++i) {
-            std::cout << "    [" << i << "]: \"" << columnLayout.getColumnName(i) << "\"\n";
+            std::cout << "    [" << i << "]: \"" << columnLayout.getName(i) << "\"\n";
         }
     }
 

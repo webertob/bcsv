@@ -3,6 +3,7 @@
 #include <string>
 #include <sstream>
 #include <iomanip>
+#include <cstring>
 
 int main() {
     std::cout << "BCSV Library Example\n";
@@ -17,7 +18,7 @@ int main() {
 
         std::cout << "Created ColumnLayout with fields:\n";
         for (size_t i = 0; i < columnLayout.getColumnCount(); ++i) {
-            std::cout << "  " << columnLayout.getColumnName(i) << " (" << columnLayout.getColumnTypeString(i) << ")\n";
+            std::cout << "  " << columnLayout.getName(i) << " (" << columnLayout.getDataTypeAsString(i) << ")\n";
         }
         std::cout << "\n";
 
@@ -46,7 +47,7 @@ int main() {
 
         std::cout << "Created ColumnLayout with fields:\n";
         for (size_t i = 0; i < workingColumnLayout.getColumnCount(); ++i) {
-            std::cout << "  " << workingColumnLayout.getColumnName(i) << " (" << workingColumnLayout.getColumnTypeString(i) << ")\n";
+            std::cout << "  " << workingColumnLayout.getName(i) << " (" << workingColumnLayout.getDataTypeAsString(i) << ")\n";
         }
         std::cout << "\n";
 
@@ -150,9 +151,9 @@ int main() {
                 
                 // Check column data types and names
                 for (size_t i = 0; i < restoredColumnLayout.getColumnCount(); ++i) {
-                    auto type = restoredColumnLayout.getColumnType(i);
-                    std::string typeName = restoredColumnLayout.getColumnTypeString(i);
-                    std::cout << "  Column " << i << ": " << typeName << " \"" << restoredColumnLayout.getColumnName(i) << "\"\n";
+                    auto type = restoredColumnLayout.getDataType(i);
+                    std::string typeName = restoredColumnLayout.getDataTypeAsString(i);
+                    std::cout << "  Column " << i << ": " << typeName << " \"" << restoredColumnLayout.getName(i) << "\"\n";
                 }
             } else {
                 std::cout << "  Failed to read header!\n";
@@ -176,7 +177,7 @@ int main() {
         
         std::cout << "Created multi-type columnLayout with " << multiTypeColumnLayout.getColumnCount() << " columns:\n";
         for (size_t i = 0; i < multiTypeColumnLayout.getColumnCount(); ++i) {
-            std::cout << "  Column " << i << ": " << multiTypeColumnLayout.getColumnTypeString(i) << " \"" << multiTypeColumnLayout.getColumnName(i) << "\"\n";
+            std::cout << "  Column " << i << ": " << multiTypeColumnLayout.getDataTypeAsString(i) << " \"" << multiTypeColumnLayout.getName(i) << "\"\n";
         }
         
         // Create a row with various data types
@@ -210,18 +211,32 @@ int main() {
         std::cout << "  precision: " << std::get<double>(multiTypeRow.getValue("precision")) << "\n";
         std::cout << "  active: " << (std::get<bool>(multiTypeRow.getValue("active")) ? "true" : "false") << "\n";
 
-        // Demonstrate Packet usage
-        std::cout << "\nDemonstrating Packet class:\n";
-        bcsv::Packet packet(bcsv::Packet::Type::ROW);
-        packet.setCompressed(true);
+        // Demonstrate PacketHeader usage (Packet class not implemented yet)
+        std::cout << "\nDemonstrating PacketHeader class:\n";
         
-        std::vector<uint8_t> sampleData = {0x48, 0x65, 0x6C, 0x6C, 0x6F}; // "Hello"
-        packet.setData(sampleData);
+        // Create a simple packet buffer for demonstration
+        bcsv::PacketHeader header;
+        header.magic = bcsv::PCKT_MAGIC;
+        header.payloadSizeRaw = 5;
+        header.payloadSizeZip = 5;
+        header.rowFirst = 0;
+        header.rowCount = 1;
+        
+        std::vector<char> packetBuffer;
+        packetBuffer.resize(sizeof(header) + sizeof(uint32_t) + 5); // header + crc + data
+        std::memcpy(packetBuffer.data(), &header, sizeof(header));
+        
+        // Add some sample data
+        const char* sampleData = "Hello";
+        std::memcpy(packetBuffer.data() + sizeof(header) + sizeof(uint32_t), sampleData, 5);
+        
+        // Update CRC32
+        bcsv::PacketHeader::updateCRC32(packetBuffer);
         
         std::cout << "Created packet:\n";
-        std::cout << "  Type: " << (packet.getType() == bcsv::Packet::Type::ROW ? "ROW" : "OTHER") << "\n";
-        std::cout << "  Compressed: " << (packet.isCompressed() ? "Yes" : "No") << "\n";
-        std::cout << "  Data size: " << packet.getData().size() << " bytes\n";
+        std::cout << "  Type: HEADER_DEMO\n";
+        std::cout << "  Has CRC32: Yes\n";
+        std::cout << "  Data size: 5 bytes\n";
 
         std::cout << "\nExample completed successfully!\n";
 

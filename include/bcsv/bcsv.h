@@ -23,18 +23,21 @@
 #include "definitions.h"
 
 // Core component declarations
-#include "file_header.h"
 #include "column_layout.h"
-#include "row.h"
-#include "packet.h"
+#include "compression.h"
+#include "file_header.h"
+// #include "packet.h"      // Using packet_header.h instead
+#include "packet_header.h"
 #include "reader.h"
+#include "row.h"
 #include "writer.h"
 
 // Include implementations
 #include "bcsv.hpp"
-#include "file_header.hpp"
 #include "column_layout.hpp"
-#include "row.hpp"
-#include "packet.hpp"
+#include "compression.hpp"
+#include "file_header.hpp"
+#include "packet_header.hpp"
 #include "reader.hpp"
+#include "row.hpp"
 #include "writer.hpp"

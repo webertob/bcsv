@@ -7,6 +7,7 @@
 #include <type_traits>
 
 #include "definitions.h"
+#include "compression.h"
 #include "column_layout.h"
 #include "file_header.h"
 #include "row.h"
@@ -54,14 +55,19 @@ namespace bcsv {
         iterator end();
         
     private:
+        Compressor compressor_;
+        std::vector<char> buffer_raw_;
+        std::vector<char> buffer_zip_;
+
+
+
         StreamType stream_;
         FileHeader fileHeader_;
         ColumnLayout columnLayout_;
         size_t currentRowIndex_ = 0;
         bool fileHeaderRead_ = false;
         bool headerRead_ = false;
-        
-        bool decompressData(const std::vector<uint8_t>& compressed, std::vector<uint8_t>& decompressed);
+
     };
 
 } // namespace bcsv

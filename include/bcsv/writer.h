@@ -8,6 +8,7 @@
 
 #include "definitions.h"
 #include "column_layout.h"
+#include "compression.h"
 #include "file_header.h"
 #include "row.h"
 
@@ -36,14 +37,19 @@ namespace bcsv {
         void flush();
 
     private:
+        bool compressData(const std::vector<uint8_t>& data, std::vector<uint8_t>& compressed);
+        
+        Compressor compressor_;
+        std::vector<char> buffer_raw_;
+        std::vector<char> buffer_zip_;
+
         StreamType stream_;
         ColumnLayout columnLayout_;
         bool compressionEnabled_ = false;
         bool fileHeaderWritten_ = false;
         bool headerWritten_ = false;
         size_t rowCount_ = 0;
-        
-        bool compressData(const std::vector<uint8_t>& data, std::vector<uint8_t>& compressed);
+
     };
 
 } // namespace bcsv

@@ -24,7 +24,7 @@ namespace bcsv {
     }
     
     inline void ColumnLayout::addColumn(const std::string& name, const std::string& typeString) {
-        ColumnDataType type = stringToColumnDataType(typeString);
+        ColumnDataType type = stringToDataType(typeString);
         addColumn(name, type);
     }
     
@@ -45,37 +45,37 @@ namespace bcsv {
         return columns;
     }
     
-    inline std::vector<std::string> ColumnLayout::getColumnNames() const {
+    inline std::vector<std::string> ColumnLayout::getNames() const {
         return column_names_;
     }
     
-    inline std::vector<ColumnDataType> ColumnLayout::getColumnTypes() const {
+    inline std::vector<ColumnDataType> ColumnLayout::getDataTypes() const {
         return column_types_;
     }
     
-    inline std::vector<std::string> ColumnLayout::getColumnTypeStrings() const {
+    inline std::vector<std::string> ColumnLayout::getDataTypesAsString() const {
         std::vector<std::string> types;
         for (const auto& type : column_types_) {
-            types.push_back(columnDataTypeToString(type));
+            types.push_back(dataTypeToString(type));
         }
         return types;
     }
     
-    inline ColumnDataType ColumnLayout::getColumnType(size_t index) const {
+    inline ColumnDataType ColumnLayout::getDataType(size_t index) const {
         if (index < column_types_.size()) {
             return column_types_[index];
         }
         return ColumnDataType::STRING;
     }
     
-    inline std::string ColumnLayout::getColumnTypeString(size_t index) const {
+    inline std::string ColumnLayout::getDataTypeAsString(size_t index) const {
         if (index < column_types_.size()) {
-            return columnDataTypeToString(column_types_[index]);
+            return dataTypeToString(column_types_[index]);
         }
         return "INVALID";
     }
     
-    inline size_t ColumnLayout::getColumnIndex(const std::string& columnName) const {
+    inline size_t ColumnLayout::getIndex(const std::string& columnName) const {
         auto it = column_name_index_.find(columnName);
         if (it != column_name_index_.end()) {
             return it->second;
@@ -83,14 +83,14 @@ namespace bcsv {
         return SIZE_MAX; // Return maximum value to indicate not found
     }
     
-    inline std::string ColumnLayout::getColumnName(size_t index) const {
+    inline std::string ColumnLayout::getName(size_t index) const {
         if (index < column_names_.size()) {
             return column_names_[index];
         }
         return "";
     }
     
-    inline void ColumnLayout::setColumnName(size_t index, const std::string& name) {
+    inline void ColumnLayout::setName(size_t index, const std::string& name) {
         if (index < column_names_.size()) {
             // Remove old mapping
             column_name_index_.erase(column_names_[index]);
@@ -101,7 +101,7 @@ namespace bcsv {
         }
     }
     
-    inline void ColumnLayout::setColumnType(size_t index, ColumnDataType type) {
+    inline void ColumnLayout::setDataType(size_t index, ColumnDataType type) {
         if (index < column_types_.size()) {
             column_types_[index] = type;
         }
@@ -137,7 +137,7 @@ namespace bcsv {
     }
 
     // Helper functions for type conversion
-    inline ColumnDataType ColumnLayout::stringToColumnDataType(const std::string& typeString) {
+    inline ColumnDataType ColumnLayout::stringToDataType(const std::string& typeString) {
         if (typeString == "bool") return ColumnDataType::BOOL;
         if (typeString == "uint8") return ColumnDataType::UINT8;
         if (typeString == "uint16") return ColumnDataType::UINT16;
@@ -152,7 +152,7 @@ namespace bcsv {
         return ColumnDataType::STRING; // default
     }
     
-    inline std::string ColumnLayout::columnDataTypeToString(ColumnDataType type) {
+    inline std::string ColumnLayout::dataTypeToString(ColumnDataType type) {
         switch (type) {
             case ColumnDataType::BOOL: return "bool";
             case ColumnDataType::UINT8: return "uint8";

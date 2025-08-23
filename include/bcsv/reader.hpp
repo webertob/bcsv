@@ -92,13 +92,6 @@ namespace bcsv {
         return currentRowIndex_;
     }
 
-    template<typename StreamType>
-    bool Reader<StreamType>::decompressData(const std::vector<uint8_t>& compressed, std::vector<uint8_t>& decompressed) {
-        // LZ4 decompression implementation placeholder
-        decompressed = compressed; // For now, just copy
-        return true;
-    }
-
     // Iterator implementation
     template<typename StreamType>
     Reader<StreamType>::iterator::iterator(Reader* reader, bool end) : reader_(reader), end_(end) {
