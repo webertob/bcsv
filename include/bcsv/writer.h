@@ -4,52 +4,58 @@
 #include <fstream>
 #include <string>
 #include <vector>
-#include <type_traits>
+#include <filesystem>
+#include <memory>
+
+#include <lz4.h>
 
 #include "definitions.h"
-#include "column_layout.h"
-#include "compression.h"
+#include "layout.h"
 #include "file_header.h"
 #include "row.h"
 
 namespace bcsv {
 
     /**
-     * @brief Template class for writing BCSV files
+     * @brief Class for writing BCSV binary files
      */
-    template<typename StreamType = std::ofstream>
+    template<typename LayoutType>
     class Writer {
-    public:
-        Writer() = default;
-        explicit Writer(const std::string& filename);
-        explicit Writer(StreamType&& stream);
-        
-        bool open(const std::string& filename);
-        void close();
-        
-        void setCompression(bool enabled);
-        bool isCompressionEnabled() const;
-        
-        bool writeFileHeader(const FileHeader& fileHeader);
-        bool writeColumnLayout(const ColumnLayout& columnLayout);
-        bool writeRow(const Row& row);
-        
-        void flush();
-
-    private:
-        bool compressData(const std::vector<uint8_t>& data, std::vector<uint8_t>& compressed);
-        
-        Compressor compressor_;
+        std::shared_ptr<LayoutType> layout_;
         std::vector<char> buffer_raw_;
         std::vector<char> buffer_zip_;
 
-        StreamType stream_;
-        ColumnLayout columnLayout_;
-        bool compressionEnabled_ = false;
-        bool fileHeaderWritten_ = false;
-        bool headerWritten_ = false;
-        size_t rowCount_ = 0;
+        std::ofstream stream_;                  // Always binary file stream
+        std::filesystem::path filePath_;        // Always present
 
+        size_t currentRowIndex_ = 0;
+        bool headerWritten_ = false;
+    
+    public:
+        explicit Writer(std::shared_ptr<LayoutType> &layout);
+        explicit Writer(std::shared_ptr<LayoutType> &layout, const std::filesystem::path& filepath, bool overwrite = false);
+        ~Writer();
+
+        void close();
+        void flush();
+        const std::filesystem::path& getFilePath() const { return filePath_; }
+        bool is_open() const { return stream_.is_open(); }
+        bool open(const std::filesystem::path& filepath, bool overwrite = false);
+        
+        bool writeRow(const Row& row);
+        
+    private:
+        bool writeHeader();
+
+    public:
+        // Factory functions
+        static std::shared_ptr<Writer> create(std::shared_ptr<LayoutType> &layout) {
+            return std::make_shared<Writer>(layout);
+        }
+
+        static std::shared_ptr<Writer> create(std::shared_ptr<LayoutType> &layout, const std::filesystem::path& filepath, bool overwrite = false) {
+            return std::make_shared<Writer>(layout, filepath, overwrite);
+        }
     };
 
 } // namespace bcsv

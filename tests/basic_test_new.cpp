@@ -1,5 +1,5 @@
 #include <bcsv/bcsv.hpp>
-#include <bcsv/column_layout.hpp>
+#include <bcsv/layout.hpp>
 #include <bcsv/file_header.hpp>
 #include <iostream>
 #include <cassert>
@@ -12,15 +12,15 @@ int main() {
     // Test ColumnLayout
     {
         std::cout << "Testing ColumnLayout... ";
-        bcsv::ColumnLayout columnLayout;
+        bcsv::Layout columnLayout;
         columnLayout.addColumn("id", bcsv::ColumnDataType::INT32);
         columnLayout.addColumn("name", bcsv::ColumnDataType::STRING);
         
         assert(columnLayout.getColumnCount() == 2);
-        assert(columnLayout.getDataType(0) == bcsv::ColumnDataType::INT32);
-        assert(columnLayout.getDataType(1) == bcsv::ColumnDataType::STRING);
-        assert(columnLayout.getIndex("id") == 0);
-        assert(columnLayout.getIndex("name") == 1);
+        assert(columnLayout.getColumnType(0) == bcsv::ColumnDataType::INT32);
+        assert(columnLayout.getColumnType(1) == bcsv::ColumnDataType::STRING);
+        assert(columnLayout.getColumnIndex("id") == 0);
+        assert(columnLayout.getColumnIndex("name") == 1);
         assert(columnLayout.hasColumn("id") == true);
         assert(columnLayout.hasColumn("unknown") == false);
         
@@ -30,7 +30,7 @@ int main() {
     // Test FileHeader
     {
         std::cout << "Testing FileHeader... ";
-        bcsv::ColumnLayout columnLayout;
+        bcsv::Layout columnLayout;
         columnLayout.addColumn("test", bcsv::ColumnDataType::INT64);
         columnLayout.addColumn("data", bcsv::ColumnDataType::STRING);
         
@@ -39,8 +39,8 @@ int main() {
         assert(fileHeader.isValidMagic() == true);
         assert(fileHeader.getVersionString() == "1.0.0");
         assert(fileHeader.getBinarySize(columnLayout) > 0);
-        assert(fileHeader.getCompressionLevel() == 0);
-        assert(fileHeader.isCompressed() == false);
+        assert(fileHeader.getCompressionLevel() == 6);  // Default compression level (mandatory in v1.0+)
+        assert(fileHeader.isCompressed() == true);      // Compression is always enabled in v1.0+
         
         std::cout << "PASSED\n";
     }

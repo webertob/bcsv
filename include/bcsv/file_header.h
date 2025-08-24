@@ -9,7 +9,9 @@
 
 namespace bcsv {
     // Forward declarations
-    class ColumnLayout;
+    class Layout;
+    template<typename... ColumnTypes>
+    class LayoutStatic;
     enum class ColumnDataType : uint16_t;
 
     /**
@@ -95,8 +97,13 @@ namespace bcsv {
      * 
      * @subsection flag_bits Feature Flags (16-bit bitfield)
      * 
-     * - Bit 0: COMPRESSED - File uses compression
-     * - Bits 1-15: Reserved for future use
+     * Note: As of v1.0+, core features are mandatory and no longer use flag bits:
+     * - CHECKSUMS: Always enabled (CRC32 integrity verification)
+     * - ROW_INDEX: Always enabled (row offset indexing for random access)
+     * - ALIGNED: Always enabled (aligned data structures)  
+     * - COMPRESSED: Always enabled (LZ4 compression)
+     * 
+     * - Bits 0-15: Reserved for future optional features
      * 
      * @note All multi-byte integers are stored in little-endian format
      * @note Column names are stored without null terminators to save space
@@ -136,16 +143,23 @@ namespace bcsv {
         static constexpr size_t COLUMN_LENGTH_SIZE = sizeof(uint16_t);        ///< Size per name length: 2 bytes
         
         /**
-         * @brief Feature flag bit positions
+         * @brief Feature flag bit positions (Reserved for future optional features)
+         * 
+         * Note: Core features (CHECKSUMS, ROW_INDEX, ALIGNED, COMPRESSED) are now
+         * mandatory in v1.0+ and no longer require flag bits.
          */
         enum FileFlags : uint16_t {
-            COMPRESSED = 0x0001,    ///< Bit 0: File uses compression
-            // Bits 1-15 reserved for future features
+            // All bits currently reserved for future optional features
+            RESERVED1 = 0x0001,    ///< Bit 0: Reserved for future use
+            RESERVED2 = 0x0002,    ///< Bit 1: Reserved for future use
+            RESERVED3 = 0x0004,    ///< Bit 2: Reserved for future use
+            RESERVED4 = 0x0008,    ///< Bit 3: Reserved for future use
+            // Bits 4-15 also reserved
         };
 
         // Constructors
-        FileHeader();
-        explicit FileHeader(uint8_t major, uint8_t minor = 0, uint8_t patch = 0);
+        FileHeader(size_t columnCount = 0, uint8_t compressionLevel = 9, uint8_t major = VERSION_MAJOR, uint8_t minor = VERSION_MAJOR, uint8_t patch = VERSION_PATCH);
+        ~FileHeader() = default;
 
         // Version management
         void setVersion(uint8_t major, uint8_t minor, uint8_t patch);
@@ -157,7 +171,6 @@ namespace bcsv {
         // Compression management
         void setCompressionLevel(uint8_t level);
         uint8_t getCompressionLevel() const;
-        bool isCompressed() const;
 
         // Flags management
         void setFlag(uint16_t flag, bool value);
@@ -182,29 +195,34 @@ namespace bcsv {
          * @param columnLayout The column layout to include in size calculation
          * @return Total size in bytes needed for complete header
          */
-        size_t getBinarySize(const ColumnLayout& columnLayout) const;
-        
+        template<typename LayoutType>
+        static size_t getBinarySize(const LayoutType& columnLayout);
+
         /**
          * @brief Write complete header to binary stream
          * @param stream Output stream to write to
          * @param columnLayout Column layout to serialize with header
          * @return true if write was successful, false on error
          */
-        bool writeToBinary(std::ostream& stream, const ColumnLayout& columnLayout) const;
-        
+        template<typename LayoutType>
+        bool writeToBinary(std::ostream& stream, const LayoutType& columnLayout) const;
+
         /**
          * @brief Read complete header from binary stream
          * @param stream Input stream to read from
          * @param columnLayout Column layout to populate from stream
          * @return true if read was successful, false on error or invalid data
          */
-        bool readFromBinary(std::istream& stream, ColumnLayout& columnLayout);
+        bool readFromBinary(std::istream& stream, Layout& columnLayout);
 
+        template<typename... ColumnTypes>
+        bool readFromBinary(std::istream& stream, const LayoutStatic<ColumnTypes...>& columnLayout);
         /**
          * @brief Print detailed binary layout information for debugging
          * @param columnLayout Column layout to analyze
          */
-        void printBinaryLayout(const ColumnLayout& columnLayout) const;
+        template<typename LayoutType>
+        void printBinaryLayout(const LayoutType& columnLayout) const;
 
     private:
         FileHeaderStruct header_;

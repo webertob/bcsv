@@ -6,12 +6,11 @@
 
 namespace bcsv {
 
-    constexpr size_t crc32_offset = sizeof(PacketHeader); 
     constexpr size_t crc32_size = sizeof(uint32_t);
-    constexpr size_t min_packet_size = sizeof(PacketHeader) + crc32_size; // Minimum packet size including CRC32
+    constexpr size_t crc32_offset = sizeof(PacketHeader) - crc32_size;
 
     void PacketHeader::updateCRC32(std::vector<char>& packetRawBuffer) {
-        if(packetRawBuffer.size() < min_packet_size) {
+        if(packetRawBuffer.size() < sizeof(PacketHeader)) {
             return; // Not enough data to update CRC32
         }
         
@@ -28,7 +27,7 @@ namespace bcsv {
     }
 
     bool PacketHeader::validateCRC32(const std::vector<char>& packetRawBuffer) {
-        if (packetRawBuffer.size() < min_packet_size) {
+        if (packetRawBuffer.size() < sizeof(PacketHeader)) {
             return false; // Not enough data for CRC32
         }
 
@@ -42,6 +41,7 @@ namespace bcsv {
         // 1st: Process buffer up to CRC32 field
         crc32.process_bytes(packetRawBuffer.data(), crc32_offset);
 
+        
         
         // 2nd: Process zeroed CRC32 field (4 bytes of zeros)
         uint32_t zeroCRC = 0;

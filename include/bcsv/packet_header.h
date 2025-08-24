@@ -4,7 +4,7 @@
 #include <cstdint>
 
 #include "definitions.h"
-#include "column_layout.h"
+#include "layout.h"
 
 namespace bcsv {
 
@@ -13,7 +13,7 @@ namespace bcsv {
      */
 
      /*
-     ### Packet Header Binary Layout
+     ### Packet Header Binary Layout (v1.0+ - Mandatory Features)
     0                   1                   2                   3
     0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -29,15 +29,19 @@ namespace bcsv {
     |                                                               |
     |                      Number of Rows (uint64)                  |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    | Optional(FileFlage CHECKSUMS):       CRC32 Checksum (uint32)  |
+    |                    CRC32 Checksum (uint32)                    |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    | Optional(FileFlage CHECKSUMS):  offset to the start of each   |
-    | row, except for the first (uint16 * Number of rows - 1)       |
+    |              Row Index - offset to the start of each          |
+    |              row, except for the first (uint16 * Rows - 1)    |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     |                                                               |
     |                    LZ4 Compressed Payload Data                |
     |                         (variable)                            |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+
+    Note: In v1.0+, CRC32 checksums and row indexing are mandatory features
+    that are always present in every packet, providing data integrity and
+    random access capabilities.
 
 */
     #pragma pack(push, 1)
@@ -47,11 +51,12 @@ namespace bcsv {
         uint32_t payloadSizeZip; // Size of the compressed payload data
         uint64_t rowFirst;       // Index of the first row in the packet
         uint64_t rowCount;       // Number of rows in the packet
+        uint32_t crc32;          // CRC32 checksum of the entire packet (with this field zeroed)
 
         static void updateCRC32(std::vector<char>& packetRawBuffer);
         static bool validateCRC32(const std::vector<char>& packetRawBuffer);
     };
     #pragma pack(pop)
-    static_assert(sizeof(PacketHeader) == 28, "PacketHeader must be exactly 28 bytes");
+    static_assert(sizeof(PacketHeader) == 32, "PacketHeader must be exactly 32 bytes");
 
 } // namespace bcsv
