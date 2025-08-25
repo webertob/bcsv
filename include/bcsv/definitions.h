@@ -68,7 +68,7 @@ namespace bcsv {
      * @param type The column data type
      * @return Default ValueType for the specified type
      */
-    inline ValueType getDefaultValue(ColumnDataType type) {
+    inline ValueType defaultValue(ColumnDataType type) {
         switch (type) {
             case ColumnDataType::STRING:
                 return ValueType{std::string{}};  // Empty string
@@ -105,8 +105,27 @@ namespace bcsv {
         }
     }
 
+    // Helper function to get size for each column type
+    size_t binaryFieldLength(ColumnDataType type) {
+        switch (type) {
+            case ColumnDataType::INT8: return sizeof(int8_t);
+            case ColumnDataType::INT16: return sizeof(int16_t);
+            case ColumnDataType::INT32: return sizeof(int32_t);
+            case ColumnDataType::INT64: return sizeof(int64_t);
+            case ColumnDataType::UINT8: return sizeof(uint8_t);
+            case ColumnDataType::UINT16: return sizeof(uint16_t);
+            case ColumnDataType::UINT32: return sizeof(uint32_t);
+            case ColumnDataType::UINT64: return sizeof(uint64_t);
+            case ColumnDataType::FLOAT: return sizeof(float);
+            case ColumnDataType::DOUBLE: return sizeof(double);
+            case ColumnDataType::BOOL: return sizeof(bool);
+            case ColumnDataType::STRING: return sizeof(uint64_t); // StringAddress
+            default: throw std::runtime_error("Unknown column type");
+        }
+    }
+
     template<typename T>
-    constexpr ValueType getDefaultValueForType() {
+    constexpr ValueType defaultValueT() {
         if constexpr (std::is_same_v<T, std::string>) {
             return ValueType{std::string{}};
         } else if constexpr (std::is_same_v<T, int8_t>) {
@@ -134,6 +153,13 @@ namespace bcsv {
         } else {
             return ValueType{std::string{}};  // Fallback
         }
+    }
+
+    // Helper to extract the actual type from ValueType variant
+    template<typename T>
+    static constexpr T extractDefaultValueT() {
+        ValueType defaultVariant = defaultValueT<T>();
+        return std::get<T>(defaultVariant);
     }
 
      /**

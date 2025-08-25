@@ -5,6 +5,8 @@
 #include <variant>
 #include <map>
 #include <cstring>
+#include <tuple>
+#include <type_traits>
 
 #include "definitions.h"
 #include "layout.h"
@@ -37,10 +39,10 @@ namespace bcsv {
  * 
  * For STRING columns:
  * ┌─────────────────────────────────────────────────────────────────┐
- * │                    StringAddress (64-bit)                      │
+ * │                    StringAddress (64-bit)                       │
  * ├─────────────────────────────────────┬───────────────────────────┤
- * │         Payload Offset (48-bit)     │    Length (16-bit)       │
- * │              Bits 16-63             │     Bits 0-15            │
+ * │         Payload Offset (48-bit)     │    Length (16-bit)        │
+ * │              Bits 16-63             │     Bits 0-15             │
  * └─────────────────────────────────────┴───────────────────────────┘
  * 
  * Payload Offset: Absolute byte offset from start of row to string data
@@ -49,7 +51,7 @@ namespace bcsv {
  * For PRIMITIVE columns (INT8, INT16, INT32, INT64, UINT8, UINT16, UINT32, UINT64, FLOAT, DOUBLE, BOOL):
  * ┌─────────────────────────────────────────────────────────────────┐
  * │                     Raw Value Data                              │
- * │                (1, 2, 4, or 8 bytes)                          │
+ * │                (1, 2, 4, or 8 bytes)                            │
  * └─────────────────────────────────────────────────────────────────┘
  * 
  * =============================================================================
@@ -127,10 +129,10 @@ namespace bcsv {
  * 
  * Bit Layout (64-bit little-endian):
  * ┌─────────────────────────────────────────────────────────────────┐
- * │ 63  56  48  40  32  24  16   8   0                             │
+ * │ 63  56  48  40  32  24  16   8   0                              │
  * ├──────────────────────────────────┬──────────────────────────────┤
- * │        Payload Offset            │         Length              │
- * │         (48 bits)                │        (16 bits)            │
+ * │        Payload Offset            │         Length               │
+ * │         (48 bits)                │        (16 bits)             │
  * └──────────────────────────────────┴──────────────────────────────┘
  * 
  * Encoding Algorithm:
@@ -261,12 +263,9 @@ namespace bcsv {
         RowInterface() = default;
         virtual ~RowInterface() = default;
 
-        template<typename T = ValueType>
-        void setValue(size_t index, const T& value) = 0;
-
-        template<typename T = ValueType>
-        const T& getValue(size_t index) const = 0;
-
+        virtual void setValue(size_t index, const ValueType& value) = 0;
+        virtual ValueType getValue(size_t index) const = 0;
+        virtual size_t size() const = 0;
         virtual void serializedSize(size_t& fixedSize, size_t& totalSize) const = 0;
         virtual void serializeTo(char* dstBuffer, size_t dstBufferSize) const = 0;
         virtual void deserializeFrom(const char* srcBuffer, size_t srcBufferSize) = 0;
@@ -278,28 +277,301 @@ namespace bcsv {
     public:
         Row() = delete;
         Row(const Layout &layout);
-        ~Row() { }
+        ~Row() = default;
 
-        template<typename T = ValueType>
-        void setValue(size_t index, const T& value);
+        // Virtual overrides
+        void setValue(size_t index, const ValueType& value) override;
+        ValueType getValue(size_t index) const override;
+        size_t size() const override { return data_.size(); }
 
-        template<typename T = ValueType>
-        const T& getValue(size_t index) const;
+        // Template methods (declared in header, implemented in .hpp)
+        template<typename T>
+        const T& get(size_t index) const;
+        
+        template<typename T>
+        void set(size_t index, const T& value);
 
+        // Virtual implementations
         void serializedSize(size_t& fixedSize, size_t& totalSize) const override;
         void serializeTo(char* dstBuffer, size_t dstBufferSize) const override;
         void deserializeFrom(const char* srcBuffer, size_t srcBufferSize) override;
     };
 
-    //class RowStatic
-    //use a compile-time fixed column layout, with template parameters for each column type, create using a LayoutStatic
+    template<typename... ColumnTypes>
+    class RowStatic : public RowInterface {
+        std::tuple<ColumnTypes...> data_;
 
-    //class RowConstView
-    //Similar to a flatbuffers creates a view into a serilized row buffer (char*)
-    //references a Layout object that provides the information on what columns and types are present. It provides read-only access to the row data
+        // Helper functions (declared here, implemented in .hpp)
+        template<size_t... Indices>
+        void setValueAtIndex(size_t index, const ValueType& value, std::index_sequence<Indices...>);
+        
+        template<size_t Index>
+        void setValueAtIndexHelper(const ValueType& value);
+        
+        template<size_t... Indices>
+        ValueType getValueAtIndex(size_t index, std::index_sequence<Indices...>) const;
+        
+        template<size_t Index>
+        void copyFromRowAtIndex(const Row& row);
+        
+        template<size_t... Indices>
+        void copyFromRow(const Row& row, std::index_sequence<Indices...>);
 
-    //class RowStaticConstView
-    //Similar to RowConstView, but uses a compile-time fixed column layout
-    //Provides read-only access to the row data with known types at compile time
+        // Helper functions for deserialization
+        template<size_t... Indices>
+        void deserializeAtIndices(const char* srcBuffer, size_t srcBufferSize, std::index_sequence<Indices...>);
+        
+        template<size_t Index>
+        void deserializeAtIndex(const char* srcBuffer, size_t srcBufferSize, const char*& fixedPtr);
+
+        // Compile-time size calculations
+        static constexpr size_t FIXED_SIZE = ((std::is_same_v<ColumnTypes, std::string> ? sizeof(uint64_t) : sizeof(ColumnTypes)) + ...);
+        static constexpr bool HAS_STRINGS = (std::is_same_v<ColumnTypes, std::string> || ...);
+        static constexpr size_t STRING_COUNT = ((std::is_same_v<ColumnTypes, std::string> ? 1 : 0) + ...);
+
+    public:
+        // Constructors
+        RowStatic();
+        
+        template<typename... Args>
+        explicit RowStatic(Args&&... args);
+        
+        explicit RowStatic(const Row& other);
+
+        // Virtual overrides
+        void setValue(size_t index, const ValueType& value) override;
+        ValueType getValue(size_t index) const override;
+        size_t size() const override;
+
+        // Template access methods
+        template<size_t Index>
+        auto& get();
+        
+        template<size_t Index>
+        const auto& get() const;
+        
+        template<size_t Index, typename T>
+        void set(const T& value);
+
+        // Virtual implementations
+        void serializedSize(size_t& fixedSize, size_t& totalSize) const override;
+        void serializeTo(char* dstBuffer, size_t dstBufferSize) const override;
+        void deserializeFrom(const char* srcBuffer, size_t srcBufferSize) override;
+
+        // Expose compile-time constants
+        static constexpr size_t getFixedSize() { return FIXED_SIZE; }
+        static constexpr bool hasStrings() { return HAS_STRINGS; }
+        static constexpr size_t getStringCount() { return STRING_COUNT; }
+    };
+
+    /* Direct view into a buffer. Supports Row interface */
+    class RowViewConst : public RowInterface {
+        const char* buffer_;
+        size_t bufferSize_;
+        std::vector<size_t> fixedOffsets_;
+
+    public:
+        RowViewConst(const char* buffer, size_t bufferSize, const Layout& layout)
+            : buffer_(buffer), bufferSize_(bufferSize) {
+
+            fixedOffsets_.reserve(layout.getColumnCount());
+            
+            size_t offset = 0;
+            for (size_t i = 0; i < layout.getColumnCount(); ++i) {
+                fixedOffsets_.push_back(offset);
+                ColumnDataType colType = layout.getColumnType(i);
+                offset += binaryFieldLength(colType);
+            }
+     
+            // Validate buffer size against layout
+            if (bufferSize < offset) {
+                throw std::invalid_argument("Buffer size is smaller than layout fixed size");
+            }
+
+            //validate string
+            
+
+
+        }
+
+        // Row interface implementation
+        void setValue(size_t index, const ValueType& value) override {
+            static_assert(!std::is_const_v<std::remove_reference_t<decltype(*this)>>, "RowViewConst is read-only");
+        }
+
+        ValueType getValue(size_t index) const override {
+            if (index >= layout_.getColumnCount()) {
+                throw std::out_of_range("Column index out of range");
+            }
+            // Deserialize the value from the buffer
+            return deserializeValue(index);
+        }
+
+        size_t size() const override {
+            return fixedOffsets_.size();
+        }
+
+    private:
+        
+        
+        ValueType deserializeValue(size_t index) const {
+            if (index >= layout_.getColumnCount()) {
+                throw std::out_of_range("Column index " + std::to_string(index) + " out of range");
+            }
+           
+            size_t fixedOffset = fixedOffsets_[index];
+            if (fixedOffset >= bufferSize_) {
+                throw std::runtime_error("Fixed offset beyond buffer size");
+            }
+
+            const char* dataPtr = buffer_ + fixedOffset;
+            ColumnDataType columnType = layout_.getColumnType(index);
+
+            // Deserialize based on column type
+            switch (columnType) {
+                case ColumnDataType::STRING: {
+                    // Read StringAddress from fixed section
+                    if (fixedOffset + sizeof(uint64_t) > bufferSize_) {
+                        throw std::runtime_error("Buffer overflow reading string address");
+                    }
+                    
+                    uint64_t packedAddr;
+                    std::memcpy(&packedAddr, dataPtr, sizeof(packedAddr));
+                    
+                    // Unpack string address
+                    size_t payloadOffset, stringLength;
+                    StringAddress::unpack(packedAddr, payloadOffset, stringLength);
+                    
+                    // Validate string payload is within buffer
+                    if (payloadOffset + stringLength > bufferSize_) {
+                        throw std::runtime_error("String payload extends beyond buffer");
+                    }
+                    
+                    // Create string from payload
+                    if (stringLength > 0) {
+                        return ValueType{std::string(buffer_ + payloadOffset, stringLength)};
+                    } else {
+                        return ValueType{std::string{}};
+                    }
+                }
+                
+                case ColumnDataType::INT8: {
+                    if (fixedOffset + sizeof(int8_t) > bufferSize_) {
+                        throw std::runtime_error("Buffer overflow reading int8_t");
+                    }
+                    int8_t value;
+                    std::memcpy(&value, dataPtr, sizeof(value));
+                    return ValueType{value};
+                }
+                
+                case ColumnDataType::INT16: {
+                    if (fixedOffset + sizeof(int16_t) > bufferSize_) {
+                        throw std::runtime_error("Buffer overflow reading int16_t");
+                    }
+                    int16_t value;
+                    std::memcpy(&value, dataPtr, sizeof(value));
+                    return ValueType{value};
+                }
+                
+                case ColumnDataType::INT32: {
+                    if (fixedOffset + sizeof(int32_t) > bufferSize_) {
+                        throw std::runtime_error("Buffer overflow reading int32_t");
+                    }
+                    int32_t value;
+                    std::memcpy(&value, dataPtr, sizeof(value));
+                    return ValueType{value};
+                }
+                
+                case ColumnDataType::INT64: {
+                    if (fixedOffset + sizeof(int64_t) > bufferSize_) {
+                        throw std::runtime_error("Buffer overflow reading int64_t");
+                    }
+                    int64_t value;
+                    std::memcpy(&value, dataPtr, sizeof(value));
+                    return ValueType{value};
+                }
+                
+                case ColumnDataType::UINT8: {
+                    if (fixedOffset + sizeof(uint8_t) > bufferSize_) {
+                        throw std::runtime_error("Buffer overflow reading uint8_t");
+                    }
+                    uint8_t value;
+                    std::memcpy(&value, dataPtr, sizeof(value));
+                    return ValueType{value};
+                }
+                
+                case ColumnDataType::UINT16: {
+                    if (fixedOffset + sizeof(uint16_t) > bufferSize_) {
+                        throw std::runtime_error("Buffer overflow reading uint16_t");
+                    }
+                    uint16_t value;
+                    std::memcpy(&value, dataPtr, sizeof(value));
+                    return ValueType{value};
+                }
+                
+                case ColumnDataType::UINT32: {
+                    if (fixedOffset + sizeof(uint32_t) > bufferSize_) {
+                        throw std::runtime_error("Buffer overflow reading uint32_t");
+                    }
+                    uint32_t value;
+                    std::memcpy(&value, dataPtr, sizeof(value));
+                    return ValueType{value};
+                }
+                
+                case ColumnDataType::UINT64: {
+                    if (fixedOffset + sizeof(uint64_t) > bufferSize_) {
+                        throw std::runtime_error("Buffer overflow reading uint64_t");
+                    }
+                    uint64_t value;
+                    std::memcpy(&value, dataPtr, sizeof(value));
+                    return ValueType{value};
+                }
+                
+                case ColumnDataType::FLOAT: {
+                    if (fixedOffset + sizeof(float) > bufferSize_) {
+                        throw std::runtime_error("Buffer overflow reading float");
+                    }
+                    float value;
+                    std::memcpy(&value, dataPtr, sizeof(value));
+                    return ValueType{value};
+                }
+                
+                case ColumnDataType::DOUBLE: {
+                    if (fixedOffset + sizeof(double) > bufferSize_) {
+                        throw std::runtime_error("Buffer overflow reading double");
+                    }
+                    double value;
+                    std::memcpy(&value, dataPtr, sizeof(value));
+                    return ValueType{value};
+                }
+                
+                case ColumnDataType::BOOL: {
+                    if (fixedOffset + sizeof(bool) > bufferSize_) {
+                        throw std::runtime_error("Buffer overflow reading bool");
+                    }
+                    bool value;
+                    std::memcpy(&value, dataPtr, sizeof(value));
+                    return ValueType{value};
+                }
+                
+                default:
+                    throw std::runtime_error("Unknown column type: " + std::to_string(static_cast<int>(columnType)));
+            }
+        }
+        
+
+    };
+
+
+    //ToDo:
+    // Refactor Row change fixedSize to fixed_section_size and totalSize to total_section_size
+    // Layout implement columnOffsets and fixedSectionSize
+    // LayoutStatic implement columnOffsets and fixedSectionSize
+    // RowViewConst implement missing functions (i.e. in Layout)
+    // RowViewConst implement deserializationView
+    // RowViewStatic implementation
+    // Implement Reader::readRow, readRows
+    // Implement Writer::writeRow, writeRows
+    // Code Review, Testing (unit tests), Documentation
 
 } // namespace bcsv
