@@ -28,11 +28,8 @@ namespace bcsv {
         return SIZE_MAX; // Return maximum value to indicate not found
     }
     
-    inline std::string LayoutInterface::getColumnName(size_t index) const {
-        if (index < column_names_.size()) {
-            return column_names_[index];
-        }
-        return "";
+    inline const std::string& LayoutInterface::getColumnName(size_t index) const {
+        return column_names_[index];
     }
 
     inline std::vector<std::string> LayoutInterface::getColumnTypesAsString() const {
@@ -44,10 +41,7 @@ namespace bcsv {
     }
     
     inline std::string LayoutInterface::getColumnTypeAsString(size_t index) const {
-        if (index < getColumnCount()) {
-            return dataTypeToString(getColumnType(index));
-        }
-        return "INVALID";
+        return dataTypeToString(getColumnType(index));
     }
 
     /**
@@ -71,14 +65,9 @@ namespace bcsv {
     }
 
     inline void LayoutInterface::setColumnName(size_t index, const std::string& name) {
-        if (index < getColumnCount()) {
-            // Remove old mapping
-            column_name_index_.erase(column_names_[index]);
-            // Update name
-            column_names_[index] = name;
-            // Add new mapping
-            column_name_index_[name] = index;
-        }
+        column_name_index_.erase(column_names_[index]); //remove old name from index
+        column_names_[index] = name; //update name
+        column_name_index_[name] = index; //add new name to index
     }
 
         // Helper functions for type conversion
@@ -113,6 +102,13 @@ namespace bcsv {
             case ColumnDataType::STRING: return "string";
             default: return "string";
         }
+    }
+
+    inline Layout::Layout(const Layout& other) {
+        column_types_ = other.column_types_;
+        column_names_ = other.column_names_;
+        column_name_index_ = other.column_name_index_;
+        //the copy is unlocked!
     }
 
     // Implementation included inline for header-only library
@@ -182,18 +178,12 @@ namespace bcsv {
     }
     
     inline ColumnDataType Layout::getColumnType(size_t index) const {
-        if (index < column_types_.size()) {
-            return column_types_[index];
-        }
-        return ColumnDataType::STRING;
+        return column_types_[index];
     }
 
     inline void Layout::setColumnDataType(size_t index, ColumnDataType type) {
         if (isLocked()) {
             throw std::runtime_error("Cannot modify locked layout");
-        }
-        if (index >= column_types_.size()) {
-            throw std::out_of_range("Column index out of range");
         }
         column_types_[index] = type;
     }
@@ -212,6 +202,16 @@ namespace bcsv {
         column_types_.erase(column_types_.begin() + index);
         // Update index map since indices have shifted
         updateIndexMap();
+    }
+
+    inline Layout& Layout::operator=(const Layout& other) {
+        if (this != &other) {
+            column_types_ = other.column_types_;
+            column_names_ = other.column_names_;
+            column_name_index_ = other.column_name_index_;
+            //the assignment is unlocked!
+        }
+        return *this;
     }
 
     template<typename... ColumnTypes>

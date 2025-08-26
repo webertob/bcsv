@@ -69,7 +69,7 @@ namespace bcsv {
         virtual size_t getColumnCount() const { return column_names_.size(); }
         const std::unordered_map<std::string, size_t>& getColumnIndex() const { return column_name_index_; }
         size_t getColumnIndex(const std::string& columnName) const;
-        std::string getColumnName(size_t index) const;
+        const std::string& getColumnName(size_t index) const;
         const std::vector<std::string>& getColumnNames() const { return column_names_; };
         virtual ColumnDataType getColumnType(size_t index) const = 0;
         std::string getColumnTypeAsString(size_t index) const;
@@ -100,7 +100,9 @@ namespace bcsv {
         typedef LayoutInterface Base;
 
         Layout() = default;
+        Layout(const Layout& other);
         explicit Layout(const std::vector<ColumnDefinition>& columns);
+        ~Layout() = default;
 
         void clear();
         ColumnDataType getColumnType(size_t index) const override;
@@ -116,6 +118,8 @@ namespace bcsv {
         bool isLocked() const override { return !lock_owners_.empty(); }
         void lock(void* owner) override { lock_owners_.insert(owner); }
         void unlock(void* owner) override { lock_owners_.erase(owner); }
+
+        Layout& operator=(const Layout& other);
 
     public:
         // Factory functions that return shared pointers
@@ -150,7 +154,7 @@ namespace bcsv {
     private:
         template<size_t Index = 0>
         constexpr ColumnDataType getTypeAtIndex(size_t targetIndex) const;
-    
+
     public:
         // Factory functions that return shared pointers
         static std::shared_ptr<LayoutStatic<ColumnTypes...>> create() {

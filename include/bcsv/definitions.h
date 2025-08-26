@@ -198,6 +198,21 @@ namespace bcsv {
         }
     }
 
+    bool isType(const ValueType& value, ColumnDataType type) {
+        return std::visit([type](auto&& arg) -> bool {
+            using T = std::decay_t<decltype(arg)>;
+            if constexpr (std::is_same_v<T, std::string>) {
+                return type == ColumnDataType::STRING;
+            } else if constexpr (std::is_integral_v<T>) {
+                return type == ColumnDataType::INT64;
+            } else if constexpr (std::is_floating_point_v<T>) {
+                return type == ColumnDataType::FLOAT;
+            } else {
+                return false;
+            }
+        }, value);
+    }
+
     /* Get the serialized size of a value (cell)
     *  Considering our custom file layout, especially for strings.
     */
