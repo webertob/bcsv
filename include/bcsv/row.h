@@ -288,36 +288,26 @@ namespace bcsv {
     template<typename... ColumnTypes>
     class RowStatic : public RowInterface {
         std::tuple<ColumnTypes...> data_;
-
-        // Helper functions (declared here, implemented in .hpp)
-        template<size_t... Indices>
-        void setValueAtIndex(size_t index, const ValueType& value, std::index_sequence<Indices...>);
-        
-        template<size_t Index>
-        void setValueAtIndexHelper(const ValueType& value);
-        
-        template<size_t... Indices>
-        ValueType getValueAtIndex(size_t index, std::index_sequence<Indices...>) const;
-        
-        template<size_t Index>
-        void copyFromRowAtIndex(const Row& row);
-        
-        template<size_t... Indices>
-        void copyFromRow(const Row& row, std::index_sequence<Indices...>);
-
-        // Helper functions for deserialization
-        template<size_t... Indices>
-        void deserializeAtIndices(const char* srcBuffer, size_t srcBufferSize, std::index_sequence<Indices...>);
-        
-        template<size_t Index>
-        void deserializeAtIndex(const char* srcBuffer, size_t srcBufferSize, const char*& fixedPtr);
-
         // Compile-time size calculations
         static constexpr size_t FIXED_SIZE = ((std::is_same_v<ColumnTypes, std::string> ? sizeof(uint64_t) : sizeof(ColumnTypes)) + ...);
-        static constexpr bool HAS_STRINGS = (std::is_same_v<ColumnTypes, std::string> || ...);
-        static constexpr size_t STRING_COUNT = ((std::is_same_v<ColumnTypes, std::string> ? 1 : 0) + ...);
+        constexpr static size_t fieldLengths_[sizeof...(ColumnTypes)] = []{
+            size_t lengths[sizeof...(ColumnTypes)] = {};
+            size_t index = 0;
+            ((lengths[index++] = binaryFieldLength<ColumnTypes>()), ...);
+            return lengths;
+        }();
+        constexpr static size_t fieldOffsets_[sizeof...(ColumnTypes)] = []{
+            size_t offsets[sizeof...(ColumnTypes)] = {};
+            size_t offset = 0;
+            size_t index = 0;
+            ((offsets[index++] = offset, offset += binaryFieldLength<ColumnTypes>()), ...);
+            return offsets;
+        }();
 
     public:
+        template<size_t Index>
+        using ColumnType = std::tuple_element_t<Index, std::tuple<ColumnTypes...>>;
+
         // Constructors
         RowStatic();
         template<typename... Args>
@@ -343,12 +333,7 @@ namespace bcsv {
         // serialization/deserialization 
         void serializedSize(size_t& fixedSize, size_t& totalSize) const;
         void serializeTo(char* dstBuffer, size_t dstBufferSize) const;
-        void deserializeFrom(const char* srcBuffer, size_t srcBufferSize);
-
-        // Expose compile-time constants
-        static constexpr size_t getFixedSize() { return FIXED_SIZE; }
-        static constexpr bool hasStrings() { return HAS_STRINGS; }
-        static constexpr size_t getStringCount() { return STRING_COUNT; }
+        void deserializeFrom(const char* srcBuffer, size_t srcBufferSize);  
     };
 
     /* Direct view into a buffer. Supports Row interface */
@@ -383,7 +368,8 @@ namespace bcsv {
         size_t bufferSize_;
         constexpr static size_t fieldLengths_[sizeof...(ColumnTypes)] = []{
             size_t lengths[sizeof...(ColumnTypes)] = {};
-            ((lengths[sizeof...(ColumnTypes)] = binaryFieldLength<ColumnTypes>()), ...);
+            size_t index = 0;
+            ((lengths[index++] = binaryFieldLength<ColumnTypes>()), ...);
             return lengths;
         }();
         constexpr static size_t fieldOffsets_[sizeof...(ColumnTypes)] = []{

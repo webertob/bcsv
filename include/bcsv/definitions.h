@@ -219,4 +219,30 @@ namespace bcsv {
             return sizeof(T);
         }
     }
+
+    template<size_t candidate, typename ...T>
+    void setTupleValue(std::tuple<T...>& tuple, size_t index, const ValueType& value) {
+        if constexpr(candidate >= sizeof...(T)) {
+            throw std::out_of_range("Index out of range");
+        } else {
+            if(candidate == index) {
+                std::get<candidate>(tuple) = std::get<std::tuple_element_t<candidate, std::tuple<T...>>>(value);
+            } else {
+                setTupleValue<candidate + 1, T...>(tuple, index, value);
+            }
+        }
+    }
+
+    template<size_t candidate, typename ...T>
+    std::variant<std::monostate, T...> getTupleValue(const std::tuple<T...>& tuple, size_t index) {
+        if constexpr(candidate >= sizeof...(T)) {
+            throw std::out_of_range("Index out of range");
+        } else {
+            if(candidate == index) {
+                return std::get<candidate>(tuple);
+            } else {
+                return getTupleValue<candidate + 1, T...>(tuple, index);
+            }
+        }
+    }
 } // namespace bcsv
