@@ -90,34 +90,37 @@ namespace bcsv {
 
     template<typename Type>
     constexpr Type defaultValueT() {
-        if constexpr (isSameType<Type, std::string>) {
+        if constexpr (std::is_same_v<Type, std::string>) {
             return std::string{};  // Empty string
-        } else if constexpr (isSameType<Type, int8_t>) {
+        } else if constexpr (std::is_same_v<Type, int8_t>) {
             return int8_t{0};
-        } else if constexpr (isSameType<Type, int16_t>) {
+        } else if constexpr (std::is_same_v<Type, int16_t>) {
             return int16_t{0};
-        } else if constexpr (isSameType<Type, int32_t>) {
+        } else if constexpr (std::is_same_v<Type, int32_t>) {
             return int32_t{0};
-        } else if constexpr (isSameType<Type, int64_t>) {
+        } else if constexpr (std::is_same_v<Type, int64_t>) {
             return int64_t{0};
-        } else if constexpr (isSameType<Type, uint8_t>) {
+        } else if constexpr (std::is_same_v<Type, uint8_t>) {
             return uint8_t{0};
-        } else if constexpr (isSameType<Type, uint16_t>) {
+        } else if constexpr (std::is_same_v<Type, uint16_t>) {
             return uint16_t{0};
-        } else if constexpr (isSameType<Type, uint32_t>) {
+        } else if constexpr (std::is_same_v<Type, uint32_t>) {
             return uint32_t{0};
-        } else if constexpr (isSameType<Type, uint64_t>) {
+        } else if constexpr (std::is_same_v<Type, uint64_t>) {
             return uint64_t{0};
-        } else if constexpr (isSameType<Type, float>) {
+        } else if constexpr (std::is_same_v<Type, float>) {
             return float{0.0f};
-        } else if constexpr (isSameType<Type, double>) {
+        } else if constexpr (std::is_same_v<Type, double>) {
             return double{0.0};
-        } else if constexpr (isSameType<Type, bool>) {
+        } else if constexpr (std::is_same_v<Type, bool>) {
             return bool{false};
         } else {
             return ValueType{std::string{}};  // Fallback
         }
     }
+
+    template<typename T>
+    constexpr bool always_false = false;
 
     template<typename T>
     constexpr size_t binaryFieldLength() {
@@ -234,7 +237,7 @@ namespace bcsv {
     }
 
     template<size_t candidate, typename ...T>
-    std::variant<std::monostate, T...> getTupleValue(const std::tuple<T...>& tuple, size_t index) {
+    std::variant<T...> getTupleValue(const std::tuple<T...>& tuple, size_t index) {
         if constexpr(candidate >= sizeof...(T)) {
             throw std::out_of_range("Index out of range");
         } else {

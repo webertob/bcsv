@@ -195,10 +195,9 @@ namespace bcsv {
         totalSize = FIXED_SIZE;
         
         // Calculate variable size for strings only
-        constexpr for (size_t i = 0; i < sizeof...(ColumnTypes); ++i) {
+        for (size_t i = 0; i < sizeof...(ColumnTypes); ++i) {
             if constexpr (std::is_same_v<std::tuple_element_t<i, std::tuple<ColumnTypes...>>, std::string>) {
                 totalSize += std::min(std::get<i>(data_).size(), MAX_STRING_LENGTH);
-                totalSize += MAX_STRING_LENGTH;
             }
         }        
         // Calculate padding needed for 4-byte alignment
@@ -221,7 +220,7 @@ namespace bcsv {
         size_t strOffset = fixedSize;
 
         // Serialize each tuple element
-        constexpr for (size_t i = 0; i < sizeof...(ColumnTypes); ++i) {
+        for (size_t i = 0; i < sizeof...(ColumnTypes); ++i) {
             constexpr size_t len = fieldLengths_[i];
             constexpr size_t off = fieldOffsets_[i];
             char* ptr = dstBuffer + off;
@@ -238,7 +237,7 @@ namespace bcsv {
                 std::memcpy(dstBuffer + strOffset, std::get<i>(data_).c_str(), strLength); //write string payload
                 strOffset += strLength;
             } else {
-                std::memcpy(&std::get<i>(data_), ptr, len);
+                std::memcpy(ptr, &std::get<i>(data_), len);
             }
         }
         // Zero out padding bytes
@@ -252,7 +251,7 @@ namespace bcsv {
             throw std::invalid_argument("Invalid source buffer");
         }
 
-        constexpr (size_t i = 0; i < sizeof...(ColumnTypes); ++i) {
+        for (size_t i = 0; i < sizeof...(ColumnTypes); ++i) {
             constexpr size_t len = fieldLengths_[i];
             constexpr size_t off = fieldOffsets_[i];
             const char* ptr = srcBuffer + off;
@@ -273,7 +272,7 @@ namespace bcsv {
                                               ", length=" + std::to_string(strLength) +
                                               ", bufferSize=" + std::to_string(srcBufferSize) + ")");
                 }
-                std::get<i>(data_) = std::string_view(srcBuffer + strOffset, strLength);
+                std::get<i>(data_) = std::string(srcBuffer + strOffset, strLength);
                 // Read packed string address
             } else {
                 std::memcpy(&std::get<i>(data_), ptr, len);
@@ -382,7 +381,7 @@ namespace bcsv {
 
                 const std::string& src = std::get<std::string>(value);
                 // Copy string data into buffer (truncate to strLen)
-                std::memcpy(buffer_ + strOff, src.data(), strLen);
+                std::memcpy(buffer_ + strOff, src.data(), std::min(src.size(), strLen));
                 if(src.size() < strLen) {
                     std::memset(buffer_ + strOff + src.size(), 0, strLen - src.size()); // Pad with null bytes if shorter
                 }
@@ -478,6 +477,8 @@ namespace bcsv {
                     return ValueType{std::string()};
                 }
             }
+            default:
+                throw std::runtime_error("Unknown column type");
         }
     }
 
@@ -599,7 +600,7 @@ namespace bcsv {
         for (size_t i = 0; i < size(); ++i) {
             if constexpr (((std::is_same_v<ColumnTypes, std::string>) || ...)) {
                 // Only check strings if we have any
-                uint64_t packedAddr = *reinterpret_cast<const uint64_t*>(buffer_ + fieldOffsets_[Index]);
+                uint64_t packedAddr = *reinterpret_cast<const uint64_t*>(buffer_ + fieldOffsets_[i]);
                 size_t strOff, strLen;
                 StringAddress::unpack(packedAddr, strOff, strLen);
                 if (strOff + strLen > bufferSize_) {
