@@ -68,45 +68,76 @@ namespace bcsv {
      * @param type The column data type
      * @return Default ValueType for the specified type
      */
-    inline ValueType defaultValue(ColumnDataType type) {
+    ValueType defaultValue(ColumnDataType type) {
+        ValueType value;
         switch (type) {
-            case ColumnDataType::STRING:
-                return ValueType{std::string{}};  // Empty string
-                
-            case ColumnDataType::INT8:
-                return ValueType{int8_t{0}};
-            case ColumnDataType::INT16:
-                return ValueType{int16_t{0}};
-            case ColumnDataType::INT32:
-                return ValueType{int32_t{0}};
-            case ColumnDataType::INT64:
-                return ValueType{int64_t{0}};
-                
-            case ColumnDataType::UINT8:
-                return ValueType{uint8_t{0}};
-            case ColumnDataType::UINT16:
-                return ValueType{uint16_t{0}};
-            case ColumnDataType::UINT32:
-                return ValueType{uint32_t{0}};
-            case ColumnDataType::UINT64:
-                return ValueType{uint64_t{0}};
-                
-            case ColumnDataType::FLOAT:
-                return ValueType{float{0.0f}};
-            case ColumnDataType::DOUBLE:
-                return ValueType{double{0.0}};
-                
-            case ColumnDataType::BOOL:
-                return ValueType{bool{false}};
-                
-            default:
-                // Fallback to string for unknown types
-                return ValueType{std::string{}};
+            case ColumnDataType::INT8: value = int8_t{0}; break;
+            case ColumnDataType::INT16: value = int16_t{0}; break;
+            case ColumnDataType::INT32: value = int32_t{0}; break;
+            case ColumnDataType::INT64: value = int64_t{0}; break;
+            case ColumnDataType::UINT8: value = uint8_t{0}; break;
+            case ColumnDataType::UINT16: value = uint16_t{0}; break;
+            case ColumnDataType::UINT32: value = uint32_t{0}; break;
+            case ColumnDataType::UINT64: value = uint64_t{0}; break;
+            case ColumnDataType::FLOAT: value = float{0.0f}; break;
+            case ColumnDataType::DOUBLE: value = double{0.0}; break;
+            case ColumnDataType::BOOL: value = bool{false}; break;
+            case ColumnDataType::STRING: value = std::string{}; break;
+            default: throw std::runtime_error("Unknown column type");
+        }
+        return value;
+    }
+
+    template<typename Type>
+    constexpr Type defaultValueT() {
+        if constexpr (isSameType<Type, std::string>) {
+            return std::string{};  // Empty string
+        } else if constexpr (isSameType<Type, int8_t>) {
+            return int8_t{0};
+        } else if constexpr (isSameType<Type, int16_t>) {
+            return int16_t{0};
+        } else if constexpr (isSameType<Type, int32_t>) {
+            return int32_t{0};
+        } else if constexpr (isSameType<Type, int64_t>) {
+            return int64_t{0};
+        } else if constexpr (isSameType<Type, uint8_t>) {
+            return uint8_t{0};
+        } else if constexpr (isSameType<Type, uint16_t>) {
+            return uint16_t{0};
+        } else if constexpr (isSameType<Type, uint32_t>) {
+            return uint32_t{0};
+        } else if constexpr (isSameType<Type, uint64_t>) {
+            return uint64_t{0};
+        } else if constexpr (isSameType<Type, float>) {
+            return float{0.0f};
+        } else if constexpr (isSameType<Type, double>) {
+            return double{0.0};
+        } else if constexpr (isSameType<Type, bool>) {
+            return bool{false};
+        } else {
+            return ValueType{std::string{}};  // Fallback
         }
     }
 
+    template<typename T>
+    constexpr size_t binaryFieldLength() {
+        if constexpr (std::is_same_v<T, int8_t>) return sizeof(int8_t);
+        else if constexpr (std::is_same_v<T, int16_t>) return sizeof(int16_t);
+        else if constexpr (std::is_same_v<T, int32_t>) return sizeof(int32_t);
+        else if constexpr (std::is_same_v<T, int64_t>) return sizeof(int64_t);
+        else if constexpr (std::is_same_v<T, uint8_t>) return sizeof(uint8_t);
+        else if constexpr (std::is_same_v<T, uint16_t>) return sizeof(uint16_t);
+        else if constexpr (std::is_same_v<T, uint32_t>) return sizeof(uint32_t);
+        else if constexpr (std::is_same_v<T, uint64_t>) return sizeof(uint64_t);
+        else if constexpr (std::is_same_v<T, float>) return sizeof(float);
+        else if constexpr (std::is_same_v<T, double>) return sizeof(double);
+        else if constexpr (std::is_same_v<T, bool>) return sizeof(bool);
+        else if constexpr (std::is_same_v<T, std::string>) return sizeof(uint64_t); // StringAddress
+        else static_assert(always_false<T>, "Unsupported type");
+    }
+
     // Helper function to get size for each column type
-    size_t binaryFieldLength(ColumnDataType type) {
+    constexpr size_t binaryFieldLength(ColumnDataType type) {
         switch (type) {
             case ColumnDataType::INT8: return sizeof(int8_t);
             case ColumnDataType::INT16: return sizeof(int16_t);
@@ -122,44 +153,6 @@ namespace bcsv {
             case ColumnDataType::STRING: return sizeof(uint64_t); // StringAddress
             default: throw std::runtime_error("Unknown column type");
         }
-    }
-
-    template<typename T>
-    constexpr ValueType defaultValueT() {
-        if constexpr (std::is_same_v<T, std::string>) {
-            return ValueType{std::string{}};
-        } else if constexpr (std::is_same_v<T, int8_t>) {
-            return ValueType{int8_t{0}};
-        } else if constexpr (std::is_same_v<T, int16_t>) {
-            return ValueType{int16_t{0}};
-        } else if constexpr (std::is_same_v<T, int32_t>) {
-            return ValueType{int32_t{0}};
-        } else if constexpr (std::is_same_v<T, int64_t>) {
-            return ValueType{int64_t{0}};
-        } else if constexpr (std::is_same_v<T, uint8_t>) {
-            return ValueType{uint8_t{0}};
-        } else if constexpr (std::is_same_v<T, uint16_t>) {
-            return ValueType{uint16_t{0}};
-        } else if constexpr (std::is_same_v<T, uint32_t>) {
-            return ValueType{uint32_t{0}};
-        } else if constexpr (std::is_same_v<T, uint64_t>) {
-            return ValueType{uint64_t{0}};
-        } else if constexpr (std::is_same_v<T, float>) {
-            return ValueType{float{0.0f}};
-        } else if constexpr (std::is_same_v<T, double>) {
-            return ValueType{double{0.0}};
-        } else if constexpr (std::is_same_v<T, bool>) {
-            return ValueType{bool{false}};
-        } else {
-            return ValueType{std::string{}};  // Fallback
-        }
-    }
-
-    // Helper to extract the actual type from ValueType variant
-    template<typename T>
-    static constexpr T extractDefaultValueT() {
-        ValueType defaultVariant = defaultValueT<T>();
-        return std::get<T>(defaultVariant);
     }
 
      /**

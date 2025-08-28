@@ -244,20 +244,8 @@ namespace bcsv {
         static constexpr uint64_t LENGTH_MASK = 0xFFFFULL;          // 16 bits
         static constexpr int OFFSET_SHIFT = 16;
         
-        static uint64_t pack(size_t offset, size_t length) {
-            if (offset > OFFSET_MASK) {
-                throw std::overflow_error("Offset too large for 48-bit field");
-            }
-            if (length > LENGTH_MASK) {
-                throw std::overflow_error("Length too large for 16-bit field");
-            }
-            return ((offset & OFFSET_MASK) << OFFSET_SHIFT) | (length & LENGTH_MASK);
-        }
-        
-        static void unpack(uint64_t packed, size_t& offset, size_t& length) {
-            offset = (packed >> OFFSET_SHIFT) & OFFSET_MASK;
-            length = static_cast<uint16_t>(packed & LENGTH_MASK);
-        }
+        static uint64_t pack(size_t offset, size_t length);
+        static void unpack(uint64_t packed, size_t& offset, size_t& length);
     };
 
     /**/
@@ -332,26 +320,25 @@ namespace bcsv {
     public:
         // Constructors
         RowStatic();
-        
         template<typename... Args>
         explicit RowStatic(Args&&... args);
-        
-        explicit RowStatic(const Row& other);
+        explicit RowStatic(const LayoutStatic<ColumnTypes...>& layout);
 
         // Virtual overrides
         void setValue(size_t index, const ValueType& value) override;
         ValueType getValue(size_t index) const override;
-        size_t size() const override;
-
+        
         // Template access methods
         template<size_t Index>
         auto& get();
-        
+
         template<size_t Index>
         const auto& get() const;
-        
+
         template<size_t Index, typename T>
         void set(const T& value);
+
+        constexpr size_t size() const override { return sizeof...(ColumnTypes); }
 
         // serialization/deserialization 
         void serializedSize(size_t& fixedSize, size_t& totalSize) const;
@@ -368,215 +355,66 @@ namespace bcsv {
     class RowView : public RowInterface {
         char* buffer_;
         size_t bufferSize_;
-        Layout layout_;
-        std::vector<size_t> fixedOffsets_;
+        std::vector<ColumnDataType> columnTypes_;
+        std::vector<size_t> fieldLengths_;
+        std::vector<size_t> fieldOffsets_;
 
     public:
-        RowView(char* buffer, size_t bufferSize, Layout layout)
-            : buffer_(buffer), bufferSize_(bufferSize), layout_(std::move(layout)) {
-            updateFixedOffsets();
-        }
+        RowView();
+        explicit RowView(char* buffer, size_t bufferSize, const Layout &layout);
 
         // Row interface implementation
-        void setValue(size_t index, const ValueType& value) override {
-            auto columnType = layout_.getColumnType(index);
-            //check time provided match type defined
-            if (!isType(value, columnType)) {
-                throw std::runtime_error("Type mismatch");
-            }
-            size_t len = binaryFieldLength(columnType);
-            size_t off = fixedOffsets_[index];
-            if (off + len > bufferSize_) {
-                throw std::runtime_error("Field end exceeds buffer size");
-            }
-            char* ptr = buffer_ + off;
-            switch(columnType) {
-                case ColumnDataType::BOOL: {
-                    bool src = std::get<bool>(value);
-                    std::memcpy(ptr, &src, sizeof(src));
-                    break;
-                }
-                case ColumnDataType::UINT8: {
-                    uint8_t src = std::get<uint8_t>(value);
-                    std::memcpy(ptr, &src, sizeof(src));
-                    break;  
-                }
-                case ColumnDataType::UINT16: {
-                    uint16_t src = std::get<uint16_t>(value);
-                    std::memcpy(ptr, &src, sizeof(src));
-                    break;
-                }
-                case ColumnDataType::UINT32: {
-                    uint32_t src = std::get<uint32_t>(value);
-                    std::memcpy(ptr, &src, sizeof(src));
-                    break;
-                }         
-                case ColumnDataType::UINT64: {
-                    uint64_t src = std::get<uint64_t>(value);
-                    std::memcpy(ptr, &src, sizeof(src));
-                    break;
-                }
-                case ColumnDataType::INT8: {
-                    int8_t src = std::get<int8_t>(value);
-                    std::memcpy(ptr, &src, sizeof(src));
-                    break;
-                }
-                case ColumnDataType::INT16: {
-                    int16_t src = std::get<int16_t>(value);
-                    std::memcpy(ptr, &src, sizeof(src));
-                    break;
-                }
-                case ColumnDataType::INT32: {
-                    int32_t src = std::get<int32_t>(value);
-                    std::memcpy(ptr, &src, sizeof(src));
-                    break;
-                }
-                case ColumnDataType::INT64: {
-                    int64_t src = std::get<int64_t>(value);
-                    std::memcpy(ptr, &src, sizeof(src));
-                    break;
-                }
-                case ColumnDataType::DOUBLE: {
-                    double src = std::get<double>(value);
-                    std::memcpy(ptr, &src, sizeof(src));    
-                    break;
-                }
-                case ColumnDataType::STRING: {
-                    // Unpack string address
-                    uint64_t packedAddr;
-                    std::memcpy(&packedAddr, ptr, sizeof(packedAddr));
-                    size_t strOff, strLen;
-                    StringAddress::unpack(packedAddr, strOff, strLen);
+        void setValue(size_t index, const ValueType& value) override;
+        ValueType getValue(size_t index) const override;
+        size_t size() const override { return fieldOffsets_.size(); }
 
-                    // Validate string payload is within buffer
-                    if (strOff + strLen > bufferSize_) {
-                        throw std::runtime_error("String payload extends beyond buffer");
-                    }
+        void setLayout(const Layout& layout);
+        char* getBuffer() const { return buffer_; }
+        size_t getBufferSize() const { return bufferSize_; }
+        void setBuffer(char* buffer, size_t bufferSize) { buffer_ = buffer; bufferSize_ = bufferSize; }
 
-                    std::string src = std::get<std::string>(value);
-                    if(src.size() < strLen) {
-                        src.resize(strLen, '\0'); // Pad with null bytes if shorter
-                    }
-                    // Copy string data into buffer (truncate to strLen)
-                    std::memcpy(buffer_ + strOff, src.data(), strLen);
-                    break;
-                }
-            }
-        }
+        bool validate() const;
+    };
 
-        ValueType getValue(size_t index) const {
-            auto columnType = layout_.getColumnType(index);
-            size_t len = binaryFieldLength(columnType);
-            size_t off = fixedOffsets_[index];
-            if (off + len > bufferSize_) {
-                throw std::runtime_error("Field end exceeds buffer size");
-            }
-            const char* ptr = buffer_ + off;
-            switch(columnType) {
-                case ColumnDataType::BOOL: {
-                    bool value;
-                    std::memcpy(&value, ptr, sizeof(value));
-                    return ValueType{value};
-                }
-                case ColumnDataType::UINT8: {
-                    uint8_t value;
-                    std::memcpy(&value, ptr, sizeof(value));
-                    return ValueType{value};
-                }
-                case ColumnDataType::UINT16: {
-                    uint16_t value;
-                    std::memcpy(&value, ptr, sizeof(value));
-                    return ValueType{value};
-                }
-                case ColumnDataType::UINT32: {
-                    uint32_t value;
-                    std::memcpy(&value, ptr, sizeof(value));
-                    return ValueType{value};
-                }
-                case ColumnDataType::UINT64: {
-                    uint64_t value;
-                    std::memcpy(&value, ptr, sizeof(value));
-                    return ValueType{value};
-                }
-                case ColumnDataType::INT8: {
-                    int8_t value;
-                    std::memcpy(&value, ptr, sizeof(value));
-                    return ValueType{value};
-                }
-                case ColumnDataType::INT16: {
-                    int16_t value;
-                    std::memcpy(&value, ptr, sizeof(value));
-                    return ValueType{value};
-                }
-                case ColumnDataType::INT32: {
-                    int32_t value;
-                    std::memcpy(&value, ptr, sizeof(value));
-                    return ValueType{value};
-                }
-                case ColumnDataType::INT64: {
-                    int64_t value;
-                    std::memcpy(&value, ptr, sizeof(value));
-                    return ValueType{value};
-                }
-                case ColumnDataType::DOUBLE: {
-                    double value;
-                    std::memcpy(&value, ptr, sizeof(value));
-                    return ValueType{value};
-                }
-                case ColumnDataType::STRING: {
- 
-                    uint64_t packedAddr;
-                    std::memcpy(&packedAddr, ptr, sizeof(packedAddr));
+    template<typename... ColumnTypes>
+    class RowViewStatic : public RowView {
 
-                    // Unpack string address
-                    size_t strOff, strLen;
-                    StringAddress::unpack(packedAddr, strOff, strLen);
-
-                    // Validate string payload is within buffer
-                    if (strOff + strLen > bufferSize_) {
-                        throw std::runtime_error("String payload extends beyond buffer");
-                    }
-
-                    // Create string from payload
-                    if (strLen > 0) {
-                        return ValueType{std::string(buffer_ + strOff, strLen)};
-                    } else {
-                        return ValueType{std::string()};
-                    }
-                }
-            }
-        }
-
-        size_t size() const override {
-            return fixedOffsets_.size();
-        }
-
-        const Layout& getLayout() const { return layout_; }
-        void setLayout(Layout layout) { 
-            layout_ = std::move(layout);
-            updateFixedOffsets();
-        }
-
-        void setBuffer(char* buffer, size_t bufferSize) {
-            buffer_ = buffer;
-            bufferSize_ = bufferSize;
-        }
-
-    private:
-        void updateFixedOffsets() {
-            fixedOffsets_.clear();
+        char* buffer_;
+        size_t bufferSize_;
+        constexpr static size_t fieldLengths_[sizeof...(ColumnTypes)] = []{
+            size_t lengths[sizeof...(ColumnTypes)] = {};
+            ((lengths[sizeof...(ColumnTypes)] = binaryFieldLength<ColumnTypes>()), ...);
+            return lengths;
+        }();
+        constexpr static size_t fieldOffsets_[sizeof...(ColumnTypes)] = []{
+            size_t offsets[sizeof...(ColumnTypes)] = {};
             size_t offset = 0;
-            for (size_t i = 0; i < layout_.getColumnCount(); ++i) {
-                fixedOffsets_.push_back(offset);
-                ColumnDataType colType = layout_.getColumnType(i);
-                offset += binaryFieldLength(colType);
-            }
-        }
+            size_t index = 0;
+            ((offsets[index++] = offset, offset += binaryFieldLength<ColumnTypes>()), ...);
+            return offsets;
+        }();
 
+    public:
+        template<size_t Index>
+        using ColumnType = std::tuple_element_t<Index, std::tuple<ColumnTypes...>>;
+
+        RowViewStatic(): buffer_(nullptr), bufferSize_(0) {}
+        explicit RowViewStatic(char* buffer, size_t bufferSize) : buffer_(buffer), bufferSize_(bufferSize) {}
+        ~RowViewStatic() = default;
+
+        char* getBuffer() const { return buffer_; }
+        size_t getBufferSize() const { return bufferSize_; }
+        void setBuffer(char* buffer, size_t bufferSize) { buffer_ = buffer; bufferSize_ = bufferSize; }
+
+        template<size_t Index>
+        auto get() const;
+        template<size_t Index> 
+        void set(const ColumnType<Index>& value);
+        constexpr size_t size() const { return sizeof...(ColumnTypes); }
+        bool validate() const;
     };
 
     //ToDo:
-    // RowViewStatic implementation
     // Implement Reader::readRow, readRows, decompressing, indexing, sequential and random access
     // Implement Writer::writeRow, writeRows
     // Code Review, Testing (unit tests), Documentation
