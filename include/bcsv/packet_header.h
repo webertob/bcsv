@@ -46,7 +46,7 @@ namespace bcsv {
 */
     #pragma pack(push, 1)
     struct PacketHeader {
-        uint32_t magic;          // Should be PCKT_MAGIC
+        const uint32_t magic = PCKT_MAGIC; 
         uint32_t payloadSizeRaw; // Size of the payload data
         uint32_t payloadSizeZip; // Size of the compressed payload data
         uint64_t rowFirst;       // Index of the first row in the packet
@@ -58,5 +58,4 @@ namespace bcsv {
     };
     #pragma pack(pop)
     static_assert(sizeof(PacketHeader) == 32, "PacketHeader must be exactly 32 bytes");
-
 } // namespace bcsv

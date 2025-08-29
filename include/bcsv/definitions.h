@@ -61,6 +61,23 @@ namespace bcsv {
         STRING = 0x000C
     };
 
+    template<typename T>
+    constexpr ColumnDataType getColumnDataType() {
+        if constexpr (std::is_same_v<T, bool>) return ColumnDataType::BOOL;
+        else if constexpr (std::is_same_v<T, int8_t>) return ColumnDataType::INT8;
+        else if constexpr (std::is_same_v<T, int16_t>) return ColumnDataType::INT16;
+        else if constexpr (std::is_same_v<T, int32_t>) return ColumnDataType::INT32;
+        else if constexpr (std::is_same_v<T, int64_t>) return ColumnDataType::INT64;
+        else if constexpr (std::is_same_v<T, uint8_t>) return ColumnDataType::UINT8;
+        else if constexpr (std::is_same_v<T, uint16_t>) return ColumnDataType::UINT16;
+        else if constexpr (std::is_same_v<T, uint32_t>) return ColumnDataType::UINT32;
+        else if constexpr (std::is_same_v<T, uint64_t>) return ColumnDataType::UINT64;
+        else if constexpr (std::is_same_v<T, float>) return ColumnDataType::FLOAT;
+        else if constexpr (std::is_same_v<T, double>) return ColumnDataType::DOUBLE;
+        else if constexpr (std::is_same_v<T, std::string>) return ColumnDataType::STRING;
+        else static_assert(always_false<T>, "Unsupported type");
+    };
+
     using ValueType = std::variant<bool, uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double, std::string>;
 
     /**
@@ -68,7 +85,7 @@ namespace bcsv {
      * @param type The column data type
      * @return Default ValueType for the specified type
      */
-    ValueType defaultValue(ColumnDataType type) {
+    inline ValueType defaultValue(ColumnDataType type) {
         ValueType value;
         switch (type) {
             case ColumnDataType::INT8: value = int8_t{0}; break;
@@ -115,7 +132,7 @@ namespace bcsv {
         } else if constexpr (std::is_same_v<Type, bool>) {
             return bool{false};
         } else {
-            return ValueType{std::string{}};  // Fallback
+            static_assert(always_false<Type>, "Unsupported type for defaultValueT");
         }
     }
 
@@ -158,54 +175,22 @@ namespace bcsv {
         }
     }
 
-     /**
-     * @brief Generic isSameType for arbitrary data types
-     * 
-     * Supports:
-     * - variant to variant comparison
-     * - plain type to plain type comparison  
-     * - variant to plain type comparison
-     * - any combination of the above
-     */
-    template<typename T, typename U>
-    bool isSameType(const T& a, const U& b) {
-        using DecayT = std::decay_t<T>;
-        using DecayU = std::decay_t<U>;
-        
-        // Case 1: Both are the same plain type
-        if constexpr (std::is_same_v<DecayT, DecayU>) {
-            return true;
-        }
-        // Case 2: Both are variants
-        else if constexpr (requires { a.index(); } && requires { b.index(); }) {
-            return a.index() == b.index();
-        }
-        // Case 3: First is variant, second is plain type
-        else if constexpr (requires { a.index(); } && !requires { b.index(); }) {
-            return std::holds_alternative<DecayU>(a);
-        }
-        // Case 4: First is plain type, second is variant  
-        else if constexpr (!requires { a.index(); } && requires { b.index(); }) {
-            return std::holds_alternative<DecayT>(b);
-        }
-        // Case 5: Both are different plain types
-        else {
-            return false;
-        }
-    }
-
-    bool isType(const ValueType& value, ColumnDataType type) {
+    inline bool isType(const ValueType& value, ColumnDataType type) {
         return std::visit([type](auto&& arg) -> bool {
             using T = std::decay_t<decltype(arg)>;
-            if constexpr (std::is_same_v<T, std::string>) {
-                return type == ColumnDataType::STRING;
-            } else if constexpr (std::is_integral_v<T>) {
-                return type == ColumnDataType::INT64;
-            } else if constexpr (std::is_floating_point_v<T>) {
-                return type == ColumnDataType::FLOAT;
-            } else {
-                return false;
-            }
+            if constexpr (std::is_same_v<T, bool>) return type == ColumnDataType::BOOL;
+            else if constexpr (std::is_same_v<T, int8_t>) return type == ColumnDataType::INT8;
+            else if constexpr (std::is_same_v<T, int16_t>) return type == ColumnDataType::INT16;
+            else if constexpr (std::is_same_v<T, int32_t>) return type == ColumnDataType::INT32;
+            else if constexpr (std::is_same_v<T, int64_t>) return type == ColumnDataType::INT64;
+            else if constexpr (std::is_same_v<T, uint8_t>) return type == ColumnDataType::UINT8;
+            else if constexpr (std::is_same_v<T, uint16_t>) return type == ColumnDataType::UINT16;
+            else if constexpr (std::is_same_v<T, uint32_t>) return type == ColumnDataType::UINT32;
+            else if constexpr (std::is_same_v<T, uint64_t>) return type == ColumnDataType::UINT64;
+            else if constexpr (std::is_same_v<T, float>) return type == ColumnDataType::FLOAT;
+            else if constexpr (std::is_same_v<T, double>) return type == ColumnDataType::DOUBLE;
+            else if constexpr (std::is_same_v<T, std::string>) return type == ColumnDataType::STRING;
+            else return false;
         }, value);
     }
 
@@ -213,9 +198,9 @@ namespace bcsv {
     *  Considering our custom file layout, especially for strings.
     */
     template<typename T>
-    size_t serializedSize(const T& val) {
-        using T = std::decay_t<decltype(val)>;
-        if constexpr (std::is_same_v<T, std::string>) {
+    constexpr size_t serializedSize(const T& val) {
+        using DecayT = std::decay_t<T>;
+        if constexpr (std::is_same_v<DecayT, std::string>) {
             // offset and length of string + string itself, limited to 16bit
             return sizeof(uint64_t) + std::min(val.size(), MAX_STRING_LENGTH);
         } else {
@@ -229,7 +214,12 @@ namespace bcsv {
             throw std::out_of_range("Index out of range");
         } else {
             if(candidate == index) {
-                std::get<candidate>(tuple) = std::get<std::tuple_element_t<candidate, std::tuple<T...>>>(value);
+                using TargetType = std::tuple_element_t<candidate, std::tuple<T...>>;
+                if (std::holds_alternative<TargetType>(value)) {
+                    std::get<candidate>(tuple) = std::get<TargetType>(value);
+                } else {
+                    throw std::runtime_error("Type mismatch in setTupleValue");
+                }
             } else {
                 setTupleValue<candidate + 1, T...>(tuple, index, value);
             }
@@ -248,4 +238,27 @@ namespace bcsv {
             }
         }
     }
+
+    template<typename T>
+    class LazyAllocator {
+    public:
+        using value_type = T;
+        
+        T* allocate(size_t n) {
+            return static_cast<T*>(std::malloc(n * sizeof(T)));
+        }
+        
+        void deallocate(T* p, size_t) {
+            std::free(p);
+        }
+        
+        // Don't construct elements
+        template<typename U, typename... Args>
+        void construct(U*, Args&&...) {}
+        
+        template<typename U>
+        void destroy(U*) {}
+    };
+
+    using ByteBuffer = std::vector<std::byte, LazyAllocator<std::byte>>;
 } // namespace bcsv

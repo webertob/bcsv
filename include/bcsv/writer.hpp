@@ -129,56 +129,93 @@ namespace bcsv {
     }
         
     template<typename LayoutType>
-    bool Writer<LayoutType>::writeHeader() {
+    void Writer<LayoutType>::writeHeader() {
         // Write the header information to the stream
         if (!stream_.is_open()) {
-            return false;
+            throw std::runtime_error("Error: File is not open");
         }
         layout_->lock(this);
         FileHeader fileHeader;
         fileHeader.writeToBinary(stream_, *layout_);
-        currentRowIndex_ = 0;
-        return true;
+        rowCounter_ = 0;
     }
 
     template<typename LayoutType>
-    bool Writer<LayoutType>::writeRow(const Row& row) {
+    void Writer<LayoutType>::writePacket() {
         if (!stream_.is_open()) {
-            return false;
+            throw std::runtime_error("Error: File is not open");
         }
+
+        if (buffer_raw_.empty()) {
+            return; // Nothing to write
+        }
+
+        // Compress the raw buffer using LZ4
+        int compressedSize = LZ4_compress_default(buffer_raw_.data(), buffer_zip_.data(),
+                                                  static_cast<int>(buffer_raw_.size()),
+                                                  static_cast<int>(buffer_zip_.size()));
+        if (compressedSize <= 0) {
+            throw std::runtime_error("Error: LZ4 compression failed");
+        }
+
+        PacketHeader packetHeader;
+        packetHeader.magic = PCKT_MAGIC;
+        packetHeader.payloadSizeRaw = static_cast<uint32_t>(buffer_raw_.size());
+        packetHeader.payloadSizeZip = static_cast<uint32_t>(compressedSize);
+        packetHeader.rowFirst = rowCounterOld_;
+        packetHeader.rowCount = rowCounter_ - rowCounterOld_;
+        packetHeader.crc32 = 0; // Placeholder for CRC32
         
-        if (!headerWritten_) {
-            if (!writeHeader()) {
-                return false;
+
+
+
+
+        
+        rowCounterOld_ = rowCounter_;
+
+
+        // Write the compressed data size and uncompressed size
+        uint32_t uncompressedSize = static_cast<uint32_t>(buffer_raw_.size());
+        uint32_t compSize = static_cast<uint32_t>(compressedSize);
+        stream_.write(reinterpret_cast<const char*>(&uncompressedSize), sizeof(uncompressedSize));
+        stream_.write(reinterpret_cast<const char*>(&compSize), sizeof(compSize));
+
+        // Write the compressed data
+        stream_.write(buffer_zip_.data(), compSize);
+
+        // Clear the raw buffer for next packet
+        buffer_raw_.clear();
+    }
+
+    template<typename LayoutType>
+    void Writer<LayoutType>::writeRow(const Row& row) {
+        if (!stream_.is_open()) {
+            throw std::runtime_error("Error: File is not open");
+        }
+
+        //compare types
+        auto colTypes = layout_->getColumnTypes();
+        auto rowTypes = row.getTypes();
+        if (colTypes.size() != rowTypes.size()) {
+            throw std::invalid_argument("Row type count does not match layout");
+        }
+        for (size_t i = 0; i < colTypes.size(); ++i) {
+            if (colTypes[i] != rowTypes[i]) {
+                throw std::invalid_argument("Row type does not match layout");
             }
-            headerWritten_ = true;
         }
-        
-        // Write row data
-        const auto& values = row.getValues();
-        if (values.size() != layout_->getColumnCount()) {
-            return false;
+
+        size_t rowSize = row.serializedSize();
+        if(buffer_raw_.size() + rowSize > buffer_raw_.capacity()) {
+            writePacket();
         }
-        
-        for (size_t i = 0; i < values.size(); ++i) {
-            const auto& value = values[i];
-            ColumnDataType colType = layout_->getColumnType(i);
-            
-            // Write the value based on its type
-            std::visit([&](const auto& v) {
-                using T = std::decay_t<decltype(v)>;
-                if constexpr (std::is_same_v<T, std::string>) {
-                    uint32_t len = static_cast<uint32_t>(v.length());
-                    stream_.write(reinterpret_cast<const char*>(&len), sizeof(len));
-                    stream_.write(v.c_str(), len);
-                } else {
-                    stream_.write(reinterpret_cast<const char*>(&v), sizeof(v));
-                }
-            }, value);
-        }
-        
-        currentRowIndex_++;
-        return stream_.good();
+
+        size_t bufSize = buffer_raw_.size();
+        buffer_raw_.resize(bufSize + rowSize);
+        char* dstBuffer = buffer_raw_.data() + bufSize;
+        row.serializeTo(dstBuffer, rowSize);
+        rowIndex_.push_back(static_cast<uint16_t>(buffer_raw_.size()));
+        rowCounter_++;
     }
 
 } // namespace bcsv

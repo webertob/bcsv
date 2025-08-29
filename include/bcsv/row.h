@@ -281,8 +281,8 @@ namespace bcsv {
 
         // serialization/deserialization
         void serializedSize(size_t& fixedSize, size_t& totalSize) const;
-        void serializeTo(char* dstBuffer, size_t dstBufferSize) const;
-        void deserializeFrom(const char* srcBuffer, size_t srcBufferSize);
+        void serializeTo(std::byte* dstBuffer, size_t dstBufferSize) const;
+        void deserializeFrom(const std::byte* srcBuffer, size_t srcBufferSize);
     };
 
     template<typename... ColumnTypes>
@@ -332,13 +332,13 @@ namespace bcsv {
 
         // serialization/deserialization 
         void serializedSize(size_t& fixedSize, size_t& totalSize) const;
-        void serializeTo(char* dstBuffer, size_t dstBufferSize) const;
-        void deserializeFrom(const char* srcBuffer, size_t srcBufferSize);  
+        void serializeTo(std::byte* dstBuffer, size_t dstBufferSize) const;
+        void deserializeFrom(const std::byte* srcBuffer, size_t srcBufferSize);
     };
 
     /* Direct view into a buffer. Supports Row interface */
     class RowView : public RowInterface {
-        char* buffer_;
+        std::byte* buffer_;
         size_t bufferSize_;
         std::vector<ColumnDataType> columnTypes_;
         std::vector<size_t> fieldLengths_;
@@ -346,7 +346,7 @@ namespace bcsv {
 
     public:
         RowView();
-        explicit RowView(char* buffer, size_t bufferSize, const Layout &layout);
+        explicit RowView(std::byte* buffer, size_t bufferSize, const Layout &layout);
 
         // Row interface implementation
         void setValue(size_t index, const ValueType& value) override;
@@ -354,9 +354,9 @@ namespace bcsv {
         size_t size() const override { return fieldOffsets_.size(); }
 
         void setLayout(const Layout& layout);
-        char* getBuffer() const { return buffer_; }
+        const std::byte* getBuffer() const { return buffer_; }
         size_t getBufferSize() const { return bufferSize_; }
-        void setBuffer(char* buffer, size_t bufferSize) { buffer_ = buffer; bufferSize_ = bufferSize; }
+        void setBuffer(std::byte* buffer, size_t bufferSize) { buffer_ = buffer; bufferSize_ = bufferSize; }
 
         bool validate() const;
     };
@@ -364,7 +364,7 @@ namespace bcsv {
     template<typename... ColumnTypes>
     class RowViewStatic : public RowView {
 
-        char* buffer_;
+        std::byte* buffer_;
         size_t bufferSize_;
         constexpr static size_t fieldLengths_[sizeof...(ColumnTypes)] = []{
             size_t lengths[sizeof...(ColumnTypes)] = {};
@@ -388,9 +388,9 @@ namespace bcsv {
         explicit RowViewStatic(char* buffer, size_t bufferSize) : buffer_(buffer), bufferSize_(bufferSize) {}
         ~RowViewStatic() = default;
 
-        char* getBuffer() const { return buffer_; }
+        const std::byte* getBuffer() const { return buffer_; }
         size_t getBufferSize() const { return bufferSize_; }
-        void setBuffer(char* buffer, size_t bufferSize) { buffer_ = buffer; bufferSize_ = bufferSize; }
+        void setBuffer(std::byte* buffer, size_t bufferSize) { buffer_ = buffer; bufferSize_ = bufferSize; }
 
         template<size_t Index>
         auto get() const;
@@ -402,7 +402,6 @@ namespace bcsv {
 
     //ToDo:
     // Implement Reader::readRow, readRows, decompressing, indexing, sequential and random access
-    // Implement Writer::writeRow, writeRows
     // Code Review, Testing (unit tests), Documentation
 
 } // namespace bcsv

@@ -22,14 +22,15 @@ namespace bcsv {
     template<typename LayoutType>
     class Writer {
         std::shared_ptr<LayoutType> layout_;
-        std::vector<char> buffer_raw_;
-        std::vector<char> buffer_zip_;
+        ByteBuffer buffer_raw_;
+        ByteBuffer buffer_zip_;
+        std::vector<uint16_t> rowIndex_;        // Row offsets for indexing
 
         std::ofstream stream_;                  // Always binary file stream
         std::filesystem::path filePath_;        // Always present
 
-        size_t currentRowIndex_ = 0;
-        bool headerWritten_ = false;
+        size_t rowCounter_ = 0;
+        size_t rowCounterOld_ = 0;
     
     public:
         explicit Writer(std::shared_ptr<LayoutType> &layout);
@@ -42,10 +43,11 @@ namespace bcsv {
         bool is_open() const { return stream_.is_open(); }
         bool open(const std::filesystem::path& filepath, bool overwrite = false);
         
-        bool writeRow(const Row& row);
+        void writeRow(const Row& row);
         
     private:
-        bool writeHeader();
+        void writeHeader();
+        void writePacket();
 
     public:
         // Factory functions

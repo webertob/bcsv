@@ -55,12 +55,10 @@ namespace bcsv {
         }
         
         // Type validation
-        ValueType testValue{value};
-        if (!isSameType(data_[index], testValue)) {
+        if (!std::holds_alternative<std::decay_t<T>>(data_[index])) {
             throw std::invalid_argument("Type mismatch");
         }
-        
-        data_[index] = ValueType{value};
+        data_[index] = value;
     }
 
     ValueType Row::getValue(size_t index) const {
@@ -97,7 +95,7 @@ namespace bcsv {
         totalSize += paddingBytes;
     }
 
-    void Row::serializeTo(char* dstBuffer, size_t dstBufferSize) const  {
+    void Row::serializeTo(std::byte* dstBuffer, size_t dstBufferSize) const  {
         if (!dstBuffer || dstBufferSize == 0) {
             throw std::invalid_argument("Invalid destination buffer");
         }
@@ -110,8 +108,8 @@ namespace bcsv {
             throw std::runtime_error("Destination buffer too small");
         }
 
-        char*  ptrFix = dstBuffer;             // Pointer to the start of fixed-size data
-        char*  ptrStr = dstBuffer + fixedSize; // Pointer to the start of string data
+        std::byte*  ptrFix = dstBuffer;             // Pointer to the start of fixed-size data
+        std::byte*  ptrStr = dstBuffer + fixedSize; // Pointer to the start of string data
         size_t strOff = fixedSize;
 
         for (const auto& value : data_) {
@@ -205,7 +203,7 @@ namespace bcsv {
     }
 
     template<typename... ColumnTypes>
-    void RowStatic<ColumnTypes...>::serializeTo(char* dstBuffer, size_t dstBufferSize) const {
+    void RowStatic<ColumnTypes...>::serializeTo(std::byte* dstBuffer, size_t dstBufferSize) const {
         if (!dstBuffer || dstBufferSize == 0) {
             throw std::invalid_argument("Invalid destination buffer");
         }
@@ -223,7 +221,7 @@ namespace bcsv {
         for (size_t i = 0; i < sizeof...(ColumnTypes); ++i) {
             constexpr size_t len = fieldLengths_[i];
             constexpr size_t off = fieldOffsets_[i];
-            char* ptr = dstBuffer + off;
+            std::byte* ptr = dstBuffer + off;
             if constexpr (std::is_same_v<ColumnType<i>, std::string>) {
                 size_t strLength = std::min(std::get<i>(data_).size(), MAX_STRING_LENGTH);
                 size_t strAddress = StringAddress::pack(strOffset, strLength);
@@ -245,7 +243,7 @@ namespace bcsv {
     }
 
     template<typename... ColumnTypes>
-    void RowStatic<ColumnTypes...>::deserializeFrom(const char* srcBuffer, size_t srcBufferSize)
+    void RowStatic<ColumnTypes...>::deserializeFrom(const std::byte* srcBuffer, size_t srcBufferSize)
     {
         if (!srcBuffer || srcBufferSize == 0) {
             throw std::invalid_argument("Invalid source buffer");
@@ -254,7 +252,7 @@ namespace bcsv {
         for (size_t i = 0; i < sizeof...(ColumnTypes); ++i) {
             constexpr size_t len = fieldLengths_[i];
             constexpr size_t off = fieldOffsets_[i];
-            const char* ptr = srcBuffer + off;
+            const std::byte* ptr = srcBuffer + off;
             if(off+len > srcBufferSize) {
                 throw std::runtime_error("Buffer overflow reading element at index " + std::to_string(i) +
                                            " (offset=" + std::to_string(off) + ", length=" + std::to_string(len) +
@@ -288,7 +286,7 @@ namespace bcsv {
     {
     }
 
-    RowView::RowView(char* buffer, size_t bufferSize, const Layout &layout)
+    RowView::RowView(std::byte* buffer, size_t bufferSize, const Layout &layout)
             : buffer_(buffer), bufferSize_(bufferSize) 
     { 
         setLayout(layout);
@@ -310,7 +308,8 @@ namespace bcsv {
         if (off + len > bufferSize_) {
             throw std::runtime_error("Field end exceeds buffer size");
         }
-        char* ptr = buffer_ + off;
+
+        std::byte* ptr = buffer_ + off;
         switch(columnTypes_[index]) {
             case ColumnDataType::BOOL: {
                 bool src = std::get<bool>(value);
@@ -472,7 +471,7 @@ namespace bcsv {
 
                 // Create string from payload
                 if (strLen > 0) {
-                    return ValueType{std::string(buffer_ + strOff, strLen)};
+                    return ValueType{std::string(reinterpret_cast<const char*>(buffer_) + strOff, strLen)};
                 } else {
                     return ValueType{std::string()};
                 }
