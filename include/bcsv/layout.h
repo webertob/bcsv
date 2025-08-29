@@ -16,42 +16,9 @@ namespace bcsv {
     struct ColumnDefinition {
         ColumnDefinition(const std::string& n, ColumnDataType t)
             : name(n), type(t) {}
-
         std::string name;
         ColumnDataType type;
     };
-
-    // Helper to convert C++ types to ColumnDataType at compile time
-    template<typename T>
-    static constexpr ColumnDataType getColumnDataType() {
-        if constexpr (std::is_same_v<T, std::string>) {
-            return ColumnDataType::STRING;
-        } else if constexpr (std::is_same_v<T, int8_t>) {
-            return ColumnDataType::INT8;
-        } else if constexpr (std::is_same_v<T, int16_t>) {
-            return ColumnDataType::INT16;
-        } else if constexpr (std::is_same_v<T, int32_t>) {
-            return ColumnDataType::INT32;
-        } else if constexpr (std::is_same_v<T, int64_t>) {
-            return ColumnDataType::INT64;
-        } else if constexpr (std::is_same_v<T, uint8_t>) {
-            return ColumnDataType::UINT8;
-        } else if constexpr (std::is_same_v<T, uint16_t>) {
-            return ColumnDataType::UINT16;
-        } else if constexpr (std::is_same_v<T, uint32_t>) {
-            return ColumnDataType::UINT32;
-        } else if constexpr (std::is_same_v<T, uint64_t>) {
-            return ColumnDataType::UINT64;
-        } else if constexpr (std::is_same_v<T, float>) {
-            return ColumnDataType::FLOAT;
-        } else if constexpr (std::is_same_v<T, double>) {
-            return ColumnDataType::DOUBLE;
-        } else if constexpr (std::is_same_v<T, bool>) {
-            return ColumnDataType::BOOL;
-        } else {
-            static_assert(sizeof(T) == 0, "Unsupported column type for LayoutStatic");
-        }
-    }
     
      /**
      * @brief Represents the column layout containing column names and types. This defines the common layout for BCSV files.
@@ -60,21 +27,20 @@ namespace bcsv {
     class LayoutInterface {
     protected:
         std::vector<std::string> column_names_;
-        std::unordered_map<std::string, size_t> column_name_index_;
+        std::unordered_map<std::string, size_t> column_index_;
 
     public:
         LayoutInterface() = default;
         virtual ~LayoutInterface() = default;
 
         virtual size_t getColumnCount() const { return column_names_.size(); }
-        const std::unordered_map<std::string, size_t>& getColumnIndex() const { return column_name_index_; }
+        const std::unordered_map<std::string, size_t>& getColumnIndex() const { return column_index_; }
         size_t getColumnIndex(const std::string& columnName) const;
         const std::string& getColumnName(size_t index) const;
         const std::vector<std::string>& getColumnNames() const { return column_names_; };
         virtual ColumnDataType getColumnType(size_t index) const = 0;
-        std::string getColumnTypeAsString(size_t index) const;
-        std::vector<std::string> getColumnTypesAsString() const;
-        bool hasColumn(const std::string& columnName) const { return column_name_index_.find(columnName) != column_name_index_.end(); }
+
+        bool hasColumn(const std::string& columnName) const { return column_index_.find(columnName) != column_index_.end(); }
         bool isCompatibleWith(const LayoutInterface& other) const;
         void setColumnName(size_t index, const std::string& name);
         
@@ -84,17 +50,19 @@ namespace bcsv {
         virtual void unlock(void* owner) = 0;
 
     protected:
-        // Helper functions
-        static ColumnDataType stringToDataType(const std::string& typeString);
-        static std::string dataTypeToString(ColumnDataType type);
         void updateIndexMap();
-        
     };
 
-    /* Flexible layout definition for BCSV files. Defined at run-time to allow for dynamic changes to the layout. */
+
+    /**
+     * @brief Represents the column layout containing column names and types. This defines the common layout for BCSV files.
+     * This layout is flexible and can be modified at runtime.
+     */
     class Layout : public LayoutInterface {
         std::vector<ColumnDataType> column_types_;
-        std::set<void*> lock_owners_;
+        std::vector<size_t> column_lengths_; // Lengths of each column in [bytes] --> serialized data
+        std::vector<size_t> column_offsets_; // Offsets of each column in [bytes] --> serialized data
+        std::set<void*> lock_owners_;        // ptrs to objects that have locked the layout, used to identify owners
 
     public:
         typedef LayoutInterface Base;
@@ -106,13 +74,14 @@ namespace bcsv {
 
         void clear();
         ColumnDataType getColumnType(size_t index) const override;
-        const std::vector<ColumnDataType>& getColumnTypes() const { return column_types_; }
-        void insertColumn(const std::string& name, ColumnDataType type = ColumnDataType::STRING, size_t position = SIZE_MAX);
-        void insertColumn(const std::string& name, const std::string& typeString, size_t position = SIZE_MAX);
+        const std::vector<ColumnDataType>& getColumnTypes() const { return column_types_; };
+        void insertColumn(const ColumnDefinition& column, size_t position = SIZE_MAX);
         void setColumnDataType(size_t index, ColumnDataType type);
         void setColumns(const std::vector<ColumnDefinition>& columns);
-        void setColumns(const std::vector<std::string>& names, const std::vector<ColumnDataType>& types);
+
         void removeColumn(size_t index);
+        size_t getColumnOffset(size_t index) const;
+        size_t getColumnLength(size_t index) const;
 
         /* Locking mechanism (need to ensure layout does not change during operations)*/
         bool isLocked() const override { return !lock_owners_.empty(); }
@@ -132,19 +101,47 @@ namespace bcsv {
         }
     };
 
-    /*
-    * Static layout definition for BCSV files. Defined at compile-time to improve performance and reduce runtime overhead.
-    */
+
+
+
+    /**
+     * @brief Static layout definition for BCSV files.
+     * 
+     * This layout is defined at compile-time to improve performance and reduce runtime overhead.
+     */
     template<typename... ColumnTypes>
     class LayoutStatic : public LayoutInterface {
-        std::tuple<ColumnTypes...> column_types_;
-
     public:
+        using DataTypes = std::tuple<ColumnTypes...>;
+        template<size_t Index>
+        using DataType = std::tuple_element_t<Index, DataTypes>;
+        
+        // Lengths of each column in [bytes] --> serialized data
+        constexpr static size_t column_lengths_[sizeof...(ColumnTypes)] = []{
+            size_t lengths[sizeof...(ColumnTypes)] = {};
+            size_t index = 0;
+            ((lengths[index++] = binaryFieldLength<ColumnTypes>()), ...);
+            return lengths;
+        }();
+
+        // Offset of each column in [bytes] --> serialized data
+        constexpr static size_t column_offsets_[sizeof...(ColumnTypes)] = []{
+            size_t offsets[sizeof...(ColumnTypes)] = {};
+            size_t offset = 0;
+            size_t index = 0;
+            ((offsets[index++] = offset, offset += binaryFieldLength<ColumnTypes>()), ...);
+            return offsets;
+        }();
+
+        static constexpr size_t FIXED_SIZE = ((std::is_same_v<ColumnTypes, std::string> ? sizeof(uint64_t) : sizeof(ColumnTypes)) + ...);
+
         LayoutStatic() = default;
         explicit LayoutStatic(const std::vector<std::string>& columnNames);
 
         constexpr size_t getColumnCount() const override { return sizeof...(ColumnTypes); }
-        ColumnDataType getColumnType(size_t index) const override;
+        ColumnDataType getColumnType(size_t index) const override {
+            return getTypeAtIndex<0>(index);
+        }
 
         /* Locking mechanism (static version is always locked)*/
         bool isLocked() const override { return true; }

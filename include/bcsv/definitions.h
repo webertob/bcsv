@@ -62,7 +62,7 @@ namespace bcsv {
     };
 
     template<typename T>
-    constexpr ColumnDataType getColumnDataType() {
+    static constexpr ColumnDataType getColumnDataType() {
         if constexpr (std::is_same_v<T, bool>) return ColumnDataType::BOOL;
         else if constexpr (std::is_same_v<T, int8_t>) return ColumnDataType::INT8;
         else if constexpr (std::is_same_v<T, int16_t>) return ColumnDataType::INT16;
@@ -77,6 +77,40 @@ namespace bcsv {
         else if constexpr (std::is_same_v<T, std::string>) return ColumnDataType::STRING;
         else static_assert(always_false<T>, "Unsupported type");
     };
+
+    // Helper functions for type conversion
+    inline ColumnDataType stringToDataType(const std::string& typeString) {
+        if (typeString == "bool") return ColumnDataType::BOOL;
+        if (typeString == "uint8") return ColumnDataType::UINT8;
+        if (typeString == "uint16") return ColumnDataType::UINT16;
+        if (typeString == "uint32") return ColumnDataType::UINT32;
+        if (typeString == "uint64") return ColumnDataType::UINT64;
+        if (typeString == "int8") return ColumnDataType::INT8;
+        if (typeString == "int16") return ColumnDataType::INT16;
+        if (typeString == "int32") return ColumnDataType::INT32;
+        if (typeString == "int64") return ColumnDataType::INT64;
+        if (typeString == "float") return ColumnDataType::FLOAT;
+        if (typeString == "double") return ColumnDataType::DOUBLE;
+        return ColumnDataType::STRING; // default
+    }
+
+    inline std::string dataTypeToString(ColumnDataType type) {
+        switch (type) {
+            case ColumnDataType::BOOL: return "bool";
+            case ColumnDataType::UINT8: return "uint8";
+            case ColumnDataType::UINT16: return "uint16";
+            case ColumnDataType::UINT32: return "uint32";
+            case ColumnDataType::UINT64: return "uint64";
+            case ColumnDataType::INT8: return "int8";
+            case ColumnDataType::INT16: return "int16";
+            case ColumnDataType::INT32: return "int32";
+            case ColumnDataType::INT64: return "int64";
+            case ColumnDataType::FLOAT: return "float";
+            case ColumnDataType::DOUBLE: return "double";
+            case ColumnDataType::STRING: return "string";
+            default: return "string";
+        }
+    }
 
     using ValueType = std::variant<bool, uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double, std::string>;
 

@@ -13,16 +13,20 @@
 
 namespace bcsv {
 
+    // ========================================================================
+    // LayoutInterface Implementation
+    // ========================================================================
+
     inline void LayoutInterface::updateIndexMap() {
-        column_name_index_.clear();
+        column_index_.clear();
         for (size_t i = 0; i < column_names_.size(); ++i) {
-            column_name_index_[column_names_[i]] = i;
+            column_index_[column_names_[i]] = i;
         }
     }
 
     inline size_t LayoutInterface::getColumnIndex(const std::string& columnName) const {
-        auto it = column_name_index_.find(columnName);
-        if (it != column_name_index_.end()) {
+        auto it = column_index_.find(columnName);
+        if (it != column_index_.end()) {
             return it->second;
         }
         return SIZE_MAX; // Return maximum value to indicate not found
@@ -30,18 +34,6 @@ namespace bcsv {
     
     inline const std::string& LayoutInterface::getColumnName(size_t index) const {
         return column_names_[index];
-    }
-
-    inline std::vector<std::string> LayoutInterface::getColumnTypesAsString() const {
-        std::vector<std::string> types(getColumnCount(), "");
-        for (size_t i = 0; i < getColumnCount(); ++i) {
-            types[i] = getColumnTypeAsString(i);
-        }
-        return types;
-    }
-    
-    inline std::string LayoutInterface::getColumnTypeAsString(size_t index) const {
-        return dataTypeToString(getColumnType(index));
     }
 
     /**
@@ -65,50 +57,25 @@ namespace bcsv {
     }
 
     inline void LayoutInterface::setColumnName(size_t index, const std::string& name) {
-        column_name_index_.erase(column_names_[index]); //remove old name from index
+        column_index_.erase(column_names_[index]); //remove old name from index
         column_names_[index] = name; //update name
-        column_name_index_[name] = index; //add new name to index
+        column_index_[name] = index; //add new name to index
     }
 
-        // Helper functions for type conversion
-    inline ColumnDataType LayoutInterface::stringToDataType(const std::string& typeString) {
-        if (typeString == "bool") return ColumnDataType::BOOL;
-        if (typeString == "uint8") return ColumnDataType::UINT8;
-        if (typeString == "uint16") return ColumnDataType::UINT16;
-        if (typeString == "uint32") return ColumnDataType::UINT32;
-        if (typeString == "uint64") return ColumnDataType::UINT64;
-        if (typeString == "int8") return ColumnDataType::INT8;
-        if (typeString == "int16") return ColumnDataType::INT16;
-        if (typeString == "int32") return ColumnDataType::INT32;
-        if (typeString == "int64") return ColumnDataType::INT64;
-        if (typeString == "float") return ColumnDataType::FLOAT;
-        if (typeString == "double") return ColumnDataType::DOUBLE;
-        return ColumnDataType::STRING; // default
-    }
 
-    inline std::string LayoutInterface::dataTypeToString(ColumnDataType type) {
-        switch (type) {
-            case ColumnDataType::BOOL: return "bool";
-            case ColumnDataType::UINT8: return "uint8";
-            case ColumnDataType::UINT16: return "uint16";
-            case ColumnDataType::UINT32: return "uint32";
-            case ColumnDataType::UINT64: return "uint64";
-            case ColumnDataType::INT8: return "int8";
-            case ColumnDataType::INT16: return "int16";
-            case ColumnDataType::INT32: return "int32";
-            case ColumnDataType::INT64: return "int64";
-            case ColumnDataType::FLOAT: return "float";
-            case ColumnDataType::DOUBLE: return "double";
-            case ColumnDataType::STRING: return "string";
-            default: return "string";
-        }
-    }
+
+
+
+    // ========================================================================
+    // Layout Implementation
+    // ========================================================================
 
     inline Layout::Layout(const Layout& other) {
         column_types_ = other.column_types_;
         column_names_ = other.column_names_;
-        column_name_index_ = other.column_name_index_;
-        //the copy is unlocked!
+        column_index_ = other.column_index_;
+        column_lengths_ = other.column_lengths_;
+        column_offsets_ = other.column_offsets_;
     }
 
     // Implementation included inline for header-only library
@@ -116,7 +83,7 @@ namespace bcsv {
         setColumns(columns);
     }
 
-    inline void Layout::insertColumn(const std::string& name, ColumnDataType type, size_t position) {
+    inline void Layout::insertColumn(const ColumnDefinition& column, size_t position) {
         if (isLocked()) {
             throw std::runtime_error("Cannot modify locked layout");
         }
@@ -126,18 +93,30 @@ namespace bcsv {
         
         // If position is past the end or SIZE_MAX, append to the end
         if (position >= column_names_.size()) {
-            column_names_.push_back(name);
-            column_types_.push_back(type);
+            column_names_.push_back(column.name);
+            column_types_.push_back(column.type);
+            if (column_offsets_.empty()) {
+                column_offsets_.push_back(0);
+            } else {
+                column_offsets_.push_back(column_offsets_.back() + column_lengths_.back());
+            }
+            column_lengths_.push_back(binaryFieldLength(column.type));
         } else {
             // Insert at the specified position
-            column_names_.insert(column_names_.begin() + position, name);
-            column_types_.insert(column_types_.begin() + position, type);
+            column_names_.insert(column_names_.begin() + position, column.name);
+            column_types_.insert(column_types_.begin() + position, column.type);
+            column_lengths_.insert(column_lengths_.begin() + position, binaryFieldLength(column.type));
+            if (position == 0) {
+                column_offsets_.insert(column_offsets_.begin(), 0);
+            } else {
+                column_offsets_.insert(column_offsets_.begin() + position, column_offsets_[position - 1] + column_lengths_[position - 1]);
+            }
+            //update all offsets past position
+            for (size_t i = position + 1; i < column_offsets_.size(); ++i) {
+                column_offsets_[i] += column_lengths_[position];
+            }
         }
         updateIndexMap();
-    }
-    
-    inline void Layout::insertColumn(const std::string& name, const std::string& typeString, size_t position) {
-        insertColumn(name, stringToDataType(typeString), position);
     }
     
     inline void Layout::clear() {
@@ -146,7 +125,9 @@ namespace bcsv {
         }
         column_names_.clear();
         column_types_.clear();
-        column_name_index_.clear();
+        column_lengths_.clear();
+        column_offsets_.clear();
+        column_index_.clear();
     }
     
     inline void Layout::setColumns(const std::vector<ColumnDefinition>& columns) {
@@ -156,28 +137,31 @@ namespace bcsv {
         clear();
         column_names_.reserve(columns.size());
         column_types_.reserve(columns.size());
+        column_lengths_.reserve(columns.size());
+        column_offsets_.reserve(columns.size());
         for (const auto& column : columns) {
-            insertColumn(column.name, column.type);
+            insertColumn(column);
         }
     }
 
-    inline void Layout::setColumns(const std::vector<std::string>& names, const std::vector<ColumnDataType>& types)
-    {
-        if (isLocked()) {
-            throw std::runtime_error("Cannot modify locked layout");
+    inline size_t Layout::getColumnOffset(size_t index) const {
+        if (RANGE_CHECKING && index >= column_offsets_.size()) {
+            throw std::out_of_range("Column index out of range");
         }
-        if (names.size() != types.size()) {
-            throw std::invalid_argument("Names and types vectors must have the same size");
-        }
-        clear();
-        column_names_.reserve(names.size());
-        column_types_.reserve(types.size());
-        for (size_t i = 0; i < names.size(); ++i) {
-            insertColumn(names[i], types[i]);
-        }
+        return column_offsets_[index];
     }
-    
+
+    inline size_t Layout::getColumnLength(size_t index) const {
+        if (RANGE_CHECKING && index >= column_lengths_.size()) {
+            throw std::out_of_range("Column index out of range");
+        }
+        return column_lengths_[index];
+    }
+
     inline ColumnDataType Layout::getColumnType(size_t index) const {
+        if (RANGE_CHECKING && index >= column_types_.size()) {
+            throw std::out_of_range("Column index out of range");
+        }
         return column_types_[index];
     }
 
@@ -196,10 +180,15 @@ namespace bcsv {
             throw std::out_of_range("Column index out of range");
         }
         // Remove from index map
-        column_name_index_.erase(column_names_[index]);
-        // Remove from vectors
+        column_index_.erase(column_names_[index]);
         column_names_.erase(column_names_.begin() + index);
         column_types_.erase(column_types_.begin() + index);
+        column_offsets_.erase(column_offsets_.begin() + index);
+        // Update all offsets past the removed column
+        for (size_t i = index; i < column_offsets_.size(); ++i) {
+            column_offsets_[i] -= column_lengths_[index];
+        }
+        column_lengths_.erase(column_lengths_.begin() + index);
         // Update index map since indices have shifted
         updateIndexMap();
     }
@@ -208,11 +197,20 @@ namespace bcsv {
         if (this != &other) {
             column_types_ = other.column_types_;
             column_names_ = other.column_names_;
-            column_name_index_ = other.column_name_index_;
+            column_index_ = other.column_index_;
+            column_lengths_ = other.column_lengths_;
+            column_offsets_ = other.column_offsets_;
             //the assignment is unlocked!
         }
         return *this;
     }
+
+
+
+
+
+
+
 
     template<typename... ColumnTypes>
     inline LayoutStatic<ColumnTypes...>::LayoutStatic(const std::vector<std::string>& columnNames) 

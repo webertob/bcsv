@@ -249,75 +249,97 @@ namespace bcsv {
     };
 
     /**/
-    class RowInterface {
-    public:
-        RowInterface() = default;
-        virtual ~RowInterface() = default;
 
-        virtual void setValue(size_t index, const ValueType& value) = 0;
-        virtual ValueType getValue(size_t index) const = 0;
-        virtual size_t size() const = 0;
-    };
-
-    class Row : public RowInterface {
+    /* Dynamic row with runtime layout */
+    class Row {
         std::vector<ValueType> data_;
+        std::shared_ptr<Layout> layout_;
 
     public:
         Row() = delete;
-        Row(const Layout &layout);
+        Row(std::shared_ptr<Layout> layout);
+        Row(const Row& other) : layout_(other.layout_), data_(other.data_) {}
         ~Row() = default;
 
-        // Virtual overrides
-        void setValue(size_t index, const ValueType& value) override;
-        ValueType getValue(size_t index) const override;
-        size_t size() const override { return data_.size(); }
+        // Layout access
+        const Layout& getLayout() const { return *layout_; }
+        std::shared_ptr<const Layout> getLayoutPtr() const { return layout_; }
 
-        // Template methods (declared in header, implemented in .hpp)
         template<typename T>
-        const T& get(size_t index) const;
-        
-        template<typename T>
+        T getAs(size_t index) const;
+        const ValueType& get(size_t index) const;
+
+        template<typename T = ValueType>
         void set(size_t index, const T& value);
 
         // serialization/deserialization
         void serializedSize(size_t& fixedSize, size_t& totalSize) const;
         void serializeTo(std::byte* dstBuffer, size_t dstBufferSize) const;
         void deserializeFrom(const std::byte* srcBuffer, size_t srcBufferSize);
+    
+        // Assignment validates layout compatibility
+        Row& operator=(const Row& other);
     };
 
-    template<typename... ColumnTypes>
-    class RowStatic : public RowInterface {
-        std::tuple<ColumnTypes...> data_;
-        // Compile-time size calculations
-        static constexpr size_t FIXED_SIZE = ((std::is_same_v<ColumnTypes, std::string> ? sizeof(uint64_t) : sizeof(ColumnTypes)) + ...);
-        constexpr static size_t fieldLengths_[sizeof...(ColumnTypes)] = []{
-            size_t lengths[sizeof...(ColumnTypes)] = {};
-            size_t index = 0;
-            ((lengths[index++] = binaryFieldLength<ColumnTypes>()), ...);
-            return lengths;
-        }();
-        constexpr static size_t fieldOffsets_[sizeof...(ColumnTypes)] = []{
-            size_t offsets[sizeof...(ColumnTypes)] = {};
-            size_t offset = 0;
-            size_t index = 0;
-            ((offsets[index++] = offset, offset += binaryFieldLength<ColumnTypes>()), ...);
-            return offsets;
-        }();
+
+
+    /* Direct view into a buffer. Supports Row interface */
+    class RowView {
+        std::byte* buffer_;
+        size_t bufferSize_;
+        std::shared_ptr<Layout> layout_;
 
     public:
+        RowView() = delete;
+        RowView(std::shared_ptr<Layout> layout, std::byte* buffer = nullptr, size_t bufferSize = 0)
+            : buffer_(buffer), bufferSize_(bufferSize), layout_(layout) {}
+        ~RowView() = default;
+
+        // Layout access
+        const Layout& getLayout() const { return *layout_; }
+        std::shared_ptr<const Layout> getLayoutPtr() const { return layout_; }
+
+        template<typename T = ValueType>
+        T get(size_t index) const;
+
+        template<typename T = ValueType>
+        void set(size_t index, const T& value);
+
+        const std::byte* getBuffer() const { return buffer_; }
+        size_t getBufferSize() const { return bufferSize_; }
+        void setBuffer(std::byte* buffer, size_t bufferSize) { buffer_ = buffer; bufferSize_ = bufferSize; }
+
+        bool validate() const;
+    };
+
+
+
+
+
+
+    template<typename LayoutType>
+    class RowStatic : public RowInterface {
+    public:
+        using DataTypes = typename LayoutType::DataTypes;
         template<size_t Index>
-        using ColumnType = std::tuple_element_t<Index, std::tuple<ColumnTypes...>>;
+        using DataType = std::tuple_element_t<Index, DataTypes>;
 
-        // Constructors
-        RowStatic();
-        template<typename... Args>
-        explicit RowStatic(Args&&... args);
-        explicit RowStatic(const LayoutStatic<ColumnTypes...>& layout);
-
-        // Virtual overrides
-        void setValue(size_t index, const ValueType& value) override;
-        ValueType getValue(size_t index) const override;
+    private:
+        LayoutType::DataTypes   data_;
+        std::shared_ptr<Layout> layout_;
         
+    public:
+        
+        // Constructors
+        RowStatic() = delete;
+        RowStatic(const LayoutType& layout) : layout_(std::make_shared<LayoutType>(layout)), data_(defaultConstruct<DataTypes>()...) {}
+        RowStatic(const RowStatic& other) : layout_(other.layout_), data_(other.data_) {}
+        ~RowStatic() = default;
+       
+        // Layout access
+        const Layout& getLayout() const { return *layout_; }
+        std::shared_ptr<const Layout> getLayoutPtr() const { return layout_; }
+
         // Template access methods
         template<size_t Index>
         auto& get();
@@ -328,7 +350,11 @@ namespace bcsv {
         template<size_t Index, typename T>
         void set(const T& value);
 
-        constexpr size_t size() const override { return sizeof...(ColumnTypes); }
+        template<typename T = ValueType, size_t I = 0>
+        T get(size_t index) const;
+
+        template<typename T = ValueType, size_t I = 0>
+        void set(size_t index, const T& value);
 
         // serialization/deserialization 
         void serializedSize(size_t& fixedSize, size_t& totalSize) const;
@@ -336,30 +362,11 @@ namespace bcsv {
         void deserializeFrom(const std::byte* srcBuffer, size_t srcBufferSize);
     };
 
-    /* Direct view into a buffer. Supports Row interface */
-    class RowView : public RowInterface {
-        std::byte* buffer_;
-        size_t bufferSize_;
-        std::vector<ColumnDataType> columnTypes_;
-        std::vector<size_t> fieldLengths_;
-        std::vector<size_t> fieldOffsets_;
 
-    public:
-        RowView();
-        explicit RowView(std::byte* buffer, size_t bufferSize, const Layout &layout);
 
-        // Row interface implementation
-        void setValue(size_t index, const ValueType& value) override;
-        ValueType getValue(size_t index) const override;
-        size_t size() const override { return fieldOffsets_.size(); }
 
-        void setLayout(const Layout& layout);
-        const std::byte* getBuffer() const { return buffer_; }
-        size_t getBufferSize() const { return bufferSize_; }
-        void setBuffer(std::byte* buffer, size_t bufferSize) { buffer_ = buffer; bufferSize_ = bufferSize; }
 
-        bool validate() const;
-    };
+
 
     template<typename... ColumnTypes>
     class RowViewStatic : public RowView {
@@ -399,9 +406,5 @@ namespace bcsv {
         constexpr size_t size() const { return sizeof...(ColumnTypes); }
         bool validate() const;
     };
-
-    //ToDo:
-    // Implement Reader::readRow, readRows, decompressing, indexing, sequential and random access
-    // Code Review, Testing (unit tests), Documentation
 
 } // namespace bcsv

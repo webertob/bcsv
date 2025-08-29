@@ -11,7 +11,7 @@
 #include "layout.h"
 
 namespace bcsv {
-
+    constexpr bool RANGE_CHECKING = true;
     // Type traits to check if StreamType supports file operations
     template<typename T>
     struct is_fstream {
