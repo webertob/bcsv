@@ -195,17 +195,8 @@ namespace bcsv {
          * @param columnLayout The column layout to include in size calculation
          * @return Total size in bytes needed for complete header
          */
-        template<typename LayoutType>
-        static size_t getBinarySize(const LayoutType& columnLayout);
-
-        /**
-         * @brief Write complete header to binary stream
-         * @param stream Output stream to write to
-         * @param columnLayout Column layout to serialize with header
-         * @return true if write was successful, false on error
-         */
-        template<typename LayoutType>
-        bool writeToBinary(std::ostream& stream, const LayoutType& columnLayout) const;
+        template<LayoutConcept LayoutType>
+        static size_t getBinarySize(const LayoutType& layout);
 
         /**
          * @brief Read complete header from binary stream
@@ -215,13 +206,29 @@ namespace bcsv {
          */
         bool readFromBinary(std::istream& stream, Layout& columnLayout);
 
+        /**
+         * @brief Read complete header from binary stream
+         * @param stream Input stream to read from
+         * @param columnLayout Column layout to populate from stream
+         * @return true if read was successful, false on error or invalid data
+         */
         template<typename... ColumnTypes>
-        bool readFromBinary(std::istream& stream, const LayoutStatic<ColumnTypes...>& columnLayout);
+        bool readFromBinary(std::istream& stream, LayoutStatic<ColumnTypes...>& columnLayout);
+        
+        /**
+         * @brief Write complete header to binary stream
+         * @param stream Output stream to write to
+         * @param columnLayout Column layout to serialize with header
+         * @return true if write was successful, false on error
+         */
+        template<LayoutConcept LayoutType>
+        bool writeToBinary(std::ostream& stream, const LayoutType& columnLayout) const;
+
         /**
          * @brief Print detailed binary layout information for debugging
          * @param columnLayout Column layout to analyze
          */
-        template<typename LayoutType>
+        template<LayoutConcept LayoutType>
         void printBinaryLayout(const LayoutType& columnLayout) const;
 
     private:

@@ -17,7 +17,7 @@
 
 namespace bcsv {
 
-    template<typename LayoutType>
+    template<LayoutConcept LayoutType>
     Writer<LayoutType>::Writer(std::shared_ptr<LayoutType> &layout) : layout_(layout) {
         buffer_raw_.reserve(LZ4_BLOCK_SIZE_KB * 1024);
         buffer_zip_.reserve(LZ4_COMPRESSBOUND(LZ4_BLOCK_SIZE_KB * 1024));
@@ -28,14 +28,14 @@ namespace bcsv {
         }
     }
 
-    template<typename LayoutType>
+    template<LayoutConcept LayoutType>
     Writer<LayoutType>::Writer(std::shared_ptr<LayoutType> &layout, const std::filesystem::path& filepath, bool overwrite) 
         : Writer(layout) {
         open(filepath, overwrite);
     }
 
 
-    template<typename LayoutType>
+    template<LayoutConcept LayoutType>
     Writer<LayoutType>::~Writer() {
         if (is_open()) {
             close();
@@ -46,7 +46,7 @@ namespace bcsv {
      /**
      * @brief Close the binary file
      */
-    template<typename LayoutType>
+    template<LayoutConcept LayoutType>
     void Writer<LayoutType>::close() {
         if (stream_.is_open()) {
             flush();
@@ -56,7 +56,7 @@ namespace bcsv {
         }
     }
 
-    template<typename LayoutType>
+    template<LayoutConcept LayoutType>
     void Writer<LayoutType>::flush() {
         if (stream_.is_open()) {
             stream_.flush();
@@ -69,8 +69,8 @@ namespace bcsv {
      * @param overwrite Whether to overwrite existing files (default: false)
      * @return true if file was successfully opened, false otherwise
      */
-    template<typename LayoutType>
-    bool Writer<LayoutType>::open(const std::filesystem::path& filepath, bool overwrite = false) {
+    template<LayoutConcept LayoutType>
+    bool Writer<LayoutType>::open(const std::filesystem::path& filepath, bool overwrite) {
         if(is_open()) {
             std::cerr << "Warning: File is already open: " << filePath_ << std::endl;
             return false;
@@ -127,8 +127,8 @@ namespace bcsv {
 
         return false;
     }
-        
-    template<typename LayoutType>
+
+    template<LayoutConcept LayoutType>
     void Writer<LayoutType>::writeHeader() {
         // Write the header information to the stream
         if (!stream_.is_open()) {
@@ -137,10 +137,10 @@ namespace bcsv {
         layout_->lock(this);
         FileHeader fileHeader;
         fileHeader.writeToBinary(stream_, *layout_);
-        rowCounter_ = 0;
+        row_cnt_ = 0;
     }
 
-    template<typename LayoutType>
+    template<LayoutConcept LayoutType>
     void Writer<LayoutType>::writePacket() {
         if (!stream_.is_open()) {
             throw std::runtime_error("Error: File is not open");
@@ -151,9 +151,11 @@ namespace bcsv {
         }
 
         // Compress the raw buffer using LZ4
+        buffer_zip_.resize(buffer_zip_.capacity());
         int compressedSize = LZ4_compress_default(buffer_raw_.data(), buffer_zip_.data(),
                                                   static_cast<int>(buffer_raw_.size()),
                                                   static_cast<int>(buffer_zip_.size()));
+        buffer_zip_.resize(compressedSize);
         if (compressedSize <= 0) {
             throw std::runtime_error("Error: LZ4 compression failed");
         }
@@ -161,48 +163,32 @@ namespace bcsv {
         PacketHeader packetHeader;
         packetHeader.magic = PCKT_MAGIC;
         packetHeader.payloadSizeRaw = static_cast<uint32_t>(buffer_raw_.size());
-        packetHeader.payloadSizeZip = static_cast<uint32_t>(compressedSize);
-        packetHeader.rowFirst = rowCounterOld_;
-        packetHeader.rowCount = rowCounter_ - rowCounterOld_;
-        packetHeader.crc32 = 0; // Placeholder for CRC32
-        
+        packetHeader.payloadSizeZip = static_cast<uint32_t>(buffer_zip_.size());
+        packetHeader.rowFirst = row_cnt_old_;
+        packetHeader.rowCount = row_cnt_ - row_cnt_old_;
+        packetHeader.updateCRC32(row_offsets_, buffer_zip_);
 
+        // Write the packet (header + row offsets + compressed data)
+        stream_.write(reinterpret_cast<const char*>(&packetHeader), sizeof(packetHeader));
+        stream_.write(reinterpret_cast<const char*>(row_offsets_.data()), row_offsets_.size() * sizeof(uint16_t));
+        stream_.write(reinterpret_cast<const char*>(buffer_zip_.data()), buffer_zip_.size());
 
-
-
-        
-        rowCounterOld_ = rowCounter_;
-
-
-        // Write the compressed data size and uncompressed size
-        uint32_t uncompressedSize = static_cast<uint32_t>(buffer_raw_.size());
-        uint32_t compSize = static_cast<uint32_t>(compressedSize);
-        stream_.write(reinterpret_cast<const char*>(&uncompressedSize), sizeof(uncompressedSize));
-        stream_.write(reinterpret_cast<const char*>(&compSize), sizeof(compSize));
-
-        // Write the compressed data
-        stream_.write(buffer_zip_.data(), compSize);
-
-        // Clear the raw buffer for next packet
+        // Clear buffers for next packet
         buffer_raw_.clear();
+        buffer_zip_.clear();
+        row_offsets_.clear();
+        row_cnt_old_ = row_cnt_;
     }
 
-    template<typename LayoutType>
-    void Writer<LayoutType>::writeRow(const Row& row) {
+    template<LayoutConcept LayoutType>
+    void Writer<LayoutType>::writeRow(const LayoutType::Row& row) {
         if (!stream_.is_open()) {
             throw std::runtime_error("Error: File is not open");
         }
 
-        //compare types
-        auto colTypes = layout_->getColumnTypes();
-        auto rowTypes = row.getTypes();
-        if (colTypes.size() != rowTypes.size()) {
-            throw std::invalid_argument("Row type count does not match layout");
-        }
-        for (size_t i = 0; i < colTypes.size(); ++i) {
-            if (colTypes[i] != rowTypes[i]) {
-                throw std::invalid_argument("Row type does not match layout");
-            }
+        //check row belongs to layout_
+        if (row.getLayout() != layout_) {
+            throw std::invalid_argument("Row does not belong to layout");
         }
 
         size_t rowSize = row.serializedSize();
@@ -210,12 +196,12 @@ namespace bcsv {
             writePacket();
         }
 
-        size_t bufSize = buffer_raw_.size();
-        buffer_raw_.resize(bufSize + rowSize);
-        char* dstBuffer = buffer_raw_.data() + bufSize;
+        size_t oldSize = buffer_raw_.size();
+        buffer_raw_.resize(oldSize + rowSize);
+        std::byte* dstBuffer = buffer_raw_.data() + oldSize;
         row.serializeTo(dstBuffer, rowSize);
-        rowIndex_.push_back(static_cast<uint16_t>(buffer_raw_.size()));
-        rowCounter_++;
+        row_offsets_.push_back(static_cast<uint16_t>(buffer_raw_.size()));
+        row_cnt_++;
     }
 
 } // namespace bcsv

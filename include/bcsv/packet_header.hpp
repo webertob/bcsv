@@ -6,56 +6,32 @@
 
 namespace bcsv {
 
-    constexpr size_t crc32_size = sizeof(uint32_t);
-    constexpr size_t crc32_offset = sizeof(PacketHeader) - crc32_size;
+    void PacketHeader::updateCRC32(const std::vector<uint16_t>& rowOffsets, const std::vector<char>& zipBuffer) {
+        this->crc32 = 0; // Ensure CRC32 field is zeroed before calculation
 
-    void PacketHeader::updateCRC32(std::vector<char>& packetRawBuffer) {
-        if(packetRawBuffer.size() < sizeof(PacketHeader)) {
-            return; // Not enough data to update CRC32
-        }
-        
-        // Zero out the CRC32 field before calculating
-        std::memset(packetRawBuffer.data() + crc32_offset, 0, crc32_size);
-
-        // Calculate CRC32 over the entire buffer
+        // Calculate CRC32 including row offsets and compressed data
         boost::crc_32_type crc32;
-        crc32.process_bytes(packetRawBuffer.data(), packetRawBuffer.size());
-        uint32_t crcValue = crc32.checksum();
-        
-        // Store the CRC32 value in the buffer
-        std::memcpy(packetRawBuffer.data() + crc32_offset, &crcValue, sizeof(crcValue));
+        crc32.process_bytes(this, sizeof(PacketHeader));
+        crc32.process_bytes(rowOffsets.data(), rowOffsets.size() * sizeof(uint16_t));
+        crc32.process_bytes(zipBuffer.data(), zipBuffer.size());
+
+        // Store the CRC32 value in the header
+        this->crc32 = crc32.checksum();
     }
 
-    bool PacketHeader::validateCRC32(const std::vector<char>& packetRawBuffer) {
-        if (packetRawBuffer.size() < sizeof(PacketHeader)) {
-            return false; // Not enough data for CRC32
-        }
+    bool PacketHeader::validateCRC32(const std::vector<uint16_t>& rowOffsets, const std::vector<char>& zipBuffer) {
+        uint32_t originalCRC32 = this->crc32;
+        this->crc32 = 0; // Zero out the CRC32 field before calculating
 
-        // Extract the stored CRC32 checksum from the packet
-        uint32_t crc32_stored;
-        std::memcpy(&crc32_stored, packetRawBuffer.data() + crc32_offset, sizeof(crc32_stored));
-
-        // Calculate CRC32 in 3 pieces to avoid buffer copy
+        // Calculate CRC32 over the row offsets
         boost::crc_32_type crc32;
-        
-        // 1st: Process buffer up to CRC32 field
-        crc32.process_bytes(packetRawBuffer.data(), crc32_offset);
+        crc32.process_bytes(this, sizeof(PacketHeader));
+        crc32.process_bytes(rowOffsets.data(), rowOffsets.size() * sizeof(uint16_t));
+        crc32.process_bytes(zipBuffer.data(), zipBuffer.size());
 
-        
-        
-        // 2nd: Process zeroed CRC32 field (4 bytes of zeros)
-        uint32_t zeroCRC = 0;
-        crc32.process_bytes(&zeroCRC, sizeof(zeroCRC));
-        
-        // 3rd: Process remainder of buffer after CRC32 field
-        size_t remainderOffset = crc32_offset + crc32_size;
-        if (remainderOffset < packetRawBuffer.size()) {
-            size_t remainderSize = packetRawBuffer.size() - remainderOffset;
-            crc32.process_bytes(packetRawBuffer.data() + remainderOffset, remainderSize);
-        }
-
-        uint32_t crc32_calculated = crc32.checksum();
-        return crc32_stored == crc32_calculated;
+        this->crc32 = originalCRC32; // Restore original CRC32 value
+        // Compare with the stored CRC32 value
+        return crc32.checksum() == originalCRC32;
     }
 
-}   
+} // namespace bcsv

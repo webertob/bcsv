@@ -92,49 +92,43 @@ namespace bcsv {
     }
 
     // FileHeader method implementations that require ColumnLayout definition
-    template<typename LayoutType>
-    inline static size_t FileHeader::getBinarySize(const LayoutType& columnLayout) {
-        size_t size = sizeof(FileHeaderStruct);                          // Fixed header
-        size_t columnCount = std::min(columnLayout.getColumnCount(), MAX_COLUMN_COUNT);
-        size += columnCount * sizeof(uint16_t);        // Column data types
-        size += columnCount * sizeof(uint16_t);        // Column name lengths
-        for (size_t i = 0; i < columnCount; ++i) {     // Column names
-            size += columnLayout.getColumnName(i).length();
+    template<LayoutConcept LayoutType>
+    inline static size_t FileHeader::getBinarySize(const LayoutType& layout) {
+        size_t size = sizeof(FileHeaderStruct);                    // Fixed header
+        size += layout.getColumnCount() * sizeof(uint16_t);        // Column data types
+        size += layout.getColumnCount() * sizeof(uint16_t);        // Column name lengths
+        for (size_t i = 0; i < layout.getColumnCount(); ++i) {     // Column names
+            size += layout.getColumnName(i).length();
         }
         return size;
     }
 
-    template<typename LayoutType>
-    inline bool FileHeader::writeToBinary(std::ostream& stream, const LayoutType& columnLayout) const {
+    template<LayoutConcept LayoutType>
+    inline bool FileHeader::writeToBinary(std::ostream& stream, const LayoutType& layout) const {
         // Update header with current column count
-        FileHeaderStruct tempHeader = header_;
-        tempHeader.columnCount = static_cast<uint16_t>(std::min(columnLayout.getColumnCount(), MAX_COLUMN_COUNT)); // ensure no overflow takes place
-        //warn if column count was truncated
-        if (tempHeader.columnCount < columnLayout.getColumnCount()) {
-            throw std::runtime_error("Warning: Column count truncated from " + std::to_string(columnLayout.getColumnCount()) + " to " + std::to_string(tempHeader.columnCount));
-        }
+        header_->columnCount = static_cast<uint16_t>(layout.getColumnCount());
 
         // Write fixed header
-        stream.write(reinterpret_cast<const char*>(&tempHeader), sizeof(tempHeader));
+        stream.write(reinterpret_cast<const char*>(&header_), sizeof(header_));
         if (!stream.good()) return false;
 
         // Write column data types
-        for (size_t i = 0; i < tempHeader.columnCount; ++i) {
-            uint16_t typeValue = static_cast<uint16_t>(columnLayout.getColumnType(i));
-            stream.write(reinterpret_cast<const char*>(&typeValue), sizeof(typeValue));
+        for (size_t i = 0; i < layout.getColumnCount(); ++i) {
+            const uint16_t val = static_cast<uint16_t>(layout.getColumnType(i));
+            stream.write(reinterpret_cast<const char*>(&val), sizeof(val));
             if (!stream.good()) return false;
         }
 
         // Write column name lengths
-        for (size_t i = 0; i < tempHeader.columnCount; ++i) {
-            uint16_t nameLength = static_cast<uint16_t>(columnLayout.getColumnName(i).length());
-            stream.write(reinterpret_cast<const char*>(&nameLength), sizeof(nameLength));
+        for (size_t i = 0; i < layout.getColumnCount(); ++i) {
+            uint16_t val = static_cast<uint16_t>(layout.getColumnName(i).length());
+            stream.write(reinterpret_cast<const char*>(&val), sizeof(val));
             if (!stream.good()) return false;
         }
 
         // Write column names (without null terminator)
-        for (size_t i = 0; i < tempHeader.columnCount; ++i) {
-            const std::string& name = columnLayout.getColumnName(i);
+        for (size_t i = 0; i < layout.getColumnCount(); ++i) {
+            const std::string& name = layout.getColumnName(i);
             if (!name.empty()) {
                 stream.write(name.c_str(), name.length());
                 if (!stream.good()) return false;
@@ -221,7 +215,7 @@ namespace bcsv {
 
     // Specialized version for LayoutStatic - validates that binary matches static definition
     template<typename... ColumnTypes>
-    bool FileHeader::readFromBinary(std::istream& stream, const LayoutStatic<ColumnTypes...>& columnLayout) {
+    bool FileHeader::readFromBinary(std::istream& stream, LayoutStatic<ColumnTypes...>& layout) {
         try {
             // Read fixed header
             stream.read(reinterpret_cast<char*>(&header_), sizeof(header_));
@@ -235,39 +229,33 @@ namespace bcsv {
             }
             
             // Validate column count matches static definition
-            constexpr size_t expectedColumnCount = sizeof...(ColumnTypes);
-            if (header_.columnCount != expectedColumnCount) {
+            if (header_.columnCount != layout.getColumnCount()) {
                 throw std::runtime_error("Column count mismatch. Static layout expects " + 
-                                       std::to_string(expectedColumnCount) + " columns, but binary has " + 
+                                       std::to_string(layout.getColumnCount()) + " columns, but binary has " + 
                                        std::to_string(header_.columnCount) + " columns");
             }
 
             // Read column data types and validate against static definition
-            for (uint16_t i = 0; i < expectedColumnCount; ++i) {
-                uint16_t typeValue;
-                stream.read(reinterpret_cast<char*>(&typeValue), sizeof(typeValue));
+            for (uint16_t i = 0; i < layout.getColumnCount(); ++i) {
+                ColumnDataType type;
+                stream.read(reinterpret_cast<char*>(&type), sizeof(type));
                 if (!stream.good()) {
                     throw std::runtime_error("Failed to read column data type at index " + std::to_string(i));
                 }
-                
-                ColumnDataType binaryType = static_cast<ColumnDataType>(typeValue);
-                ColumnDataType expectedType = columnLayout.getColumnType(i);
-                
-                if (binaryType != expectedType) {
+                if (type != layout.getColumnType(i)) {
                     throw std::runtime_error("Column type mismatch at index " + std::to_string(i) + 
-                                           ". Static layout expects " + std::to_string(static_cast<int>(expectedType)) + 
-                                           ", but binary has " + std::to_string(static_cast<int>(binaryType)));
+                                           ". Static layout expects " + dataTypeToString(layout.getColumnType(i)) + 
+                                           ", but binary has " + dataTypeToString(type));
                 }
             }
 
             // Read column name lengths (we still need to read them to advance the stream)
-            std::vector<uint16_t> nameLengths(expectedColumnCount);
-            for (uint16_t i = 0; i < expectedColumnCount; ++i) {
+            std::vector<uint16_t> nameLengths(layout.getColumnCount());
+            for (uint16_t i = 0; i < layout.getColumnCount(); ++i) {
                 stream.read(reinterpret_cast<char*>(&nameLengths[i]), sizeof(uint16_t));
                 if (!stream.good()) {
                     throw std::runtime_error("Failed to read column name length at index " + std::to_string(i));
                 }
-                
                 // Validate name length
                 if (nameLengths[i] > MAX_STRING_LENGTH) {
                     throw std::runtime_error("Column name length (" + std::to_string(nameLengths[i]) + 
@@ -277,7 +265,7 @@ namespace bcsv {
             }
 
             // Read column names and optionally validate against static definition
-            for (uint16_t i = 0; i < expectedColumnCount; ++i) {
+            for (uint16_t i = 0; i < layout.getColumnCount(); ++i) {
                 if (nameLengths[i] > 0) {
                     std::vector<char> nameBuffer(nameLengths[i]);
                     stream.read(nameBuffer.data(), nameLengths[i]);
@@ -285,23 +273,22 @@ namespace bcsv {
                         throw std::runtime_error("Failed to read column name at index " + std::to_string(i));
                     }
                     
-                    std::string columnName = std::string(nameBuffer.begin(), nameBuffer.end());
-                    
+                    auto name = std::string_view(nameBuffer.begin(), nameBuffer.end());
                     // Optional: Validate column names match static definition (if names were set)
                     if (!columnLayout.getColumnName(i).empty()) {
-                        if (columnName != columnLayout.getColumnName(i)) {
+                        if (name != columnLayout.getColumnName(i)) {
                             throw std::runtime_error("Column name mismatch at index " + std::to_string(i) + 
                                                    ". Static layout expects '" + columnLayout.getColumnName(i) + 
-                                                   "', but binary has '" + columnName + "'");
+                                                   "', but binary has '" + name + "'");
                         }
+                    } else {
+                        layout.setColumnName(i, name);
                     }
                 } else {
-                    // Empty name - skip validation
+                    layout.setColumnName(i, "Column_" + std::to_string(i));
                 }
             }
-
             return true;
-            
         } catch (const std::exception& e) {
             // For LayoutStatic, we don't clear/modify the layout on failure
             // since it's compile-time defined and cannot be changed
@@ -309,7 +296,7 @@ namespace bcsv {
         }
     }
 
-    template<typename LayoutType>
+    template<LayoutConcept LayoutType>
     inline void FileHeader::printBinaryLayout(const LayoutType& columnLayout) const {
         std::cout << "FileHeader Binary Layout (" << getBinarySize(columnLayout) << " bytes):\n";
         std::cout << "  Magic:       0x" << std::hex << header_.magic << std::dec << " (" << sizeof(header_.magic) << " bytes)\n";

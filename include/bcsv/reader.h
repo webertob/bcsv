@@ -19,15 +19,18 @@ namespace bcsv {
     /**
      * @brief Class for reading BCSV binary files
      */
-    template<typename LayoutType>
+    template<LayoutConcept LayoutType>
     class Reader {
         std::shared_ptr<LayoutType> layout_;
         std::vector<char> buffer_raw_;
         std::vector<char> buffer_zip_;
+        std::vector<uint16_t> row_offsets_;     // Row offsets for indexing
+        size_t row_cnt_ = 0;
+        size_t row_cnt_old_ = 0;
 
         std::ifstream stream_;                  // Always binary file stream
         std::filesystem::path filePath_;        // Always present
-        size_t currentRowIndex_ = 0;
+        
 
     public:
         explicit Reader(std::shared_ptr<LayoutType> &layout);
@@ -38,13 +41,14 @@ namespace bcsv {
         const std::filesystem::path& getFilePath() const { return filePath_; }
         bool is_open() const {  return stream_.is_open(); }
         bool open(const std::filesystem::path& filepath);
-        
-        bool readRow(Row& row);
+
+        bool readRow(LayoutType::RowViewType& row);
         bool seekToRow(size_t rowIndex);
         size_t getRowCount() const;
         
     private:
         bool readHeader();
+        bool readPacket();
 
     public:
         // Factory functions

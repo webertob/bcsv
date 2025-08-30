@@ -66,7 +66,8 @@ namespace bcsv {
         std::set<std::weak_ptr<Row>> rows_;
 
     public:
-        typedef Row RowType;
+        typedef Row     RowType;
+        typedef RowView RowViewType;
 
         Layout() = default;
         Layout(const Layout& other);
@@ -131,7 +132,8 @@ namespace bcsv {
         void updateIndex();
 
     public:
-        typedef RowStatic<LayoutStatic<ColumnTypes...>> RowType;
+        typedef RowStatic<LayoutStatic<ColumnTypes...>>     RowType;
+        typedef RowViewStatic<LayoutStatic<ColumnTypes...>> RowViewType;
 
         using column_types = std::tuple<ColumnTypes...>;
         template<size_t Index>

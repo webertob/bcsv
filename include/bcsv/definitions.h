@@ -139,7 +139,7 @@ namespace bcsv {
             case ColumnDataType::FLOAT: return "float";
             case ColumnDataType::DOUBLE: return "double";
             case ColumnDataType::STRING: return "string";
-            default: return "string";
+            default: return "undefined";
         }
     }
 

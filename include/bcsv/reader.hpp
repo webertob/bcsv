@@ -16,7 +16,7 @@
 
 namespace bcsv {
 
-    template<typename LayoutType>
+    template<LayoutConcept LayoutType>
     Reader<LayoutType>::Reader(std::shared_ptr<LayoutType> &layout) : layout_(layout) {
         buffer_raw_.reserve(LZ4_BLOCK_SIZE_KB * 1024);
         buffer_zip_.reserve(LZ4_COMPRESSBOUND(LZ4_BLOCK_SIZE_KB * 1024));
@@ -27,13 +27,13 @@ namespace bcsv {
         }
     }
 
-    template<typename LayoutType>
+    template<LayoutConcept LayoutType>
     Reader<LayoutType>::Reader(std::shared_ptr<LayoutType> &layout, const std::filesystem::path& filepath) 
         : Reader(layout) {
         open(filepath);
     }
 
-    template<typename LayoutType>
+    template<LayoutConcept LayoutType>
     Reader<LayoutType>::~Reader() {
         if (is_open()) {
             close();
@@ -44,7 +44,7 @@ namespace bcsv {
     /**
      * @brief Close the binary file
      */
-    template<typename LayoutType>
+    template<LayoutConcept LayoutType>
     void Reader<LayoutType>::close() {
         if (stream_.is_open()) {
             stream_.close();
@@ -61,7 +61,7 @@ namespace bcsv {
      * @param filepath Path to the file (relative or absolute)
      * @return true if file was successfully opened, false otherwise
      */
-    template<typename LayoutType>
+    template<LayoutConcept LayoutType>
     bool Reader<LayoutType>::open(const std::filesystem::path& filepath) {
         if(is_open()) {
             std::cerr << "Warning: File is already open: " << filePath_ << std::endl;
@@ -106,16 +106,14 @@ namespace bcsv {
 
         } catch (const std::filesystem::filesystem_error& ex) {
             std::cerr << "Filesystem error: " << ex.what() << std::endl;
-            return false;
         } catch (const std::exception& ex) {
             std::cerr << "Error opening file: " << ex.what() << std::endl;
-            return false;
         }
-
+        stream_.close();
         return false;
     }
 
-    template<typename LayoutType>
+    template<LayoutConcept LayoutType>
     bool Reader<LayoutType>::readHeader() {
         // Write the header information to the stream
         if (!stream_.is_open()) {
@@ -124,135 +122,76 @@ namespace bcsv {
         layout_->unlock(this);
         FileHeader fileHeader;
         if(fileHeader.readFromBinary(stream_, *layout_)) {
-            // need to ensure layout does not change during reading the rest of the file.
             layout_->lock(this);
         } else {
             return false;
         }
-        currentRowIndex_ = 0;
+        row_cnt_ = 0;
         return true;
     }
 
-    template<typename LayoutType>
-    bool Reader<LayoutType>::readRow(Row& row) {
-        if (!stream_.is_open() || stream_.eof()) {
+    template<LayoutConcept LayoutType>
+    bool Reader<LayoutType>::readPacket() {
+        if (!stream_.is_open()) {
             return false;
         }
-        
-        std::vector<FieldValue> values;
-        values.reserve(layout_->getColumnCount());
-        
-        for (size_t i = 0; i < layout_->getColumnCount(); ++i) {
-            ColumnDataType colType = layout_->getColumnType(i);
-            
-            switch (colType) {
-                case ColumnDataType::STRING: {
-                    uint32_t len;
-                    if (!stream_.read(reinterpret_cast<char*>(&len), sizeof(len))) {
-                        return false;
-                    }
-                    std::string str(len, '\0');
-                    if (!stream_.read(str.data(), len)) {
-                        return false;
-                    }
-                    values.emplace_back(std::move(str));
-                    break;
-                }
-                case ColumnDataType::INT8: {
-                    int8_t val;
-                    if (!stream_.read(reinterpret_cast<char*>(&val), sizeof(val))) {
-                        return false;
-                    }
-                    values.emplace_back(val);
-                    break;
-                }
-                case ColumnDataType::INT16: {
-                    int16_t val;
-                    if (!stream_.read(reinterpret_cast<char*>(&val), sizeof(val))) {
-                        return false;
-                    }
-                    values.emplace_back(val);
-                    break;
-                }
-                case ColumnDataType::INT32: {
-                    int32_t val;
-                    if (!stream_.read(reinterpret_cast<char*>(&val), sizeof(val))) {
-                        return false;
-                    }
-                    values.emplace_back(val);
-                    break;
-                }
-                case ColumnDataType::INT64: {
-                    int64_t val;
-                    if (!stream_.read(reinterpret_cast<char*>(&val), sizeof(val))) {
-                        return false;
-                    }
-                    values.emplace_back(val);
-                    break;
-                }
-                case ColumnDataType::UINT8: {
-                    uint8_t val;
-                    if (!stream_.read(reinterpret_cast<char*>(&val), sizeof(val))) {
-                        return false;
-                    }
-                    values.emplace_back(val);
-                    break;
-                }
-                case ColumnDataType::UINT16: {
-                    uint16_t val;
-                    if (!stream_.read(reinterpret_cast<char*>(&val), sizeof(val))) {
-                        return false;
-                    }
-                    values.emplace_back(val);
-                    break;
-                }
-                case ColumnDataType::UINT32: {
-                    uint32_t val;
-                    if (!stream_.read(reinterpret_cast<char*>(&val), sizeof(val))) {
-                        return false;
-                    }
-                    values.emplace_back(val);
-                    break;
-                }
-                case ColumnDataType::UINT64: {
-                    uint64_t val;
-                    if (!stream_.read(reinterpret_cast<char*>(&val), sizeof(val))) {
-                        return false;
-                    }
-                    values.emplace_back(val);
-                    break;
-                }
-                case ColumnDataType::FLOAT: {
-                    float val;
-                    if (!stream_.read(reinterpret_cast<char*>(&val), sizeof(val))) {
-                        return false;
-                    }
-                    values.emplace_back(val);
-                    break;
-                }
-                case ColumnDataType::DOUBLE: {
-                    double val;
-                    if (!stream_.read(reinterpret_cast<char*>(&val), sizeof(val))) {
-                        return false;
-                    }
-                    values.emplace_back(val);
-                    break;
-                }
-                case ColumnDataType::BOOL: {
-                    bool val;
-                    if (!stream_.read(reinterpret_cast<char*>(&val), sizeof(val))) {
-                        return false;
-                    }
-                    values.emplace_back(val);
-                    break;
-                }
-                default:
-                    return false;
+
+        // Read packet header (compressed and uncompressed sizes)
+        PacketHeader header;
+        stream_.read(reinterpret_cast<char*>(&header), sizeof(header));
+        if (!stream_.good()) {
+            return false;
+        }
+
+        //read row offsets
+        row_offsets_.resize(header.rowCount);
+        stream_.read(reinterpret_cast<char*>(row_offsets_.data()), row_offsets_.size() * sizeof(uint16_t));
+
+        // Read the compressed packet data
+        buffer_zip_.resize(header.compressedSize);
+        stream_.read(buffer_zip_.data(), buffer_zip_.size());
+        if (!stream_.good()) {
+            return false;
+        }
+
+        // validate CRC
+        if(!header.validateCRC32(row_offsets_, buffer_zip_)) {
+            throw std::runtime_error("Error: Packet CRC32 validation failed");
+        }
+
+        // Decompress the packet data
+        buffer_raw_.resize(header.uncompressedSize);
+        int decompressedSize = LZ4_decompress_safe(buffer_zip_.data(), buffer_raw_.data(), buffer_zip_.size(), buffer_raw_.size());
+        if (decompressedSize < 0 || static_cast<size_t>(decompressedSize) != header.uncompressedSize) {
+            throw std::runtime_error("Error: LZ4 decompression failed");
+        }
+
+        // Update row count
+        row_cnt_old_ = row_cnt_;
+        row_cnt_ += header.rowCount;
+        return true;
+    }
+
+    template<LayoutConcept LayoutType>
+    bool Reader<LayoutType>::readRow(LayoutType::RowViewType& row) {
+        size_t rows_remaining = row_cnt_old_ - row_cnt_;
+        if(rows_remaining == 0) {
+            if(!readPacket()) {
+                return false;
+            }
+            rows_remaining = row_cnt_old_ - row_cnt_;
+            if(rows_remaining == 0) {
+                return false; // No more data
             }
         }
-        
-        row.setValues(values);
-        return stream_.good();
+
+        size_t row_index  = row_offsets_.size() - rows_remaining - 1;
+        size_t row_offset = row_offsets_[row_index];
+        size_t row_length = rows_remaining > 1 ? row_offsets_[row_index + 1] - row_offset : buffer_raw_.size() - row_offset;
+        --rows_remaining;
+        row.setBuffer(buffer_raw_.data() + row_offset, row_length);
+        return row.validate();
+
     }
 
 } // namespace bcsv

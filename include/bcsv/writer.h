@@ -19,19 +19,17 @@ namespace bcsv {
     /**
      * @brief Class for writing BCSV binary files
      */
-    template<typename LayoutType>
+    template<LayoutConcept LayoutType>
     class Writer {
         std::shared_ptr<LayoutType> layout_;
         ByteBuffer buffer_raw_;
         ByteBuffer buffer_zip_;
-        std::vector<uint16_t> rowIndex_;        // Row offsets for indexing
-
+        std::vector<uint16_t> row_offsets_;     // Row offsets for indexing
+        size_t row_cnt_ = 0;
+        size_t row_cnt_old_ = 0;
         std::ofstream stream_;                  // Always binary file stream
         std::filesystem::path filePath_;        // Always present
 
-        size_t rowCounter_ = 0;
-        size_t rowCounterOld_ = 0;
-    
     public:
         explicit Writer(std::shared_ptr<LayoutType> &layout);
         explicit Writer(std::shared_ptr<LayoutType> &layout, const std::filesystem::path& filepath, bool overwrite = false);
@@ -42,9 +40,9 @@ namespace bcsv {
         const std::filesystem::path& getFilePath() const { return filePath_; }
         bool is_open() const { return stream_.is_open(); }
         bool open(const std::filesystem::path& filepath, bool overwrite = false);
-        
-        void writeRow(const Row& row);
-        
+
+        void writeRow(const LayoutType::Row& row);
+
     private:
         void writeHeader();
         void writePacket();

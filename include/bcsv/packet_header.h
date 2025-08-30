@@ -53,8 +53,8 @@ namespace bcsv {
         uint64_t rowCount;       // Number of rows in the packet
         uint32_t crc32;          // CRC32 checksum of the entire packet (with this field zeroed)
 
-        static void updateCRC32(std::vector<char>& packetRawBuffer);
-        static bool validateCRC32(const std::vector<char>& packetRawBuffer);
+        void updateCRC32(const std::vector<uint16_t>& rowOffsets, const std::vector<char>& zipBuffer);
+        bool validateCRC32(const std::vector<uint16_t>& rowOffsets, const std::vector<char>& zipBuffer);
     };
     #pragma pack(pop)
     static_assert(sizeof(PacketHeader) == 32, "PacketHeader must be exactly 32 bytes");
