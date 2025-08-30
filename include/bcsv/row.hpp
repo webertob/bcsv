@@ -147,9 +147,20 @@ namespace bcsv {
         std::memset(ptrStr, 0, totalSize - (ptrStr - dstBuffer));
     }
 
+    void Row::setLayout(std::shared_ptr<Layout> layout) {
+        if(layout_ == layout) return; //no change
+        if(layout_) {
+            layout_->removeRow(shared_from_this());
+        }
+        layout_ = layout;
+        if(layout_) {
+            layout_->addRow(shared_from_this());
+        }
+    }
+
     // Assignment validates layout compatibility
     Row& Row::operator=(const Row& other) {
-        if (!layout_->isCompatibleWith(*other.layout_)) {
+        if (!layout_->isCompatibleWith(other.getLayout())) {
             throw std::runtime_error("Incompatible layouts");
         }
         data_ = other.data_;

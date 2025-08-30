@@ -54,7 +54,7 @@ namespace bcsv {
      * @brief Represents the column layout containing column names and types. This defines the common layout for BCSV files.
      * This layout is flexible and can be modified at runtime.
      */
-    class Layout {
+    class Layout : public std::enable_shared_from_this<Layout> {
         std::vector<std::string> column_names_;
         std::unordered_map<std::string, size_t> column_index_;
         std::vector<ColumnDataType> column_types_;
@@ -62,6 +62,8 @@ namespace bcsv {
         std::vector<size_t> column_offsets_; // Offsets of each column in [bytes] --> serialized data
         std::set<void*> lock_owners_;        // ptrs to objects that have locked the layout, used to identify owners
         void updateIndex();
+
+        std::set<std::weak_ptr<Row>> rows_;
 
     public:
         typedef Row RowType;
@@ -87,14 +89,17 @@ namespace bcsv {
         void unlock(void* owner) { lock_owners_.erase(owner); }
 
         // Compatibility checking
-        template<LayoutConcept OtherLayout>
-        bool isCompatibleWith(const OtherLayout& other) const;
+        bool isCompatibleWith(const Layout& other) const;
 
         void clear();
         void insertColumn(const ColumnDefinition& column, size_t position = SIZE_MAX);
         void removeColumn(size_t index);
         void setColumnType(size_t index, ColumnDataType type);
         void setColumns(const std::vector<ColumnDefinition>& columns);
+
+        // Row management
+        void addRow(std::weak_ptr<Row> row);
+        void removeRow(std::weak_ptr<Row> row);
 
         template<LayoutConcept OtherLayout>
         Layout& operator=(const OtherLayout& other);

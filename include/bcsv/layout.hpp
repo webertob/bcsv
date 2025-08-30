@@ -23,6 +23,8 @@ namespace bcsv {
         column_index_ = other.column_index_;
         column_lengths_ = other.column_lengths_;
         column_offsets_ = other.column_offsets_;
+
+        //don't copy row pointers
     }
 
     // Implementation included inline for header-only library
@@ -75,6 +77,13 @@ namespace bcsv {
             }
         }
         updateIndex();
+
+        //update rows
+        for (auto& row : rows_) {
+            if (auto sp = row.lock()) {
+                sp->data_.insert(sp->data_.begin() + position, defaultValue(column.type));
+            }
+        }
     }
     
     inline void Layout::clear() {
@@ -86,6 +95,13 @@ namespace bcsv {
         column_lengths_.clear();
         column_offsets_.clear();
         column_index_.clear();
+
+        //update rows
+        for (auto& row : rows_) {
+            if (auto sp = row.lock()) {
+                sp->data_.clear();
+            }
+        }
     }
     
     inline void Layout::setColumns(const std::vector<ColumnDefinition>& columns) {
@@ -113,6 +129,15 @@ namespace bcsv {
             column_offsets_[i] = (i == 0) ? 0 : column_offsets_[i - 1] + column_lengths_[i - 1];
         }
 
+        // update rows (try to convert if convertible)
+        for (auto& row : rows_) {
+            if (auto sp = row.lock()) {
+                sp->data_.resize(getColumnCount());
+                for (size_t i = 0; i < sp->data_.size(); ++i) {
+                    sp->data_[i] = convertValueType(sp->data_[i], column_types_[i]);
+                }
+            }
+        }
     }
 
     inline void Layout::setColumnName(size_t index, const std::string& name) {
@@ -140,6 +165,10 @@ namespace bcsv {
         if (isLocked()) {
             throw std::runtime_error("Cannot modify locked layout");
         }
+        if(column_types_[index] == type) {
+            return; //no change
+        }
+
         column_types_[index] = type;
 
         //need to update lengths and offsets
@@ -147,8 +176,16 @@ namespace bcsv {
         for (size_t i = index + 1; i < column_offsets_.size(); ++i) {
             column_offsets_[i] = column_offsets_[i - 1] + column_lengths_[i - 1];
         }
+
+        // update rows (try to convert if convertible)
+        for (auto& row : rows_) {
+            if (auto sp = row.lock()) {
+                sp->data_[index] = convertValueType(sp->data_[index], type);
+            }
+        }
+
     }
-    
+
     inline void Layout::removeColumn(size_t index) {
         if (isLocked()) {
             throw std::runtime_error("Cannot modify locked layout");
@@ -170,6 +207,33 @@ namespace bcsv {
             column_offsets_[i] -= removedLength;
         }
         updateIndex();
+
+        //update rows
+        for (auto& row : rows_) {
+            if (auto sp = row.lock()) {
+                sp->data_.erase(sp->data_.begin() + index);
+            }
+        }
+    }
+
+    inline void Layout::addRow(std::weak_ptr<Row> row) {
+        rows_.insert(row);
+        if (auto sp = row.lock()) {
+            sp->setLayout(shared_from_this());
+            // ToDo: try to insert or remove into data_ using defaultValues to create minimum change to row (preserve as much information as possible)
+            // for now we simply replace data_ with a version that matches layout
+            sp->data_ = std::vector<ValueType>(column_types_.size());
+            for (size_t i = 0; i < column_types_.size(); ++i) {
+                sp->data_[i] = defaultValue(column_types_[i]);
+            }
+        }
+    }
+
+    inline void Layout::removeRow(std::weak_ptr<Row> row) {
+        rows_.erase(row);
+        if (auto sp = row.lock()) {
+            sp->setLayout(nullptr);
+        }
     }
 
     /**
@@ -177,8 +241,7 @@ namespace bcsv {
      * @param other The other layout to check compatibility with
      * @return true if data can be safely transferred between layouts
      */
-    template<LayoutConcept OtherLayout>
-    inline bool Layout::isCompatibleWith(const OtherLayout& other) const {
+    inline bool Layout::isCompatibleWith(const Layout& other) const {
         // different column counts means not equivalent
         if (getColumnCount() != other.getColumnCount()) {
             return false;

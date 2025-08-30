@@ -253,19 +253,34 @@ namespace bcsv {
 
 
     /* Dynamic row with flexible layout (runtime-defined)*/
-    class Row {
+    class Row : public std::enable_shared_from_this<Row> {
         std::vector<ValueType> data_;
         std::shared_ptr<Layout> layout_;
+        friend class Layout; // Allow Layout to access private members
+    
+    public:
+        // Factory function to ensure Row is always created as shared_ptr
+        template<typename... Args>
+        static std::shared_ptr<Row> create(std::shared_ptr<Layout> layout, Args&&... args) {
+            auto ptr = std::shared_ptr<Row>(new Row(std::move(layout), std::forward<Args>(args)...));
+            layout->addRow(ptr);
+            return ptr;
+        }
+
+    private:
+        // Make constructor private to force use of factory
+        Row(std::shared_ptr<Layout> layout);
 
     public:
         Row() = delete;
-        Row(std::shared_ptr<Layout> layout);
-        Row(const Row& other) : layout_(other.layout_), data_(other.data_) {}
-        ~Row() = default;
+        Row(const Row& other) = delete;
+        Row(Row&& other) = delete;
+        ~Row() { layout_->removeRow(shared_from_this()); }
 
         // Layout access
         const Layout& getLayout() const { return *layout_; }
         std::shared_ptr<const Layout> getLayoutPtr() const { return layout_; }
+        void setLayout(std::shared_ptr<Layout> layout);
 
         template<typename T>
         T getAs(size_t index) const;
@@ -328,7 +343,7 @@ namespace bcsv {
         using column_type = std::tuple_element_t<Index, column_types>;
 
     private:
-        column_types            data_;
+        column_types                data_;
         std::shared_ptr<LayoutType> layout_;
         
     public:
