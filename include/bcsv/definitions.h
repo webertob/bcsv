@@ -20,12 +20,12 @@ namespace bcsv {
     }
 
     // Constants for the binary file format
-    constexpr uint32_t BCSV_MAGIC = 0x56534342; // "BCSV" in little-endian
-    constexpr uint32_t PCKT_MAGIC = 0xDEADBEEF; // "PCKT" in little-endian
-    constexpr size_t LZ4_BLOCK_SIZE_KB = 64;    // Average uncompressed payload of a packet
-    constexpr size_t MAX_STRING_LENGTH = 65535; // Maximum length of string data
-    constexpr size_t MAX_COLUMN_WIDTH  = 65535; // Maximum width of column content
-    constexpr size_t MAX_COLUMN_COUNT  = 65535;
+    constexpr uint32_t BCSV_MAGIC = 0x56534342;   // "BCSV" in little-endian
+    constexpr uint32_t PCKT_MAGIC = 0xDEADBEEF;   // "PCKT" in little-endian
+    constexpr size_t LZ4_BLOCK_SIZE_KB = 64;      // Average uncompressed payload of a packet
+    constexpr size_t MAX_STRING_LENGTH = 65535-1; // Maximum length of string data
+    constexpr size_t MAX_COLUMN_WIDTH  = 65535-1; // Maximum width of column content
+    constexpr size_t MAX_COLUMN_COUNT  = 65535-1;
 
     // File header flags - All mandatory features in v1.0+
     namespace FileFlags {
@@ -62,7 +62,7 @@ namespace bcsv {
     };
 
     template<typename T>
-    static constexpr ColumnDataType getColumnDataType() {
+    static constexpr ColumnDataType toColumnDataType() {
         if constexpr (std::is_same_v<T, bool>) return ColumnDataType::BOOL;
         else if constexpr (std::is_same_v<T, int8_t>) return ColumnDataType::INT8;
         else if constexpr (std::is_same_v<T, int16_t>) return ColumnDataType::INT16;

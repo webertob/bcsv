@@ -37,13 +37,11 @@ namespace bcsv {
         const std::unordered_map<std::string, size_t>& getColumnIndex() const { return column_index_; }
         size_t getColumnIndex(const std::string& columnName) const;
         const std::string& getColumnName(size_t index) const;
-        const std::vector<std::string>& getColumnNames() const { return column_names_; };
+        void setColumnName(size_t index, const std::string& name);
         virtual ColumnDataType getColumnType(size_t index) const = 0;
-
         bool hasColumn(const std::string& columnName) const { return column_index_.find(columnName) != column_index_.end(); }
         bool isCompatibleWith(const LayoutInterface& other) const;
-        void setColumnName(size_t index, const std::string& name);
-        
+                
         /* Locking mechanism (need to ensure layout does not change during operations)*/
         virtual bool isLocked() const = 0;
         virtual void lock(void* owner) = 0;
@@ -73,13 +71,14 @@ namespace bcsv {
         ~Layout() = default;
 
         void clear();
-        ColumnDataType getColumnType(size_t index) const override;
-        const std::vector<ColumnDataType>& getColumnTypes() const { return column_types_; };
+        
         void insertColumn(const ColumnDefinition& column, size_t position = SIZE_MAX);
-        void setColumnDataType(size_t index, ColumnDataType type);
+        void removeColumn(size_t index);
+
+        ColumnDataType getColumnType(size_t index) const override;
+        void setColumnType(size_t index, ColumnDataType type);
         void setColumns(const std::vector<ColumnDefinition>& columns);
 
-        void removeColumn(size_t index);
         size_t getColumnOffset(size_t index) const;
         size_t getColumnLength(size_t index) const;
 
@@ -112,45 +111,49 @@ namespace bcsv {
     template<typename... ColumnTypes>
     class LayoutStatic : public LayoutInterface {
     public:
-        using DataTypes = std::tuple<ColumnTypes...>;
+        using column_types = std::tuple<ColumnTypes...>;
+
         template<size_t Index>
-        using DataType = std::tuple_element_t<Index, DataTypes>;
-        
+        using column_type = typename std::tuple_element_t<Index, std::tuple<ColumnTypes...>>;
+
         // Lengths of each column in [bytes] --> serialized data
-        constexpr static size_t column_lengths_[sizeof...(ColumnTypes)] = []{
-            size_t lengths[sizeof...(ColumnTypes)] = {};
+        static constexpr std::array<size_t, sizeof...(ColumnTypes)> getColumnLengths() {
+            std::array<size_t, sizeof...(ColumnTypes)> lengths{};
             size_t index = 0;
             ((lengths[index++] = binaryFieldLength<ColumnTypes>()), ...);
             return lengths;
-        }();
+        }
 
-        // Offset of each column in [bytes] --> serialized data
-        constexpr static size_t column_offsets_[sizeof...(ColumnTypes)] = []{
-            size_t offsets[sizeof...(ColumnTypes)] = {};
+        // Offsets of each column in [bytes] --> serialized data
+        static constexpr std::array<size_t, sizeof...(ColumnTypes)> getColumnOffsets() {
+            std::array<size_t, sizeof...(ColumnTypes)> offsets{};
             size_t offset = 0;
             size_t index = 0;
             ((offsets[index++] = offset, offset += binaryFieldLength<ColumnTypes>()), ...);
             return offsets;
-        }();
-
-        static constexpr size_t FIXED_SIZE = ((std::is_same_v<ColumnTypes, std::string> ? sizeof(uint64_t) : sizeof(ColumnTypes)) + ...);
-
-        LayoutStatic() = default;
-        explicit LayoutStatic(const std::vector<std::string>& columnNames);
-
-        constexpr size_t getColumnCount() const override { return sizeof...(ColumnTypes); }
-        ColumnDataType getColumnType(size_t index) const override {
-            return getTypeAtIndex<0>(index);
         }
 
+        static constexpr size_t FIXED_SIZE = (binaryFieldLength<ColumnTypes>() + ... + 0);
+        static constexpr auto column_lengths = getColumnLengths();
+        static constexpr auto column_offsets = getColumnOffsets();
+
+        LayoutStatic();
+        explicit LayoutStatic(const std::vector<std::string>& columnNames);
+
+        static constexpr size_t getColumnCount() const override { return sizeof...(ColumnTypes); }
+        ColumnDataType getColumnType(size_t index) const override { return getColumnType<0>(index);}
+
+        template<size_t Index>
+        static constexpr ColumnDataType getColumnType() const { return toColumnDataType< column_type<Index> >(); }
+
         /* Locking mechanism (static version is always locked)*/
-        bool isLocked() const override { return true; }
+        constexpr bool isLocked() const override { return true; }
         void lock(void* owner) override { /* stub - static layouts cannot be modified */ }
         void unlock(void* owner) override { /* stub - static layouts cannot be modified */ }
 
     private:
         template<size_t Index = 0>
-        constexpr ColumnDataType getTypeAtIndex(size_t targetIndex) const;
+        constexpr ColumnDataType getColumnType(size_t index) const;
 
     public:
         // Factory functions that return shared pointers

@@ -61,20 +61,32 @@ namespace bcsv {
         return data_[index];
     }
 
-    template<typename T>
-    void Row::set(size_t index, const T& value) {
-        if constexpr (std::is_same_v<T, ValueType>) {
-            // Handle ValueType (variant) - extract actual type and call recursively
-            std::visit([this, index](auto&& actualValue) {
-                using ActualType = std::decay_t<decltype(actualValue)>;
-                this->set<ActualType>(index, actualValue);
-            }, value);
-            return;
+    void Row::set(size_t index, const auto& value) {
+        if (RANGE_CHECKING && index >= data_.size()) {
+            throw std::out_of_range("Index out of range");
         }
-        if (!std::holds_alternative<T>(data_[index])) {
-            throw std::runtime_error("Type mismatch with layout");
+
+        using ProvidedType = std::decay_t<decltype(value)>;
+
+        if constexpr (std::is_same_v<ProvidedType, ValueType>) {
+            // Handle ValueType (variant) - validate against layout
+            data_[index] = value;
+        } else {
+            // Smart assignment based on current variant state
+            std::visit([this, index, &value](auto&& currentValue) {
+                using CurrentType = std::decay_t<decltype(currentValue)>;
+                
+                if constexpr (std::is_same_v<ProvidedType, CurrentType>) {
+                    // Exact type match - direct assignment
+                    data_[index] = ValueType{value};
+                } else if constexpr (std::is_convertible_v<ProvidedType, CurrentType>) {
+                    // Safe conversion to existing type
+                    data_[index] = ValueType{static_cast<CurrentType>(value)};
+                } else {
+                    throw std::runtime_error("Cannot convert provided type to variant at index " + std::to_string(index));
+                }
+            }, data_[index]);
         }
-        data_[index] = value;
     }
 
     void Row::serializedSize(size_t& fixedSize, size_t& totalSize) const {
@@ -186,7 +198,7 @@ namespace bcsv {
             throw std::runtime_error("Buffer is null");
         }
 
-        if (getColumnDataType<T>() != layout_->getColumnType(index)) {
+        if (toColumnDataType<T>() != layout_->getColumnType(index)) {
             throw std::runtime_error("Type mismatch");
         }
 
@@ -215,23 +227,37 @@ namespace bcsv {
         }
     }
 
-    template<typename T>
-    void RowView::set(size_t index, const T& value) 
+    void RowView::set(size_t index, const auto& value) 
     {
-        if constexpr (std::is_same_v<T, ValueType>) {
+        //handle valuetype
+        if constexpr (std::is_same_v<decltype(value), ValueType>) {
             // Handle ValueType (variant) - need to visit and extract actual type
             std::visit([this, index](auto&& actualValue) {
-                using ActualType = std::decay_t<decltype(actualValue)>;
-                this->set<ActualType>(index, actualValue);
+                using Type = std::decay_t<decltype(actualValue)>;
+                this->setExplicit<Type>(index, actualValue);
             }, value);
             return; // Important: return after handling variant
-        }   
+        }
+
+        // derive type and call setExplicit
+        using Type = std::decay_t<decltype(value)>;
+        this->setExplicit<Type>(index, value);
+    }
+
+    template<typename T>
+    void RowView::setExplicit(size_t index, const T& value) 
+    {
+        // does not support ValueType
+        static_assert(!std::is_same_v<T, ValueType>, "setExplicit does not support ValueType");
+        if (RANGE_CHECKING && index >= layout_->getColumnCount()) {
+            throw std::out_of_range("Index out of range");
+        }
 
         if (buffer_ == nullptr) {
             throw std::runtime_error("Buffer is null");
         }
 
-        if (getColumnDataType<T>() != layout_->getColumnType(index)) {
+        if (toColumnDataType<T>() != layout_->getColumnType(index)) {
             throw std::runtime_error("Type mismatch with layout");
         }
 
@@ -314,34 +340,60 @@ namespace bcsv {
     }
 
     template<typename LayoutType>
-    template<size_t Index, typename T>
-    void RowStatic<LayoutType>::set(const T& value) {
-        if constexpr (std::is_same_v<T, ValueType>) {
-            // Handle ValueType (variant) - need to visit and extract actual type
-            std::visit([this, index](auto&& actualValue) {
-                using ActualType = std::decay_t<decltype(actualValue)>;
-                this->set<ActualType>(index, actualValue);
-            }, value);
-            return; // Important: return after handling variant
-        }
+    template<size_t Index>
+    void RowStatic<LayoutType>::set(const auto& value) {
         static_assert(Index < LayoutType::getColumnCount(), "Index out of bounds");
-        static_assert(std::is_same_v<T, DataType<Index>, "Type mismatch");
-        std::get<Index>(data_) = value;
+    
+        using ProvidedType = std::decay_t<decltype(value)>;
+        using ExpectedType = std::tuple_element_t<Index, typename LayoutType::column_types>;
+
+        if constexpr (std::is_same_v<ProvidedType, ValueType>) {
+            // Handle ValueType (variant) - extract actual type
+            std::visit([this](auto&& actualValue) {
+                using ActualType = std::decay_t<decltype(actualValue)>;
+                if constexpr (std::is_same_v<ActualType, ExpectedType>) {
+                    std::get<Index>(data_) = actualValue;
+                } else {
+                    throw std::runtime_error("ValueType contains wrong type for column " + std::to_string(Index));
+                }
+            }, value);
+        } else if constexpr (std::is_same_v<ProvidedType, ExpectedType>) {
+            // Direct assignment for matching types
+            std::get<Index>(data_) = value;
+        } else if constexpr (std::is_convertible_v<ProvidedType, ExpectedType>) {
+            // Safe conversion
+            std::get<Index>(data_) = static_cast<ExpectedType>(value);
+        } else {
+            static_assert(std::is_convertible_v<ProvidedType, ExpectedType>,
+                        "Cannot convert provided type to column type");
+        }
     }
 
     template<typename LayoutType>
-    template<typename T, size_t I>
-    T RowStatic<LayoutType>::get(size_t index) const {
+    template<size_t Index, typename T>
+    void RowStatic<LayoutType>::setExplicit(const T& value) {
+        static_assert(Index < LayoutType::getColumnCount(), "Index out of bounds");
+
+        using ExpectedType = std::tuple_element_t<Index, typename LayoutType::column_types>;
+
+        if constexpr (std::is_same_v<T, ExpectedType>) {
+            // Direct assignment for matching types
+            std::get<Index>(data_) = value;
+        } else if constexpr (std::is_convertible_v<T, ExpectedType>) {
+            // Safe conversion
+            std::get<Index>(data_) = static_cast<ExpectedType>(value);
+        } else {
+            static_assert(std::is_convertible_v<T, ExpectedType>,
+                        "Cannot convert provided type to column type");
+        }
+    }
+
+    template<typename LayoutType>
+    template<size_t I>
+    ValueType RowStatic<LayoutType>::get(size_t index) const {
         if constexpr (I < LayoutType::getColumnCount()) {
             if(index == I) {
-                using ColumnType = std::tuple_element_t<I, typename LayoutType::DataTypes>;
-                if constexpr (std::is_same_v<ColumnType, T>) {
-                    return std::get<I>(data_);
-                } else if constexpr (std::is_same_v<ValueType, T>) {
-                    return ValueType{std::get<I>(data_)};
-                } else {
-                    throw std::runtime_error("Type mismatch at index " + std::to_string(index));
-                }
+                return ValueType{std::get<I>(data_)}; 
             } else {
                 return this->get<T, I + 1>(index);
             }
@@ -351,30 +403,13 @@ namespace bcsv {
     }
 
     template<typename LayoutType>
-    template<typename T, size_t I>
-    void RowStatic<LayoutType>::set(size_t index, const T& value) {
-        // first unroll type
-        if constexpr (std::is_same_v<T, ValueType>) {
-            // Handle ValueType - extract actual type
-            std::visit([this](auto&& actualValue) { 
-                using ActualType = std::decay_t<decltype(actualValue)>;
-                static_assert(!std::is_same_v<ActualType, ValueType>, "Nested ValueType not allowed");
-                this->set<ActualType, 0>(index, actualValue); // Start recursion at index 0
-            }, value);
-            return;
-        }
-
-        // second unroll index
+    template<size_t I>
+    void RowStatic<LayoutType>::set(size_t index, const auto& value) {
         if constexpr (I < LayoutType::getColumnCount()) {
             if(index == I) {
-                using ColumnType = std::tuple_element_t<I, typename LayoutType::DataTypes>;
-                if constexpr (std::is_same_v<ColumnType, T>) {
-                    std::get<I>(data_) = value;
-                } else {
-                    throw std::runtime_error("Type mismatch at index " + std::to_string(index));
-                }
+                this->set<I>(value);
             } else {
-                this->set<T, I + 1>(index, value);
+                this->set<I + 1>(index, value);
             }
         } else {
             throw std::out_of_range("Index out of range");
@@ -384,12 +419,12 @@ namespace bcsv {
     template<typename LayoutType>
     void RowStatic<LayoutType>::serializedSize(size_t& fixedSize, size_t& totalSize) const {
         // Use compile-time constant
-        fixedSize = FIXED_SIZE;
-        totalSize = FIXED_SIZE;
-        
+        fixedSize = LayoutType::FIXED_SIZE;
+        totalSize = LayoutType::FIXED_SIZE;
+
         // Calculate variable size for strings only
-        for (size_t i = 0; i < sizeof...(ColumnTypes); ++i) {
-            if constexpr (std::is_same_v<std::tuple_element_t<i, std::tuple<ColumnTypes...>>, std::string>) {
+        for (size_t i = 0; i < LayoutType::getColumnCount(); ++i) {
+            if constexpr (std::is_same_v<column_type<i>, std::string>) {
                 totalSize += std::min(std::get<i>(data_).size(), MAX_STRING_LENGTH);
             }
         }        
@@ -397,8 +432,8 @@ namespace bcsv {
         totalSize += (4 - (totalSize % 4)) % 4;
     }
 
-    template<typename... ColumnTypes>
-    void RowStatic<ColumnTypes...>::serializeTo(std::byte* dstBuffer, size_t dstBufferSize) const {
+    template<typename LayoutType>
+    void RowStatic<LayoutType>::serializeTo(std::byte* dstBuffer, size_t dstBufferSize) const {
         if (!dstBuffer || dstBufferSize == 0) {
             throw std::invalid_argument("Invalid destination buffer");
         }
@@ -413,11 +448,11 @@ namespace bcsv {
         size_t strOffset = fixedSize;
 
         // Serialize each tuple element
-        for (size_t i = 0; i < sizeof...(ColumnTypes); ++i) {
+        for (size_t i = 0; i < LayoutType::getColumnCount(); ++i) {
             constexpr size_t len = fieldLengths_[i];
             constexpr size_t off = fieldOffsets_[i];
             std::byte* ptr = dstBuffer + off;
-            if constexpr (std::is_same_v<ColumnType<i>, std::string>) {
+            if constexpr (std::is_same_v<column_type<i>, std::string>) {
                 size_t strLength = std::min(std::get<i>(data_).size(), MAX_STRING_LENGTH);
                 size_t strAddress = StringAddress::pack(strOffset, strLength);
                 std::memcpy(ptr, &strAddress, len);     //write string address field
@@ -437,16 +472,16 @@ namespace bcsv {
         std::memset(dstBuffer + strOffset, 0, totalSize - strOffset);
     }
 
-    template<typename... ColumnTypes>
-    void RowStatic<ColumnTypes...>::deserializeFrom(const std::byte* srcBuffer, size_t srcBufferSize)
+    template<typename LayoutType>
+    void RowStatic<LayoutType>::deserializeFrom(const std::byte* srcBuffer, size_t srcBufferSize)
     {
         if (!srcBuffer || srcBufferSize == 0) {
             throw std::invalid_argument("Invalid source buffer");
         }
 
-        for (size_t i = 0; i < sizeof...(ColumnTypes); ++i) {
-            constexpr size_t len = fieldLengths_[i];
-            constexpr size_t off = fieldOffsets_[i];
+        for (size_t i = 0; i < LayoutType::getColumnCount(); ++i) {
+            constexpr size_t len = LayoutType::column_lengths[i];
+            constexpr size_t off = LayoutType::column_offsets[i];
             const std::byte* ptr = srcBuffer + off;
             if(off+len > srcBufferSize) {
                 throw std::runtime_error("Buffer overflow reading element at index " + std::to_string(i) +
@@ -454,7 +489,7 @@ namespace bcsv {
                                            ", bufferSize=" + std::to_string(srcBufferSize) + ")");
             }
 
-            if constexpr (std::is_same_v<ColumnType<i>, std::string>) {
+            if constexpr (std::is_same_v<column_type<i>, std::string>) {
                 size_t strAddress, strOffset, strLength;
                 std::memcpy(&strAddress, ptr, len);
                 StringAddress::unpack(strAddress, strOffset, strLength);
@@ -473,24 +508,26 @@ namespace bcsv {
         }
     }
 
+
+
     // ========================================================================
     // RowStaticView Implementation
     // ========================================================================
 
-    template<typename... ColumnTypes>
+    template<typename LayoutType>
     template<size_t Index>
-    auto RowViewStatic<ColumnTypes...>::get() const 
+    auto RowViewStatic<LayoutType>::get() const 
     {
-        static_assert(Index < sizeof...(ColumnTypes), "Index out of bounds");
+        static_assert(Index < LayoutType::getColumnCount(), "Index out of bounds");
 
         //validate buffer length
-        if (fieldOffsets_[Index] + fieldLengths_[Index] > bufferSize_) {
+        if (LayoutType::column_offsets[Index] + LayoutType::column_lengths[Index] > bufferSize_) {
             throw std::runtime_error("Buffer overflow");
         }
 
-        if constexpr (std::is_same_v<ColumnType<Index>, std::string>) {
+        if constexpr (std::is_same_v<column_type<Index>, std::string>) {
             // Handle string case
-            uint64_t packedAddr = *reinterpret_cast<const uint64_t*>(buffer_ + fieldOffsets_[Index]);
+            uint64_t packedAddr = *reinterpret_cast<const uint64_t*>(buffer_ + LayoutType::column_offsets[Index]);
             size_t strOff, strLen;
             StringAddress::unpack(packedAddr, strOff, strLen);
 
@@ -500,23 +537,35 @@ namespace bcsv {
             return std::string_view(buffer_ + strOff, strLen);
         } else {
             // Handle primitive case
-            return *reinterpret_cast<const ColumnType<Index>()*>(buffer_ + fieldOffsets_[Index]);
+            return *reinterpret_cast<const column_type<Index>()*>(buffer_ + LayoutType::column_offsets[Index]);
         }
     }
 
-    template<typename... ColumnTypes>
+    template<typename LayoutType>
     template<size_t Index>
-    void RowViewStatic<ColumnTypes...>::set(const ColumnType<Index>& value) {
-        static_assert(Index < sizeof...(ColumnTypes), "Index out of bounds");
+    void RowViewStatic<LayoutType>::set(const auto& value) {
+        // handle ValueType
+        if constexpr (std::is_same_v<decltype(value), ValueType>) {
+            this->setExplicit<Index, column_type<Index>>(std::get<column_type<Index>>(value));
+        } else {
+            this->setExplicit<Index, column_type<Index>>(value);
+        }
+    }
+
+    template<typename LayoutType>
+    template<size_t Index, typename T>
+    void RowViewStatic<LayoutType>::setExplicit(const T& value) {
+        static_assert(Index < LayoutType::getColumnCount(), "Index out of bounds");
+        static_assert(!std::is_same_v<T, column_type<Index>>, "setExplicit type mismatch");
 
         //validate buffer length
-        if (fieldOffsets_[Index] + fieldLengths_[Index] > bufferSize_) {
+        if (LayoutType::column_offsets[Index] + LayoutType::column_lengths[Index] > bufferSize_) {
             throw std::runtime_error("Buffer overflow");
         }
 
-        if constexpr (std::is_same_v<ColumnType<Index>, std::string>) {
+        if constexpr (std::is_same_v<column_type<Index>, std::string>) {
             // Handle string case
-            uint64_t packedAddr = *reinterpret_cast<const uint64_t*>(buffer_ + fieldOffsets_[Index]);
+            uint64_t packedAddr = *reinterpret_cast<const uint64_t*>(buffer_ + LayoutType::column_offsets[Index]);
             size_t strOff, strLen;
             StringAddress::unpack(packedAddr, strOff, strLen);
 
@@ -525,7 +574,7 @@ namespace bcsv {
             }
 
             // Copy string data into buffer (truncate to strLen)
-            std::memcpy(buffer_ + strOff, value.data(), strLen);
+            std::memcpy(buffer_ + strOff, value.data(), std::min(value.size(), strLen));
             if(value.size() < strLen) {
                 // Pad with null bytes if shorter
                 std::memset(buffer_ + strOff + value.size(), 0, strLen - value.size());
@@ -533,12 +582,44 @@ namespace bcsv {
         
         } else {
             // Handle primitive case
-            *reinterpret_cast<ColumnType<Index>()*>(buffer_ + fieldOffsets_[Index]) = value;
+            *reinterpret_cast<column_type<Index>*>(buffer_ + LayoutType::column_offsets[Index]) = value;
         }
     }
 
-    template<typename... ColumnTypes>
-    bool RowViewStatic<ColumnTypes...>::validate() const 
+
+    template<typename LayoutType>
+    template<size_t I>
+    ValueType RowViewStatic<LayoutType>::get(size_t index) const {
+        if constexpr (I < LayoutType::getColumnCount()) {
+            if(index == I) {
+                return ValueType{this->get<I>()}; 
+            } else {
+                return this->get<I + 1>(index);
+            }
+        } else {
+            throw std::out_of_range("Index out of range");
+        }
+    }
+
+    template<typename LayoutType>
+    template<size_t I>
+    void RowViewStatic<LayoutType>::set(size_t index, const auto& value)
+    {
+        if constexpr (I < LayoutType::getColumnCount()) {
+            if(index == I) {
+                this->set<I>(value);
+            } else {
+                this->set<I + 1>(index, value);
+            }
+        } else {
+            throw std::out_of_range("Index out of range");
+        }
+
+    }
+
+
+    template<typename LayoutType>
+    bool RowViewStatic<LayoutType>::validate() const 
     {
         if(buffer_ == nullptr) {
             return false;

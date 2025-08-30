@@ -64,8 +64,6 @@ namespace bcsv {
 
 
 
-
-
     // ========================================================================
     // Layout Implementation
     // ========================================================================
@@ -165,7 +163,7 @@ namespace bcsv {
         return column_types_[index];
     }
 
-    inline void Layout::setColumnDataType(size_t index, ColumnDataType type) {
+    inline void Layout::setColumnType(size_t index, ColumnDataType type) {
         if (isLocked()) {
             throw std::runtime_error("Cannot modify locked layout");
         }
@@ -206,15 +204,24 @@ namespace bcsv {
     }
 
 
+    // ========================================================================
+    // LayoutStatic Implementation
+    // ========================================================================
 
-
-
-
-
+    template<typename... ColumnTypes>
+    inline LayoutStatic<ColumnTypes...>::LayoutStatic() 
+    {
+        std::vector<std::string> names(sizeof...(ColumnTypes));
+        // Default column names as "Column0", "Column1", etc.
+        for (size_t i = 0; i < sizeof...(ColumnTypes); ++i) {
+            names[i] = "Column" + std::to_string(i);
+        }
+        column_names_ = std::move(names);
+        updateIndexMap();
+    }
 
     template<typename... ColumnTypes>
     inline LayoutStatic<ColumnTypes...>::LayoutStatic(const std::vector<std::string>& columnNames) 
-            : column_types_(std::make_tuple(ColumnTypes{}...))
     {
         if (columnNames.size() != sizeof...(ColumnTypes)) {
             throw std::invalid_argument("Number of column names must match number of column types");
@@ -223,24 +230,15 @@ namespace bcsv {
         updateIndexMap();
     }
 
-    template<typename... ColumnTypes>
-    inline ColumnDataType LayoutStatic<ColumnTypes...>::getColumnType(size_t index) const {
-        if (index >= sizeof...(ColumnTypes)) {
-            throw std::out_of_range("Column index out of range");
-        }
-        return getTypeAtIndex<0>(index);
-    }
-
     // Recursive helper to get type at runtime index
     template<typename... ColumnTypes>
     template<size_t Index>
-    constexpr ColumnDataType LayoutStatic<ColumnTypes...>::getTypeAtIndex(size_t targetIndex) const {
+    constexpr ColumnDataType LayoutStatic<ColumnTypes...>::getColumnType(size_t index) const {
         if constexpr (Index < sizeof...(ColumnTypes)) {
-            if (Index == targetIndex) {
-                using TypeAtIndex = std::tuple_element_t<Index, std::tuple<ColumnTypes...>>;
-                return getColumnDataType<TypeAtIndex>();
+            if (Index == index) {
+                return toColumnDataType< column_type<Index> >;
             } else {
-                return getTypeAtIndex<Index + 1>(targetIndex);
+                return getColumnType<Index + 1>(index);
             }
         } else {
             return ColumnDataType::STRING; // Should never reach here with valid index

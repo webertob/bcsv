@@ -239,18 +239,20 @@ namespace bcsv {
  * =============================================================================
  */
 
+    /* StringAddress , helps with string column addressing, packing and unpacking
+     * Currently we are supporting strings with a maximum length of 16bits (65535 chars)
+    */
     struct StringAddress {
-        static constexpr uint64_t OFFSET_MASK = 0xFFFFFFFFFFFFULL;  // 48 bits
-        static constexpr uint64_t LENGTH_MASK = 0xFFFFULL;          // 16 bits
+        static constexpr uint64_t OFFSET_MASK = 0xFFFFFFFFFFFFULL;  // 48 bits (position of first char relative to row start)
+        static constexpr uint64_t LENGTH_MASK = 0xFFFFULL;          // 16 bits (length of string in chars)
         static constexpr int OFFSET_SHIFT = 16;
         
         static uint64_t pack(size_t offset, size_t length);
         static void unpack(uint64_t packed, size_t& offset, size_t& length);
     };
 
-    /**/
 
-    /* Dynamic row with runtime layout */
+    /* Dynamic row with flexible layout (runtime-defined)*/
     class Row {
         std::vector<ValueType> data_;
         std::shared_ptr<Layout> layout_;
@@ -269,8 +271,7 @@ namespace bcsv {
         T getAs(size_t index) const;
         const ValueType& get(size_t index) const;
 
-        template<typename T = ValueType>
-        void set(size_t index, const T& value);
+        void set(size_t index, const auto& value);
 
         // serialization/deserialization
         void serializedSize(size_t& fixedSize, size_t& totalSize) const;
@@ -289,6 +290,9 @@ namespace bcsv {
         size_t bufferSize_;
         std::shared_ptr<Layout> layout_;
 
+        template<typename T>
+        void setExplicit(size_t index, const T& value);
+
     public:
         RowView() = delete;
         RowView(std::shared_ptr<Layout> layout, std::byte* buffer = nullptr, size_t bufferSize = 0)
@@ -302,8 +306,7 @@ namespace bcsv {
         template<typename T = ValueType>
         T get(size_t index) const;
 
-        template<typename T = ValueType>
-        void set(size_t index, const T& value);
+        void set(size_t index, const auto& value);
 
         const std::byte* getBuffer() const { return buffer_; }
         size_t getBufferSize() const { return bufferSize_; }
@@ -316,45 +319,49 @@ namespace bcsv {
 
 
 
-
+    /* Dynamic row with static layout (compile-time defined) */
     template<typename LayoutType>
-    class RowStatic : public RowInterface {
+    class RowStatic {
     public:
-        using DataTypes = typename LayoutType::DataTypes;
+        using column_types = typename LayoutType::column_types;
         template<size_t Index>
-        using DataType = std::tuple_element_t<Index, DataTypes>;
+        using column_type = std::tuple_element_t<Index, column_types>;
 
     private:
-        LayoutType::DataTypes   data_;
-        std::shared_ptr<Layout> layout_;
+        column_types            data_;
+        std::shared_ptr<LayoutType> layout_;
         
     public:
         
         // Constructors
         RowStatic() = delete;
-        RowStatic(const LayoutType& layout) : layout_(std::make_shared<LayoutType>(layout)), data_(defaultConstruct<DataTypes>()...) {}
+        RowStatic(std::shared_ptr<LayoutType> layout) : layout_(layout), data_() {}
         RowStatic(const RowStatic& other) : layout_(other.layout_), data_(other.data_) {}
         ~RowStatic() = default;
        
         // Layout access
-        const Layout& getLayout() const { return *layout_; }
-        std::shared_ptr<const Layout> getLayoutPtr() const { return layout_; }
+        const LayoutType& getLayout() const { return *layout_; }
+        std::shared_ptr<const LayoutType> getLayoutPtr() const { return layout_; }
 
-        // Template access methods
+        // get/set using compile time fixed indices
         template<size_t Index>
         auto& get();
 
         template<size_t Index>
         const auto& get() const;
 
+        template<size_t Index>
+        void set(const auto& value);
+
         template<size_t Index, typename T>
-        void set(const T& value);
+        void setExplicit(const T& value);
 
-        template<typename T = ValueType, size_t I = 0>
-        T get(size_t index) const;
+        // get/set using run time variable indices
+        template<size_t I = 0>
+        ValueType get(size_t index) const;
 
-        template<typename T = ValueType, size_t I = 0>
-        void set(size_t index, const T& value);
+        template<size_t I = 0>
+        void set(size_t index, const auto& value);
 
         // serialization/deserialization 
         void serializedSize(size_t& fixedSize, size_t& totalSize) const;
@@ -363,47 +370,52 @@ namespace bcsv {
     };
 
 
+    /* View into a buffer. Supports RowStatic interface */
+    template<typename LayoutType>
+    class RowViewStatic {
+    public:
+        using column_types = typename LayoutType::column_types;
+        template<size_t Index>
+        using column_type = std::tuple_element_t<Index, column_types>;
 
-
-
-
-
-    template<typename... ColumnTypes>
-    class RowViewStatic : public RowView {
-
-        std::byte* buffer_;
-        size_t bufferSize_;
-        constexpr static size_t fieldLengths_[sizeof...(ColumnTypes)] = []{
-            size_t lengths[sizeof...(ColumnTypes)] = {};
-            size_t index = 0;
-            ((lengths[index++] = binaryFieldLength<ColumnTypes>()), ...);
-            return lengths;
-        }();
-        constexpr static size_t fieldOffsets_[sizeof...(ColumnTypes)] = []{
-            size_t offsets[sizeof...(ColumnTypes)] = {};
-            size_t offset = 0;
-            size_t index = 0;
-            ((offsets[index++] = offset, offset += binaryFieldLength<ColumnTypes>()), ...);
-            return offsets;
-        }();
+    private:
+        std::byte*                  buffer_;
+        size_t                      bufferSize_;
+        std::shared_ptr<LayoutType> layout_;
 
     public:
-        template<size_t Index>
-        using ColumnType = std::tuple_element_t<Index, std::tuple<ColumnTypes...>>;
 
-        RowViewStatic(): buffer_(nullptr), bufferSize_(0) {}
-        explicit RowViewStatic(char* buffer, size_t bufferSize) : buffer_(buffer), bufferSize_(bufferSize) {}
+        RowViewStatic() = delete;
+        RowViewStatic(std::shared_ptr<LayoutType> layout, std::byte* buffer = nullptr, size_t bufferSize = 0)
+            : layout_(layout), buffer_(buffer), bufferSize_(bufferSize) {}
         ~RowViewStatic() = default;
 
+        // Layout access
+        const LayoutType& getLayout() const { return *layout_; }
+        std::shared_ptr<const LayoutType> getLayoutPtr() const { return layout_; }
+
+        // Buffer access
         const std::byte* getBuffer() const { return buffer_; }
         size_t getBufferSize() const { return bufferSize_; }
         void setBuffer(std::byte* buffer, size_t bufferSize) { buffer_ = buffer; bufferSize_ = bufferSize; }
 
+        // get/set using compile time fixed indices
         template<size_t Index>
         auto get() const;
-        template<size_t Index> 
-        void set(const ColumnType<Index>& value);
-        constexpr size_t size() const { return sizeof...(ColumnTypes); }
+
+        template<size_t Index>
+        void set(const auto& value);
+
+        template<size_t Index, typename T>
+        void setExplicit(const T& value);
+
+        // get/set using run time variable indices
+        template<size_t I = 0>
+        ValueType get(size_t index) const;
+
+        template<size_t I = 0>
+        void set(size_t index, const auto& value);
+
         bool validate() const;
     };
 

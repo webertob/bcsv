@@ -168,14 +168,14 @@ namespace bcsv {
             }
 
             // Read column data types
-            std::vector<ColumnDataType> columnDataTypes(header_.columnCount);
+            std::vector<ColumnDefinition> columnDefinitions(header_.columnCount);
             for (uint16_t i = 0; i < header_.columnCount; ++i) {
                 uint16_t typeValue;
                 stream.read(reinterpret_cast<char*>(&typeValue), sizeof(typeValue));
                 if (!stream.good()) {
                     throw std::runtime_error("Failed to read column data type at index " + std::to_string(i));
                 }
-                columnDataTypes[i] = static_cast<ColumnDataType>(typeValue);
+                columnDefinitions[i].type = static_cast<ColumnDataType>(typeValue);
             }
 
             // Read column name lengths
@@ -195,7 +195,6 @@ namespace bcsv {
             }
 
             // Read column names
-            std::vector<std::string> columnNames(header_.columnCount);
             for (uint16_t i = 0; i < header_.columnCount; ++i) {
                 if (nameLengths[i] > 0) {
                     std::vector<char> nameBuffer(nameLengths[i]);
@@ -203,14 +202,14 @@ namespace bcsv {
                     if (!stream.good()) {
                         throw std::runtime_error("Failed to read column name at index " + std::to_string(i));
                     }
-                    columnNames[i] = std::string(nameBuffer.begin(), nameBuffer.end());
+                    columnDefinitions[i].name = std::string(nameBuffer.begin(), nameBuffer.end());
                 } else {
-                    columnNames[i] = "";
+                    columnDefinitions[i].name = "";
                 }
             }
 
             // Populate the layout with the deserialized data
-            columnLayout.setColumns(columnNames, columnDataTypes);
+            columnLayout.setColumns(columnDefinitions);
             return true;
             
         } catch (const std::exception& e) {
