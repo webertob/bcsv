@@ -14,57 +14,6 @@
 namespace bcsv {
 
     // ========================================================================
-    // LayoutInterface Implementation
-    // ========================================================================
-
-    inline void LayoutInterface::updateIndexMap() {
-        column_index_.clear();
-        for (size_t i = 0; i < column_names_.size(); ++i) {
-            column_index_[column_names_[i]] = i;
-        }
-    }
-
-    inline size_t LayoutInterface::getColumnIndex(const std::string& columnName) const {
-        auto it = column_index_.find(columnName);
-        if (it != column_index_.end()) {
-            return it->second;
-        }
-        return SIZE_MAX; // Return maximum value to indicate not found
-    }
-    
-    inline const std::string& LayoutInterface::getColumnName(size_t index) const {
-        return column_names_[index];
-    }
-
-    /**
-     * @brief Check if this layout is compatible with another for data transfer
-     * @param other The other layout to check compatibility with
-     * @return true if data can be safely transferred between layouts
-     */
-    inline bool LayoutInterface::isCompatibleWith(const LayoutInterface& other) const {
-        // Quick check: different column counts means not equivalent
-        if (getColumnCount() != other.getColumnCount()) {
-            return false;
-        }
-            
-        const size_t columnCount = getColumnCount();
-        for (size_t i = 0; i < columnCount; ++i) {
-            if (getColumnType(i) != other.getColumnType(i)) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    inline void LayoutInterface::setColumnName(size_t index, const std::string& name) {
-        column_index_.erase(column_names_[index]); //remove old name from index
-        column_names_[index] = name; //update name
-        column_index_[name] = index; //add new name to index
-    }
-
-
-
-    // ========================================================================
     // Layout Implementation
     // ========================================================================
 
@@ -79,6 +28,17 @@ namespace bcsv {
     // Implementation included inline for header-only library
     inline Layout::Layout(const std::vector<ColumnDefinition>& columns) {
         setColumns(columns);
+    }
+
+    inline size_t Layout::getColumnIndex(const std::string& columnName) const {
+        auto it = column_index_.find(columnName);
+        if (it != column_index_.end()) {
+            return it->second;
+        } else if constexpr (RANGE_CHECKING) {
+            throw std::out_of_range("Column name not found: " + columnName);
+
+        }
+        return SIZE_MAX; // Return maximum value to indicate not found
     }
 
     inline void Layout::insertColumn(const ColumnDefinition& column, size_t position) {
@@ -114,7 +74,7 @@ namespace bcsv {
                 column_offsets_[i] += column_lengths_[position];
             }
         }
-        updateIndexMap();
+        updateIndex();
     }
     
     inline void Layout::clear() {
@@ -133,41 +93,60 @@ namespace bcsv {
             throw std::runtime_error("Cannot modify locked layout");
         }
         clear();
-        column_names_.reserve(columns.size());
-        column_types_.reserve(columns.size());
-        column_lengths_.reserve(columns.size());
-        column_offsets_.reserve(columns.size());
-        for (const auto& column : columns) {
-            insertColumn(column);
+        column_names_.resize(columns.size());
+        column_types_.resize(columns.size());
+        column_lengths_.resize(columns.size());
+        column_offsets_.resize(columns.size());
+
+        for(size_t i = 0; i < columns.size(); ++i) {
+            if(columns[i].name.empty()) {
+                throw std::invalid_argument("Column name cannot be empty");
+            }
+            // Check for duplicate names using index
+            if(column_index_.find(columns[i].name) != column_index_.end()) {
+                throw std::invalid_argument("Duplicate column name: " + columns[i].name);
+            }
+            column_names_[i] = columns[i].name;
+            column_types_[i] = columns[i].type;
+            column_index_[columns[i].name] = i;
+            column_lengths_[i] = binaryFieldLength(columns[i].type);
+            column_offsets_[i] = (i == 0) ? 0 : column_offsets_[i - 1] + column_lengths_[i - 1];
         }
+
     }
 
-    inline size_t Layout::getColumnOffset(size_t index) const {
-        if (RANGE_CHECKING && index >= column_offsets_.size()) {
-            throw std::out_of_range("Column index out of range");
+    inline void Layout::setColumnName(size_t index, const std::string& name) {
+        if (isLocked()) {
+            throw std::runtime_error("Cannot modify locked layout");
         }
-        return column_offsets_[index];
+
+        //no empty names
+        if (name.empty()) {
+            throw std::invalid_argument("Column name cannot be empty");
+        }
+
+        // Check for duplicate names
+        if (column_index_.find(name) != column_index_.end() && column_names_[index] != name) {
+            throw std::invalid_argument("Duplicate column name: " + name);
+        }
+
+        column_index_.erase(column_names_[index]); //remove old name from index
+        column_names_[index] = name; //update name
+        column_index_[name] = index; //add new name to index
     }
 
-    inline size_t Layout::getColumnLength(size_t index) const {
-        if (RANGE_CHECKING && index >= column_lengths_.size()) {
-            throw std::out_of_range("Column index out of range");
-        }
-        return column_lengths_[index];
-    }
-
-    inline ColumnDataType Layout::getColumnType(size_t index) const {
-        if (RANGE_CHECKING && index >= column_types_.size()) {
-            throw std::out_of_range("Column index out of range");
-        }
-        return column_types_[index];
-    }
 
     inline void Layout::setColumnType(size_t index, ColumnDataType type) {
         if (isLocked()) {
             throw std::runtime_error("Cannot modify locked layout");
         }
         column_types_[index] = type;
+
+        //need to update lengths and offsets
+        column_lengths_[index] = binaryFieldLength(type);
+        for (size_t i = index + 1; i < column_offsets_.size(); ++i) {
+            column_offsets_[i] = column_offsets_[i - 1] + column_lengths_[i - 1];
+        }
     }
     
     inline void Layout::removeColumn(size_t index) {
@@ -177,32 +156,76 @@ namespace bcsv {
         if (index >= column_names_.size()) {
             throw std::out_of_range("Column index out of range");
         }
+        size_t removedLength = column_lengths_[index];
+
         // Remove from index map
         column_index_.erase(column_names_[index]);
         column_names_.erase(column_names_.begin() + index);
         column_types_.erase(column_types_.begin() + index);
         column_offsets_.erase(column_offsets_.begin() + index);
-        // Update all offsets past the removed column
-        for (size_t i = index; i < column_offsets_.size(); ++i) {
-            column_offsets_[i] -= column_lengths_[index];
-        }
         column_lengths_.erase(column_lengths_.begin() + index);
-        // Update index map since indices have shifted
-        updateIndexMap();
+
+        // update subsequent offsets
+        for (size_t i = index + 1; i < column_offsets_.size(); ++i) {
+            column_offsets_[i] -= removedLength;
+        }
+        updateIndex();
     }
 
-    inline Layout& Layout::operator=(const Layout& other) {
-        if (this != &other) {
-            column_types_ = other.column_types_;
-            column_names_ = other.column_names_;
-            column_index_ = other.column_index_;
-            column_lengths_ = other.column_lengths_;
-            column_offsets_ = other.column_offsets_;
-            //the assignment is unlocked!
+    /**
+     * @brief Check if this layout is compatible with another for data transfer
+     * @param other The other layout to check compatibility with
+     * @return true if data can be safely transferred between layouts
+     */
+    template<LayoutConcept OtherLayout>
+    inline bool Layout::isCompatibleWith(const OtherLayout& other) const {
+        // different column counts means not equivalent
+        if (getColumnCount() != other.getColumnCount()) {
+            return false;
         }
+
+        // different column types means not equivalent
+        const size_t columnCount = getColumnCount();
+        for (size_t i = 0; i < columnCount; ++i) {
+            if (getColumnType(i) != other.getColumnType(i)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    template<LayoutConcept OtherLayout>
+    inline Layout& Layout::operator=(const OtherLayout& other) {
+        if (isLocked()) {
+            throw std::runtime_error("Cannot modify locked layout");
+        }
+        clear();
+        size_t size = other.getColumnCount();
+        column_names_.resize(size);
+        column_types_.resize(size);
+        column_lengths_.resize(size);
+        column_offsets_.resize(size);
+
+        for (size_t i = 0; i < size; ++i) {
+            column_types_[i] = other.getColumnType(i);
+            column_names_[i] = other.getColumnName(i);
+            column_lengths_[i] = other.getColumnLength(i);
+            column_index_[column_names_[i]] = i;
+        }
+
+        for (size_t i = 0; i < size; ++i) {
+            column_offsets_[i] = (i == 0) ? 0 : column_offsets_[i - 1] + column_lengths_[i - 1];
+        }
+        
         return *this;
     }
 
+    inline void Layout::updateIndex() {
+        column_index_.clear();
+        for (size_t i = 0; i < column_names_.size(); ++i) {
+            column_index_[column_names_[i]] = i;
+        }
+    }
 
     // ========================================================================
     // LayoutStatic Implementation
@@ -211,13 +234,11 @@ namespace bcsv {
     template<typename... ColumnTypes>
     inline LayoutStatic<ColumnTypes...>::LayoutStatic() 
     {
-        std::vector<std::string> names(sizeof...(ColumnTypes));
         // Default column names as "Column0", "Column1", etc.
         for (size_t i = 0; i < sizeof...(ColumnTypes); ++i) {
-            names[i] = "Column" + std::to_string(i);
+            column_names_[i] = "Column" + std::to_string(i);
         }
-        column_names_ = std::move(names);
-        updateIndexMap();
+        updateIndex();
     }
 
     template<typename... ColumnTypes>
@@ -226,22 +247,68 @@ namespace bcsv {
         if (columnNames.size() != sizeof...(ColumnTypes)) {
             throw std::invalid_argument("Number of column names must match number of column types");
         }
-        column_names_ = columnNames;
-        updateIndexMap();
+        for (size_t i = 0; i < columnNames_.size(); ++i) {
+            column_names_[i] = columnNames[i];
+        }
+        updateIndex();
     }
 
     // Recursive helper to get type at runtime index
     template<typename... ColumnTypes>
     template<size_t Index>
-    constexpr ColumnDataType LayoutStatic<ColumnTypes...>::getColumnType(size_t index) const {
+    inline ColumnDataType LayoutStatic<ColumnTypes...>::getColumnTypeT(size_t index) const {
         if constexpr (Index < sizeof...(ColumnTypes)) {
             if (Index == index) {
                 return toColumnDataType< column_type<Index> >;
             } else {
-                return getColumnType<Index + 1>(index);
+                return this->getColumnTypeT<Index + 1>(index);
             }
         } else {
             return ColumnDataType::STRING; // Should never reach here with valid index
+        }
+    }
+
+    template<typename... ColumnTypes>
+    template<LayoutConcept OtherLayout>
+    inline bool LayoutStatic<ColumnTypes...>::isCompatibleWith(const OtherLayout& other) const {
+        // Check if the number of columns is the same
+        if (sizeof...(ColumnTypes) != other.getColumnCount()) {
+            return false;
+        }
+
+        // Check if the column types are the same
+        for (size_t i = 0; i < sizeof...(ColumnTypes); ++i) {
+            if (getColumnType(i) != other.getColumnType(i)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    template<typename... ColumnTypes>
+    template<LayoutConcept OtherLayout>
+    inline LayoutStatic<ColumnTypes...>& LayoutStatic<ColumnTypes...>::operator=(const OtherLayout& other) {
+        if (!this->isCompatibleWith(other)) {
+            throw std::runtime_error("Incompatible layout");
+        }
+        if (isLocked()) {
+            throw std::runtime_error("Cannot modify locked layout");
+        }
+        if (this != &other) {
+            for (size_t i = 0; i < column_names_.size(); ++i) {
+                column_names_[i] = other.getColumnName(i);
+            }
+            updateIndex();
+        }
+        return *this;
+    }
+
+    template<typename... ColumnTypes>
+    void LayoutStatic<ColumnTypes...>::updateIndex() {
+        column_index_.clear();
+        for (size_t i = 0; i < column_names_.size(); ++i) {
+            column_index_[column_names_[i]] = i;
         }
     }
 

@@ -10,7 +10,7 @@
 #include <stdexcept>
 
 #include "definitions.h"
-
+#include "row.h"
 namespace bcsv {
 
     struct ColumnDefinition {
@@ -20,35 +20,33 @@ namespace bcsv {
         ColumnDataType type;
     };
     
-     /**
-     * @brief Represents the column layout containing column names and types. This defines the common layout for BCSV files.
-     * It is also the common interface for Layout (run-time flexible layout definition) and LayoutStatic (compile-time fixed layout definition).
-     */
-    class LayoutInterface {
-    protected:
-        std::vector<std::string> column_names_;
-        std::unordered_map<std::string, size_t> column_index_;
+    // ========================================================================
+    // Layout Concept - Replaces LayoutInterface
+    // ========================================================================
+    template<typename T>
+    concept LayoutConcept = requires(T layout, const T& const_layout, size_t index, const std::string& name, void* owner) {
+        // Basic layout information
+        { const_layout.hasColumn(name) } -> std::convertible_to<bool>;
+        { const_layout.getColumnCount() } -> std::convertible_to<size_t>;
+        { const_layout.getColumnIndex(name) } -> std::convertible_to<size_t>;
+        { const_layout.getColumnLength(index) } -> std::convertible_to<size_t>;
+        { const_layout.getColumnName(index) } -> std::convertible_to<std::string>;
+        { const_layout.getColumnOffset(index) } -> std::convertible_to<size_t>;
+        { const_layout.getColumnType(index) } -> std::convertible_to<ColumnDataType>;
+        { const_layout.setColumnName(index, name) } -> std::same_as<void>;
 
-    public:
-        LayoutInterface() = default;
-        virtual ~LayoutInterface() = default;
-
-        virtual size_t getColumnCount() const { return column_names_.size(); }
-        const std::unordered_map<std::string, size_t>& getColumnIndex() const { return column_index_; }
-        size_t getColumnIndex(const std::string& columnName) const;
-        const std::string& getColumnName(size_t index) const;
-        void setColumnName(size_t index, const std::string& name);
-        virtual ColumnDataType getColumnType(size_t index) const = 0;
-        bool hasColumn(const std::string& columnName) const { return column_index_.find(columnName) != column_index_.end(); }
-        bool isCompatibleWith(const LayoutInterface& other) const;
-                
-        /* Locking mechanism (need to ensure layout does not change during operations)*/
-        virtual bool isLocked() const = 0;
-        virtual void lock(void* owner) = 0;
-        virtual void unlock(void* owner) = 0;
-
-    protected:
-        void updateIndexMap();
+        // Locking mechanism
+        { const_layout.isLocked() } -> std::convertible_to<bool>;
+        { layout.lock(owner) } -> std::same_as<void>;
+        { layout.unlock(owner) } -> std::same_as<void>;
+        
+        // Optional: Compatibility checking
+        requires requires(const T& other) {
+            { const_layout.isCompatibleWith(other) } -> std::convertible_to<bool>;
+        };
+        
+        // Type information (for static layouts)
+        typename T::RowType;  // Each layout must define its row type
     };
 
 
@@ -56,38 +54,50 @@ namespace bcsv {
      * @brief Represents the column layout containing column names and types. This defines the common layout for BCSV files.
      * This layout is flexible and can be modified at runtime.
      */
-    class Layout : public LayoutInterface {
+    class Layout {
+        std::vector<std::string> column_names_;
+        std::unordered_map<std::string, size_t> column_index_;
         std::vector<ColumnDataType> column_types_;
         std::vector<size_t> column_lengths_; // Lengths of each column in [bytes] --> serialized data
         std::vector<size_t> column_offsets_; // Offsets of each column in [bytes] --> serialized data
         std::set<void*> lock_owners_;        // ptrs to objects that have locked the layout, used to identify owners
+        void updateIndex();
 
     public:
-        typedef LayoutInterface Base;
+        typedef Row RowType;
 
         Layout() = default;
         Layout(const Layout& other);
         explicit Layout(const std::vector<ColumnDefinition>& columns);
         ~Layout() = default;
 
+        // Basic Layout information
+        bool hasColumn(const std::string& name) const { return column_index_.find(name) != column_index_.end(); }
+        size_t getColumnCount() const { return column_names_.size(); }
+        size_t getColumnIndex(const std::string& name) const;
+        size_t getColumnLength(size_t index) const { if constexpr (RANGE_CHECKING) {return column_lengths_.at(index);} else { return column_lengths_[index]; } }
+        const std::string& getColumnName(size_t index) const { if constexpr (RANGE_CHECKING) {return column_names_.at(index);} else { return column_names_[index]; } }
+        size_t getColumnOffset(size_t index) const { if constexpr (RANGE_CHECKING) {return column_offsets_.at(index);} else { return column_offsets_[index]; } }
+        ColumnDataType getColumnType(size_t index) const { if constexpr (RANGE_CHECKING) {return column_types_.at(index);} else { return column_types_[index]; } }
+        void setColumnName(size_t index, const std::string& name);
+
+        /* Locking mechanism (need to ensure layout does not change during operations)*/
+        bool isLocked() const { return !lock_owners_.empty(); }
+        void lock(void* owner) { lock_owners_.insert(owner); }
+        void unlock(void* owner) { lock_owners_.erase(owner); }
+
+        // Compatibility checking
+        template<LayoutConcept OtherLayout>
+        bool isCompatibleWith(const OtherLayout& other) const;
+
         void clear();
-        
         void insertColumn(const ColumnDefinition& column, size_t position = SIZE_MAX);
         void removeColumn(size_t index);
-
-        ColumnDataType getColumnType(size_t index) const override;
         void setColumnType(size_t index, ColumnDataType type);
         void setColumns(const std::vector<ColumnDefinition>& columns);
 
-        size_t getColumnOffset(size_t index) const;
-        size_t getColumnLength(size_t index) const;
-
-        /* Locking mechanism (need to ensure layout does not change during operations)*/
-        bool isLocked() const override { return !lock_owners_.empty(); }
-        void lock(void* owner) override { lock_owners_.insert(owner); }
-        void unlock(void* owner) override { lock_owners_.erase(owner); }
-
-        Layout& operator=(const Layout& other);
+        template<LayoutConcept OtherLayout>
+        Layout& operator=(const OtherLayout& other);
 
     public:
         // Factory functions that return shared pointers
@@ -109,10 +119,16 @@ namespace bcsv {
      * This layout is defined at compile-time to improve performance and reduce runtime overhead.
      */
     template<typename... ColumnTypes>
-    class LayoutStatic : public LayoutInterface {
-    public:
-        using column_types = std::tuple<ColumnTypes...>;
+    class LayoutStatic {
+        std::array<std::string, sizeof...(ColumnTypes)> column_names_;
+        std::unordered_map<std::string, size_t> column_index_;
+        std::set<void*> lock_owners_;                               // ptrs to objects that have locked the layout, used to identify owners
+        void updateIndex();
 
+    public:
+        typedef RowStatic<LayoutStatic<ColumnTypes...>> RowType;
+
+        using column_types = std::tuple<ColumnTypes...>;
         template<size_t Index>
         using column_type = typename std::tuple_element_t<Index, std::tuple<ColumnTypes...>>;
 
@@ -138,22 +154,36 @@ namespace bcsv {
         static constexpr auto column_offsets = getColumnOffsets();
 
         LayoutStatic();
-        explicit LayoutStatic(const std::vector<std::string>& columnNames);
+        LayoutStatic(const std::vector<std::string>& columnNames);
 
-        static constexpr size_t getColumnCount() const override { return sizeof...(ColumnTypes); }
-        ColumnDataType getColumnType(size_t index) const override { return getColumnType<0>(index);}
+        // Basic Layout information
+        bool hasColumn(const std::string& name) const { return column_index_.find(name) != column_index_.end(); }
+        static constexpr size_t getColumnCount() { return sizeof...(ColumnTypes); }
+        size_t getColumnIndex(const std::string& name) const;
+        static constexpr size_t getColumnLength(size_t index) { if constexpr (RANGE_CHECKING) {return column_lengths.at(index);} else { return column_lengths[index]; } }
+        const std::string& getColumnName(size_t index) const { if constexpr (RANGE_CHECKING) {return column_names_.at(index);} else { return column_names_[index]; } }
+        static constexpr size_t getColumnOffset(size_t index) { if constexpr (RANGE_CHECKING) {return column_offsets.at(index);} else { return column_offsets[index]; } }
+        ColumnDataType getColumnType(size_t index) const { return getColumnTypeT<0>(index); }
+        void setColumnName(size_t index, const std::string& name);
+
+        /* Locking mechanism (need to ensure layout does not change during operations)*/
+        bool isLocked() const { return !lock_owners_.empty(); }
+        void lock(void* owner) { lock_owners_.insert(owner); }
+        void unlock(void* owner) { lock_owners_.erase(owner); }
+
+
+        template<size_t Index = 0>
+        ColumnDataType getColumnTypeT(size_t index) const;
 
         template<size_t Index>
-        static constexpr ColumnDataType getColumnType() const { return toColumnDataType< column_type<Index> >(); }
+        static constexpr ColumnDataType getColumnType() { return toColumnDataType< column_type<Index> >(); }
 
-        /* Locking mechanism (static version is always locked)*/
-        constexpr bool isLocked() const override { return true; }
-        void lock(void* owner) override { /* stub - static layouts cannot be modified */ }
-        void unlock(void* owner) override { /* stub - static layouts cannot be modified */ }
+        // Compatibility checking
+        template<LayoutConcept OtherLayout>
+        bool isCompatibleWith(const OtherLayout& other) const;
 
-    private:
-        template<size_t Index = 0>
-        constexpr ColumnDataType getColumnType(size_t index) const;
+        template<LayoutConcept OtherLayout>
+        LayoutStatic& operator=(const OtherLayout& other);
 
     public:
         // Factory functions that return shared pointers
