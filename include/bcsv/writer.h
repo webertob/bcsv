@@ -31,8 +31,8 @@ namespace bcsv {
         std::filesystem::path filePath_;        // Always present
 
     public:
-        explicit Writer(std::shared_ptr<LayoutType> &layout);
-        explicit Writer(std::shared_ptr<LayoutType> &layout, const std::filesystem::path& filepath, bool overwrite = false);
+        Writer(std::shared_ptr<LayoutType> layout);
+        Writer(std::shared_ptr<LayoutType> layout, const std::filesystem::path& filepath, bool overwrite = false);
         ~Writer();
 
         void close();
@@ -42,6 +42,7 @@ namespace bcsv {
         bool open(const std::filesystem::path& filepath, bool overwrite = false);
 
         void writeRow(const LayoutType::Row& row);
+        void writeRow(const std::shared_ptr<LayoutType::Row>& row) { if(auto *ptr = row.get()) { writeRow(*ptr); } }
 
     private:
         void writeHeader();

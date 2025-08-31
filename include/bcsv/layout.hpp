@@ -145,14 +145,20 @@ namespace bcsv {
             throw std::runtime_error("Cannot modify locked layout");
         }
 
+        if(RANGE_CHECKING && index >= column_names_.size() ) {
+            throw std::out_of_range("Column index out of range");
+        }
+
         //no empty names
         if (name.empty()) {
-            throw std::invalid_argument("Column name cannot be empty");
+            std::cerr << "Column name cannot be empty" << std::endl;
+            return;
         }
 
         // Check for duplicate names
         if (column_index_.find(name) != column_index_.end() && column_names_[index] != name) {
-            throw std::invalid_argument("Duplicate column name: " + name);
+            std::cerr << "Duplicate column name: " << name << " skip" << std::endl;
+            return;
         }
 
         column_index_.erase(column_names_[index]); //remove old name from index
@@ -314,6 +320,43 @@ namespace bcsv {
             column_names_[i] = columnNames[i];
         }
         updateIndex();
+    }
+
+    template<typename... ColumnTypes>
+    inline size_t LayoutStatic<ColumnTypes...>::getColumnIndex(const std::string& columnName) const {
+        auto it = column_index_.find(columnName);
+        if (it != column_index_.end()) {
+            return it->second;
+        } else if constexpr (RANGE_CHECKING) {
+            throw std::out_of_range("Column name not found: " + columnName);
+        }
+        return SIZE_MAX; // Return maximum value to indicate not found
+    }
+
+    template<typename... ColumnTypes>
+    inline void LayoutStatic<ColumnTypes...>::setColumnName(size_t index, const std::string& name) {
+        if (isLocked()) {
+            throw std::runtime_error("Cannot modify locked layout");
+        }
+        if (RANGE_CHECKING && index >= sizeof...(ColumnTypes)) {
+            throw std::out_of_range("Column index out of range");
+        }
+
+        //no empty names
+        if (name.empty()) {
+            std::cerr << "Column name cannot be empty" << std::endl;
+            return;
+        }
+
+        // Check for duplicate names
+        if (column_index_.find(name) != column_index_.end() && column_names_[index] != name) {
+            std::cerr << "Duplicate column name: " << name << " skip" << std::endl;
+            return;
+        }
+
+        column_index_.erase(column_names_[index]); //remove old name from index
+        column_names_[index] = name; //update name
+        column_index_[name] = index; //add new name to index
     }
 
     // Recursive helper to get type at runtime index

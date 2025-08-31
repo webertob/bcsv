@@ -18,7 +18,7 @@
 namespace bcsv {
 
     template<LayoutConcept LayoutType>
-    Writer<LayoutType>::Writer(std::shared_ptr<LayoutType> &layout) : layout_(layout) {
+    Writer<LayoutType>::Writer(std::shared_ptr<LayoutType> layout) : layout_(std::move(layout)) {
         buffer_raw_.reserve(LZ4_BLOCK_SIZE_KB * 1024);
         buffer_zip_.reserve(LZ4_COMPRESSBOUND(LZ4_BLOCK_SIZE_KB * 1024));
 
@@ -29,8 +29,8 @@ namespace bcsv {
     }
 
     template<LayoutConcept LayoutType>
-    Writer<LayoutType>::Writer(std::shared_ptr<LayoutType> &layout, const std::filesystem::path& filepath, bool overwrite) 
-        : Writer(layout) {
+    Writer<LayoutType>::Writer(std::shared_ptr<LayoutType> layout, const std::filesystem::path& filepath, bool overwrite) 
+        : Writer(std::move(layout)) {
         open(filepath, overwrite);
     }
 

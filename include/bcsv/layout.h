@@ -33,7 +33,7 @@ namespace bcsv {
         { const_layout.getColumnName(index) } -> std::convertible_to<std::string>;
         { const_layout.getColumnOffset(index) } -> std::convertible_to<size_t>;
         { const_layout.getColumnType(index) } -> std::convertible_to<ColumnDataType>;
-        { const_layout.setColumnName(index, name) } -> std::same_as<void>;
+        { layout.setColumnName(index, name) } -> std::same_as<void>;
 
         // Locking mechanism
         { const_layout.isLocked() } -> std::convertible_to<bool>;
@@ -165,11 +165,11 @@ namespace bcsv {
 
         // Basic Layout information
         bool hasColumn(const std::string& name) const { return column_index_.find(name) != column_index_.end(); }
-        static constexpr size_t getColumnCount() { return sizeof...(ColumnTypes); }
+        constexpr size_t getColumnCount() const { return sizeof...(ColumnTypes); }
         size_t getColumnIndex(const std::string& name) const;
-        static constexpr size_t getColumnLength(size_t index) { if constexpr (RANGE_CHECKING) {return column_lengths.at(index);} else { return column_lengths[index]; } }
+        constexpr size_t getColumnLength(size_t index) const { if constexpr (RANGE_CHECKING) {return column_lengths.at(index);} else { return column_lengths[index]; } }
         const std::string& getColumnName(size_t index) const { if constexpr (RANGE_CHECKING) {return column_names_.at(index);} else { return column_names_[index]; } }
-        static constexpr size_t getColumnOffset(size_t index) { if constexpr (RANGE_CHECKING) {return column_offsets.at(index);} else { return column_offsets[index]; } }
+        constexpr size_t getColumnOffset(size_t index) const { if constexpr (RANGE_CHECKING) {return column_offsets.at(index);} else { return column_offsets[index]; } }
         ColumnDataType getColumnType(size_t index) const { return getColumnTypeT<0>(index); }
         void setColumnName(size_t index, const std::string& name);
 
