@@ -8,6 +8,7 @@
 #include <string>
 #include <tuple>
 #include <type_traits>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -335,12 +336,17 @@ namespace bcsv {
 
 
     /* Dynamic row with static layout (compile-time defined) */
-    template<typename LayoutType>
+    template<typename... ColumnTypes>
     class RowStatic {
     public:
-        using column_types = typename LayoutType::column_types;
+        using LayoutType = LayoutStatic<ColumnTypes...>;
+        static constexpr size_t column_count = LayoutType::column_count;
+        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_offsets = LayoutType::column_offsets;
+        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_lengths = LayoutType::column_lengths;
+
         template<size_t Index>
-        using column_type = std::tuple_element_t<Index, column_types>;
+        using column_type = std::tuple_element_t<Index, LayoutType::column_types>;
+        using column_types = typename LayoutType::column_types;
 
     private:
         column_types                data_;
@@ -382,16 +388,32 @@ namespace bcsv {
         void serializedSize(size_t& fixedSize, size_t& totalSize) const;
         void serializeTo(std::byte* dstBuffer, size_t dstBufferSize) const;
         void deserializeFrom(const std::byte* srcBuffer, size_t srcBufferSize);
+
+    private:
+        template<size_t Index>
+        void serializeElements(std::byte* dstBuffer, size_t dstBufferSize, size_t& strOffset) const;
+        
+        template<size_t Index>
+        void deserializeElements(const std::byte* srcBuffer, size_t srcBufferSize);
+
+        template<size_t Index>
+        void calculateStringSizes(size_t& totalSize) const;
     };
 
 
     /* View into a buffer. Supports RowStatic interface */
-    template<typename LayoutType>
+    template<typename... ColumnTypes>
     class RowViewStatic {
     public:
-        using column_types = typename LayoutType::column_types;
+        using LayoutType = LayoutStatic<ColumnTypes...>;
+        static constexpr size_t column_count = LayoutType::column_count;
+        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_offsets = LayoutType::column_offsets;
+        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_lengths = LayoutType::column_lengths;
+
         template<size_t Index>
-        using column_type = std::tuple_element_t<Index, column_types>;
+        using column_type = std::tuple_element_t<Index, LayoutType::column_types>;
+        using column_types = typename LayoutType::column_types;
+        
 
     private:
         std::byte*                  buffer_;
@@ -432,6 +454,10 @@ namespace bcsv {
         void set(size_t index, const auto& value);
 
         bool validate() const;
+
+    private:
+        template<size_t Index = 0>
+        bool validateStringPayloads() const;
     };
 
 } // namespace bcsv

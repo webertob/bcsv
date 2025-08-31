@@ -10,6 +10,7 @@
 #include <lz4.h>
 
 #include "definitions.h"
+#include "byte_buffer.h"
 #include "layout.h"
 #include "file_header.h"
 #include "row.h"
@@ -41,8 +42,8 @@ namespace bcsv {
         bool is_open() const { return stream_.is_open(); }
         bool open(const std::filesystem::path& filepath, bool overwrite = false);
 
-        void writeRow(const LayoutType::Row& row);
-        void writeRow(const std::shared_ptr<LayoutType::Row>& row) { if(auto *ptr = row.get()) { writeRow(*ptr); } }
+        void writeRow(const typename LayoutType::RowType& row);
+        void writeRow(const std::shared_ptr<typename LayoutType::RowType>& row) { if(auto *ptr = row.get()) { writeRow(*ptr); } }
 
     private:
         void writeHeader();

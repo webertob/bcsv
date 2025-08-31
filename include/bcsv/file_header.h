@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #include "definitions.h"
+#include "layout.h"
 
 namespace bcsv {
     // Forward declarations

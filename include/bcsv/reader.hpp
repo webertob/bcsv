@@ -21,7 +21,7 @@ namespace bcsv {
         buffer_raw_.reserve(LZ4_BLOCK_SIZE_KB * 1024);
         buffer_zip_.reserve(LZ4_COMPRESSBOUND(LZ4_BLOCK_SIZE_KB * 1024));
 
-        static_assert(std::is_base_of_v<LayoutInterface, LayoutType>, "LayoutType must derive from LayoutInterface");
+        // Using concepts instead of static_assert for type checking
         if (!layout_) {
             throw std::runtime_error("Error: Layout is not initialized");
         }
@@ -143,12 +143,19 @@ namespace bcsv {
             return false;
         }
 
-        //read row offsets
+        if(!header.validate()) {
+            return false;
+        }
+
+        //read row offsets (by definition 1st offset is always 0)
         row_offsets_.resize(header.rowCount);
-        stream_.read(reinterpret_cast<char*>(row_offsets_.data()), row_offsets_.size() * sizeof(uint16_t));
+        row_offsets_[0] = 0;
+        //read the remaining offsets
+        constexpr size_t offset_size = sizeof(row_offsets_.value_type);
+        stream_.read(reinterpret_cast<char*>(row_offsets_.data() + offset_size), (row_offsets_.size() - 1) * offset_size);
 
         // Read the compressed packet data
-        buffer_zip_.resize(header.compressedSize);
+        buffer_zip_.resize(header.payloadSizeZip);
         stream_.read(buffer_zip_.data(), buffer_zip_.size());
         if (!stream_.good()) {
             return false;
@@ -160,9 +167,9 @@ namespace bcsv {
         }
 
         // Decompress the packet data
-        buffer_raw_.resize(header.uncompressedSize);
+        buffer_raw_.resize(header.payloadSizeRaw);
         int decompressedSize = LZ4_decompress_safe(buffer_zip_.data(), buffer_raw_.data(), buffer_zip_.size(), buffer_raw_.size());
-        if (decompressedSize < 0 || static_cast<size_t>(decompressedSize) != header.uncompressedSize) {
+        if (decompressedSize < 0 || static_cast<size_t>(decompressedSize) != header.payloadSizeRaw) {
             throw std::runtime_error("Error: LZ4 decompression failed");
         }
 

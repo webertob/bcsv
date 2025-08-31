@@ -22,7 +22,7 @@ namespace bcsv {
         buffer_raw_.reserve(LZ4_BLOCK_SIZE_KB * 1024);
         buffer_zip_.reserve(LZ4_COMPRESSBOUND(LZ4_BLOCK_SIZE_KB * 1024));
 
-        static_assert(std::is_base_of_v<LayoutInterface, LayoutType>, "LayoutType must derive from LayoutInterface");
+        // Using concepts instead of static_assert for type checking
         if (!layout_) {
             throw std::runtime_error("Error: Layout is not initialized");
         }
@@ -152,7 +152,8 @@ namespace bcsv {
 
         // Compress the raw buffer using LZ4
         buffer_zip_.resize(buffer_zip_.capacity());
-        int compressedSize = LZ4_compress_default(buffer_raw_.data(), buffer_zip_.data(),
+        int compressedSize = LZ4_compress_default(reinterpret_cast<const char*>(buffer_raw_.data()), 
+                                                  reinterpret_cast<char*>(buffer_zip_.data()),
                                                   static_cast<int>(buffer_raw_.size()),
                                                   static_cast<int>(buffer_zip_.size()));
         buffer_zip_.resize(compressedSize);
@@ -160,8 +161,11 @@ namespace bcsv {
             throw std::runtime_error("Error: LZ4 compression failed");
         }
 
+        // remove last offset
+        row_offsets_.pop_back();
+
         PacketHeader packetHeader;
-        packetHeader.magic = PCKT_MAGIC;
+        // magic is already initialized with PCKT_MAGIC in the struct definition
         packetHeader.payloadSizeRaw = static_cast<uint32_t>(buffer_raw_.size());
         packetHeader.payloadSizeZip = static_cast<uint32_t>(buffer_zip_.size());
         packetHeader.rowFirst = row_cnt_old_;
@@ -181,17 +185,19 @@ namespace bcsv {
     }
 
     template<LayoutConcept LayoutType>
-    void Writer<LayoutType>::writeRow(const LayoutType::Row& row) {
+    void Writer<LayoutType>::writeRow(const typename LayoutType::RowType& row) {
         if (!stream_.is_open()) {
             throw std::runtime_error("Error: File is not open");
         }
 
         //check row belongs to layout_
-        if (row.getLayout() != layout_) {
+        if (row.getLayoutPtr() != layout_) {
             throw std::invalid_argument("Row does not belong to layout");
         }
 
-        size_t rowSize = row.serializedSize();
+        size_t fixedSize, totalSize;
+        row.serializedSize(fixedSize, totalSize);
+        size_t rowSize = totalSize;
         if(buffer_raw_.size() + rowSize > buffer_raw_.capacity()) {
             writePacket();
         }

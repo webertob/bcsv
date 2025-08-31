@@ -223,7 +223,12 @@ namespace bcsv {
     }
 
     inline void Layout::addRow(std::weak_ptr<Row> row) {
-        rows_.insert(row);
+        // Remove any expired weak_ptrs first to avoid accumulation
+        rows_.erase(std::remove_if(rows_.begin(), rows_.end(), 
+                    [](const std::weak_ptr<Row>& wp) { return wp.expired(); }), 
+                    rows_.end());
+        
+        rows_.push_back(row);
         if (auto sp = row.lock()) {
             sp->setLayout(shared_from_this());
             // ToDo: try to insert or remove into data_ using defaultValues to create minimum change to row (preserve as much information as possible)
@@ -236,7 +241,13 @@ namespace bcsv {
     }
 
     inline void Layout::removeRow(std::weak_ptr<Row> row) {
-        rows_.erase(row);
+        // Find and remove the matching weak_ptr
+        rows_.erase(std::remove_if(rows_.begin(), rows_.end(), 
+                    [&row](const std::weak_ptr<Row>& wp) { 
+                        return !wp.owner_before(row) && !row.owner_before(wp); 
+                    }), 
+                    rows_.end());
+        
         if (auto sp = row.lock()) {
             sp->setLayout(nullptr);
         }
@@ -316,7 +327,7 @@ namespace bcsv {
         if (columnNames.size() != sizeof...(ColumnTypes)) {
             throw std::invalid_argument("Number of column names must match number of column types");
         }
-        for (size_t i = 0; i < columnNames_.size(); ++i) {
+        for (size_t i = 0; i < sizeof...(ColumnTypes); ++i) {
             column_names_[i] = columnNames[i];
         }
         updateIndex();

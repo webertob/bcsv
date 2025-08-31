@@ -5,8 +5,16 @@
 #include <string>
 #include <cstddef>
 #include <variant>
+#include <algorithm>
 
 namespace bcsv {
+
+    // Configuration
+    constexpr bool RANGE_CHECKING = true;
+
+    // Helper template for static_assert
+    template<typename T>
+    constexpr bool always_false = false;
 
     // Version information
     constexpr int VERSION_MAJOR = 1;
@@ -102,6 +110,9 @@ namespace bcsv {
     template<ColumnDataType Type>
     using fromColumnDataType = typename fromColumnDataTypeT<Type>::type;
 
+    // Define ValueType early since it's used by other functions
+    using ValueType = std::variant<bool, uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double, std::string>;
+
     ColumnDataType toColumnDataType(const ValueType& value) {
         return std::visit([](auto&& arg) -> ColumnDataType {
             using T = std::decay_t<decltype(arg)>;
@@ -142,8 +153,6 @@ namespace bcsv {
             default: return "undefined";
         }
     }
-
-    using ValueType = std::variant<bool, uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double, std::string>;
 
     /**
      * @brief Get default value for a given column data type
@@ -200,9 +209,6 @@ namespace bcsv {
             static_assert(always_false<Type>, "Unsupported type for defaultValueT");
         }
     }
-
-    template<typename T>
-    constexpr bool always_false = false;
 
     template<typename T>
     constexpr size_t binaryFieldLength() {
@@ -302,33 +308,10 @@ namespace bcsv {
                 return getTupleValue<candidate + 1, T...>(tuple, index);
             }
         }
-    }
-
-    template<typename T>
-    class LazyAllocator {
-    public:
-        using value_type = T;
-        
-        T* allocate(size_t n) {
-            return static_cast<T*>(std::malloc(n * sizeof(T)));
-        }
-        
-        void deallocate(T* p, size_t) {
-            std::free(p);
-        }
-        
-        // Don't construct elements
-        template<typename U, typename... Args>
-        void construct(U*, Args&&...) {}
-        
-        template<typename U>
-        void destroy(U*) {}
-    };
-
-    using ByteBuffer = std::vector<std::byte, LazyAllocator<std::byte>>;
+    } 
 
     ValueType convertValueType(const ValueType &value, ColumnDataType targetType) {
-        std::visit([targetType](const auto& v) -> ValueType {
+        return std::visit([targetType](const auto& v) -> ValueType {
             using SrcType = std::decay_t<decltype(v)>;
 
             switch (targetType)
@@ -384,7 +367,7 @@ namespace bcsv {
             default:
                 break;
             }
+            return defaultValue(targetType);
         }, value);
-        return defaultValue(targetType);
     }
 } // namespace bcsv

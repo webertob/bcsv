@@ -335,28 +335,27 @@ namespace bcsv {
     // RowStatic Implementation
     // ========================================================================
 
-
-    template<typename LayoutType>
+    template<typename... ColumnTypes>
     template<size_t Index>
-    auto& RowStatic<LayoutType>::get() {
-        static_assert(Index < LayoutType::getColumnCount(), "Index out of bounds");
+    auto& RowStatic<ColumnTypes...>::get() {
+        static_assert(Index < column_count, "Index out of bounds");
         return std::get<Index>(data_);
     }
 
-    template<typename LayoutType>
+    template<typename... ColumnTypes>
     template<size_t Index>
-    const auto& RowStatic<LayoutType>::get() const {
-        static_assert(Index < LayoutType::getColumnCount(), "Index out of bounds");
+    const auto& RowStatic<ColumnTypes...>::get() const {
+        static_assert(Index < column_count, "Index out of bounds");
         return std::get<Index>(data_);
     }
 
-    template<typename LayoutType>
+    template<typename... ColumnTypes>
     template<size_t Index>
-    void RowStatic<LayoutType>::set(const auto& value) {
-        static_assert(Index < LayoutType::getColumnCount(), "Index out of bounds");
-    
+    void RowStatic<ColumnTypes...>::set(const auto& value) {
+        static_assert(Index < column_count, "Index out of bounds");
+
         using ProvidedType = std::decay_t<decltype(value)>;
-        using ExpectedType = std::tuple_element_t<Index, typename LayoutType::column_types>;
+        using ExpectedType = column_type<Index>;
 
         if constexpr (std::is_same_v<ProvidedType, ValueType>) {
             // Handle ValueType (variant) - extract actual type
@@ -380,12 +379,12 @@ namespace bcsv {
         }
     }
 
-    template<typename LayoutType>
+    template<typename... ColumnTypes>
     template<size_t Index, typename T>
-    void RowStatic<LayoutType>::setExplicit(const T& value) {
-        static_assert(Index < LayoutType::getColumnCount(), "Index out of bounds");
+    void RowStatic<ColumnTypes...>::setExplicit(const T& value) {
+        static_assert(Index < column_count, "Index out of bounds");
 
-        using ExpectedType = std::tuple_element_t<Index, typename LayoutType::column_types>;
+        using ExpectedType = column_type<Index>;
 
         if constexpr (std::is_same_v<T, ExpectedType>) {
             // Direct assignment for matching types
@@ -399,24 +398,24 @@ namespace bcsv {
         }
     }
 
-    template<typename LayoutType>
+    template<typename... ColumnTypes>
     template<size_t I>
-    ValueType RowStatic<LayoutType>::get(size_t index) const {
-        if constexpr (I < LayoutType::getColumnCount()) {
+    ValueType RowStatic<ColumnTypes...>::get(size_t index) const {
+        if constexpr (I < column_count) {
             if(index == I) {
                 return ValueType{std::get<I>(data_)}; 
             } else {
-                return this->get<T, I + 1>(index);
+                return this->get<I + 1>(index);
             }
         } else {
             throw std::out_of_range("Index out of range");
         }
     }
 
-    template<typename LayoutType>
+    template<typename... ColumnTypes>
     template<size_t I>
-    void RowStatic<LayoutType>::set(size_t index, const auto& value) {
-        if constexpr (I < LayoutType::getColumnCount()) {
+    void RowStatic<ColumnTypes...>::set(size_t index, const auto& value) {
+        if constexpr (I < column_count) {
             if(index == I) {
                 this->set<I>(value);
             } else {
@@ -427,24 +426,33 @@ namespace bcsv {
         }
     }
 
-    template<typename LayoutType>
-    void RowStatic<LayoutType>::serializedSize(size_t& fixedSize, size_t& totalSize) const {
+    template<typename... ColumnTypes>
+    void RowStatic<ColumnTypes...>::serializedSize(size_t& fixedSize, size_t& totalSize) const {
         // Use compile-time constant
-        fixedSize = LayoutType::FIXED_SIZE;
-        totalSize = LayoutType::FIXED_SIZE;
+        fixedSize = LayoutType::fixed_size;
+        totalSize = LayoutType::fixed_size;
 
-        // Calculate variable size for strings only
-        for (size_t i = 0; i < LayoutType::getColumnCount(); ++i) {
-            if constexpr (std::is_same_v<column_type<i>, std::string>) {
-                totalSize += std::min(std::get<i>(data_).size(), MAX_STRING_LENGTH);
-            }
-        }        
+        // Calculate variable size for strings only using template recursion
+        calculateStringSizes<0>(totalSize);
+        
         // Calculate padding needed for 4-byte alignment
         totalSize += (4 - (totalSize % 4)) % 4;
     }
 
-    template<typename LayoutType>
-    void RowStatic<LayoutType>::serializeTo(std::byte* dstBuffer, size_t dstBufferSize) const {
+    template<typename... ColumnTypes>
+    template<size_t Index>
+    void RowStatic<ColumnTypes...>::calculateStringSizes(size_t& totalSize) const {
+        if constexpr (Index < column_count) {
+            if constexpr (std::is_same_v<column_type<Index>, std::string>) {
+                totalSize += std::min(std::get<Index>(data_).size(), MAX_STRING_LENGTH);
+            }
+            // Recursively process next element
+            calculateStringSizes<Index + 1>(totalSize);
+        }
+    }
+
+    template<typename... ColumnTypes>
+    void RowStatic<ColumnTypes...>::serializeTo(std::byte* dstBuffer, size_t dstBufferSize) const {
         if (!dstBuffer || dstBufferSize == 0) {
             throw std::invalid_argument("Invalid destination buffer");
         }
@@ -458,64 +466,87 @@ namespace bcsv {
         }
         size_t strOffset = fixedSize;
 
-        // Serialize each tuple element
-        for (size_t i = 0; i < LayoutType::getColumnCount(); ++i) {
-            constexpr size_t len = fieldLengths_[i];
-            constexpr size_t off = fieldOffsets_[i];
+        // Serialize each tuple element using compile-time recursion
+        serializeElements<0>(dstBuffer, dstBufferSize, strOffset);
+        
+        // Zero out padding bytes
+        if (strOffset < totalSize) {
+            std::memset(dstBuffer + strOffset, 0, totalSize - strOffset);
+        }
+    }
+
+    template<typename... ColumnTypes>
+    template<size_t Index>
+    void RowStatic<ColumnTypes...>::serializeElements(std::byte* dstBuffer, size_t dstBufferSize, size_t& strOffset) const {
+        if constexpr (Index < column_count) {
+            constexpr size_t len = LayoutType::column_lengths[Index];
+            constexpr size_t off = LayoutType::column_offsets[Index];
             std::byte* ptr = dstBuffer + off;
-            if constexpr (std::is_same_v<column_type<i>, std::string>) {
-                size_t strLength = std::min(std::get<i>(data_).size(), MAX_STRING_LENGTH);
+            
+            if constexpr (std::is_same_v<column_type<Index>, std::string>) {
+                size_t strLength = std::min(std::get<Index>(data_).size(), MAX_STRING_LENGTH);
                 size_t strAddress = StringAddress::pack(strOffset, strLength);
                 std::memcpy(ptr, &strAddress, len);     //write string address field
                 if (strOffset + strLength > dstBufferSize) {
-                    throw std::runtime_error("String data at index " + std::to_string(i) +
+                    throw std::runtime_error("String data at index " + std::to_string(Index) +
                                                " extends beyond buffer (offset=" + std::to_string(strOffset) +
                                                ", length=" + std::to_string(strLength) +
                                                ", bufferSize=" + std::to_string(dstBufferSize) + ")");
                 }
-                std::memcpy(dstBuffer + strOffset, std::get<i>(data_).c_str(), strLength); //write string payload
+                std::memcpy(dstBuffer + strOffset, std::get<Index>(data_).c_str(), strLength); //write string payload
                 strOffset += strLength;
             } else {
-                std::memcpy(ptr, &std::get<i>(data_), len);
+                std::memcpy(ptr, &std::get<Index>(data_), len);
             }
+            
+            // Recursively process next element
+            serializeElements<Index + 1>(dstBuffer, dstBufferSize, strOffset);
         }
-        // Zero out padding bytes
-        std::memset(dstBuffer + strOffset, 0, totalSize - strOffset);
     }
 
-    template<typename LayoutType>
-    void RowStatic<LayoutType>::deserializeFrom(const std::byte* srcBuffer, size_t srcBufferSize)
+    template<typename... ColumnTypes>
+    void RowStatic<ColumnTypes...>::deserializeFrom(const std::byte* srcBuffer, size_t srcBufferSize)
     {
         if (!srcBuffer || srcBufferSize == 0) {
             throw std::invalid_argument("Invalid source buffer");
         }
 
-        for (size_t i = 0; i < LayoutType::getColumnCount(); ++i) {
-            constexpr size_t len = LayoutType::column_lengths[i];
-            constexpr size_t off = LayoutType::column_offsets[i];
+        deserializeElements<0>(srcBuffer, srcBufferSize);
+    }
+
+    template<typename... ColumnTypes>
+    template<size_t Index>
+    void RowStatic<ColumnTypes...>::deserializeElements(const std::byte* srcBuffer, size_t srcBufferSize) {
+        if constexpr (Index < column_count) {
+            constexpr size_t len = LayoutType::column_lengths[Index];
+            constexpr size_t off = LayoutType::column_offsets[Index];
             const std::byte* ptr = srcBuffer + off;
+            
             if(off+len > srcBufferSize) {
-                throw std::runtime_error("Buffer overflow reading element at index " + std::to_string(i) +
+                throw std::runtime_error("Buffer overflow reading element at index " + std::to_string(Index) +
                                            " (offset=" + std::to_string(off) + ", length=" + std::to_string(len) +
                                            ", bufferSize=" + std::to_string(srcBufferSize) + ")");
             }
 
-            if constexpr (std::is_same_v<column_type<i>, std::string>) {
+            if constexpr (std::is_same_v<column_type<Index>, std::string>) {
                 size_t strAddress, strOffset, strLength;
                 std::memcpy(&strAddress, ptr, len);
                 StringAddress::unpack(strAddress, strOffset, strLength);
 
                 if (strOffset + strLength > srcBufferSize) {
-                    throw std::runtime_error("String data at index " + std::to_string(i) +
+                    throw std::runtime_error("String data at index " + std::to_string(Index) +
                                               " extends beyond buffer (offset=" + std::to_string(strOffset) +
                                               ", length=" + std::to_string(strLength) +
                                               ", bufferSize=" + std::to_string(srcBufferSize) + ")");
                 }
-                std::get<i>(data_) = std::string(srcBuffer + strOffset, strLength);
+                std::get<Index>(data_) = std::string(reinterpret_cast<const char*>(srcBuffer) + strOffset, strLength);
                 // Read packed string address
             } else {
-                std::memcpy(&std::get<i>(data_), ptr, len);
+                std::memcpy(&std::get<Index>(data_), ptr, len);
             }
+            
+            // Recursively process next element
+            deserializeElements<Index + 1>(srcBuffer, srcBufferSize);
         }
     }
 
@@ -525,11 +556,11 @@ namespace bcsv {
     // RowStaticView Implementation
     // ========================================================================
 
-    template<typename LayoutType>
+    template<typename... ColumnTypes>
     template<size_t Index>
-    auto RowViewStatic<LayoutType>::get() const 
+    auto RowViewStatic<ColumnTypes...>::get() const 
     {
-        static_assert(Index < LayoutType::getColumnCount(), "Index out of bounds");
+        static_assert(Index < column_count, "Index out of bounds");
 
         //validate buffer length
         if (LayoutType::column_offsets[Index] + LayoutType::column_lengths[Index] > bufferSize_) {
@@ -545,16 +576,16 @@ namespace bcsv {
             if (strOff + strLen > bufferSize_) {
                 throw std::runtime_error("String payload extends beyond buffer");
             }
-            return std::string_view(buffer_ + strOff, strLen);
+            return std::string_view(reinterpret_cast<const char*>(buffer_) + strOff, strLen);
         } else {
             // Handle primitive case
-            return *reinterpret_cast<const column_type<Index>()*>(buffer_ + LayoutType::column_offsets[Index]);
+            return *reinterpret_cast<const column_type<Index>*>(buffer_ + LayoutType::column_offsets[Index]);
         }
     }
 
-    template<typename LayoutType>
+    template<typename... ColumnTypes>
     template<size_t Index>
-    void RowViewStatic<LayoutType>::set(const auto& value) {
+    void RowViewStatic<ColumnTypes...>::set(const auto& value) {
         // handle ValueType
         if constexpr (std::is_same_v<decltype(value), ValueType>) {
             this->setExplicit<Index, column_type<Index>>(std::get<column_type<Index>>(value));
@@ -563,10 +594,10 @@ namespace bcsv {
         }
     }
 
-    template<typename LayoutType>
+    template<typename... ColumnTypes>
     template<size_t Index, typename T>
-    void RowViewStatic<LayoutType>::setExplicit(const T& value) {
-        static_assert(Index < LayoutType::getColumnCount(), "Index out of bounds");
+    void RowViewStatic<ColumnTypes...>::setExplicit(const T& value) {
+        static_assert(Index < column_count, "Index out of bounds");
         static_assert(!std::is_same_v<T, column_type<Index>>, "setExplicit type mismatch");
 
         //validate buffer length
@@ -598,10 +629,10 @@ namespace bcsv {
     }
 
 
-    template<typename LayoutType>
+    template<typename... ColumnTypes>
     template<size_t I>
-    ValueType RowViewStatic<LayoutType>::get(size_t index) const {
-        if constexpr (I < LayoutType::getColumnCount()) {
+    ValueType RowViewStatic<ColumnTypes...>::get(size_t index) const {
+        if constexpr (I < column_count) {
             if(index == I) {
                 return ValueType{this->get<I>()}; 
             } else {
@@ -612,11 +643,11 @@ namespace bcsv {
         }
     }
 
-    template<typename LayoutType>
+    template<typename... ColumnTypes>
     template<size_t I>
-    void RowViewStatic<LayoutType>::set(size_t index, const auto& value)
+    void RowViewStatic<ColumnTypes...>::set(size_t index, const auto& value)
     {
-        if constexpr (I < LayoutType::getColumnCount()) {
+        if constexpr (I < column_count) {
             if(index == I) {
                 this->set<I>(value);
             } else {
@@ -629,31 +660,38 @@ namespace bcsv {
     }
 
 
-    template<typename LayoutType>
-    bool RowViewStatic<LayoutType>::validate() const 
+    template<typename... ColumnTypes>
+    bool RowViewStatic<ColumnTypes...>::validate() const 
     {
         if(buffer_ == nullptr) {
             return false;
         }
 
         // Check if buffer is large enough for all fixed fields
-        if (fieldOffsets_[size()-1] + fieldLengths_[size()-1] > bufferSize_) {
+        if (LayoutType::column_offsets[column_count-1] + LayoutType::column_lengths[column_count-1] > bufferSize_) {
             return false;
         }
 
-        // Validate string payloads
-        for (size_t i = 0; i < size(); ++i) {
-            if constexpr (((std::is_same_v<ColumnTypes, std::string>) || ...)) {
-                // Only check strings if we have any
-                uint64_t packedAddr = *reinterpret_cast<const uint64_t*>(buffer_ + fieldOffsets_[i]);
+        // Validate string payloads using template recursion
+        return validateStringPayloads<0>();
+    }
+
+    template<typename... ColumnTypes>
+    template<size_t Index>
+    bool RowViewStatic<ColumnTypes...>::validateStringPayloads() const {
+        if constexpr (Index >= column_count) {
+            return true;
+        } else {
+            if constexpr (std::is_same_v<column_type<Index>, std::string>) {
+                uint64_t packedAddr = *reinterpret_cast<const uint64_t*>(buffer_ + LayoutType::column_offsets[Index]);
                 size_t strOff, strLen;
                 StringAddress::unpack(packedAddr, strOff, strLen);
                 if (strOff + strLen > bufferSize_) {
                     return false;
                 }
             }
+            return validateStringPayloads<Index + 1>();
         }
-        return true;
     }
 
 } // namespace bcsv

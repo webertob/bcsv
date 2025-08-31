@@ -10,7 +10,15 @@
 #include <stdexcept>
 
 #include "definitions.h"
-#include "row.h"
+
+// Forward declarations to avoid circular dependencies
+namespace bcsv {
+    class Row;
+    class RowView;
+    template<typename... ColumnTypes> class RowStatic;
+    template<typename... ColumnTypes> class RowViewStatic;
+}
+
 namespace bcsv {
 
     struct ColumnDefinition {
@@ -47,6 +55,7 @@ namespace bcsv {
         
         // Type information (for static layouts)
         typename T::RowType;  // Each layout must define its row type
+        typename T::RowViewType;  // Each layout must define its row view type
     };
 
 
@@ -63,11 +72,12 @@ namespace bcsv {
         std::set<void*> lock_owners_;        // ptrs to objects that have locked the layout, used to identify owners
         void updateIndex();
 
-        std::set<std::weak_ptr<Row>> rows_;
+        // Use vector instead of set for weak_ptr storage since weak_ptr doesn't have comparison operators
+        std::vector<std::weak_ptr<Row>> rows_;
 
     public:
-        typedef Row     RowType;
-        typedef RowView RowViewType;
+        using RowType = Row;
+        using RowViewType = RowView;
 
         Layout() = default;
         Layout(const Layout& other);
@@ -132,8 +142,8 @@ namespace bcsv {
         void updateIndex();
 
     public:
-        typedef RowStatic<LayoutStatic<ColumnTypes...>>     RowType;
-        typedef RowViewStatic<LayoutStatic<ColumnTypes...>> RowViewType;
+        using RowType = RowStatic<LayoutStatic<ColumnTypes...>>;
+        using RowViewType = RowViewStatic<LayoutStatic<ColumnTypes...>>;
 
         using column_types = std::tuple<ColumnTypes...>;
         template<size_t Index>
@@ -156,9 +166,11 @@ namespace bcsv {
             return offsets;
         }
 
-        static constexpr size_t FIXED_SIZE = (binaryFieldLength<ColumnTypes>() + ... + 0);
+        static constexpr size_t fixed_size = (binaryFieldLength<ColumnTypes>() + ... + 0);
+        static constexpr size_t column_count = sizeof...(ColumnTypes);
         static constexpr auto column_lengths = getColumnLengths();
         static constexpr auto column_offsets = getColumnOffsets();
+
 
         LayoutStatic();
         LayoutStatic(const std::vector<std::string>& columnNames);
