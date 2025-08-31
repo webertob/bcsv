@@ -223,7 +223,7 @@ namespace bcsv {
          * @return true if write was successful, false on error
          */
         template<LayoutConcept LayoutType>
-        bool writeToBinary(std::ostream& stream, const LayoutType& columnLayout) const;
+        bool writeToBinary(std::ostream& stream, const LayoutType& columnLayout);
 
         /**
          * @brief Print detailed binary layout information for debugging

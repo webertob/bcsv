@@ -73,7 +73,7 @@ endif()
 target_link_libraries(bcsv INTERFACE lz4_static)
 
 # Compiler-specific options
-target_compile_features(bcsv INTERFACE cxx_std_17)
+target_compile_features(bcsv INTERFACE cxx_std_20)
 
 # Add compile options for different compilers
 if(MSVC)

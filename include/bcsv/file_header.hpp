@@ -107,7 +107,7 @@ namespace bcsv {
     }
 
     template<LayoutConcept LayoutType>
-    inline bool FileHeader::writeToBinary(std::ostream& stream, const LayoutType& layout) const {
+    inline bool FileHeader::writeToBinary(std::ostream& stream, const LayoutType& layout) {
         // Update header with current column count
         header_.columnCount = static_cast<uint16_t>(layout.getColumnCount());
 
@@ -209,7 +209,7 @@ namespace bcsv {
             columnLayout.setColumns(columnDefinitions);
             return true;
             
-        } catch (const std::exception& e) {
+        } catch (const std::exception&) {
             // Ensure layout is cleared on any failure
             columnLayout.clear();
             throw; // Re-throw the exception

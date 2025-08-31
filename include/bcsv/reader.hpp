@@ -151,12 +151,12 @@ namespace bcsv {
         row_offsets_.resize(header.rowCount);
         row_offsets_[0] = 0;
         //read the remaining offsets
-        constexpr size_t offset_size = sizeof(row_offsets_.value_type);
-        stream_.read(reinterpret_cast<char*>(row_offsets_.data() + offset_size), (row_offsets_.size() - 1) * offset_size);
+        constexpr size_t offset_size = sizeof(uint16_t);
+        stream_.read(reinterpret_cast<char*>(row_offsets_.data() + 1), (row_offsets_.size() - 1) * offset_size);
 
         // Read the compressed packet data
         buffer_zip_.resize(header.payloadSizeZip);
-        stream_.read(buffer_zip_.data(), buffer_zip_.size());
+        stream_.read(reinterpret_cast<char*>(buffer_zip_.data()), buffer_zip_.size());
         if (!stream_.good()) {
             return false;
         }
@@ -168,7 +168,12 @@ namespace bcsv {
 
         // Decompress the packet data
         buffer_raw_.resize(header.payloadSizeRaw);
-        int decompressedSize = LZ4_decompress_safe(buffer_zip_.data(), buffer_raw_.data(), buffer_zip_.size(), buffer_raw_.size());
+        int decompressedSize = LZ4_decompress_safe(
+            reinterpret_cast<const char*>(buffer_zip_.data()), 
+            reinterpret_cast<char*>(buffer_raw_.data()), 
+            static_cast<int>(buffer_zip_.size()), 
+            static_cast<int>(buffer_raw_.size())
+        );
         if (decompressedSize < 0 || static_cast<size_t>(decompressedSize) != header.payloadSizeRaw) {
             throw std::runtime_error("Error: LZ4 decompression failed");
         }
@@ -181,12 +186,12 @@ namespace bcsv {
 
     template<LayoutConcept LayoutType>
     bool Reader<LayoutType>::readRow(LayoutType::RowViewType& row) {
-        size_t rows_remaining = row_cnt_old_ - row_cnt_;
+        size_t rows_remaining = row_cnt_ - row_cnt_old_;
         if(rows_remaining == 0) {
             if(!readPacket()) {
                 return false;
             }
-            rows_remaining = row_cnt_old_ - row_cnt_;
+            rows_remaining = row_cnt_ - row_cnt_old_;
             if(rows_remaining == 0) {
                 return false; // No more data
             }
@@ -199,6 +204,11 @@ namespace bcsv {
         row.setBuffer(buffer_raw_.data() + row_offset, row_length);
         return row.validate();
 
+    }
+
+    template<LayoutConcept LayoutType>
+    size_t Reader<LayoutType>::getRowCount() const {
+        return row_cnt_;
     }
 
 } // namespace bcsv

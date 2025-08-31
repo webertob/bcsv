@@ -22,6 +22,7 @@ namespace bcsv {
 namespace bcsv {
 
     struct ColumnDefinition {
+        ColumnDefinition() : name(""), type(ColumnDataType::STRING) {}
         ColumnDefinition(const std::string& n, ColumnDataType t)
             : name(n), type(t) {}
         std::string name;

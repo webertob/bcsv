@@ -13,6 +13,7 @@
 #include "layout.h"
 #include "file_header.h"
 #include "row.h"
+#include "byte_buffer.h"
 
 namespace bcsv {
 
@@ -22,8 +23,8 @@ namespace bcsv {
     template<LayoutConcept LayoutType>
     class Reader {
         std::shared_ptr<LayoutType> layout_;
-        std::vector<char> buffer_raw_;
-        std::vector<char> buffer_zip_;
+        ByteBuffer buffer_raw_;
+        ByteBuffer buffer_zip_;
         std::vector<uint16_t> row_offsets_;     // Row offsets for indexing
         size_t row_cnt_ = 0;
         size_t row_cnt_old_ = 0;

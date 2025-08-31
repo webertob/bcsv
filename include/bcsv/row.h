@@ -263,7 +263,7 @@ namespace bcsv {
         // Factory function to ensure Row is always created as shared_ptr
         template<typename... Args>
         static std::shared_ptr<Row> create(std::shared_ptr<Layout> layout, Args&&... args) {
-            auto ptr = std::shared_ptr<Row>(new Row(std::move(layout), std::forward<Args>(args)...));
+            auto ptr = std::shared_ptr<Row>(new Row(layout, std::forward<Args>(args)...));
             layout->addRow(ptr);
             return ptr;
         }
@@ -276,7 +276,18 @@ namespace bcsv {
         Row() = delete;
         Row(const Row& other) = delete;
         Row(Row&& other) = delete;
-        ~Row() { layout_->removeRow(shared_from_this()); }
+        ~Row() { 
+            /*
+            if (layout_) {
+                try {
+                    layout_->removeRow(shared_from_this()); 
+                } catch (const std::bad_weak_ptr&) {
+                    // shared_from_this() failed during destruction, which is expected
+                    // The Layout will clean up expired weak_ptrs on its own
+                }
+            }
+            */
+        }
 
         // Layout access
         const Layout& getLayout() const { return *layout_; }
@@ -345,7 +356,7 @@ namespace bcsv {
         static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_lengths = LayoutType::column_lengths;
 
         template<size_t Index>
-        using column_type = std::tuple_element_t<Index, LayoutType::column_types>;
+        using column_type = std::tuple_element_t<Index, typename LayoutType::column_types>;
         using column_types = typename LayoutType::column_types;
 
     private:
@@ -411,7 +422,7 @@ namespace bcsv {
         static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_lengths = LayoutType::column_lengths;
 
         template<size_t Index>
-        using column_type = std::tuple_element_t<Index, LayoutType::column_types>;
+        using column_type = std::tuple_element_t<Index, typename LayoutType::column_types>;
         using column_types = typename LayoutType::column_types;
         
 
