@@ -26,7 +26,7 @@ namespace bcsv {
     |                    First Row Number (uint64)                  |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     |                                                               |
-    |                      Number of Rows (uint64)                  |
+    |                      Number of Rows (uint32)                  |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     |                    CRC32 Checksum (uint32)                    |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
@@ -49,7 +49,7 @@ namespace bcsv {
         uint32_t payloadSizeRaw; // Size of the payload data
         uint32_t payloadSizeZip; // Size of the compressed payload data
         uint64_t rowFirst;       // Index of the first row in the packet
-        uint64_t rowCount;       // Number of rows in the packet
+        uint32_t rowCount;       // Number of rows in the packet
         uint32_t crc32;          // CRC32 checksum of the entire packet (with this field zeroed)
 
         void updateCRC32(const std::vector<uint16_t>& rowOffsets, const ByteBuffer& zipBuffer);
@@ -68,5 +68,5 @@ namespace bcsv {
         }
     };
     #pragma pack(pop)
-    static_assert(sizeof(PacketHeader) == 32, "PacketHeader must be exactly 32 bytes");
+    static_assert(sizeof(PacketHeader) == 28, "PacketHeader must be exactly 28 bytes");
 } // namespace bcsv

@@ -97,7 +97,7 @@ namespace bcsv {
             
             // Store file path
             filePath_ = absolutePath;
-            if(!readHeader()) {
+            if(!readFileHeader()) {
                 stream_.close();
                 return false;
             } else {
@@ -113,9 +113,10 @@ namespace bcsv {
         return false;
     }
 
+    /* Read the header information from the binary file */
     template<LayoutConcept LayoutType>
-    bool Reader<LayoutType>::readHeader() {
-        // Write the header information to the stream
+    bool Reader<LayoutType>::readFileHeader() {
+        
         if (!stream_.is_open()) {
             return false;
         }
@@ -126,10 +127,13 @@ namespace bcsv {
         } else {
             return false;
         }
-        row_cnt_ = 0;
+        rows_read_ = 0;
+        rows_available_ = 0;
+        row_offsets_.clear();
         return true;
     }
 
+    /* Read a packet of rows from the binary file */
     template<LayoutConcept LayoutType>
     bool Reader<LayoutType>::readPacket() {
         if (!stream_.is_open()) {
@@ -148,11 +152,12 @@ namespace bcsv {
         }
 
         //read row offsets (by definition 1st offset is always 0)
-        row_offsets_.resize(header.rowCount);
-        row_offsets_[0] = 0;
-        //read the remaining offsets
-        constexpr size_t offset_size = sizeof(uint16_t);
-        stream_.read(reinterpret_cast<char*>(row_offsets_.data() + 1), (row_offsets_.size() - 1) * offset_size);
+        if (header.rowCount > 1) {
+            row_offsets_.resize(header.rowCount - 1);
+            stream_.read(reinterpret_cast<char*>(row_offsets_.data()), row_offsets_.size() * sizeof(uint16_t));
+        } else {
+            row_offsets_.resize(0);
+        }
 
         // Read the compressed packet data
         buffer_zip_.resize(header.payloadSizeZip);
@@ -167,7 +172,7 @@ namespace bcsv {
         }
 
         // Decompress the packet data
-        buffer_raw_.resize(header.payloadSizeRaw);
+        buffer_raw_.resize(buffer_raw_.capacity());
         int decompressedSize = LZ4_decompress_safe(
             reinterpret_cast<const char*>(buffer_zip_.data()), 
             reinterpret_cast<char*>(buffer_raw_.data()), 
@@ -176,31 +181,34 @@ namespace bcsv {
         );
         if (decompressedSize < 0 || static_cast<size_t>(decompressedSize) != header.payloadSizeRaw) {
             throw std::runtime_error("Error: LZ4 decompression failed");
+        } else {
+            buffer_raw_.resize(decompressedSize);
         }
 
         // Update row count
-        row_cnt_old_ = row_cnt_;
-        row_cnt_ += header.rowCount;
+        rows_available_ = header.rowCount;
         return true;
     }
 
     template<LayoutConcept LayoutType>
     bool Reader<LayoutType>::readRow(LayoutType::RowViewType& row) {
-        size_t rows_remaining = row_cnt_ - row_cnt_old_;
-        if(rows_remaining == 0) {
-            if(!readPacket()) {
+        if(rows_available_ == 0) {
+            if(!readPacket() || rows_available_ == 0) {
                 return false;
-            }
-            rows_remaining = row_cnt_ - row_cnt_old_;
-            if(rows_remaining == 0) {
-                return false; // No more data
             }
         }
 
-        size_t row_index  = row_offsets_.size() - rows_remaining - 1;
-        size_t row_offset = row_offsets_[row_index];
-        size_t row_length = rows_remaining > 1 ? row_offsets_[row_index + 1] - row_offset : buffer_raw_.size() - row_offset;
-        --rows_remaining;
+        size_t row_index = row_offsets_.size() + 1 - rows_available_;
+        size_t row_offset = (row_index == 0) ? 0 : row_offsets_[row_index - 1];
+        size_t row_offset_next = (row_index < row_offsets_.size()) ? row_offsets_[row_index] : buffer_raw_.size();
+        size_t row_length = row_offset_next - row_offset;
+
+        // Sanity checks
+        if(row_offset + row_length > buffer_raw_.size()) {
+            throw std::runtime_error("Error: Row offset and length exceed buffer size");
+        }
+
+        rows_available_--;
         row.setBuffer(buffer_raw_.data() + row_offset, row_length);
         return row.validate();
 
@@ -208,7 +216,7 @@ namespace bcsv {
 
     template<LayoutConcept LayoutType>
     size_t Reader<LayoutType>::getRowCount() const {
-        return row_cnt_;
+        return rows_read_;
     }
 
 } // namespace bcsv

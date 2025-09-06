@@ -13,6 +13,7 @@
 #include "layout.h"
 #include "row.h"
 #include <fstream>
+#include <limits>
 #include <type_traits>
 
 namespace bcsv {
@@ -59,6 +60,10 @@ namespace bcsv {
     template<LayoutConcept LayoutType>
     void Writer<LayoutType>::flush() {
         if (stream_.is_open()) {
+            // Write any remaining data in the buffer before flushing the stream
+            if (!buffer_raw_.empty()) {
+                writePacket();
+            }
             stream_.flush();
         }
     }
@@ -107,14 +112,14 @@ namespace bcsv {
 
             // Open the binary file
             stream_.open(absolutePath, std::ios::binary);
-            if (!stream_.is_open()) {
+            if (!stream_.good()) {
                 throw std::runtime_error("Error: Cannot open file for writing: " + absolutePath.string() +
                                            " (Check permissions and disk space)");
             }
 
             // Store file path
             filePath_ = absolutePath;
-            writeHeader();
+            writeFileHeader();
             return true;
 
         } catch (const std::filesystem::filesystem_error& ex) {
@@ -129,7 +134,7 @@ namespace bcsv {
     }
 
     template<LayoutConcept LayoutType>
-    void Writer<LayoutType>::writeHeader() {
+    void Writer<LayoutType>::writeFileHeader() {
         // Write the header information to the stream
         if (!stream_.is_open()) {
             throw std::runtime_error("Error: File is not open");
@@ -156,32 +161,45 @@ namespace bcsv {
                                                   reinterpret_cast<char*>(buffer_zip_.data()),
                                                   static_cast<int>(buffer_raw_.size()),
                                                   static_cast<int>(buffer_zip_.size()));
-        buffer_zip_.resize(compressedSize);
         if (compressedSize <= 0) {
+            buffer_zip_.clear();
             throw std::runtime_error("Error: LZ4 compression failed");
+        } else {
+            buffer_zip_.resize(compressedSize);
         }
-
-        // remove last offset
-        row_offsets_.pop_back();
-
+        
+        // Check for potential overflow when converting size_t to uint32_t
+        if (RANGE_CHECKING && buffer_raw_.size() > std::numeric_limits<uint32_t>::max()) {
+            throw std::runtime_error("Raw buffer size exceeds uint32_t maximum");
+        }
+        if (RANGE_CHECKING && buffer_zip_.size() > std::numeric_limits<uint32_t>::max()) {
+            throw std::runtime_error("Compressed buffer size exceeds uint32_t maximum");
+        }
+        if (RANGE_CHECKING && row_offsets_.size() > std::numeric_limits<uint32_t>::max()) {
+            throw std::runtime_error("Row count difference exceeds uint32_t maximum");
+        }
+        
         PacketHeader packetHeader;
-        // magic is already initialized with PCKT_MAGIC in the struct definition
         packetHeader.payloadSizeRaw = static_cast<uint32_t>(buffer_raw_.size());
         packetHeader.payloadSizeZip = static_cast<uint32_t>(buffer_zip_.size());
-        packetHeader.rowFirst = row_cnt_old_;
-        packetHeader.rowCount = row_cnt_ - row_cnt_old_;
+        packetHeader.rowFirst = row_cnt_; 
+        packetHeader.rowCount = static_cast<uint32_t>(row_offsets_.size());
+        row_offsets_.pop_back();    // remove last offset (end of last row) based on the format specification
         packetHeader.updateCRC32(row_offsets_, buffer_zip_);
 
         // Write the packet (header + row offsets + compressed data)
         stream_.write(reinterpret_cast<const char*>(&packetHeader), sizeof(packetHeader));
-        stream_.write(reinterpret_cast<const char*>(row_offsets_.data()), row_offsets_.size() * sizeof(uint16_t));
-        stream_.write(reinterpret_cast<const char*>(buffer_zip_.data()), buffer_zip_.size());
+        
+        // Safe conversion for row offsets size
+        size_t row_offsets_bytes = row_offsets_.size() * sizeof(uint16_t);
+        stream_.write(reinterpret_cast<const char*>(row_offsets_.data()), static_cast<std::streamsize>(row_offsets_bytes));
+        stream_.write(reinterpret_cast<const char*>(buffer_zip_.data()), static_cast<std::streamsize>(buffer_zip_.size()));
 
         // Clear buffers for next packet
         buffer_raw_.clear();
         buffer_zip_.clear();
         row_offsets_.clear();
-        row_cnt_old_ = row_cnt_;
+        row_cnt_ += packetHeader.rowCount; // Update total row count
     }
 
     template<LayoutConcept LayoutType>
@@ -195,19 +213,19 @@ namespace bcsv {
             throw std::invalid_argument("Row does not belong to layout");
         }
 
+        // check if the new row fits into the current packet, if not write the current packet
         size_t fixedSize, totalSize;
         row.serializedSize(fixedSize, totalSize);
-        size_t rowSize = totalSize;
-        if(buffer_raw_.size() + rowSize > buffer_raw_.capacity()) {
+        size_t row_raw_size = totalSize;
+        if(buffer_raw_.size() + row_raw_size > buffer_raw_.capacity()) {
             writePacket();
         }
 
-        size_t oldSize = buffer_raw_.size();
-        buffer_raw_.resize(oldSize + rowSize);
-        std::byte* dstBuffer = buffer_raw_.data() + oldSize;
-        row.serializeTo(dstBuffer, rowSize);
+        // Append serialized row to raw buffer
+        std::byte* ptr_raw = buffer_raw_.data() + buffer_raw_.size();
+        buffer_raw_.resize(buffer_raw_.size() + row_raw_size);
+        row.serializeTo(ptr_raw, row_raw_size);
         row_offsets_.push_back(static_cast<uint16_t>(buffer_raw_.size()));
-        row_cnt_++;
     }
 
 } // namespace bcsv

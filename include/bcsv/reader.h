@@ -26,8 +26,8 @@ namespace bcsv {
         ByteBuffer buffer_raw_;
         ByteBuffer buffer_zip_;
         std::vector<uint16_t> row_offsets_;     // Row offsets for indexing
-        size_t row_cnt_ = 0;
-        size_t row_cnt_old_ = 0;
+        size_t rows_read_ = 0;
+        size_t rows_available_ = 0;             // Number of rows currently available in buffer
 
         std::ifstream stream_;                  // Always binary file stream
         std::filesystem::path filePath_;        // Always present
@@ -48,7 +48,7 @@ namespace bcsv {
         size_t getRowCount() const;
         
     private:
-        bool readHeader();
+        bool readFileHeader();
         bool readPacket();
 
     public:

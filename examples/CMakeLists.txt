@@ -1,23 +1,24 @@
+# BCSV Examples
+# =============
+# This directory contains examples demonstrating different aspects of BCSV:
+#
+# 1. example.cpp - Basic flexible interface usage (runtime-defined schemas)
+# 2. example_static.cpp - Static interface usage (compile-time schemas)  
+# 3. performance_benchmark.cpp - Performance comparison between interfaces
+
+# Basic flexible interface example
 add_executable(example example.cpp)
-add_executable(simple_example simple_example.cpp)
-
-# Link the bcsv library to the examples
 target_link_libraries(example PRIVATE bcsv)
-target_link_libraries(simple_example PRIVATE bcsv)
 
-# Add LZ4 streaming file example (independent of bcsv)
-add_executable(lz4_streaming_file_example lz4_streaming_file_example.cpp)
-target_link_libraries(lz4_streaming_file_example PRIVATE lz4_static)
+# Static interface example
+add_executable(example_static example_static.cpp)
+target_link_libraries(example_static PRIVATE bcsv)
 
-# Add LZ4 raw streaming example (uses raw LZ4 streaming API)
-add_executable(lz4_raw_streaming_example lz4_raw_streaming_example.cpp)
-target_link_libraries(lz4_raw_streaming_example PRIVATE lz4_static)
-
-# Add LZ4 independent blocks example (random access with fault tolerance)
-add_executable(lz4_independent_blocks_example lz4_independent_blocks_example.cpp)
-target_link_libraries(lz4_independent_blocks_example PRIVATE lz4_static)
+# Performance benchmark
+add_executable(performance_benchmark performance_benchmark.cpp)
+target_link_libraries(performance_benchmark PRIVATE bcsv)
 
 # Set output directory
-set_target_properties(example simple_example lz4_streaming_file_example lz4_raw_streaming_example lz4_independent_blocks_example PROPERTIES
+set_target_properties(example example_static performance_benchmark PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )

@@ -8,6 +8,7 @@
  */
 
 #include "layout.h"
+#include "row.h"
 #include <algorithm>
 #include <stdexcept>
 
@@ -253,6 +254,10 @@ namespace bcsv {
         }
     }
 
+    inline std::shared_ptr<Row> Layout::createRow() {
+        return Row::create(shared_from_this());
+    }
+
     /**
      * @brief Check if this layout is compatible with another for data transfer
      * @param other The other layout to check compatibility with
@@ -274,7 +279,11 @@ namespace bcsv {
         return true;
     }
 
-    template<LayoutConcept OtherLayout>
+    template<typename OtherLayout>
+    requires requires(const OtherLayout& other) {
+        { other.getColumnCount() } -> std::convertible_to<size_t>;
+        { other.getColumnType(size_t{}) } -> std::convertible_to<ColumnDataType>;
+    }
     inline Layout& Layout::operator=(const OtherLayout& other) {
         if (isLocked()) {
             throw std::runtime_error("Cannot modify locked layout");
@@ -376,7 +385,7 @@ namespace bcsv {
     inline ColumnDataType LayoutStatic<ColumnTypes...>::getColumnTypeT(size_t index) const {
         if constexpr (Index < sizeof...(ColumnTypes)) {
             if (Index == index) {
-                return toColumnDataType< column_type<Index> >;
+                return toColumnDataType< column_type<Index> >();
             } else {
                 return this->getColumnTypeT<Index + 1>(index);
             }
@@ -386,7 +395,11 @@ namespace bcsv {
     }
 
     template<typename... ColumnTypes>
-    template<LayoutConcept OtherLayout>
+    template<typename OtherLayout>
+    requires requires(const OtherLayout& other) {
+        { other.getColumnCount() } -> std::convertible_to<size_t>;
+        { other.getColumnType(size_t{}) } -> std::convertible_to<ColumnDataType>;
+    }
     inline bool LayoutStatic<ColumnTypes...>::isCompatibleWith(const OtherLayout& other) const {
         // Check if the number of columns is the same
         if (sizeof...(ColumnTypes) != other.getColumnCount()) {
@@ -404,7 +417,11 @@ namespace bcsv {
     }
 
     template<typename... ColumnTypes>
-    template<LayoutConcept OtherLayout>
+    template<typename OtherLayout>
+    requires requires(const OtherLayout& other) {
+        { other.getColumnCount() } -> std::convertible_to<size_t>;
+        { other.getColumnType(size_t{}) } -> std::convertible_to<ColumnDataType>;
+    }
     inline LayoutStatic<ColumnTypes...>& LayoutStatic<ColumnTypes...>::operator=(const OtherLayout& other) {
         if (!this->isCompatibleWith(other)) {
             throw std::runtime_error("Incompatible layout");
@@ -419,6 +436,11 @@ namespace bcsv {
             updateIndex();
         }
         return *this;
+    }
+
+    template<typename... ColumnTypes>
+    inline std::shared_ptr<RowStatic<ColumnTypes...>> LayoutStatic<ColumnTypes...>::createRow() {
+        return std::make_shared<RowStatic<ColumnTypes...>>(std::static_pointer_cast<LayoutStatic<ColumnTypes...>>(this->shared_from_this()));
     }
 
     template<typename... ColumnTypes>

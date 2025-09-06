@@ -282,10 +282,10 @@ namespace bcsv {
                         if (name != layout.getColumnName(i)) {
                             throw std::runtime_error("Column name mismatch at index " + std::to_string(i) + 
                                                    ". Static layout expects '" + layout.getColumnName(i) + 
-                                                   "', but binary has '" + name + "'");
+                                                   "', but binary has '" + std::string(name) + "'");
                         }
                     } else {
-                        layout.setColumnName(i, name);
+                        layout.setColumnName(i, std::string(name));
                     }
                 } else {
                     layout.setColumnName(i, "Column_" + std::to_string(i));
@@ -295,6 +295,7 @@ namespace bcsv {
         } catch (const std::exception& e) {
             // For LayoutStatic, we don't clear/modify the layout on failure
             // since it's compile-time defined and cannot be changed
+            (void)e; // Suppress unused variable warning
             throw; // Re-throw the exception
         }
     }

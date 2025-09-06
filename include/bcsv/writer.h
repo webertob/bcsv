@@ -27,7 +27,6 @@ namespace bcsv {
         ByteBuffer buffer_zip_;
         std::vector<uint16_t> row_offsets_;     // Row offsets for indexing
         size_t row_cnt_ = 0;
-        size_t row_cnt_old_ = 0;
         std::ofstream stream_;                  // Always binary file stream
         std::filesystem::path filePath_;        // Always present
 
@@ -46,7 +45,7 @@ namespace bcsv {
         void writeRow(const std::shared_ptr<typename LayoutType::RowType>& row) { if(auto *ptr = row.get()) { writeRow(*ptr); } }
 
     private:
-        void writeHeader();
+        void writeFileHeader();
         void writePacket();
 
     public:

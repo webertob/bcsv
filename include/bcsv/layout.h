@@ -3,6 +3,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <array>
 #include <cstdint>
 #include <unordered_map>
 #include <functional>
@@ -48,11 +49,6 @@ namespace bcsv {
         { const_layout.isLocked() } -> std::convertible_to<bool>;
         { layout.lock(owner) } -> std::same_as<void>;
         { layout.unlock(owner) } -> std::same_as<void>;
-        
-        // Optional: Compatibility checking
-        requires requires(const T& other) {
-            { const_layout.isCompatibleWith(other) } -> std::convertible_to<bool>;
-        };
         
         // Type information (for static layouts)
         typename T::RowType;  // Each layout must define its row type
@@ -112,8 +108,13 @@ namespace bcsv {
         // Row management
         void addRow(std::weak_ptr<Row> row);
         void removeRow(std::weak_ptr<Row> row);
+        std::shared_ptr<Row> createRow();
 
-        template<LayoutConcept OtherLayout>
+        template<typename OtherLayout>
+        requires requires(const OtherLayout& other) {
+            { other.getColumnCount() } -> std::convertible_to<size_t>;
+            { other.getColumnType(size_t{}) } -> std::convertible_to<ColumnDataType>;
+        }
         Layout& operator=(const OtherLayout& other);
 
     public:
@@ -136,15 +137,15 @@ namespace bcsv {
      * This layout is defined at compile-time to improve performance and reduce runtime overhead.
      */
     template<typename... ColumnTypes>
-    class LayoutStatic {
+    class LayoutStatic : public std::enable_shared_from_this<LayoutStatic<ColumnTypes...>> {
         std::array<std::string, sizeof...(ColumnTypes)> column_names_;
         std::unordered_map<std::string, size_t> column_index_;
         std::set<void*> lock_owners_;                               // ptrs to objects that have locked the layout, used to identify owners
         void updateIndex();
 
     public:
-        using RowType = RowStatic<LayoutStatic<ColumnTypes...>>;
-        using RowViewType = RowViewStatic<LayoutStatic<ColumnTypes...>>;
+        using RowType = RowStatic<ColumnTypes...>;
+        using RowViewType = RowViewStatic<ColumnTypes...>;
 
         using column_types = std::tuple<ColumnTypes...>;
         template<size_t Index>
@@ -199,11 +200,22 @@ namespace bcsv {
         static constexpr ColumnDataType getColumnType() { return toColumnDataType< column_type<Index> >(); }
 
         // Compatibility checking
-        template<LayoutConcept OtherLayout>
+        template<typename OtherLayout>
+        requires requires(const OtherLayout& other) {
+            { other.getColumnCount() } -> std::convertible_to<size_t>;
+            { other.getColumnType(size_t{}) } -> std::convertible_to<ColumnDataType>;
+        }
         bool isCompatibleWith(const OtherLayout& other) const;
 
-        template<LayoutConcept OtherLayout>
+        template<typename OtherLayout>
+        requires requires(const OtherLayout& other) {
+            { other.getColumnCount() } -> std::convertible_to<size_t>;
+            { other.getColumnType(size_t{}) } -> std::convertible_to<ColumnDataType>;
+        }
         LayoutStatic& operator=(const OtherLayout& other);
+
+        // Row creation
+        std::shared_ptr<RowStatic<ColumnTypes...>> createRow();
 
     public:
         // Factory functions that return shared pointers
