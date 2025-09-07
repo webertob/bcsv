@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <istream>
 
 #include "definitions.h"
 #include "byte_buffer.h"
@@ -52,13 +53,15 @@ namespace bcsv {
         uint32_t rowCount;       // Number of rows in the packet
         uint32_t crc32;          // CRC32 checksum of the entire packet (with this field zeroed)
 
+        bool read(std::istream& stream);
+        bool findAndRead(std::istream& stream);
         void updateCRC32(const std::vector<uint16_t>& rowOffsets, const ByteBuffer& zipBuffer);
         bool validateCRC32(const std::vector<uint16_t>& rowOffsets, const ByteBuffer& zipBuffer);
         bool validate() const {
             if(magic != PCKT_MAGIC) {
                 return false;
             }
-            if(payloadSizeRaw == 0 || payloadSizeZip == 0) {
+            if(payloadSizeRaw == 0 || payloadSizeZip == 0 || payloadSizeZip > payloadSizeRaw) {
                 return false;
             }
             if(rowCount == 0) {

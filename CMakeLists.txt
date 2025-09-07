@@ -94,6 +94,36 @@ if(BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
+# Add debug test
+add_executable(test_writer_debug test_writer_debug.cpp)
+target_link_libraries(test_writer_debug lz4_static bcsv)
+target_include_directories(test_writer_debug PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Add file inspect test
+add_executable(test_file_inspect test_file_inspect.cpp)
+target_link_libraries(test_file_inspect lz4_static bcsv)
+target_include_directories(test_file_inspect PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Add large test
+add_executable(test_large test_large.cpp)
+target_link_libraries(test_large lz4_static bcsv)
+target_include_directories(test_large PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Add multipacket test
+add_executable(test_multipacket test_multipacket.cpp)
+target_link_libraries(test_multipacket lz4_static bcsv)
+target_include_directories(test_multipacket PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Add exact test
+add_executable(test_exact test_exact.cpp)
+target_link_libraries(test_exact lz4_static bcsv)
+target_include_directories(test_exact PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+# Add comprehensive debug test
+add_executable(test_comprehensive_debug test_comprehensive_debug.cpp)
+target_link_libraries(test_comprehensive_debug lz4_static bcsv)
+target_include_directories(test_comprehensive_debug PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 # Installation rules
 install(DIRECTORY include/ DESTINATION include)
 install(DIRECTORY ${lz4_SOURCE_DIR}/lib/ DESTINATION include/lz4 FILES_MATCHING PATTERN "*.h")

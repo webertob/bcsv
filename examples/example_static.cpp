@@ -79,7 +79,6 @@ void readStaticBCSV() {
         return;
     }
 
-    std::cout << "File contains " << reader.getRowCount() << " rows\n";
     std::cout << "Reading data:\n\n";
 
     // Step 3: Read rows using static RowViewType

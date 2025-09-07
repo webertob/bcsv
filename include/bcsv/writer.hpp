@@ -183,7 +183,7 @@ namespace bcsv {
         packetHeader.payloadSizeRaw = static_cast<uint32_t>(buffer_raw_.size());
         packetHeader.payloadSizeZip = static_cast<uint32_t>(buffer_zip_.size());
         packetHeader.rowFirst = row_cnt_; 
-        packetHeader.rowCount = static_cast<uint32_t>(row_offsets_.size());
+        packetHeader.rowCount = static_cast<uint32_t>(row_offsets_.size()); // Number of rows
         row_offsets_.pop_back();    // remove last offset (end of last row) based on the format specification
         packetHeader.updateCRC32(row_offsets_, buffer_zip_);
 

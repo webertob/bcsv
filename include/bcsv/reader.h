@@ -26,8 +26,8 @@ namespace bcsv {
         ByteBuffer buffer_raw_;
         ByteBuffer buffer_zip_;
         std::vector<uint16_t> row_offsets_;     // Row offsets for indexing
-        size_t rows_read_ = 0;
-        size_t rows_available_ = 0;             // Number of rows currently available in buffer
+        size_t row_index_file_   = 0;           // current row index within the file
+        size_t row_index_packet_ = 0;           // current row index within the packet
 
         std::ifstream stream_;                  // Always binary file stream
         std::filesystem::path filePath_;        // Always present
@@ -43,10 +43,8 @@ namespace bcsv {
         bool is_open() const {  return stream_.is_open(); }
         bool open(const std::filesystem::path& filepath);
 
-        bool readRow(LayoutType::RowViewType& row);
-        bool seekToRow(size_t rowIndex);
-        size_t getRowCount() const;
-        
+        size_t readRow(LayoutType::RowViewType& row);
+
     private:
         bool readFileHeader();
         bool readPacket();

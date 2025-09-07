@@ -20,7 +20,9 @@ namespace bcsv {
     Reader<LayoutType>::Reader(std::shared_ptr<LayoutType> &layout) : layout_(layout) {
         buffer_raw_.reserve(LZ4_BLOCK_SIZE_KB * 1024);
         buffer_zip_.reserve(LZ4_COMPRESSBOUND(LZ4_BLOCK_SIZE_KB * 1024));
-
+        row_index_file_ = 0;
+        row_index_packet_ = 0;
+        row_offsets_.clear();
         // Using concepts instead of static_assert for type checking
         if (!layout_) {
             throw std::runtime_error("Error: Layout is not initialized");
@@ -54,6 +56,11 @@ namespace bcsv {
         }
         filePath_.clear();
         layout_->unlock(this);
+        buffer_raw_.clear();
+        buffer_zip_.clear();
+        row_index_file_ = 0;
+        row_index_packet_ = 0;
+        row_offsets_.clear();
     }
 
     /**
@@ -116,8 +123,12 @@ namespace bcsv {
     /* Read the header information from the binary file */
     template<LayoutConcept LayoutType>
     bool Reader<LayoutType>::readFileHeader() {
-        
-        if (!stream_.is_open()) {
+        buffer_raw_.clear();
+        buffer_zip_.clear();
+        row_index_file_ = 0;
+        row_index_packet_ = 0;
+        row_offsets_.clear();
+        if (!stream_) {
             return false;
         }
         layout_->unlock(this);
@@ -127,96 +138,132 @@ namespace bcsv {
         } else {
             return false;
         }
-        rows_read_ = 0;
-        rows_available_ = 0;
-        row_offsets_.clear();
         return true;
     }
 
     /* Read a packet of rows from the binary file */
     template<LayoutConcept LayoutType>
     bool Reader<LayoutType>::readPacket() {
-        if (!stream_.is_open()) {
-            return false;
-        }
+        bool normal = true;
+        while (stream_)
+        {
+            try {
+                // Check if we're at EOF before trying to read
+                if (stream_.peek() == EOF) {
+                    break;
+                }
+                
+                // Read packet header (compressed and uncompressed sizes)
+                PacketHeader header;
+                // in normal mode we expect the header to be at the current position
+                // in recovery mode we search for the header magic number
+                if(normal) {
+                    if (!header.read(stream_)) {
+                        throw std::runtime_error("Error: Failed to read packet header in normal mode");
+                    }
+                } else {
+                    if (!header.findAndRead(stream_)) {
+                        throw std::runtime_error("Error: Failed to find and read packet header in recovery mode");
+                    }
+                }
 
-        // Read packet header (compressed and uncompressed sizes)
-        PacketHeader header;
-        stream_.read(reinterpret_cast<char*>(&header), sizeof(header));
-        if (!stream_.good()) {
-            return false;
-        }
+                //read row offsets (by definition 1st offset is always 0)
+                if (header.rowCount > 1) {
+                    row_offsets_.resize(header.rowCount - 1);
+                    stream_.read(reinterpret_cast<char*>(row_offsets_.data()), row_offsets_.size() * sizeof(uint16_t));
+                    if (stream_.gcount() != static_cast<std::streamsize>(row_offsets_.size() * sizeof(uint16_t))) {
+                        throw std::runtime_error("Error: Failed to read row offsets");
+                    }
+                } else {
+                    row_offsets_.resize(0);
+                }
 
-        if(!header.validate()) {
-            return false;
-        }
+                // Read the compressed packet data
+                buffer_zip_.resize(header.payloadSizeZip);
+                stream_.read(reinterpret_cast<char*>(buffer_zip_.data()), buffer_zip_.size());
+                if (stream_.gcount() != static_cast<std::streamsize>(buffer_zip_.size())) {
+                    throw std::runtime_error("Error: Failed to read packet data");
+                }
 
-        //read row offsets (by definition 1st offset is always 0)
-        if (header.rowCount > 1) {
-            row_offsets_.resize(header.rowCount - 1);
-            stream_.read(reinterpret_cast<char*>(row_offsets_.data()), row_offsets_.size() * sizeof(uint16_t));
-        } else {
-            row_offsets_.resize(0);
-        }
+                // validate CRC
+                if(!header.validateCRC32(row_offsets_, buffer_zip_)) {
+                    throw std::runtime_error("Error: Packet CRC32 validation failed");
+                }
 
-        // Read the compressed packet data
-        buffer_zip_.resize(header.payloadSizeZip);
-        stream_.read(reinterpret_cast<char*>(buffer_zip_.data()), buffer_zip_.size());
-        if (!stream_.good()) {
-            return false;
-        }
+                // Decompress the packet data
+                buffer_raw_.resize(buffer_raw_.capacity());
+                int decompressedSize = LZ4_decompress_safe(
+                    reinterpret_cast<const char*>(buffer_zip_.data()), 
+                    reinterpret_cast<char*>(buffer_raw_.data()), 
+                    static_cast<int>(buffer_zip_.size()), 
+                    static_cast<int>(buffer_raw_.size())
+                );
+                if (decompressedSize < 0 || static_cast<size_t>(decompressedSize) != header.payloadSizeRaw) {
+                    throw std::runtime_error("Error: LZ4 decompression failed");
+                } else {
+                    buffer_raw_.resize(decompressedSize);
+                }
 
-        // validate CRC
-        if(!header.validateCRC32(row_offsets_, buffer_zip_)) {
-            throw std::runtime_error("Error: Packet CRC32 validation failed");
-        }
+                if(!normal) { 
+                    std::cerr << "Info: Recovered from error, resynchronized at row index " << header.rowFirst << std::endl;
+                    std::cerr << "Info: We have lost range [" << row_index_file_ + 1 << " to " << header.rowFirst-1 << "]" << std::endl;
+                    normal = true; // back to normal mode
+                }
 
-        // Decompress the packet data
-        buffer_raw_.resize(buffer_raw_.capacity());
-        int decompressedSize = LZ4_decompress_safe(
-            reinterpret_cast<const char*>(buffer_zip_.data()), 
-            reinterpret_cast<char*>(buffer_raw_.data()), 
-            static_cast<int>(buffer_zip_.size()), 
-            static_cast<int>(buffer_raw_.size())
-        );
-        if (decompressedSize < 0 || static_cast<size_t>(decompressedSize) != header.payloadSizeRaw) {
-            throw std::runtime_error("Error: LZ4 decompression failed");
-        } else {
-            buffer_raw_.resize(decompressedSize);
+                // Update row count
+                row_index_file_ = header.rowFirst;
+                row_index_packet_ = 0;
+                return true;
+            } catch (const std::exception& ex) {
+                std::cerr << "Error reading packet: " << ex.what() << std::endl;
+                normal = false; // switch to recovery mode
+            }
         }
-
-        // Update row count
-        rows_available_ = header.rowCount;
-        return true;
+        buffer_raw_.clear();
+        buffer_zip_.clear();
+        row_offsets_.clear();
+        row_index_packet_ = 0;
+        return false;
     }
 
+    /*
+    * @brief Read a single row from the buffer
+    * @param row The row to read into
+    * @return The index of the row read. Note: count starts at 1! Returns 0 if no row could be read
+    */
     template<LayoutConcept LayoutType>
-    bool Reader<LayoutType>::readRow(LayoutType::RowViewType& row) {
-        if(rows_available_ == 0) {
-            if(!readPacket() || rows_available_ == 0) {
-                return false;
+    size_t Reader<LayoutType>::readRow(LayoutType::RowViewType& row) {
+        if(row_offsets_.empty() || row_index_packet_ >= row_offsets_.size()+1) {
+            if(!readPacket() || row_offsets_.empty()) {
+                return 0;
             }
         }
 
-        size_t row_index = row_offsets_.size() + 1 - rows_available_;
-        size_t row_offset = (row_index == 0) ? 0 : row_offsets_[row_index - 1];
-        size_t row_offset_next = (row_index < row_offsets_.size()) ? row_offsets_[row_index] : buffer_raw_.size();
-        size_t row_length = row_offset_next - row_offset;
+        size_t row_offset, row_length;
+        if(row_index_packet_ == 0) {
+            row_offset = 0;
+            row_length = row_offsets_[0];
+        } else if(row_index_packet_ < row_offsets_.size()) {
+            row_offset = row_offsets_[row_index_packet_ - 1];
+            row_length = row_offsets_[row_index_packet_] - row_offset;
+        } else {
+            row_offset = row_offsets_.back();
+            row_length = buffer_raw_.size() - row_offset;
+        }
+        
 
         // Sanity checks
         if(row_offset + row_length > buffer_raw_.size()) {
             throw std::runtime_error("Error: Row offset and length exceed buffer size");
         }
 
-        rows_available_--;
         row.setBuffer(buffer_raw_.data() + row_offset, row_length);
-        return row.validate();
-
-    }
-
-    template<LayoutConcept LayoutType>
-    size_t Reader<LayoutType>::getRowCount() const {
-        return rows_read_;
+        if (!row.validate()) {
+            throw std::runtime_error("Error: Row validation failed");
+        }
+        row_index_packet_++;
+        row_index_file_++;
+        return row_index_file_;
     }
 
 } // namespace bcsv
