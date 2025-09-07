@@ -23,6 +23,7 @@ namespace bcsv {
         row_index_file_ = 0;
         row_index_packet_ = 0;
         row_offsets_.clear();
+        mode_ = ReaderMode::RESILIENT; // Default mode
         // Using concepts instead of static_assert for type checking
         if (!layout_) {
             throw std::runtime_error("Error: Layout is not initialized");
@@ -32,6 +33,18 @@ namespace bcsv {
     template<LayoutConcept LayoutType>
     Reader<LayoutType>::Reader(std::shared_ptr<LayoutType> &layout, const std::filesystem::path& filepath) 
         : Reader(layout) {
+        open(filepath);
+    }
+
+    template<LayoutConcept LayoutType>
+    Reader<LayoutType>::Reader(std::shared_ptr<LayoutType> &layout, ReaderMode mode) 
+        : Reader(layout) {
+        mode_ = mode;
+    }
+
+    template<LayoutConcept LayoutType>
+    Reader<LayoutType>::Reader(std::shared_ptr<LayoutType> &layout, const std::filesystem::path& filepath, ReaderMode mode) 
+        : Reader(layout, mode) {
         open(filepath);
     }
 
@@ -60,6 +73,7 @@ namespace bcsv {
         buffer_zip_.clear();
         row_index_file_ = 0;
         row_index_packet_ = 0;
+        packet_row_count_ = 0;
         row_offsets_.clear();
     }
 
@@ -127,6 +141,7 @@ namespace bcsv {
         buffer_zip_.clear();
         row_index_file_ = 0;
         row_index_packet_ = 0;
+        packet_row_count_ = 0;
         row_offsets_.clear();
         if (!stream_) {
             return false;
@@ -167,15 +182,23 @@ namespace bcsv {
                     }
                 }
 
+                if(header.rowFirst < row_index_file_) {
+                    throw std::runtime_error("Error: Packet rowFirst index is less than current file row index");
+                }
+
+                if(header.rowCount == 0) {
+                    throw std::runtime_error("Error: Packet rowCount is zero");
+                }
+
+                if(header.payloadSizeRaw == 0 || header.payloadSizeZip == 0 || header.payloadSizeZip > header.payloadSizeRaw) {
+                    throw std::runtime_error("Error: Invalid payload sizes in packet header");
+                }
+
                 //read row offsets (by definition 1st offset is always 0)
-                if (header.rowCount > 1) {
-                    row_offsets_.resize(header.rowCount - 1);
-                    stream_.read(reinterpret_cast<char*>(row_offsets_.data()), row_offsets_.size() * sizeof(uint16_t));
-                    if (stream_.gcount() != static_cast<std::streamsize>(row_offsets_.size() * sizeof(uint16_t))) {
-                        throw std::runtime_error("Error: Failed to read row offsets");
-                    }
-                } else {
-                    row_offsets_.resize(0);
+                row_offsets_.resize(header.rowCount-1);
+                stream_.read(reinterpret_cast<char*>(row_offsets_.data()), row_offsets_.size() * sizeof(uint16_t));
+                if (stream_.gcount() != static_cast<std::streamsize>(row_offsets_.size() * sizeof(uint16_t))) {
+                    throw std::runtime_error("Error: Failed to read row offsets");
                 }
 
                 // Read the compressed packet data
@@ -213,8 +236,15 @@ namespace bcsv {
                 // Update row count
                 row_index_file_ = header.rowFirst;
                 row_index_packet_ = 0;
+                packet_row_count_ = header.rowCount;
                 return true;
             } catch (const std::exception& ex) {
+                // In STRICT mode, immediately rethrow any exceptions
+                if (mode_ == ReaderMode::STRICT) {
+                    throw;  // Rethrow the original exception
+                }
+                
+                // In RESILIENT mode, log error and try to recover
                 std::cerr << "Error reading packet: " << ex.what() << std::endl;
                 normal = false; // switch to recovery mode
             }
@@ -223,6 +253,7 @@ namespace bcsv {
         buffer_zip_.clear();
         row_offsets_.clear();
         row_index_packet_ = 0;
+        packet_row_count_ = 0;
         return false;
     }
 
@@ -233,25 +264,22 @@ namespace bcsv {
     */
     template<LayoutConcept LayoutType>
     size_t Reader<LayoutType>::readRow(LayoutType::RowViewType& row) {
-        if(row_offsets_.empty() || row_index_packet_ >= row_offsets_.size()+1) {
-            if(!readPacket() || row_offsets_.empty()) {
+        if(row_index_packet_ >= packet_row_count_ ) {
+            if(!readPacket()) {
+                return 0;
+            }
+            if(packet_row_count_ == 0) {
                 return 0;
             }
         }
 
-        size_t row_offset, row_length;
-        if(row_index_packet_ == 0) {
-            row_offset = 0;
-            row_length = row_offsets_[0];
-        } else if(row_index_packet_ < row_offsets_.size()) {
-            row_offset = row_offsets_[row_index_packet_ - 1];
-            row_length = row_offsets_[row_index_packet_] - row_offset;
-        } else {
-            row_offset = row_offsets_.back();
-            row_length = buffer_raw_.size() - row_offset;
-        }
+        size_t row_offset = row_index_packet_ == 0 ? 
+            0 : 
+            row_offsets_[row_index_packet_ - 1];
+        size_t row_length = row_index_packet_ < row_offsets_.size() ? 
+            row_offsets_[row_index_packet_] - row_offset : 
+            buffer_raw_.size() - row_offset;
         
-
         // Sanity checks
         if(row_offset + row_length > buffer_raw_.size()) {
             throw std::runtime_error("Error: Row offset and length exceed buffer size");
