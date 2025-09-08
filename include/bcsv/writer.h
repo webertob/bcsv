@@ -8,6 +8,7 @@
 #include <memory>
 
 #include <lz4.h>
+#include <lz4hc.h>
 
 #include "definitions.h"
 #include "byte_buffer.h"
@@ -29,6 +30,7 @@ namespace bcsv {
         size_t row_cnt_ = 0;
         std::ofstream stream_;                  // Always binary file stream
         std::filesystem::path filePath_;        // Always present
+        int compressionLevel_ = 1;              // Default LZ4 compression level (0=disabled, 1-9=enabled)
 
     public:
         Writer(std::shared_ptr<LayoutType> layout);
@@ -43,6 +45,9 @@ namespace bcsv {
 
         void writeRow(const typename LayoutType::RowType& row);
         void writeRow(const std::shared_ptr<typename LayoutType::RowType>& row) { if(auto *ptr = row.get()) { writeRow(*ptr); } }
+
+        void setCompressionLevel(int level);
+        int getCompressionLevel() const { return compressionLevel_; }
 
     private:
         void writeFileHeader();

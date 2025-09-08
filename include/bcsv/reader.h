@@ -41,6 +41,7 @@ namespace bcsv {
 
         std::ifstream stream_;                  // Always binary file stream
         std::filesystem::path filePath_;        // Always present
+        uint8_t fileCompressionLevel_ = 1;      // Compression level from file header
         
 
     public:

@@ -150,6 +150,7 @@ namespace bcsv {
         FileHeader fileHeader;
         if(fileHeader.readFromBinary(stream_, *layout_)) {
             layout_->lock(this);
+            fileCompressionLevel_ = fileHeader.getCompressionLevel();
         } else {
             return false;
         }
@@ -213,18 +214,24 @@ namespace bcsv {
                     throw std::runtime_error("Error: Packet CRC32 validation failed");
                 }
 
-                // Decompress the packet data
-                buffer_raw_.resize(buffer_raw_.capacity());
-                int decompressedSize = LZ4_decompress_safe(
-                    reinterpret_cast<const char*>(buffer_zip_.data()), 
-                    reinterpret_cast<char*>(buffer_raw_.data()), 
-                    static_cast<int>(buffer_zip_.size()), 
-                    static_cast<int>(buffer_raw_.size())
-                );
-                if (decompressedSize < 0) {
-                    throw std::runtime_error("Error: LZ4 decompression failed");
+                // Handle decompression based on file compression level
+                if (fileCompressionLevel_ == 0) {
+                    // No compression - use compressed buffer directly (avoid LZ4 overhead)
+                    buffer_raw_.swap(buffer_zip_); // Efficient swap instead of copy
                 } else {
-                    buffer_raw_.resize(decompressedSize);
+                    // Decompress the packet data using LZ4
+                    buffer_raw_.resize(buffer_raw_.capacity());
+                    int decompressedSize = LZ4_decompress_safe(
+                        reinterpret_cast<const char*>(buffer_zip_.data()), 
+                        reinterpret_cast<char*>(buffer_raw_.data()), 
+                        static_cast<int>(buffer_zip_.size()), 
+                        static_cast<int>(buffer_raw_.size())
+                    );
+                    if (decompressedSize < 0) {
+                        throw std::runtime_error("Error: LZ4 decompression failed");
+                    } else {
+                        buffer_raw_.resize(decompressedSize);
+                    }
                 }
 
                 if(!normal) { 

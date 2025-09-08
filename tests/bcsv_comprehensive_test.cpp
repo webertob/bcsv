@@ -1288,6 +1288,310 @@ TEST_F(BCSVTestSuite, Multipacket_LargeData) {
     std::cout << "Multipacket large data test completed successfully" << std::endl;
 }
 
+// ============================================================================
+// Compression Level Tests
+// ============================================================================
+
+TEST_F(BCSVTestSuite, CompressionLevels_FlexibleInterface_AllLevels) {
+    std::cout << "\nTesting all compression levels (0-9) with flexible interface..." << std::endl;
+    
+    // Create test layout with diverse data types for good compression testing
+    auto layout = bcsv::Layout::create();
+    layout->insertColumn({"id", bcsv::ColumnDataType::UINT32});
+    layout->insertColumn({"name", bcsv::ColumnDataType::STRING});
+    layout->insertColumn({"value", bcsv::ColumnDataType::DOUBLE});
+    layout->insertColumn({"score", bcsv::ColumnDataType::FLOAT});
+    layout->insertColumn({"active", bcsv::ColumnDataType::BOOL});
+    layout->insertColumn({"counter", bcsv::ColumnDataType::INT64});
+    
+    const size_t test_rows = 1000;
+    
+    // Test each compression level
+    for (int level = 0; level <= 9; level++) {
+        std::string filename = test_dir_ + "/compression_level_" + std::to_string(level) + "_flexible.bcsv";
+        
+        // Write with specific compression level
+        {
+            bcsv::Writer<bcsv::Layout> writer(layout);
+            writer.setCompressionLevel(level);
+            writer.open(filename, true);
+            
+            for (size_t i = 0; i < test_rows; i++) {
+                auto row = layout->createRow();
+                (*row).set(0, static_cast<uint32_t>(i));
+                (*row).set(1, "TestString_" + std::to_string(i % 100)); // Repeating pattern for compression
+                (*row).set(2, i * 3.14159265359);
+                (*row).set(3, static_cast<float>(i % 1000) / 10.0f);
+                (*row).set(4, (i % 2) == 0);
+                (*row).set(5, static_cast<int64_t>(i * 1000));
+                writer.writeRow(*row);
+            }
+        }
+        
+        // Verify file exists and get size
+        ASSERT_TRUE(fs::exists(filename)) << "File not created for compression level " << level;
+        size_t file_size = fs::file_size(filename);
+        
+        // Read and verify all data
+        {
+            bcsv::Reader<bcsv::Layout> reader(layout, filename);
+            bcsv::RowView rowView(layout);
+            
+            size_t count = 0;
+            while (reader.readRow(rowView)) {
+                // Verify data integrity
+                EXPECT_EQ(rowView.get<uint32_t>(0), count) << "ID mismatch at row " << count << ", level " << level;
+                EXPECT_EQ(rowView.get<std::string>(1), "TestString_" + std::to_string(count % 100)) 
+                    << "String mismatch at row " << count << ", level " << level;
+                EXPECT_NEAR(rowView.get<double>(2), count * 3.14159265359, 1e-10) 
+                    << "Double mismatch at row " << count << ", level " << level;
+                EXPECT_NEAR(rowView.get<float>(3), static_cast<float>(count % 1000) / 10.0f, 1e-5) 
+                    << "Float mismatch at row " << count << ", level " << level;
+                EXPECT_EQ(rowView.get<bool>(4), (count % 2) == 0) 
+                    << "Bool mismatch at row " << count << ", level " << level;
+                EXPECT_EQ(rowView.get<int64_t>(5), static_cast<int64_t>(count * 1000)) 
+                    << "Int64 mismatch at row " << count << ", level " << level;
+                count++;
+            }
+            
+            EXPECT_EQ(count, test_rows) << "Row count mismatch for compression level " << level;
+        }
+        
+        std::cout << "Level " << level << ": " << file_size << " bytes, " << test_rows << " rows - OK" << std::endl;
+        
+        // Clean up
+        fs::remove(filename);
+    }
+}
+
+TEST_F(BCSVTestSuite, CompressionLevels_StaticInterface_AllLevels) {
+    std::cout << "\nTesting all compression levels (0-9) with static interface..." << std::endl;
+    
+    // Create static layout with same structure
+    using TestLayout = bcsv::LayoutStatic<uint32_t, std::string, double, float, bool, int64_t>;
+    auto layout = TestLayout::create();
+    
+    const size_t test_rows = 1000;
+    
+    // Test each compression level
+    for (int level = 0; level <= 9; level++) {
+        std::string filename = test_dir_ + "/compression_level_" + std::to_string(level) + "_static.bcsv";
+        
+        // Write with specific compression level
+        {
+            bcsv::Writer<TestLayout> writer(layout);
+            writer.setCompressionLevel(level);
+            writer.open(filename, true);
+            
+            for (size_t i = 0; i < test_rows; i++) {
+                auto row = layout->createRow();
+                (*row).set<0>(static_cast<uint32_t>(i));
+                (*row).set<1>("TestString_" + std::to_string(i % 100));
+                (*row).set<2>(i * 3.14159265359);
+                (*row).set<3>(static_cast<float>(i % 1000) / 10.0f);
+                (*row).set<4>((i % 2) == 0);
+                (*row).set<5>(static_cast<int64_t>(i * 1000));
+                writer.writeRow(*row);
+            }
+        }
+        
+        // Verify file exists and get size
+        ASSERT_TRUE(fs::exists(filename)) << "File not created for compression level " << level;
+        size_t file_size = fs::file_size(filename);
+        
+        // Read and verify all data
+        {
+            bcsv::Reader<TestLayout> reader(layout, filename);
+            typename TestLayout::RowViewType rowView(layout);
+            
+            size_t count = 0;
+            while (reader.readRow(rowView)) {
+                // Verify data integrity
+                EXPECT_EQ(rowView.get<0>(), count) << "ID mismatch at row " << count << ", level " << level;
+                EXPECT_EQ(rowView.get<1>(), "TestString_" + std::to_string(count % 100)) 
+                    << "String mismatch at row " << count << ", level " << level;
+                EXPECT_NEAR(rowView.get<2>(), count * 3.14159265359, 1e-10) 
+                    << "Double mismatch at row " << count << ", level " << level;
+                EXPECT_NEAR(rowView.get<3>(), static_cast<float>(count % 1000) / 10.0f, 1e-5) 
+                    << "Float mismatch at row " << count << ", level " << level;
+                EXPECT_EQ(rowView.get<4>(), (count % 2) == 0) 
+                    << "Bool mismatch at row " << count << ", level " << level;
+                EXPECT_EQ(rowView.get<5>(), static_cast<int64_t>(count * 1000)) 
+                    << "Int64 mismatch at row " << count << ", level " << level;
+                count++;
+            }
+            
+            EXPECT_EQ(count, test_rows) << "Row count mismatch for compression level " << level;
+        }
+        
+        std::cout << "Level " << level << ": " << file_size << " bytes, " << test_rows << " rows - OK" << std::endl;
+        
+        // Clean up
+        fs::remove(filename);
+    }
+}
+
+TEST_F(BCSVTestSuite, CompressionLevels_CrossCompatibility) {
+    std::cout << "\nTesting compression level cross-compatibility..." << std::endl;
+    
+    // Create layouts
+    auto flexLayout = bcsv::Layout::create();
+    flexLayout->insertColumn({"Column0", bcsv::ColumnDataType::UINT32});
+    flexLayout->insertColumn({"Column1", bcsv::ColumnDataType::STRING});
+    flexLayout->insertColumn({"Column2", bcsv::ColumnDataType::DOUBLE});
+    
+    using StaticLayout = bcsv::LayoutStatic<uint32_t, std::string, double>;
+    auto staticLayout = StaticLayout::create();
+    
+    const size_t test_rows = 100;
+    
+    // Test reading files written with different compression levels
+    for (int write_level = 0; write_level <= 9; write_level += 3) { // Test levels 0, 3, 6, 9
+        std::string filename = test_dir_ + "/cross_compat_" + std::to_string(write_level) + ".bcsv";
+        
+        // Write with flexible interface
+        {
+            bcsv::Writer<bcsv::Layout> writer(flexLayout);
+            writer.setCompressionLevel(write_level);
+            writer.open(filename, true);
+            
+            for (size_t i = 0; i < test_rows; i++) {
+                auto row = flexLayout->createRow();
+                (*row).set(0, static_cast<uint32_t>(i));
+                (*row).set(1, "CrossTest_" + std::to_string(i));
+                (*row).set(2, i * 2.71828);
+                writer.writeRow(*row);
+            }
+        }
+        
+        // Read with static interface
+        {
+            bcsv::Reader<StaticLayout> reader(staticLayout, filename);
+            typename StaticLayout::RowViewType rowView(staticLayout);
+            
+            size_t count = 0;
+            while (reader.readRow(rowView)) {
+                EXPECT_EQ(rowView.get<0>(), count) << "Cross-compat ID mismatch at row " << count;
+                EXPECT_EQ(rowView.get<1>(), "CrossTest_" + std::to_string(count)) 
+                    << "Cross-compat string mismatch at row " << count;
+                EXPECT_NEAR(rowView.get<2>(), count * 2.71828, 1e-10) 
+                    << "Cross-compat double mismatch at row " << count;
+                count++;
+            }
+            
+            EXPECT_EQ(count, test_rows) << "Cross-compat row count mismatch for level " << write_level;
+        }
+        
+        std::cout << "Cross-compatibility test passed for compression level " << write_level << std::endl;
+        fs::remove(filename);
+    }
+}
+
+TEST_F(BCSVTestSuite, CompressionLevels_ValidationAndRestrictions) {
+    std::cout << "\nTesting compression level validation and restrictions..." << std::endl;
+    
+    auto layout = bcsv::Layout::create();
+    layout->insertColumn({"test", bcsv::ColumnDataType::INT32});
+    
+    // Test invalid compression levels
+    {
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        
+        // Test negative level
+        EXPECT_THROW(writer.setCompressionLevel(-1), std::invalid_argument);
+        
+        // Test too high level
+        EXPECT_THROW(writer.setCompressionLevel(10), std::invalid_argument);
+        
+        // Valid levels should not throw
+        EXPECT_NO_THROW(writer.setCompressionLevel(0));
+        EXPECT_NO_THROW(writer.setCompressionLevel(5));
+        EXPECT_NO_THROW(writer.setCompressionLevel(9));
+    }
+    
+    // Test restriction when file is open
+    {
+        std::string filename = test_dir_ + "/restriction_test.bcsv";
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        writer.open(filename, true);
+        
+        // Should not change compression level when file is open
+        int original_level = writer.getCompressionLevel();
+        writer.setCompressionLevel(5); // Should be ignored
+        EXPECT_EQ(writer.getCompressionLevel(), original_level) 
+            << "Compression level should not change when file is open";
+        
+        writer.close();
+        fs::remove(filename);
+    }
+    
+    std::cout << "Validation and restrictions test completed" << std::endl;
+}
+
+TEST_F(BCSVTestSuite, CompressionLevels_PerformanceCharacteristics) {
+    std::cout << "\nTesting compression level performance characteristics..." << std::endl;
+    
+    auto layout = bcsv::Layout::create();
+    layout->insertColumn({"id", bcsv::ColumnDataType::UINT32});
+    layout->insertColumn({"data", bcsv::ColumnDataType::STRING});
+    
+    const size_t test_rows = 5000;
+    std::vector<std::pair<int, size_t>> level_sizes; // (level, file_size)
+    
+    // Test compression effectiveness
+    for (int level : {0, 1, 5, 9}) {
+        std::string filename = test_dir_ + "/perf_test_" + std::to_string(level) + ".bcsv";
+        
+        auto start = std::chrono::high_resolution_clock::now();
+        
+        {
+            bcsv::Writer<bcsv::Layout> writer(layout);
+            writer.setCompressionLevel(level);
+            writer.open(filename, true);
+            
+            for (size_t i = 0; i < test_rows; i++) {
+                auto row = layout->createRow();
+                (*row).set(0, static_cast<uint32_t>(i));
+                // Create repetitive data that compresses well
+                std::string data = "RepeatingDataPattern_" + std::to_string(i % 10) + "_";
+                for (int j = 0; j < 5; j++) {
+                    data += "MoreRepetitiveContent";
+                }
+                (*row).set(1, data);
+                writer.writeRow(*row);
+            }
+        }
+        
+        auto end = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+        
+        size_t file_size = fs::file_size(filename);
+        level_sizes.push_back({level, file_size});
+        
+        std::cout << "Level " << level << ": " << file_size << " bytes, " 
+                  << duration << "ms write time" << std::endl;
+        
+        fs::remove(filename);
+    }
+    
+    // Verify compression effectiveness (higher levels should generally produce smaller files)
+    size_t uncompressed_size = 0;
+    size_t compressed_size = 0;
+    
+    for (auto& [level, size] : level_sizes) {
+        if (level == 0) {
+            uncompressed_size = size;
+        } else if (level == 9) {
+            compressed_size = size;
+        }
+    }
+    
+    EXPECT_GT(uncompressed_size, compressed_size) 
+        << "Level 9 should produce smaller files than level 0";
+    
+    std::cout << "Performance characteristics test completed" << std::endl;
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
