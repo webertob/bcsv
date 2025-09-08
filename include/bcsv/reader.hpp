@@ -190,7 +190,7 @@ namespace bcsv {
                     throw std::runtime_error("Error: Packet rowCount is zero");
                 }
 
-                if(header.payloadSizeRaw == 0 || header.payloadSizeZip == 0 || header.payloadSizeZip > header.payloadSizeRaw) {
+                if(header.payloadSizeZip == 0) {
                     throw std::runtime_error("Error: Invalid payload sizes in packet header");
                 }
 
@@ -221,7 +221,7 @@ namespace bcsv {
                     static_cast<int>(buffer_zip_.size()), 
                     static_cast<int>(buffer_raw_.size())
                 );
-                if (decompressedSize < 0 || static_cast<size_t>(decompressedSize) != header.payloadSizeRaw) {
+                if (decompressedSize < 0) {
                     throw std::runtime_error("Error: LZ4 decompression failed");
                 } else {
                     buffer_raw_.resize(decompressedSize);

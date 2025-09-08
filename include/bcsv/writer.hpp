@@ -180,7 +180,6 @@ namespace bcsv {
         }
         
         PacketHeader packetHeader;
-        packetHeader.payloadSizeRaw = static_cast<uint32_t>(buffer_raw_.size());
         packetHeader.payloadSizeZip = static_cast<uint32_t>(buffer_zip_.size());
         packetHeader.rowFirst = row_cnt_; 
         packetHeader.rowCount = static_cast<uint32_t>(row_offsets_.size()); // Number of rows

@@ -19,14 +19,11 @@ namespace bcsv {
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     |                      Packet Magic (uint32)                    |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |                     Original Payload Size (uint32)            |
-    +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |                    Compressed Payload Size (uint32)           |
+    |                    Payload Size (compressed) (uint32)         |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     |                                                               |
     |                    First Row Number (uint64)                  |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |                                                               |
     |                      Number of Rows (uint32)                  |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     |                    CRC32 Checksum (uint32)                    |
@@ -35,7 +32,7 @@ namespace bcsv {
     |              row, except for the first (uint16 * Rows - 1)    |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     |                                                               |
-    |                    LZ4 Compressed Payload Data                |
+    |                    Payload Data (LZ4 compressed)              |
     |                         (variable)                            |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
 
@@ -47,7 +44,6 @@ namespace bcsv {
     #pragma pack(push, 1)
     struct PacketHeader {
         const uint32_t magic = PCKT_MAGIC; 
-        uint32_t payloadSizeRaw; // Size of the payload data
         uint32_t payloadSizeZip; // Size of the compressed payload data
         uint64_t rowFirst;       // Index of the first row in the packet
         uint32_t rowCount;       // Number of rows in the packet
@@ -61,7 +57,7 @@ namespace bcsv {
             if(magic != PCKT_MAGIC) {
                 return false;
             }
-            if(payloadSizeRaw == 0 || payloadSizeZip == 0 || payloadSizeZip > payloadSizeRaw) {
+            if(payloadSizeZip == 0) {
                 return false;
             }
             if(rowCount == 0) {
@@ -71,5 +67,5 @@ namespace bcsv {
         }
     };
     #pragma pack(pop)
-    static_assert(sizeof(PacketHeader) == 28, "PacketHeader must be exactly 28 bytes");
+    static_assert(sizeof(PacketHeader) == 24, "PacketHeader must be exactly 24 bytes");
 } // namespace bcsv
