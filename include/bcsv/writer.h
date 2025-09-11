@@ -23,45 +23,34 @@ namespace bcsv {
      */
     template<LayoutConcept LayoutType>
     class Writer {
-        std::shared_ptr<LayoutType> layout_;
-        ByteBuffer buffer_raw_;
-        ByteBuffer buffer_zip_;
-        std::vector<uint16_t> row_offsets_;     // Row offsets for indexing
-        size_t row_cnt_ = 0;
-        std::ofstream stream_;                  // Always binary file stream
-        std::filesystem::path filePath_;        // Always present
-        int compressionLevel_ = 1;              // Default LZ4 compression level (0=disabled, 1-9=enabled)
+        LayoutType              layout_;
+        FileHeader              fileHeader_;                // File header for accessing flags and metadata
+        std::filesystem::path   filePath_;                  // Always present
+        std::ofstream           stream_;                    // Always binary file stream
+
+        ByteBuffer              buffer_raw_;
+        ByteBuffer              buffer_zip_;
+        std::vector<uint16_t>   row_offsets_;               // Row offsets for indexing
+        size_t                  row_cnt_ = 0;
+    
+    public:
+        LayoutType::RowType     row;
 
     public:
-        Writer(std::shared_ptr<LayoutType> layout);
-        Writer(std::shared_ptr<LayoutType> layout, const std::filesystem::path& filepath, bool overwrite = false);
+        Writer() = delete;
+        Writer(const LayoutType& layout);
         ~Writer();
 
-        void close();
-        void flush();
-        const std::filesystem::path& getFilePath() const { return filePath_; }
-        bool is_open() const { return stream_.is_open(); }
-        bool open(const std::filesystem::path& filepath, bool overwrite = false);
-
-        void writeRow(const typename LayoutType::RowType& row);
-        void writeRow(const std::shared_ptr<typename LayoutType::RowType>& row) { if(auto *ptr = row.get()) { writeRow(*ptr); } }
-
-        void setCompressionLevel(int level);
-        int getCompressionLevel() const { return compressionLevel_; }
+        void                            close();
+        void                            flush();
+        uint8_t                         getCompressionLevel() const     { return fileHeader_.getCompressionLevel(); }
+        const std::filesystem::path&    getFilePath() const             { return filePath_; }
+        bool                            is_open() const                 { return stream_.is_open(); }
+        bool                            open(const std::filesystem::path& filepath, bool overwrite = false, uint8_t compressionLevel = 1);
+        bool                            writeRow();
 
     private:
-        void writeFileHeader();
-        void writePacket();
-
-    public:
-        // Factory functions
-        static std::shared_ptr<Writer> create(std::shared_ptr<LayoutType> &layout) {
-            return std::make_shared<Writer>(layout);
-        }
-
-        static std::shared_ptr<Writer> create(std::shared_ptr<LayoutType> &layout, const std::filesystem::path& filepath, bool overwrite = false) {
-            return std::make_shared<Writer>(layout, filepath, overwrite);
-        }
+        void                            writePacket();
     };
 
 } // namespace bcsv

@@ -35,23 +35,20 @@ namespace bcsv {
     constexpr size_t MAX_COLUMN_WIDTH  = 65535-1; // Maximum width of column content
     constexpr size_t MAX_COLUMN_COUNT  = 65535-1;
 
-    // File header flags - All mandatory features in v1.0+
-    namespace FileFlags {
-        // Previously optional flags that are now mandatory:
-        // - CHECKSUMS: Always present (CRC32 integrity checking)
-        // - ROW_INDEX: Always present (row offset indexing)
-        // - ALIGNED: Always present (aligned data structures)
-        // - COMPRESSED: Always present (LZ4 compression)
-        
-        constexpr uint16_t RESERVED1 = 0x0010;
-        constexpr uint16_t RESERVED2 = 0x0020;
-        constexpr uint16_t RESERVED3 = 0x0040;
-        constexpr uint16_t RESERVED4 = 0x0080;
-        constexpr uint16_t RESERVED5 = 0x0100;
-        constexpr uint16_t RESERVED6 = 0x0200;
-        constexpr uint16_t RESERVED7 = 0x0400;
-        constexpr uint16_t RESERVED8 = 0x0800;
-    }
+    /**
+     * @brief Feature flag bit positions (Reserved for future optional features)
+     * 
+     * Note: Core features (CHECKSUMS, ROW_INDEX, ALIGNED, COMPRESSED) are now
+     * mandatory in v1.0+ and no longer require flag bits.
+     */
+    enum FileFlags : uint16_t {
+        // All bits currently reserved for future optional features
+        ZERO_ORDER_HOLD = 0x0001,       ///< Bit 0: Indicates this file uses zero-order hold compression (not implemented yet)
+        RESERVED2 = 0x0002,             ///< Bit 1: Reserved for future use
+        RESERVED3 = 0x0004,             ///< Bit 2: Reserved for future use
+        RESERVED4 = 0x0008,             ///< Bit 3: Reserved for future use
+        // Bits 4-15 also reserved
+    };
 
     // Column data type enumeration (stored as uint16_t in file)
     enum class ColumnDataType : uint16_t {

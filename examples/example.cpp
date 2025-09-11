@@ -17,19 +17,22 @@ void writeFlexibleBCSV() {
 
     // Step 1: Create a flexible layout
     // The Layout class allows you to define columns at runtime
-    auto layout = bcsv::Layout::create();
+    bcsv::Layout layout;
     
     // Add columns with name and data type
-    layout->insertColumn({"id", bcsv::ColumnDataType::INT32});
-    layout->insertColumn({"name", bcsv::ColumnDataType::STRING});
-    layout->insertColumn({"score", bcsv::ColumnDataType::FLOAT});
-    layout->insertColumn({"active", bcsv::ColumnDataType::BOOL});
-
-    std::cout << "Created layout with " << layout->getColumnCount() << " columns\n";
+    layout.addColumn({"id", bcsv::ColumnDataType::INT32});
+    layout.addColumn({"name", bcsv::ColumnDataType::STRING});
+    layout.addColumn({"score", bcsv::ColumnDataType::FLOAT});
+    layout.addColumn({"active", bcsv::ColumnDataType::BOOL});
+    std::cout << "Created layout with " << layout.getColumnCount() << " columns\n";
 
     // Step 2: Create a writer
     const std::string filename = "example_flexible.bcsv";
-    bcsv::Writer<bcsv::Layout> writer(layout, filename, true);
+    bcsv::Writer<bcsv::Layout> writer(layout);
+    if(!writer.open(filename, true)) {
+        std::cerr << "Failed to open file for writing: " << filename << "\n";
+        return;
+    }
 
     // Step 3: Create and write data rows
     struct SampleData {
@@ -48,13 +51,15 @@ void writeFlexibleBCSV() {
     };
 
     for (const auto& data : sampleData) {
-        auto row = layout->createRow();
         // Use the pattern from working tests: (*row).set() instead of row->set()
-        (*row).set(0, data.id);
-        (*row).set(1, data.name);
-        (*row).set(2, data.score);
-        (*row).set(3, data.active);
-        writer.writeRow(*row);
+        writer.row.set(0, data.id);
+        writer.row.set(1, data.name);
+        writer.row.set(2, data.score);
+        writer.row.set(3, data.active);
+        if (!writer.writeRow()) {
+            std::cerr << "Failed to write row\n";
+            break;
+        }
     }
 
     writer.flush();
@@ -66,42 +71,55 @@ void readFlexibleBCSV() {
 
     // Step 1: Create matching layout for reading
     // Must match the layout used for writing
-    auto layout = bcsv::Layout::create();
-    layout->insertColumn({"id", bcsv::ColumnDataType::INT32});
-    layout->insertColumn({"name", bcsv::ColumnDataType::STRING});
-    layout->insertColumn({"score", bcsv::ColumnDataType::FLOAT});
-    layout->insertColumn({"active", bcsv::ColumnDataType::BOOL});
+    bcsv::Layout layoutExpected;
+    layoutExpected.addColumn({"id", bcsv::ColumnDataType::INT32});
+    layoutExpected.addColumn({"name", bcsv::ColumnDataType::STRING});
+    layoutExpected.addColumn({"score", bcsv::ColumnDataType::FLOAT});
+    layoutExpected.addColumn({"active", bcsv::ColumnDataType::BOOL});
 
     // Step 2: Create a reader
     const std::string filename = "example_flexible.bcsv";
-    bcsv::Reader<bcsv::Layout> reader(layout, filename);
-
-    if (!reader.is_open()) {
+    bcsv::Reader<bcsv::Layout> reader;
+    if (!reader.open(filename)) {
         std::cerr << "Failed to open file: " << filename << "\n";
         return;
     }
+    // Validate layout compatibility (column count, types)
+    if (!reader.getLayout().isCompatibleWith(layoutExpected)) {
+        std::cerr << "Error: File layout is not compatible with expected layout\n";
+        reader.close();
+        return;
+    }
+
+    //Optional: Compare column names
+    for (size_t i = 0; i < layoutExpected.getColumnCount(); i++) {
+        if (layoutExpected.getColumnName(i) != reader.getLayout().getColumnName(i)) {
+            std::cerr << "Warning: Column name mismatch at index " << i
+                      << " (expected: " << layoutExpected.getColumnName(i)
+                      << ", found: " << reader.getLayout().getColumnName(i) << ")\n";
+        }
+    }
+
 
     std::cout << "Reading data:\n\n";
-
-    // Step 3: Read rows using RowView
-    bcsv::RowView rowView(layout);
-    size_t rowIndex = 0;
-    
     // Table header
     std::cout << "ID | Name           | Score | Active\n";
     std::cout << "---|----------------|-------|-------\n";
-    
-    while (reader.readRow(rowView)) {
-        auto id = rowView.get<int32_t>(0);
-        auto name = rowView.get<std::string>(1);
-        auto score = rowView.get<float>(2);
-        auto active = rowView.get<bool>(3);
-        
-        std::cout << std::setw(2) << id << " | " 
+
+    // Step 3: Read rows using RowView
+    size_t rowIndex = 0;
+    while (reader.readNext()) {
+        auto row = reader.row();
+        auto id = row.get<int32_t>(0);
+        auto name = row.get<std::string>(1);
+        auto score = row.get<float>(2);
+        auto active = row.get<bool>(3);
+
+        std::cout << std::setw(2) << id << " | "
                   << std::setw(14) << std::left << name << " | "
                   << std::setw(5) << std::right << std::fixed << std::setprecision(1) << score << " | "
                   << (active ? "Yes" : "No") << "\n";
-        rowIndex++;
+        rowIndex = reader.getCurrentRowIndex();
     }
 
     reader.close();

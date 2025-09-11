@@ -21,7 +21,7 @@ namespace bcsv {
         header_.versionMajor = major;
         header_.versionMinor = minor;
         header_.versionPatch = patch;
-        header_.compressionLevel = compressionLevel;
+        header_.compressionLevel = std::min(compressionLevel, uint8_t(9));
         header_.flags = 0;             // All flags reserved for future use
         header_.columnCount = static_cast<uint16_t>( std::min(columnCount, MAX_COLUMN_COUNT));
         if (header_.columnCount == MAX_COLUMN_COUNT) {
@@ -219,85 +219,77 @@ namespace bcsv {
     // Specialized version for LayoutStatic - validates that binary matches static definition
     template<typename... ColumnTypes>
     bool FileHeader::readFromBinary(std::istream& stream, LayoutStatic<ColumnTypes...>& layout) {
-        try {
-            // Read fixed header
-            stream.read(reinterpret_cast<char*>(&header_), sizeof(header_));
-            if (!stream.good()) {
-                throw std::runtime_error("Failed to read BCSV header from stream");
-            }
-            
-            if (!isValidMagic()) {
-                throw std::runtime_error("Invalid magic number in BCSV header. Expected: 0x" + 
-                                       std::to_string(BCSV_MAGIC) + ", Got: 0x" + std::to_string(header_.magic));
-            }
-            
-            // Validate column count matches static definition
-            if (header_.columnCount != layout.getColumnCount()) {
-                throw std::runtime_error("Column count mismatch. Static layout expects " + 
-                                       std::to_string(layout.getColumnCount()) + " columns, but binary has " + 
-                                       std::to_string(header_.columnCount) + " columns");
-            }
-
-            // Read column data types and validate against static definition
-            for (uint16_t i = 0; i < layout.getColumnCount(); ++i) {
-                ColumnDataType type;
-                stream.read(reinterpret_cast<char*>(&type), sizeof(type));
-                if (!stream.good()) {
-                    throw std::runtime_error("Failed to read column data type at index " + std::to_string(i));
-                }
-                if (type != layout.getColumnType(i)) {
-                    throw std::runtime_error("Column type mismatch at index " + std::to_string(i) + 
-                                           ". Static layout expects " + dataTypeToString(layout.getColumnType(i)) + 
-                                           ", but binary has " + dataTypeToString(type));
-                }
-            }
-
-            // Read column name lengths (we still need to read them to advance the stream)
-            std::vector<uint16_t> nameLengths(layout.getColumnCount());
-            for (uint16_t i = 0; i < layout.getColumnCount(); ++i) {
-                stream.read(reinterpret_cast<char*>(&nameLengths[i]), sizeof(uint16_t));
-                if (!stream.good()) {
-                    throw std::runtime_error("Failed to read column name length at index " + std::to_string(i));
-                }
-                // Validate name length
-                if (nameLengths[i] > MAX_STRING_LENGTH) {
-                    throw std::runtime_error("Column name length (" + std::to_string(nameLengths[i]) + 
-                                           ") exceeds maximum (" + std::to_string(MAX_STRING_LENGTH) + 
-                                           ") at index " + std::to_string(i));
-                }
-            }
-
-            // Read column names and optionally validate against static definition
-            for (uint16_t i = 0; i < layout.getColumnCount(); ++i) {
-                if (nameLengths[i] > 0) {
-                    std::vector<char> nameBuffer(nameLengths[i]);
-                    stream.read(nameBuffer.data(), nameLengths[i]);
-                    if (!stream.good()) {
-                        throw std::runtime_error("Failed to read column name at index " + std::to_string(i));
-                    }
-                    
-                    auto name = std::string_view(nameBuffer.begin(), nameBuffer.end());
-                    // Optional: Validate column names match static definition (if names were set)
-                    if (!layout.getColumnName(i).empty()) {
-                        if (name != layout.getColumnName(i)) {
-                            throw std::runtime_error("Column name mismatch at index " + std::to_string(i) + 
-                                                   ". Static layout expects '" + layout.getColumnName(i) + 
-                                                   "', but binary has '" + std::string(name) + "'");
-                        }
-                    } else {
-                        layout.setColumnName(i, std::string(name));
-                    }
-                } else {
-                    layout.setColumnName(i, "Column_" + std::to_string(i));
-                }
-            }
-            return true;
-        } catch (const std::exception& e) {
-            // For LayoutStatic, we don't clear/modify the layout on failure
-            // since it's compile-time defined and cannot be changed
-            (void)e; // Suppress unused variable warning
-            throw; // Re-throw the exception
+        // Read fixed header
+        stream.read(reinterpret_cast<char*>(&header_), sizeof(header_));
+        if (!stream.good()) {
+            std::cerr << "error: Failed to read BCSV header from stream" << std::endl;
+            return false;
         }
+        
+        if (!isValidMagic()) {
+            std::cerr << "error: Invalid magic number in BCSV header. Expected: 0x" << std::hex << BCSV_MAGIC << ", Got: 0x" << std::hex << header_.magic << std::endl;
+            return false;
+        }
+        
+        // Validate column count matches static definition
+        if (header_.columnCount != layout.getColumnCount()) {
+            std::cerr << "error: Column count mismatch. Static layout expects " << layout.getColumnCount() << " columns, but binary has " << header_.columnCount << " columns" << std::endl;
+            return false;
+        }
+        if (header_.columnCount > MAX_COLUMN_COUNT) {
+            std::cerr << "error: Column count (" << header_.columnCount << ") exceeds maximum limit (" << MAX_COLUMN_COUNT << ")" << std::endl;
+            return false;
+        }   
+
+        // Read column data types and validate against static definition
+        for (uint16_t i = 0; i < layout.getColumnCount(); ++i) {
+            ColumnDataType type;
+            stream.read(reinterpret_cast<char*>(&type), sizeof(type));
+            if (!stream.good()) {
+                std::cerr << "error: Failed to read column data type at index " << std::to_string(i) << std::endl;
+                return false;
+            }
+            if (type != layout.getColumnType(i)) {
+                std::cerr << "error: Column type mismatch at index " << std::to_string(i) << 
+                            ". Static layout expects " << dataTypeToString(layout.getColumnType(i)) << 
+                            ", but binary has " << dataTypeToString(type) << std::endl;
+                return false;
+            }
+        }
+
+        // Read column name lengths (we must read them to advance the stream)
+        std::vector<uint16_t> nameLengths(layout.getColumnCount());
+        for (uint16_t i = 0; i < layout.getColumnCount(); ++i) {
+            stream.read(reinterpret_cast<char*>(&nameLengths[i]), sizeof(uint16_t));
+            if (!stream.good()) {
+                std::cerr << "error: Failed to read column name length at index " << std::to_string(i) << std::endl;
+                return false;
+            }
+            // Validate name length
+            if (nameLengths[i] > MAX_STRING_LENGTH) {
+                std::cerr << "error: Column name length (" << std::to_string(nameLengths[i]) << 
+                            ") exceeds maximum (" << std::to_string(MAX_STRING_LENGTH) << 
+                            ") at index " << std::to_string(i) << std::endl;
+                return false;
+            }
+        }
+
+        // Read column names and optionally validate against static definition
+        std::vector<char> nameBuffer;
+        for (uint16_t i = 0; i < layout.getColumnCount(); ++i) {
+            if (nameLengths[i] > 0) {
+                nameBuffer.resize(nameLengths[i]);
+                stream.read(nameBuffer.data(), nameLengths[i]);
+                if (!stream.good()) {
+                    std::cerr << "error: Failed to read column name at index " << std::to_string(i) << std::endl;
+                    return false;
+                }
+                layout.setColumnName(i, std::string(nameBuffer.begin(), nameBuffer.end()));
+            } else {
+                layout.setColumnName(i, "Column_" + std::to_string(i));
+            }
+        }
+        return true;
     }
 
     template<LayoutConcept LayoutType>

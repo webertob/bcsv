@@ -24,14 +24,17 @@ void writeStaticBCSV() {
     std::cout << "=== Writing with Static Interface ===\n\n";
 
     // Step 1: Create static layout with column names
-    std::vector<std::string> columnNames = {"id", "name", "score", "active"};
-    auto layout = ExampleLayout::create(columnNames);
-    
-    std::cout << "Created static layout with " << layout->getColumnCount() << " columns\n";
+    ExampleLayout layout({"id", "name", "score", "active"});
+
+    std::cout << "Created static layout with " << layout.getColumnCount() << " columns\n";
 
     // Step 2: Create a writer
     const std::string filename = "example_static.bcsv";
-    bcsv::Writer<ExampleLayout> writer(layout, filename, true);
+    bcsv::Writer<ExampleLayout> writer(layout);
+    if(!writer.open(filename, true)) {
+        std::cerr << "Failed to open writer for BCSV file\n";
+        return;
+    }
 
     // Step 3: Create and write data rows
     struct SampleData {
@@ -50,13 +53,11 @@ void writeStaticBCSV() {
     };
 
     for (const auto& data : sampleData) {
-        auto row = layout->createRow();
-        // Use the pattern from working tests: (*row).set<N>() instead of row->set<N>()
-        (*row).set<0>(data.id);
-        (*row).set<1>(data.name);
-        (*row).set<2>(data.score);
-        (*row).set<3>(data.active);
-        writer.writeRow(*row);
+        writer.row.set<0>(data.id);
+        writer.row.set<1>(data.name);
+        writer.row.set<2>(data.score);
+        writer.row.set<3>(data.active);
+        writer.writeRow();
     }
 
     writer.close();
@@ -67,30 +68,41 @@ void readStaticBCSV() {
     std::cout << "=== Reading with Static Interface ===\n\n";
 
     // Step 1: Create matching layout for reading
-    std::vector<std::string> columnNames = {"id", "name", "score", "active"};
-    auto layout = ExampleLayout::create(columnNames);
-
+    ExampleLayout layout({"id", "name", "score", "active"});
+    std::cout << "Created static layout with " << layout.getColumnCount() << " columns\n";
+    
     // Step 2: Create a reader
     const std::string filename = "example_static.bcsv";
-    bcsv::Reader<ExampleLayout> reader(layout, filename);
-
-    if (!reader.is_open()) {
+    bcsv::Reader<ExampleLayout> reader;
+    if (!reader.open(filename)) {
         std::cerr << "Failed to open file: " << filename << "\n";
         return;
     }
 
-    std::cout << "Reading data:\n\n";
+    if (!reader.getLayout().isCompatibleWith(layout)) {
+        std::cerr << "Incompatible layout for reading BCSV file\n";
+        return;
+    }
 
-    // Step 3: Read rows using static RowViewType
-    typename ExampleLayout::RowViewType rowView(layout);
-    size_t rowIndex = 0;
+    //optional check column names
+    for (size_t i = 0; i < layout.getColumnCount(); i++) {
+        if (reader.getLayout().getColumnName(i) != layout.getColumnName(i)) {
+            std::cerr << "Warning: Column name mismatch at index " << i 
+                      << ": expected '" << layout.getColumnName(i) 
+                      << "', got '" << reader.getLayout().getColumnName(i) << "'\n";
+        }
+    }
+
+    std::cout << "Reading data:\n\n";  
     
     // Table header
     std::cout << "ID | Name           | Score | Active\n";
     std::cout << "---|----------------|-------|-------\n";
     
-    while (reader.readRow(rowView)) {
+    size_t rowIndex = 0;
+    while (reader.readNext()) {
         // Use template get<N>() method for type-safe access
+        const auto& rowView = reader.row();
         auto id = rowView.get<0>();
         auto name = rowView.get<1>();
         auto score = rowView.get<2>();

@@ -30,59 +30,47 @@ namespace bcsv {
      */
     template<LayoutConcept LayoutType>
     class Reader {
-        std::shared_ptr<LayoutType> layout_;
-        ByteBuffer buffer_raw_;
-        ByteBuffer buffer_zip_;
-        std::vector<uint16_t> row_offsets_;     // Row offsets for indexing
-        size_t row_index_file_   = 0;           // current row index within the file
-        size_t row_index_packet_ = 0;           // current row index within the packet
-        size_t packet_row_count_ = 0;           // number of rows in the current packet
-        ReaderMode mode_ = ReaderMode::RESILIENT; // Default to resilient mode for backward compatibility
+        LayoutType              layout_;
+        ReaderMode              mode_ = ReaderMode::STRICT; // Default to strict mode for backward compatibility
+        FileHeader              fileHeader_;                // File header for accessing flags and metadata
+        std::filesystem::path   filePath_;                  // Always present
+        std::ifstream           stream_;                    // Always binary file stream
 
-        std::ifstream stream_;                  // Always binary file stream
-        std::filesystem::path filePath_;        // Always present
-        uint8_t fileCompressionLevel_ = 1;      // Compression level from file header
-        
+        ByteBuffer              buffer_raw_;
+        ByteBuffer              buffer_zip_;
+        std::vector<uint16_t>   row_offsets_;                // Row offsets for indexing
+        size_t                  row_index_file_   = 0;       // current row index within the file
+        size_t                  row_index_packet_ = 0;       // current row index within the packet
+        LayoutType::RowViewType row_view_;                   // current row view
+        size_t                  packet_row_count_ = 0;       // number of rows in the current packet
 
     public:
-        explicit Reader(std::shared_ptr<LayoutType> &layout);
-        explicit Reader(std::shared_ptr<LayoutType> &layout, const std::filesystem::path& filepath);
-        explicit Reader(std::shared_ptr<LayoutType> &layout, ReaderMode mode);
-        explicit Reader(std::shared_ptr<LayoutType> &layout, const std::filesystem::path& filepath, ReaderMode mode);
-        ~Reader();
+        /**
+         * @brief Construct a Reader with a given layout
+         * @param layout The layout defining the structure of rows
+         * @param mode The reader mode for error handling (default: STRICT)
+         */
+        explicit                            Reader(ReaderMode mode = ReaderMode::STRICT);
+                                            ~Reader();
 
-        void close();
-        const std::filesystem::path& getFilePath() const { return filePath_; }
-        bool is_open() const {  return stream_.is_open(); }
-        bool open(const std::filesystem::path& filepath);
+        void                                close();
+        uint8_t                             getCompressionLevel() const { return fileHeader_.getCompressionLevel(); }
+        const std::filesystem::path&        getFilePath() const { return filePath_; }
+        const LayoutType&                   getLayout() const { return layout_; }
+        ReaderMode                          getMode() const { return mode_; }
+        size_t                              getCurrentRowIndex() const { return row_index_file_; }
+        
+        bool                                isOpen() const {  return stream_.is_open(); }
+        bool                                open(const std::filesystem::path& filepath);
 
-        // Reader mode management
-        void setMode(ReaderMode mode) { mode_ = mode; }
-        ReaderMode getMode() const { return mode_; }
+        bool                                readNext();
+        const LayoutType::RowViewType&      row() const { return row_view_; }
 
-        size_t readRow(LayoutType::RowViewType& row);
+        void                                setMode(ReaderMode mode) { mode_ = mode; }
 
     private:
-        bool readFileHeader();
-        bool readPacket();
-
-    public:
-        // Factory functions
-        static std::shared_ptr<Reader<LayoutType>> create(std::shared_ptr<LayoutType> &layout) {
-            return std::make_shared<Reader<LayoutType>>(layout);
-        }
-
-        static std::shared_ptr<Reader<LayoutType>> create(std::shared_ptr<LayoutType> &layout, const std::filesystem::path& filepath) {
-            return std::make_shared<Reader<LayoutType>>(layout, filepath);
-        }
-
-        static std::shared_ptr<Reader<LayoutType>> create(std::shared_ptr<LayoutType> &layout, ReaderMode mode) {
-            return std::make_shared<Reader<LayoutType>>(layout, mode);
-        }
-
-        static std::shared_ptr<Reader<LayoutType>> create(std::shared_ptr<LayoutType> &layout, const std::filesystem::path& filepath, ReaderMode mode) {
-            return std::make_shared<Reader<LayoutType>>(layout, filepath, mode);
-        }
+        bool                                readFileHeader();
+        bool                                readPacket();        
     };
 
 } // namespace bcsv

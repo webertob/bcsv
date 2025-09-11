@@ -19,29 +19,18 @@
 namespace bcsv {
 
     template<LayoutConcept LayoutType>
-    Writer<LayoutType>::Writer(std::shared_ptr<LayoutType> layout) : layout_(std::move(layout)), compressionLevel_(1) {
+    Writer<LayoutType>::Writer(const LayoutType& layout) 
+    : layout_(layout), fileHeader_(layout.getColumnCount(), 1), row(layout)
+    {
         buffer_raw_.reserve(LZ4_BLOCK_SIZE_KB * 1024);
         buffer_zip_.reserve(LZ4_COMPRESSBOUND(LZ4_BLOCK_SIZE_KB * 1024));
-
-        // Using concepts instead of static_assert for type checking
-        if (!layout_) {
-            throw std::runtime_error("Error: Layout is not initialized");
-        }
     }
-
-    template<LayoutConcept LayoutType>
-    Writer<LayoutType>::Writer(std::shared_ptr<LayoutType> layout, const std::filesystem::path& filepath, bool overwrite) 
-        : Writer(std::move(layout)) {
-        open(filepath, overwrite);
-    }
-
 
     template<LayoutConcept LayoutType>
     Writer<LayoutType>::~Writer() {
         if (is_open()) {
             close();
         }
-        layout_->unlock(this);
     }
 
      /**
@@ -49,23 +38,25 @@ namespace bcsv {
      */
     template<LayoutConcept LayoutType>
     void Writer<LayoutType>::close() {
-        if (stream_.is_open()) {
-            flush();
-            stream_.close();
-            filePath_.clear();
-            layout_->unlock(this);
+        if (!stream_.is_open()) {
+            return;
         }
+        flush();
+        stream_.close();
+        filePath_.clear();        
     }
 
     template<LayoutConcept LayoutType>
     void Writer<LayoutType>::flush() {
-        if (stream_.is_open()) {
-            // Write any remaining data in the buffer before flushing the stream
-            if (!buffer_raw_.empty()) {
-                writePacket();
-            }
-            stream_.flush();
+        if (!stream_.is_open()) {
+            return;
         }
+
+        // Write any remaining data in the buffer before flushing the stream
+        if (!buffer_raw_.empty()) {
+            writePacket();
+        }
+        stream_.flush();
     }
 
      /**
@@ -75,7 +66,7 @@ namespace bcsv {
      * @return true if file was successfully opened, false otherwise
      */
     template<LayoutConcept LayoutType>
-    bool Writer<LayoutType>::open(const std::filesystem::path& filepath, bool overwrite) {
+    bool Writer<LayoutType>::open(const std::filesystem::path& filepath, bool overwrite, uint8_t compressionLevel) {
         if(is_open()) {
             std::cerr << "Warning: File is already open: " << filePath_ << std::endl;
             return false;
@@ -119,7 +110,10 @@ namespace bcsv {
 
             // Store file path
             filePath_ = absolutePath;
-            writeFileHeader();
+            fileHeader_ = FileHeader(layout_.getColumnCount(), static_cast<uint8_t>(compressionLevel));
+            fileHeader_.writeToBinary(stream_, layout_);
+            row_cnt_ = 0;
+            row = LayoutType::RowType(layout_);
             return true;
 
         } catch (const std::filesystem::filesystem_error& ex) {
@@ -134,18 +128,6 @@ namespace bcsv {
     }
 
     template<LayoutConcept LayoutType>
-    void Writer<LayoutType>::writeFileHeader() {
-        // Write the header information to the stream
-        if (!stream_.is_open()) {
-            throw std::runtime_error("Error: File is not open");
-        }
-        layout_->lock(this);
-        FileHeader fileHeader(layout_->getColumnCount(), static_cast<uint8_t>(compressionLevel_));
-        fileHeader.writeToBinary(stream_, *layout_);
-        row_cnt_ = 0;
-    }
-
-    template<LayoutConcept LayoutType>
     void Writer<LayoutType>::writePacket() {
         if (!stream_.is_open()) {
             throw std::runtime_error("Error: File is not open");
@@ -156,7 +138,7 @@ namespace bcsv {
         }
 
         // Handle compression based on level
-        if (compressionLevel_ == 0) {
+        if (getCompressionLevel() == 0) {
             // No compression - use raw data directly (avoid LZ4 overhead)
             // Optimize by reusing the raw buffer as compressed buffer to avoid copying
             buffer_zip_.swap(buffer_raw_); // Efficient swap instead of copy
@@ -165,7 +147,7 @@ namespace bcsv {
             buffer_zip_.resize(buffer_zip_.capacity());
             int compressedSize;
             
-            if (compressionLevel_ == 1) {
+            if (getCompressionLevel() == 1) {
                 // Use fast default compression
                 compressedSize = LZ4_compress_default(reinterpret_cast<const char*>(buffer_raw_.data()), 
                                                       reinterpret_cast<char*>(buffer_zip_.data()),
@@ -177,7 +159,7 @@ namespace bcsv {
                                                  reinterpret_cast<char*>(buffer_zip_.data()),
                                                  static_cast<int>(buffer_raw_.size()),
                                                  static_cast<int>(buffer_zip_.size()),
-                                                 compressionLevel_);
+                                                 getCompressionLevel());
             }
             
             if (compressedSize <= 0) {
@@ -222,43 +204,27 @@ namespace bcsv {
     }
 
     template<LayoutConcept LayoutType>
-    void Writer<LayoutType>::writeRow(const typename LayoutType::RowType& row) {
+    bool Writer<LayoutType>::writeRow() {
         if (!stream_.is_open()) {
-            throw std::runtime_error("Error: File is not open");
+            std::cerr << "Error: File is not open";
+            return false;
         }
 
-        //check row belongs to layout_
-        if (row.getLayoutPtr() != layout_) {
-            throw std::invalid_argument("Row does not belong to layout");
-        }
-
-        // check if the new row fits into the current packet, if not write the current packet
+        // check if the new row fits into the current packet
+        // if not write the current packet to file and start a new one
         size_t fixedSize, totalSize;
         row.serializedSize(fixedSize, totalSize);
-        size_t row_raw_size = totalSize;
-        if(buffer_raw_.size() + row_raw_size > buffer_raw_.capacity()) {
+        if(buffer_raw_.size() + totalSize > buffer_raw_.capacity()) {
             writePacket();
         }
 
-        // Append serialized row to raw buffer
-        std::byte* ptr_raw = buffer_raw_.data() + buffer_raw_.size();
-        buffer_raw_.resize(buffer_raw_.size() + row_raw_size);
-        row.serializeTo(ptr_raw, row_raw_size);
+        // Serialize the row into the raw buffer
+        size_t row_offset = buffer_raw_.size();
+        size_t row_length = totalSize;
+        buffer_raw_.resize(buffer_raw_.size() + row_length);
+        row.serializeTo({buffer_raw_.data() + row_offset, row_length});
         row_offsets_.push_back(static_cast<uint16_t>(buffer_raw_.size()));
-    }
-
-    template<LayoutConcept LayoutType>
-    void Writer<LayoutType>::setCompressionLevel(int level) {
-        if (level < 0 || level > 9) {
-            throw std::invalid_argument("Compression level must be between 0 (disabled) and 9 (maximum)");
-        }
-        if (is_open()) {
-            // Ignore the request if file is already open
-            std::cerr << "Warning: Cannot change compression level while file is open. Current level: " 
-                      << compressionLevel_ << std::endl;
-            return;
-        }
-        compressionLevel_ = level;
+        return true;
     }
 
 } // namespace bcsv

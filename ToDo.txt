@@ -1,6 +1,5 @@
-0. Do not store uncompressed payload size (not required), safe 8bytes per pakets
-1. Allow flexibile definition of compression level (0:none to 9:max)
-    a. if 0 is defined, do not invoke any LZ4 or copy activity, tune for speed
+1. refactor interface, get rid of shared_ptrs reduce complexity 
+
 2. Add BLOB data type
 3. change column order, column order at the API level still follows user definition, but for serialization ensure String and BLOB are most right, while bool is most left
 4. Use bitmaps to hold bools

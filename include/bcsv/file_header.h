@@ -143,21 +143,6 @@ namespace bcsv {
         static constexpr size_t COLUMN_TYPE_SIZE = sizeof(uint16_t);          ///< Size per column type: 2 bytes  
         static constexpr size_t COLUMN_LENGTH_SIZE = sizeof(uint16_t);        ///< Size per name length: 2 bytes
         
-        /**
-         * @brief Feature flag bit positions (Reserved for future optional features)
-         * 
-         * Note: Core features (CHECKSUMS, ROW_INDEX, ALIGNED, COMPRESSED) are now
-         * mandatory in v1.0+ and no longer require flag bits.
-         */
-        enum FileFlags : uint16_t {
-            // All bits currently reserved for future optional features
-            RESERVED1 = 0x0001,    ///< Bit 0: Reserved for future use
-            RESERVED2 = 0x0002,    ///< Bit 1: Reserved for future use
-            RESERVED3 = 0x0004,    ///< Bit 2: Reserved for future use
-            RESERVED4 = 0x0008,    ///< Bit 3: Reserved for future use
-            // Bits 4-15 also reserved
-        };
-
         // Constructors
         FileHeader(size_t columnCount = 0, uint8_t compressionLevel = 9, uint8_t major = VERSION_MAJOR, uint8_t minor = VERSION_MAJOR, uint8_t patch = VERSION_PATCH);
         ~FileHeader() = default;

@@ -17,43 +17,21 @@
 namespace bcsv {
 
     template<LayoutConcept LayoutType>
-    Reader<LayoutType>::Reader(std::shared_ptr<LayoutType> &layout) : layout_(layout) {
+    Reader<LayoutType>::Reader(ReaderMode mode) 
+    : layout_(), mode_(mode), row_view_(layout_), fileHeader_() 
+    {
         buffer_raw_.reserve(LZ4_BLOCK_SIZE_KB * 1024);
         buffer_zip_.reserve(LZ4_COMPRESSBOUND(LZ4_BLOCK_SIZE_KB * 1024));
         row_index_file_ = 0;
         row_index_packet_ = 0;
         row_offsets_.clear();
-        mode_ = ReaderMode::RESILIENT; // Default mode
-        // Using concepts instead of static_assert for type checking
-        if (!layout_) {
-            throw std::runtime_error("Error: Layout is not initialized");
-        }
-    }
-
-    template<LayoutConcept LayoutType>
-    Reader<LayoutType>::Reader(std::shared_ptr<LayoutType> &layout, const std::filesystem::path& filepath) 
-        : Reader(layout) {
-        open(filepath);
-    }
-
-    template<LayoutConcept LayoutType>
-    Reader<LayoutType>::Reader(std::shared_ptr<LayoutType> &layout, ReaderMode mode) 
-        : Reader(layout) {
-        mode_ = mode;
-    }
-
-    template<LayoutConcept LayoutType>
-    Reader<LayoutType>::Reader(std::shared_ptr<LayoutType> &layout, const std::filesystem::path& filepath, ReaderMode mode) 
-        : Reader(layout, mode) {
-        open(filepath);
     }
 
     template<LayoutConcept LayoutType>
     Reader<LayoutType>::~Reader() {
-        if (is_open()) {
+        if (isOpen()) {
             close();
         }
-        layout_->unlock(this);
     }
 
     /**
@@ -61,14 +39,14 @@ namespace bcsv {
      */
     template<LayoutConcept LayoutType>
     void Reader<LayoutType>::close() {
-        if (stream_.is_open()) {
-            stream_.close();
-            if (!filePath_.empty()) {
-                std::cout << "Info: Closed file: " << filePath_ << std::endl;
-            }
+        if(!isOpen()) {
+            return;
         }
+        fileHeader_ = FileHeader();
+        layout_ = LayoutType(); // reset layout
+        row_view_ = LayoutType::RowViewType(layout_);
+        stream_.close();
         filePath_.clear();
-        layout_->unlock(this);
         buffer_raw_.clear();
         buffer_zip_.clear();
         row_index_file_ = 0;
@@ -84,7 +62,7 @@ namespace bcsv {
      */
     template<LayoutConcept LayoutType>
     bool Reader<LayoutType>::open(const std::filesystem::path& filepath) {
-        if(is_open()) {
+        if(isOpen()) {
             std::cerr << "Warning: File is already open: " << filePath_ << std::endl;
             return false;
         }
@@ -146,13 +124,14 @@ namespace bcsv {
         if (!stream_) {
             return false;
         }
-        layout_->unlock(this);
-        FileHeader fileHeader;
-        if(fileHeader.readFromBinary(stream_, *layout_)) {
-            layout_->lock(this);
-            fileCompressionLevel_ = fileHeader.getCompressionLevel();
-        } else {
+        
+        if(!fileHeader_.readFromBinary(stream_, layout_)) {
+            fileHeader_ = FileHeader();
+            layout_ = LayoutType(); // reset layout
+            std::cerr << "Error: Failed to read or validate file header" << std::endl;
             return false;
+        } else {
+            row_view_ = LayoutType::RowViewType(layout_);
         }
         return true;
     }
@@ -215,7 +194,7 @@ namespace bcsv {
                 }
 
                 // Handle decompression based on file compression level
-                if (fileCompressionLevel_ == 0) {
+                if (getCompressionLevel() == 0) {
                     // No compression - use compressed buffer directly (avoid LZ4 overhead)
                     buffer_raw_.swap(buffer_zip_); // Efficient swap instead of copy
                 } else {
@@ -270,13 +249,13 @@ namespace bcsv {
     * @return The index of the row read. Note: count starts at 1! Returns 0 if no row could be read
     */
     template<LayoutConcept LayoutType>
-    size_t Reader<LayoutType>::readRow(LayoutType::RowViewType& row) {
+    bool Reader<LayoutType>::readNext() {
         if(row_index_packet_ >= packet_row_count_ ) {
             if(!readPacket()) {
-                return 0;
+                return false;
             }
             if(packet_row_count_ == 0) {
-                return 0;
+                return false;
             }
         }
 
@@ -286,19 +265,14 @@ namespace bcsv {
         size_t row_length = row_index_packet_ < row_offsets_.size() ? 
             row_offsets_[row_index_packet_] - row_offset : 
             buffer_raw_.size() - row_offset;
-        
-        // Sanity checks
-        if(row_offset + row_length > buffer_raw_.size()) {
-            throw std::runtime_error("Error: Row offset and length exceed buffer size");
-        }
 
-        row.setBuffer(buffer_raw_.data() + row_offset, row_length);
-        if (!row.validate()) {
-            throw std::runtime_error("Error: Row validation failed");
+        row_view_.setBuffer({buffer_raw_.begin() + row_offset, row_length});
+        if (!row_view_.validate()) {
+            return false;
         }
         row_index_packet_++;
         row_index_file_++;
-        return row_index_file_;
+        return true;
     }
 
 } // namespace bcsv

@@ -43,12 +43,8 @@ namespace bcsv {
         { const_layout.getColumnName(index) } -> std::convertible_to<std::string>;
         { const_layout.getColumnOffset(index) } -> std::convertible_to<size_t>;
         { const_layout.getColumnType(index) } -> std::convertible_to<ColumnDataType>;
-        { layout.setColumnName(index, name) } -> std::same_as<void>;
-
-        // Locking mechanism
-        { const_layout.isLocked() } -> std::convertible_to<bool>;
-        { layout.lock(owner) } -> std::same_as<void>;
-        { layout.unlock(owner) } -> std::same_as<void>;
+        { layout.setColumnName(index, name) } -> std::same_as<bool>;
+        { const_layout.isCompatibleWith(const_layout) } -> std::convertible_to<bool>;
         
         // Type information (for static layouts)
         typename T::RowType;  // Each layout must define its row type
@@ -60,21 +56,17 @@ namespace bcsv {
      * @brief Represents the column layout containing column names and types. This defines the common layout for BCSV files.
      * This layout is flexible and can be modified at runtime.
      */
-    class Layout : public std::enable_shared_from_this<Layout> {
+    class Layout {
         std::vector<std::string> column_names_;
         std::unordered_map<std::string, size_t> column_index_;
         std::vector<ColumnDataType> column_types_;
         std::vector<size_t> column_lengths_; // Lengths of each column in [bytes] --> serialized data
         std::vector<size_t> column_offsets_; // Offsets of each column in [bytes] --> serialized data
-        std::set<void*> lock_owners_;        // ptrs to objects that have locked the layout, used to identify owners
         void updateIndex();
 
-        // Use vector instead of set for weak_ptr storage since weak_ptr doesn't have comparison operators
-        std::vector<std::weak_ptr<Row>> rows_;
-
     public:
-        using RowType = Row;
-        using RowViewType = RowView;
+        using RowType = typename Row;
+        using RowViewType = typename RowView;
 
         Layout() = default;
         Layout(const Layout& other);
@@ -89,26 +81,16 @@ namespace bcsv {
         const std::string& getColumnName(size_t index) const { if constexpr (RANGE_CHECKING) {return column_names_.at(index);} else { return column_names_[index]; } }
         size_t getColumnOffset(size_t index) const { if constexpr (RANGE_CHECKING) {return column_offsets_.at(index);} else { return column_offsets_[index]; } }
         ColumnDataType getColumnType(size_t index) const { if constexpr (RANGE_CHECKING) {return column_types_.at(index);} else { return column_types_[index]; } }
-        void setColumnName(size_t index, const std::string& name);
-
-        /* Locking mechanism (need to ensure layout does not change during operations)*/
-        bool isLocked() const { return !lock_owners_.empty(); }
-        void lock(void* owner) { lock_owners_.insert(owner); }
-        void unlock(void* owner) { lock_owners_.erase(owner); }
+        bool setColumnName(size_t index, const std::string& name);
 
         // Compatibility checking
         bool isCompatibleWith(const Layout& other) const;
 
         void clear();
-        void insertColumn(const ColumnDefinition& column, size_t position = SIZE_MAX);
+        bool addColumn(const ColumnDefinition& column, size_t position = SIZE_MAX);
         void removeColumn(size_t index);
         void setColumnType(size_t index, ColumnDataType type);
         void setColumns(const std::vector<ColumnDefinition>& columns);
-
-        // Row management
-        void addRow(std::weak_ptr<Row> row);
-        void removeRow(std::weak_ptr<Row> row);
-        std::shared_ptr<Row> createRow();
 
         template<typename OtherLayout>
         requires requires(const OtherLayout& other) {
@@ -116,16 +98,6 @@ namespace bcsv {
             { other.getColumnType(size_t{}) } -> std::convertible_to<ColumnDataType>;
         }
         Layout& operator=(const OtherLayout& other);
-
-    public:
-        // Factory functions that return shared pointers
-        static std::shared_ptr<Layout> create() {
-            return std::make_shared<Layout>();
-        }
-        
-        static std::shared_ptr<Layout> create(const std::vector<ColumnDefinition>& columns) {
-            return std::make_shared<Layout>(columns);
-        }
     };
 
 
@@ -137,15 +109,14 @@ namespace bcsv {
      * This layout is defined at compile-time to improve performance and reduce runtime overhead.
      */
     template<typename... ColumnTypes>
-    class LayoutStatic : public std::enable_shared_from_this<LayoutStatic<ColumnTypes...>> {
+    class LayoutStatic {
         std::array<std::string, sizeof...(ColumnTypes)> column_names_;
         std::unordered_map<std::string, size_t> column_index_;
-        std::set<void*> lock_owners_;                               // ptrs to objects that have locked the layout, used to identify owners
         void updateIndex();
 
     public:
-        using RowType = RowStatic<ColumnTypes...>;
-        using RowViewType = RowViewStatic<ColumnTypes...>;
+        using RowType = typename RowStatic<ColumnTypes...>;
+        using RowViewType = typename RowViewStatic<ColumnTypes...>;
 
         using column_types = std::tuple<ColumnTypes...>;
         template<size_t Index>
@@ -175,7 +146,7 @@ namespace bcsv {
 
 
         LayoutStatic();
-        LayoutStatic(const std::vector<std::string>& columnNames);
+        LayoutStatic(const std::array<std::string, sizeof...(ColumnTypes)>& columnNames);
 
         // Basic Layout information
         bool hasColumn(const std::string& name) const { return column_index_.find(name) != column_index_.end(); }
@@ -185,12 +156,7 @@ namespace bcsv {
         const std::string& getColumnName(size_t index) const { if constexpr (RANGE_CHECKING) {return column_names_.at(index);} else { return column_names_[index]; } }
         constexpr size_t getColumnOffset(size_t index) const { if constexpr (RANGE_CHECKING) {return column_offsets.at(index);} else { return column_offsets[index]; } }
         ColumnDataType getColumnType(size_t index) const { return getColumnTypeT<0>(index); }
-        void setColumnName(size_t index, const std::string& name);
-
-        /* Locking mechanism (need to ensure layout does not change during operations)*/
-        bool isLocked() const { return !lock_owners_.empty(); }
-        void lock(void* owner) { lock_owners_.insert(owner); }
-        void unlock(void* owner) { lock_owners_.erase(owner); }
+        bool setColumnName(size_t index, const std::string& name);
 
 
         template<size_t Index = 0>
@@ -212,20 +178,8 @@ namespace bcsv {
             { other.getColumnCount() } -> std::convertible_to<size_t>;
             { other.getColumnType(size_t{}) } -> std::convertible_to<ColumnDataType>;
         }
+
         LayoutStatic& operator=(const OtherLayout& other);
-
-        // Row creation
-        std::shared_ptr<RowStatic<ColumnTypes...>> createRow();
-
-    public:
-        // Factory functions that return shared pointers
-        static std::shared_ptr<LayoutStatic<ColumnTypes...>> create() {
-            return std::make_shared<LayoutStatic<ColumnTypes...>>();
-        }
-        
-        static std::shared_ptr<LayoutStatic<ColumnTypes...>> create(const std::vector<std::string>& columnNames) {
-            return std::make_shared<LayoutStatic<ColumnTypes...>>(columnNames);
-        }
    };
 
 } // namespace bcsv
