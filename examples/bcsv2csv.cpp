@@ -24,6 +24,7 @@ struct Config {
     bool quote_all = false;
     bool verbose = false;
     bool help = false;
+    int float_precision = -1;  // -1 means auto-detect optimal precision
 };
 
 // Escape CSV field if necessary
@@ -53,20 +54,43 @@ std::string escapeCSVField(const std::string& field, char delimiter, char quote_
     return result;
 }
 
-// Convert BCSV value to string
+// Convert BCSV value to string with precision preservation
 template<typename T>
-std::string valueToString(const T& value) {
+std::string valueToString(const T& value, int precision = -1) {
     if constexpr (std::is_same_v<T, bool>) {
         return value ? "true" : "false";
     } else if constexpr (std::is_same_v<T, std::string>) {
         return value;
     } else if constexpr (std::is_floating_point_v<T>) {
+        // Use default precision without fixed format to avoid representation artifacts
         std::ostringstream oss;
-        oss << std::fixed << std::setprecision(15) << value;
+        
+        int effective_precision;
+        if (precision >= 0) {
+            effective_precision = precision;
+        } else if constexpr (std::is_same_v<T, float>) {
+            // For float, use enough precision to represent the value accurately
+            effective_precision = 7;
+        } else {
+            // For double, use enough precision to represent the value accurately  
+            effective_precision = 15;
+        }
+        
+        oss << std::setprecision(effective_precision) << value;
+        
         std::string result = oss.str();
-        // Remove trailing zeros for cleaner output
-        result.erase(result.find_last_not_of('0') + 1, std::string::npos);
-        result.erase(result.find_last_not_of('.') + 1, std::string::npos);
+        
+        // Handle scientific notation and very long decimal representations
+        if (precision < 0 && result.find('e') == std::string::npos && result.find('.') != std::string::npos) {
+            // Remove trailing zeros only if we have a decimal point and no scientific notation
+            size_t last_non_zero = result.find_last_not_of('0');
+            if (last_non_zero != std::string::npos && result[last_non_zero] != '.') {
+                result.erase(last_non_zero + 1);
+            } else if (last_non_zero != std::string::npos && result[last_non_zero] == '.') {
+                result.erase(last_non_zero);
+            }
+        }
+        
         return result;
     } else {
         return std::to_string(value);
@@ -74,33 +98,45 @@ std::string valueToString(const T& value) {
 }
 
 // Get string value from BCSV row based on column type
-std::string getRowValueAsString(const bcsv::RowView& row, size_t column_index, bcsv::ColumnDataType type) {
+std::string getRowValueAsString(const bcsv::Reader<bcsv::Layout>& reader, size_t column_index, bcsv::ColumnDataType type, int float_precision = -1) {
     try {
         switch (type) {
             case bcsv::ColumnDataType::BOOL:
-                return valueToString(row.get<bool>(column_index));
+                return valueToString(reader.row().get<bool>(column_index));
             case bcsv::ColumnDataType::INT8:
-                return valueToString(row.get<int8_t>(column_index));
+                return valueToString(reader.row().get<int8_t>(column_index));
             case bcsv::ColumnDataType::INT16:
-                return valueToString(row.get<int16_t>(column_index));
+                return valueToString(reader.row().get<int16_t>(column_index));
             case bcsv::ColumnDataType::INT32:
-                return valueToString(row.get<int32_t>(column_index));
+                return valueToString(reader.row().get<int32_t>(column_index));
             case bcsv::ColumnDataType::INT64:
-                return valueToString(row.get<int64_t>(column_index));
+                return valueToString(reader.row().get<int64_t>(column_index));
             case bcsv::ColumnDataType::UINT8:
-                return valueToString(row.get<uint8_t>(column_index));
+                return valueToString(reader.row().get<uint8_t>(column_index));
             case bcsv::ColumnDataType::UINT16:
-                return valueToString(row.get<uint16_t>(column_index));
+                return valueToString(reader.row().get<uint16_t>(column_index));
             case bcsv::ColumnDataType::UINT32:
-                return valueToString(row.get<uint32_t>(column_index));
+                return valueToString(reader.row().get<uint32_t>(column_index));
             case bcsv::ColumnDataType::UINT64:
-                return valueToString(row.get<uint64_t>(column_index));
+                return valueToString(reader.row().get<uint64_t>(column_index));
+#if BCSV_HAS_FLOAT16
+            case bcsv::ColumnDataType::FLOAT16:
+                return valueToString(reader.row().get<std::float16_t>(column_index), float_precision);
+#endif
+#if BCSV_HAS_BFLOAT16
+            case bcsv::ColumnDataType::BFLOAT16:
+                return valueToString(reader.row().get<std::bfloat16_t>(column_index), float_precision);
+#endif
             case bcsv::ColumnDataType::FLOAT:
-                return valueToString(row.get<float>(column_index));
+                return valueToString(reader.row().get<float>(column_index), float_precision);
             case bcsv::ColumnDataType::DOUBLE:
-                return valueToString(row.get<double>(column_index));
+                return valueToString(reader.row().get<double>(column_index), float_precision);
+#if BCSV_HAS_FLOAT128
+            case bcsv::ColumnDataType::FLOAT128:
+                return valueToString(reader.row().get<std::float128_t>(column_index), float_precision);
+#endif
             case bcsv::ColumnDataType::STRING:
-                return row.get<std::string>(column_index);
+                return reader.row().get<std::string>(column_index);
             default:
                 return "";
         }
@@ -120,6 +156,7 @@ void printUsage(const char* program_name) {
     std::cout << "  -q, --quote CHAR        Quote character (default: '\"')\n";
     std::cout << "  --no-header             Don't include header row in output\n";
     std::cout << "  --quote-all             Quote all fields (not just those that need it)\n";
+    std::cout << "  -p, --precision N       Floating point precision (default: auto)\n";
     std::cout << "  -v, --verbose           Enable verbose output\n";
     std::cout << "  -h, --help              Show this help message\n\n";
     std::cout << "Examples:\n";
@@ -146,6 +183,15 @@ Config parseArgs(int argc, char* argv[]) {
         } else if (arg == "-q" || arg == "--quote") {
             if (i + 1 < argc) {
                 config.quote_char = argv[++i][0];
+            } else {
+                throw std::runtime_error("Option " + arg + " requires an argument");
+            }
+        } else if (arg == "-p" || arg == "--precision") {
+            if (i + 1 < argc) {
+                config.float_precision = std::stoi(argv[++i]);
+                if (config.float_precision < 0) {
+                    throw std::runtime_error("Precision must be non-negative");
+                }
             } else {
                 throw std::runtime_error("Option " + arg + " requires an argument");
             }
@@ -212,16 +258,18 @@ int main(int argc, char* argv[]) {
         }
         
         // Open BCSV file and get layout information
-        auto layout = std::make_shared<bcsv::Layout>();
-        bcsv::Reader<bcsv::Layout> reader(layout, config.input_file);
+        bcsv::Reader<bcsv::Layout> reader;
+        reader.open(config.input_file);
+        
+        const auto& layout = reader.getLayout();
         
         if (config.verbose) {
             std::cout << "Opened BCSV file successfully" << std::endl;
-            std::cout << "Layout contains " << layout->getColumnCount() << " columns:" << std::endl;
+            std::cout << "Layout contains " << layout.getColumnCount() << " columns:" << std::endl;
             
-            for (size_t i = 0; i < layout->getColumnCount(); ++i) {
-                std::cout << "  " << layout->getColumnName(i) << " (";
-                switch (layout->getColumnType(i)) {
+            for (size_t i = 0; i < layout.getColumnCount(); ++i) {
+                std::cout << "  " << layout.getColumnName(i) << " (";
+                switch (layout.getColumnType(i)) {
                     case bcsv::ColumnDataType::BOOL: std::cout << "BOOL"; break;
                     case bcsv::ColumnDataType::INT8: std::cout << "INT8"; break;
                     case bcsv::ColumnDataType::INT16: std::cout << "INT16"; break;
@@ -231,8 +279,17 @@ int main(int argc, char* argv[]) {
                     case bcsv::ColumnDataType::UINT16: std::cout << "UINT16"; break;
                     case bcsv::ColumnDataType::UINT32: std::cout << "UINT32"; break;
                     case bcsv::ColumnDataType::UINT64: std::cout << "UINT64"; break;
+#if BCSV_HAS_FLOAT16
+                    case bcsv::ColumnDataType::FLOAT16: std::cout << "FLOAT16"; break;
+#endif
+#if BCSV_HAS_BFLOAT16
+                    case bcsv::ColumnDataType::BFLOAT16: std::cout << "BFLOAT16"; break;
+#endif
                     case bcsv::ColumnDataType::FLOAT: std::cout << "FLOAT"; break;
                     case bcsv::ColumnDataType::DOUBLE: std::cout << "DOUBLE"; break;
+#if BCSV_HAS_FLOAT128
+                    case bcsv::ColumnDataType::FLOAT128: std::cout << "FLOAT128"; break;
+#endif
                     case bcsv::ColumnDataType::STRING: std::cout << "STRING"; break;
                     default: std::cout << "UNKNOWN"; break;
                 }
@@ -248,31 +305,37 @@ int main(int argc, char* argv[]) {
         
         // Write header if requested
         if (config.include_header) {
-            for (size_t i = 0; i < layout->getColumnCount(); ++i) {
+            for (size_t i = 0; i < layout.getColumnCount(); ++i) {
                 if (i > 0) output << config.delimiter;
-                output << escapeCSVField(layout->getColumnName(i), config.delimiter, config.quote_char, config.quote_all);
+                output << escapeCSVField(layout.getColumnName(i), config.delimiter, config.quote_char, config.quote_all);
             }
             output << "\n";
         }
         
         // Convert data rows
-        bcsv::RowView row(layout);
         size_t row_count = 0;
         
-        while (reader.readRow(row)) {
-            for (size_t col = 0; col < layout->getColumnCount(); ++col) {
+        // Pre-calculate frequently used values outside the loop
+        const size_t num_columns = layout.getColumnCount();
+        std::string value;  // Reuse string object to reduce allocations
+        value.reserve(256); // Pre-allocate capacity for typical field sizes
+        
+        while (reader.readNext()) {
+            for (size_t col = 0; col < num_columns; ++col) {
                 if (col > 0) output << config.delimiter;
                 
-                std::string value = getRowValueAsString(row, col, layout->getColumnType(col));
+                value = getRowValueAsString(reader, col, layout.getColumnType(col), config.float_precision);
                 output << escapeCSVField(value, config.delimiter, config.quote_char, config.quote_all);
             }
             output << "\n";
-            row_count++;
+            ++row_count;  // Pre-increment is slightly faster
             
-            if (config.verbose && row_count % 10000 == 0) {
+            if (config.verbose && (row_count & 0x3FFF) == 0) {  // Every 16384 rows for better performance
                 std::cout << "Processed " << row_count << " rows..." << std::endl;
             }
         }
+        
+        reader.close();
         
         std::cout << "Successfully converted " << row_count << " rows to " << config.output_file << std::endl;
         

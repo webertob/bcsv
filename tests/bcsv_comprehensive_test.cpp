@@ -168,8 +168,8 @@ protected:
     }
     
     // Create flexible layout with 2 columns for each data type
-    std::shared_ptr<bcsv::Layout> createFullFlexibleLayout() {
-        auto layout = bcsv::Layout::create();
+    bcsv::Layout createFullFlexibleLayout() {
+        bcsv::Layout layout;
         
         std::vector<bcsv::ColumnDefinition> columns = {
             {"bool1", bcsv::ColumnDataType::BOOL},
@@ -199,77 +199,77 @@ protected:
         };
         
         for (const auto& col : columns) {
-            layout->insertColumn(col);
+            layout.addColumn(col);
         }
         
         return layout;
     }
     
     // Create static layout
-    std::shared_ptr<FullTestLayoutStatic> createStaticLayout() {
-        std::vector<std::string> columnNames = {
+    FullTestLayoutStatic createStaticLayout() {
+        std::array<std::string, 24> columnNames = {
             "bool1", "bool2", "int8_1", "int8_2", "int16_1", "int16_2",
             "int32_1", "int32_2", "int64_1", "int64_2", "uint8_1", "uint8_2",
             "uint16_1", "uint16_2", "uint32_1", "uint32_2", "uint64_1", "uint64_2",
             "float1", "float2", "double1", "double2", "string1", "string2"
         };
-        return FullTestLayoutStatic::create(columnNames);
+        return FullTestLayoutStatic(columnNames);
     }
     
-    // Populate flexible row
-    void populateFlexibleRow(std::shared_ptr<bcsv::Layout::RowType> row, const TestData& data) {
-        (*row).set(0, data.bool1);
-        (*row).set(1, data.bool2);
-        (*row).set(2, data.int8_1);
-        (*row).set(3, data.int8_2);
-        (*row).set(4, data.int16_1);
-        (*row).set(5, data.int16_2);
-        (*row).set(6, data.int32_1);
-        (*row).set(7, data.int32_2);
-        (*row).set(8, data.int64_1);
-        (*row).set(9, data.int64_2);
-        (*row).set(10, data.uint8_1);
-        (*row).set(11, data.uint8_2);
-        (*row).set(12, data.uint16_1);
-        (*row).set(13, data.uint16_2);
-        (*row).set(14, data.uint32_1);
-        (*row).set(15, data.uint32_2);
-        (*row).set(16, data.uint64_1);
-        (*row).set(17, data.uint64_2);
-        (*row).set(18, data.float1);
-        (*row).set(19, data.float2);
-        (*row).set(20, data.double1);
-        (*row).set(21, data.double2);
-        (*row).set(22, data.string1);
-        (*row).set(23, data.string2);
+    // Populate flexible row using new API (writer.row.set())
+    void populateFlexibleRow(bcsv::Writer<bcsv::Layout>& writer, const TestData& data) {
+        writer.row.set(0, data.bool1);
+        writer.row.set(1, data.bool2);
+        writer.row.set(2, data.int8_1);
+        writer.row.set(3, data.int8_2);
+        writer.row.set(4, data.int16_1);
+        writer.row.set(5, data.int16_2);
+        writer.row.set(6, data.int32_1);
+        writer.row.set(7, data.int32_2);
+        writer.row.set(8, data.int64_1);
+        writer.row.set(9, data.int64_2);
+        writer.row.set(10, data.uint8_1);
+        writer.row.set(11, data.uint8_2);
+        writer.row.set(12, data.uint16_1);
+        writer.row.set(13, data.uint16_2);
+        writer.row.set(14, data.uint32_1);
+        writer.row.set(15, data.uint32_2);
+        writer.row.set(16, data.uint64_1);
+        writer.row.set(17, data.uint64_2);
+        writer.row.set(18, data.float1);
+        writer.row.set(19, data.float2);
+        writer.row.set(20, data.double1);
+        writer.row.set(21, data.double2);
+        writer.row.set(22, data.string1);
+        writer.row.set(23, data.string2);
     }
     
-    // Populate static row
-    void populateStaticRow(std::shared_ptr<typename FullTestLayoutStatic::RowType> row, const TestData& data) {
-        row->template set<0>(data.bool1);
-        row->template set<1>(data.bool2);
-        row->template set<2>(data.int8_1);
-        row->template set<3>(data.int8_2);
-        row->template set<4>(data.int16_1);
-        row->template set<5>(data.int16_2);
-        row->template set<6>(data.int32_1);
-        row->template set<7>(data.int32_2);
-        row->template set<8>(data.int64_1);
-        row->template set<9>(data.int64_2);
-        row->template set<10>(data.uint8_1);
-        row->template set<11>(data.uint8_2);
-        row->template set<12>(data.uint16_1);
-        row->template set<13>(data.uint16_2);
-        row->template set<14>(data.uint32_1);
-        row->template set<15>(data.uint32_2);
-        row->template set<16>(data.uint64_1);
-        row->template set<17>(data.uint64_2);
-        row->template set<18>(data.float1);
-        row->template set<19>(data.float2);
-        row->template set<20>(data.double1);
-        row->template set<21>(data.double2);
-        row->template set<22>(data.string1);
-        row->template set<23>(data.string2);
+    // Populate static row using new API (writer.row.set<INDEX>())
+    void populateStaticRow(bcsv::Writer<FullTestLayoutStatic>& writer, const TestData& data) {
+        writer.row.set<0>(data.bool1);
+        writer.row.set<1>(data.bool2);
+        writer.row.set<2>(data.int8_1);
+        writer.row.set<3>(data.int8_2);
+        writer.row.set<4>(data.int16_1);
+        writer.row.set<5>(data.int16_2);
+        writer.row.set<6>(data.int32_1);
+        writer.row.set<7>(data.int32_2);
+        writer.row.set<8>(data.int64_1);
+        writer.row.set<9>(data.int64_2);
+        writer.row.set<10>(data.uint8_1);
+        writer.row.set<11>(data.uint8_2);
+        writer.row.set<12>(data.uint16_1);
+        writer.row.set<13>(data.uint16_2);
+        writer.row.set<14>(data.uint32_1);
+        writer.row.set<15>(data.uint32_2);
+        writer.row.set<16>(data.uint64_1);
+        writer.row.set<17>(data.uint64_2);
+        writer.row.set<18>(data.float1);
+        writer.row.set<19>(data.float2);
+        writer.row.set<20>(data.double1);
+        writer.row.set<21>(data.double2);
+        writer.row.set<22>(data.string1);
+        writer.row.set<23>(data.string2);
     }
     
     // Validate flexible row data  
@@ -346,15 +346,19 @@ TEST_F(BCSVTestSuite, FlexibleInterface_SequentialWrite_AllTypes) {
     // Write data using flexible interface
     {
         auto layout = createFullFlexibleLayout();
-        bcsv::Writer<bcsv::Layout> writer(layout, filename, true);
-        
-        for (size_t i = 0; i < NUM_ROWS; ++i) {
-            auto row = layout->createRow();
-            populateFlexibleRow(row, test_data[i]);
-            writer.writeRow(*row);
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        if (!writer.open(filename, true)) {
+            FAIL() << "Failed to open writer for file: " << filename;
         }
         
-        writer.flush();
+        for (size_t i = 0; i < NUM_ROWS; ++i) {
+            populateFlexibleRow(writer, test_data[i]);
+            if (!writer.writeRow()) {
+                FAIL() << "Failed to write row " << i;
+            }
+        }
+        
+        writer.close();
     }
     
     // Verify file exists and has reasonable size
@@ -378,15 +382,19 @@ TEST_F(BCSVTestSuite, StaticInterface_SequentialWrite_AllTypes) {
     // Write data using static interface
     {
         auto layout = createStaticLayout();
-        bcsv::Writer<FullTestLayoutStatic> writer(layout, filename, true);
-        
-        for (size_t i = 0; i < NUM_ROWS; ++i) {
-            auto row = layout->createRow();
-            populateStaticRow(row, test_data[i]);
-            writer.writeRow(*row);
+        bcsv::Writer<FullTestLayoutStatic> writer(layout);
+        if (!writer.open(filename, true)) {
+            FAIL() << "Failed to open writer for file: " << filename;
         }
         
-        writer.flush();
+        for (size_t i = 0; i < NUM_ROWS; ++i) {
+            populateStaticRow(writer, test_data[i]);
+            if (!writer.writeRow()) {
+                FAIL() << "Failed to write row " << i;
+            }
+        }
+        
+        writer.close();
     }
     
     // Verify file exists and has reasonable size
@@ -412,34 +420,46 @@ TEST_F(BCSVTestSuite, FlexibleInterface_SequentialRead_DataIntegrity) {
         }
         
         auto layout = createFullFlexibleLayout();
-        bcsv::Writer<bcsv::Layout> writer(layout, filename, true);
-        
-        for (size_t i = 0; i < TEST_ROWS; ++i) {
-            auto row = layout->createRow();
-            populateFlexibleRow(row, test_data[i]);
-            writer.writeRow(*row);
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        if (!writer.open(filename, true)) {
+            FAIL() << "Failed to open writer for file: " << filename;
         }
         
-        writer.flush();
+        for (size_t i = 0; i < TEST_ROWS; ++i) {
+            populateFlexibleRow(writer, test_data[i]);
+            if (!writer.writeRow()) {
+                FAIL() << "Failed to write row " << i;
+            }
+        }
+        
+        writer.close();
     }
     
     // Read data back and validate data integrity
     {
         auto layout = createFullFlexibleLayout();
-        bcsv::Reader<bcsv::Layout> reader(layout, filename);
+        bcsv::Reader<bcsv::Layout> reader;
+        if (!reader.open(filename)) {
+            FAIL() << "Failed to open reader for file: " << filename;
+        }
+        
+        // Validate layout compatibility
+        if (!reader.getLayout().isCompatibleWith(layout)) {
+            FAIL() << "File layout is not compatible with expected layout";
+        }
         
         // Read all rows and validate using while loop pattern
-        bcsv::RowView rowView(layout);
         size_t rows_read = 0;
         size_t validation_failures = 0;
         
-        while (size_t row_index = reader.readRow(rowView)) {
+        while (reader.readNext()) {
+            auto row = reader.row();
+            size_t row_index = reader.getCurrentRowIndex() - 1; // Convert to 0-based
             rows_read++;
-            // readRow returns 1-based index, convert to 0-based for array access
-            size_t array_index = row_index - 1;
-            if (array_index < test_data.size()) {
+            
+            if (row_index < test_data.size()) {
                 try {
-                    validateFlexibleRowData(test_data[array_index], rowView, array_index);
+                    validateFlexibleRowData(test_data[row_index], row, row_index);
                 } catch (const std::exception& e) {
                     validation_failures++;
                     std::cout << "Validation exception for row " << row_index << ": " << e.what() << std::endl;
@@ -471,34 +491,46 @@ TEST_F(BCSVTestSuite, StaticInterface_SequentialRead_DataIntegrity) {
         }
         
         auto layout = createStaticLayout();
-        bcsv::Writer<FullTestLayoutStatic> writer(layout, filename, true);
-        
-        for (size_t i = 0; i < TEST_ROWS; ++i) {
-            auto row = layout->createRow();
-            populateStaticRow(row, test_data[i]);
-            writer.writeRow(*row);
+        bcsv::Writer<FullTestLayoutStatic> writer(layout);
+        if (!writer.open(filename, true)) {
+            FAIL() << "Failed to open writer for file: " << filename;
         }
         
-        writer.flush();
+        for (size_t i = 0; i < TEST_ROWS; ++i) {
+            populateStaticRow(writer, test_data[i]);
+            if (!writer.writeRow()) {
+                FAIL() << "Failed to write row " << i;
+            }
+        }
+        
+        writer.close();
     }
     
     // Read data back using static interface and validate data integrity
     {
         auto layout = createStaticLayout();
-        bcsv::Reader<FullTestLayoutStatic> reader(layout, filename);
+        bcsv::Reader<FullTestLayoutStatic> reader;
+        if (!reader.open(filename)) {
+            FAIL() << "Failed to open reader for file: " << filename;
+        }
+        
+        // Validate layout compatibility  
+        if (!reader.getLayout().isCompatibleWith(layout)) {
+            FAIL() << "File layout is not compatible with expected layout";
+        }
         
         // Read all rows and validate using while loop pattern
-        typename FullTestLayoutStatic::RowViewType rowView(layout);
         size_t rows_read = 0;
         size_t validation_failures = 0;
         
-        while (size_t row_index = reader.readRow(rowView)) {
+        while (reader.readNext()) {
+            auto row = reader.row();
+            size_t row_index = reader.getCurrentRowIndex() - 1; // Convert to 0-based
             rows_read++;
-            // readRow returns 1-based index, convert to 0-based for array access
-            size_t array_index = row_index - 1;
-            if (array_index < test_data.size()) {
+            
+            if (row_index < test_data.size()) {
                 try {
-                    validateStaticRowData(test_data[array_index], rowView, array_index);
+                    validateStaticRowData(test_data[row_index], row, row_index);
                 } catch (const std::exception& e) {
                     validation_failures++;
                     std::cout << "Validation exception for row " << row_index << ": " << e.what() << std::endl;
@@ -508,6 +540,7 @@ TEST_F(BCSVTestSuite, StaticInterface_SequentialRead_DataIntegrity) {
             }
         }
         
+        reader.close();
         std::cout << "Read " << rows_read << " rows with " << validation_failures << " validation failures" << std::endl;
         EXPECT_EQ(rows_read, TEST_ROWS);
     }
@@ -528,30 +561,43 @@ TEST_F(BCSVTestSuite, CrossCompatibility_FlexibleWrite_StaticRead) {
     // Write with flexible interface
     {
         auto layout = createFullFlexibleLayout();
-        bcsv::Writer<bcsv::Layout> writer(layout, filename, true);
-        
-        for (size_t i = 0; i < 100; ++i) {
-            auto row = layout->createRow();
-            populateFlexibleRow(row, test_data[i]);
-            writer.writeRow(*row);
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        if (!writer.open(filename, true)) {
+            FAIL() << "Failed to open writer for file: " << filename;
         }
         
-        writer.flush();
+        for (size_t i = 0; i < 100; ++i) {
+            populateFlexibleRow(writer, test_data[i]);
+            if (!writer.writeRow()) {
+                FAIL() << "Failed to write row " << i;
+            }
+        }
+        
+        writer.close();
     }
     
     // Read with static interface
     {
         auto layout = createStaticLayout();
-        bcsv::Reader<FullTestLayoutStatic> reader(layout, filename);
+        bcsv::Reader<FullTestLayoutStatic> reader;
+        if (!reader.open(filename)) {
+            FAIL() << "Failed to open reader for file: " << filename;
+        }
         
-        typename FullTestLayoutStatic::RowViewType rowView(layout);
+        // Validate layout compatibility
+        if (!reader.getLayout().isCompatibleWith(layout)) {
+            FAIL() << "File layout is not compatible with expected layout";
+        }
+        
         size_t rows_read = 0;
         
-        while (reader.readRow(rowView)) {
-            validateStaticRowData(test_data[rows_read], rowView, rows_read);
+        while (reader.readNext()) {
+            auto row = reader.row();
+            validateStaticRowData(test_data[rows_read], row, rows_read);
             rows_read++;
         }
         
+        reader.close();
         EXPECT_EQ(rows_read, 100);
     }
     
@@ -571,30 +617,42 @@ TEST_F(BCSVTestSuite, CrossCompatibility_StaticWrite_FlexibleRead) {
     // Write with static interface
     {
         auto layout = createStaticLayout();
-        bcsv::Writer<FullTestLayoutStatic> writer(layout, filename, true);
-        
-        for (size_t i = 0; i < 100; ++i) {
-            auto row = layout->createRow();
-            populateStaticRow(row, test_data[i]);
-            writer.writeRow(*row);
+        bcsv::Writer<FullTestLayoutStatic> writer(layout);
+        if (!writer.open(filename, true)) {
+            FAIL() << "Failed to open writer for file: " << filename;
         }
         
-        writer.flush();
+        // Write the test data
+        for (size_t i = 0; i < test_data.size(); ++i) {
+            populateStaticRow(writer, test_data[i]);
+            writer.writeRow();
+        }
+        
+        writer.close();
     }
     
     // Read with flexible interface
     {
         auto layout = createFullFlexibleLayout();
-        bcsv::Reader<bcsv::Layout> reader(layout, filename);
+        bcsv::Reader<bcsv::Layout> reader;
+        if (!reader.open(filename)) {
+            FAIL() << "Failed to open reader for file: " << filename;
+        }
         
-        bcsv::RowView rowView(layout);
+        // Validate layout compatibility
+        if (!reader.getLayout().isCompatibleWith(layout)) {
+            FAIL() << "File layout is not compatible with expected layout";
+        }
+        
         size_t rows_read = 0;
         
-        while (reader.readRow(rowView)) {
-            validateFlexibleRowData(test_data[rows_read], rowView, rows_read);
+        while (reader.readNext()) {
+            auto row = reader.row();
+            validateFlexibleRowData(test_data[rows_read], row, rows_read);
             rows_read++;
         }
         
+        reader.close();
         EXPECT_EQ(rows_read, 100);
     }
     
@@ -616,15 +674,19 @@ TEST_F(BCSVTestSuite, Performance_FlexibleVsStatic) {
     auto start = std::chrono::high_resolution_clock::now();
     {
         auto layout = createFullFlexibleLayout();
-        bcsv::Writer<bcsv::Layout> writer(layout, flex_file, true);
-        
-        for (size_t i = 0; i < perf_rows; ++i) {
-            auto row = layout->createRow();
-            populateFlexibleRow(row, test_data[i]);
-            writer.writeRow(*row);
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        if (!writer.open(flex_file, true)) {
+            FAIL() << "Failed to open writer for file: " << flex_file;
         }
         
-        writer.flush();
+        for (size_t i = 0; i < perf_rows; ++i) {
+            populateFlexibleRow(writer, test_data[i]);
+            if (!writer.writeRow()) {
+                FAIL() << "Failed to write row " << i;
+            }
+        }
+        
+        writer.close();
     }
     auto flex_write_time = std::chrono::high_resolution_clock::now() - start;
     
@@ -632,15 +694,19 @@ TEST_F(BCSVTestSuite, Performance_FlexibleVsStatic) {
     start = std::chrono::high_resolution_clock::now();
     {
         auto layout = createStaticLayout();
-        bcsv::Writer<FullTestLayoutStatic> writer(layout, static_file, true);
-        
-        for (size_t i = 0; i < perf_rows; ++i) {
-            auto row = layout->createRow();
-            populateStaticRow(row, test_data[i]);
-            writer.writeRow(*row);
+        bcsv::Writer<FullTestLayoutStatic> writer(layout);
+        if (!writer.open(static_file, true)) {
+            FAIL() << "Failed to open writer for file: " << static_file;
         }
         
-        writer.flush();
+        for (size_t i = 0; i < perf_rows; ++i) {
+            populateStaticRow(writer, test_data[i]);
+            if (!writer.writeRow()) {
+                FAIL() << "Failed to write row " << i;
+            }
+        }
+        
+        writer.close();
     }
     auto static_write_time = std::chrono::high_resolution_clock::now() - start;
     
@@ -674,28 +740,40 @@ TEST_F(BCSVTestSuite, CRC32_CorruptionDetection) {
     // Write and verify basic functionality
     {
         auto layout = createFullFlexibleLayout();
-        bcsv::Writer<bcsv::Layout> writer(layout, test_file, true);
-        
-        for (size_t i = 0; i < 5; ++i) {
-            auto row = layout->createRow();
-            populateFlexibleRow(row, test_data[i]);
-            writer.writeRow(*row);
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        if (!writer.open(test_file, true)) {
+            FAIL() << "Failed to open writer for file: " << test_file;
         }
         
-        writer.flush();
+        for (size_t i = 0; i < 5; ++i) {
+            populateFlexibleRow(writer, test_data[i]);
+            if (!writer.writeRow()) {
+                FAIL() << "Failed to write row " << i;
+            }
+        }
+        
+        writer.close();
     }
     
     // Verify the file works normally first
     {
         auto layout = createFullFlexibleLayout();
-        bcsv::Reader<bcsv::Layout> reader(layout, test_file);
-        bcsv::RowView rowView(layout);
+        bcsv::Reader<bcsv::Layout> reader;
+        if (!reader.open(test_file)) {
+            FAIL() << "Failed to open reader for file: " << test_file;
+        }
+        
+        // Validate layout compatibility
+        if (!reader.getLayout().isCompatibleWith(layout)) {
+            FAIL() << "File layout is not compatible with expected layout";
+        }
         
         size_t rows_read = 0;
-        while (reader.readRow(rowView)) {
+        while (reader.readNext()) {
             rows_read++;
         }
         
+        reader.close();
         EXPECT_EQ(rows_read, 5) << "Original file should be readable";
     }
     
@@ -732,9 +810,10 @@ TEST_F(BCSVTestSuite, CRC32_CorruptionDetection) {
             std::string error_message;
             
             try {
-                bcsv::Reader<bcsv::Layout> reader(layout, test_file, bcsv::ReaderMode::STRICT);
-                bcsv::RowView rowView(layout);
-                reader.readRow(rowView);
+                bcsv::Reader<bcsv::Layout> reader;
+                reader.setMode(bcsv::ReaderMode::STRICT);
+                reader.open(test_file);
+                reader.readNext();
             } catch (const std::exception& e) {
                 exception_thrown = true;
                 error_message = e.what();
@@ -785,14 +864,17 @@ TEST_F(BCSVTestSuite, CRC32_CorruptionDetection) {
             // Restore clean file
             {
                 auto layout = createFullFlexibleLayout();
-                bcsv::Writer<bcsv::Layout> writer(layout, test_file, true);
+                bcsv::Writer<bcsv::Layout> writer(layout);
+                if (!writer.open(test_file, true)) {
+                    FAIL() << "Failed to open test file for writing";
+                }
                 
                 for (size_t i = 0; i < 5; ++i) {
-                    auto row = layout->createRow();
-                    populateFlexibleRow(row, test_data[i]);
-                    writer.writeRow(*row);
+                    populateFlexibleRow(writer, test_data[i]);
+                    writer.writeRow();
                 }
                 writer.flush();
+                writer.close();
             }
             
             // Apply corruption
@@ -819,11 +901,11 @@ TEST_F(BCSVTestSuite, CRC32_CorruptionDetection) {
             std::string error_message;
             
             try {
-                bcsv::Reader<bcsv::Layout> reader(layout, test_file);
-                bcsv::RowView rowView(layout);
+                bcsv::Reader<bcsv::Layout> reader;
+                reader.open(test_file);
                 
                 // Try to read all rows to catch any corruption
-                while (reader.readRow(rowView)) {
+                while (reader.readNext()) {
                     // Continue reading
                 }
             } catch (const std::exception& e) {
@@ -857,27 +939,31 @@ TEST_F(BCSVTestSuite, PacketRecovery_SkipBrokenPackets) {
     // Write clean data first
     {
         auto layout = createFullFlexibleLayout();
-        bcsv::Writer<bcsv::Layout> writer(layout, test_file, true);
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        if (!writer.open(test_file, true)) {
+            FAIL() << "Failed to open test file for writing";
+        }
         
         for (size_t i = 0; i < TOTAL_ROWS; ++i) {
-            auto row = layout->createRow();
-            populateFlexibleRow(row, test_data[i]);
-            writer.writeRow(*row);
+            populateFlexibleRow(writer, test_data[i]);
+            writer.writeRow();
         }
         
         writer.flush();
+        writer.close();
     }
     
     // Verify clean file reads correctly
     size_t clean_rows_read = 0;
     {
         auto layout = createFullFlexibleLayout();
-        bcsv::Reader<bcsv::Layout> reader(layout, test_file);
-        bcsv::RowView rowView(layout);
+        bcsv::Reader<bcsv::Layout> reader;
+        reader.open(test_file);
         
-        while (reader.readRow(rowView)) {
+        while (reader.readNext()) {
             clean_rows_read++;
         }
+        reader.close();
     }
     
     std::cout << "Clean file contains " << clean_rows_read << " readable rows" << std::endl;
@@ -919,11 +1005,11 @@ TEST_F(BCSVTestSuite, PacketRecovery_SkipBrokenPackets) {
     size_t errors_encountered = 0;
     {
         auto layout = createFullFlexibleLayout();
-        bcsv::Reader<bcsv::Layout> reader(layout, test_file);
-        bcsv::RowView rowView(layout);
+        bcsv::Reader<bcsv::Layout> reader;
+        reader.open(test_file);
         
         try {
-            while (reader.readRow(rowView)) {
+            while (reader.readNext()) {
                 recovered_rows++;
                 // Don't validate data as row indices might be different due to skipped packets
             }
@@ -959,18 +1045,21 @@ TEST_F(BCSVTestSuite, EdgeCase_ZeroColumns) {
     std::string test_file = getTestFilePath("zero_columns_test.bcsv");
     
     // Test creating a layout with zero columns
-    auto empty_layout = std::make_shared<bcsv::Layout>();
+    bcsv::Layout empty_layout;
     
     // Should not crash when creating writer with empty layout
     bool writer_creation_success = false;
     std::string writer_error;
     
     try {
-        bcsv::Writer<bcsv::Layout> writer(empty_layout, test_file, true);
-        writer_creation_success = true;
-        
-        // Try to flush empty file
-        writer.flush();
+        bcsv::Writer<bcsv::Layout> writer(empty_layout);
+        if (writer.open(test_file, true)) {
+            writer_creation_success = true;
+            
+            // Try to flush empty file
+            writer.flush();
+            writer.close();
+        }
         
     } catch (const std::exception& e) {
         writer_error = e.what();
@@ -986,14 +1075,15 @@ TEST_F(BCSVTestSuite, EdgeCase_ZeroColumns) {
     
     if (file_exists) {
         try {
-            bcsv::Reader<bcsv::Layout> reader(empty_layout, test_file);
-            bcsv::RowView rowView(empty_layout);
+            bcsv::Reader<bcsv::Layout> reader;
+            reader.open(test_file);
             reader_creation_success = true;
             
             // Try to read from empty column file
-            while (reader.readRow(rowView)) {
+            while (reader.readNext()) {
                 rows_read++;
             }
+            reader.close();
             
         } catch (const std::exception& e) {
             reader_error = e.what();
@@ -1023,10 +1113,13 @@ TEST_F(BCSVTestSuite, EdgeCase_ZeroRows) {
     std::string write_error;
     
     try {
-        bcsv::Writer<bcsv::Layout> writer(layout, test_file, true);
-        // Don't write any rows, just flush
-        writer.flush();
-        write_success = true;
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        if (writer.open(test_file, true)) {
+            // Don't write any rows, just flush
+            writer.flush();
+            writer.close();
+            write_success = true;
+        }
         
     } catch (const std::exception& e) {
         write_error = e.what();
@@ -1043,14 +1136,15 @@ TEST_F(BCSVTestSuite, EdgeCase_ZeroRows) {
     
     if (file_exists) {
         try {
-            bcsv::Reader<bcsv::Layout> reader(layout, test_file);
-            bcsv::RowView rowView(layout);
+            bcsv::Reader<bcsv::Layout> reader;
+            reader.open(test_file);
             read_success = true;
             
             // Should read zero rows gracefully
-            while (reader.readRow(rowView)) {
+            while (reader.readNext()) {
                 rows_read++;
             }
+            reader.close();
             
         } catch (const std::exception& e) {
             read_error = e.what();
@@ -1065,12 +1159,14 @@ TEST_F(BCSVTestSuite, EdgeCase_ZeroRows) {
     if (file_exists) {
         try {
             // Add one row to the previously empty file (overwrite mode since append might not be supported)
-            bcsv::Writer<bcsv::Layout> writer(layout, test_file, true); // overwrite mode
-            auto row = layout->createRow();
-            populateFlexibleRow(row, generateTestData(0));
-            writer.writeRow(*row);
-            writer.flush();
-            append_success = true;
+            bcsv::Writer<bcsv::Layout> writer(layout);
+            if (writer.open(test_file, true)) { // overwrite mode
+                populateFlexibleRow(writer, generateTestData(0));
+                writer.writeRow();
+                writer.flush();
+                writer.close();
+                append_success = true;
+            }
             
             // Check file size after writing
             if (fs::exists(test_file)) {
@@ -1088,13 +1184,14 @@ TEST_F(BCSVTestSuite, EdgeCase_ZeroRows) {
     
     if (append_success) {
         try {
-            bcsv::Reader<bcsv::Layout> reader(layout, test_file);
-            bcsv::RowView rowView(layout);
+            bcsv::Reader<bcsv::Layout> reader;
+            reader.open(test_file);
             
-            while (reader.readRow(rowView)) {
+            while (reader.readNext()) {
                 final_rows_read++;
                 // Just count rows, don't validate data since generateTestData uses random values
             }
+            reader.close();
             final_read_success = true;
             
         } catch (const std::exception& e) {
@@ -1149,59 +1246,63 @@ TEST_F(BCSVTestSuite, EdgeCase_MixedEmptyOperations) {
         std::string error_message;
         
         try {
-            std::shared_ptr<bcsv::Layout> layout;
+            bcsv::Layout layout;
             
             // Create layout based on scenario
             if (i == 0) {
-                // Empty layout
-                layout = std::make_shared<bcsv::Layout>();
+                // Empty layout - already initialized as empty
             } else if (i == 1) {
                 // Valid layout
                 layout = createFullFlexibleLayout();
             } else if (i == 2 || i == 3) {
                 // Single column layout
-                layout = std::make_shared<bcsv::Layout>();
                 bcsv::ColumnDefinition col("single_col", bcsv::ColumnDataType::INT64);
-                layout->insertColumn(col);
+                layout.addColumn(col);
             }
             
             // Write phase
-            bcsv::Writer<bcsv::Layout> writer(layout, scenario_file, true);
+            bcsv::Writer<bcsv::Layout> writer(layout);
+            if (!writer.open(scenario_file, true)) {
+                throw std::runtime_error("Failed to open file for writing");
+            }
             
             if (i == 3) {
                 // Write one row for scenario 3
-                auto row = layout->createRow();
-                (*row).set(0, static_cast<int64_t>(42));
-                writer.writeRow(*row);
+                writer.row.set(0, static_cast<int64_t>(42));
+                writer.writeRow();
             }
             // For other scenarios, write nothing
             
             writer.flush();
+            writer.close();
             write_success = true;
             
             // Read phase
-            bcsv::Reader<bcsv::Layout> reader(layout, scenario_file);
-            bcsv::RowView rowView(layout);
+            bcsv::Reader<bcsv::Layout> reader;
+            if (!reader.open(scenario_file)) {
+                throw std::runtime_error("Failed to open file for reading");
+            }
             
-            while (reader.readRow(rowView)) {
+            while (reader.readNext()) {
                 rows_read++;
+                auto& row = reader.row();
                 // Validate data if we have columns
-                if (layout->getColumnCount() > 0) {
+                if (layout.getColumnCount() > 0) {
                     // Basic validation that we can access the data
-                    for (size_t col = 0; col < layout->getColumnCount(); ++col) {
-                        std::string col_name = layout->getColumnName(col);
+                    for (size_t col = 0; col < layout.getColumnCount(); ++col) {
+                        std::string col_name = layout.getColumnName(col);
                         // Just verify we can call the accessor without crashing
-                        switch (layout->getColumnType(col)) {
+                        switch (layout.getColumnType(col)) {
                             case bcsv::ColumnDataType::INT64:
                                 {
-                                    auto val = rowView.get<int64_t>(col);
+                                    auto val = row.get<int64_t>(col);
                                     if (i == 3) {
                                         EXPECT_EQ(val, 42);
                                     }
                                 }
                                 break;
                             case bcsv::ColumnDataType::STRING:
-                                rowView.get<std::string>(col);
+                                row.get<std::string>(col);
                                 break;
                             default:
                                 break;
@@ -1209,6 +1310,7 @@ TEST_F(BCSVTestSuite, EdgeCase_MixedEmptyOperations) {
                     }
                 }
             }
+            reader.close();
             read_success = true;
             
         } catch (const std::exception& e) {
@@ -1237,50 +1339,57 @@ TEST_F(BCSVTestSuite, EdgeCase_MixedEmptyOperations) {
  * Test multipacket scenarios with large data to ensure packet boundaries work correctly
  */
 TEST_F(BCSVTestSuite, Multipacket_LargeData) {
-    auto layout = std::make_shared<bcsv::Layout>();
+    bcsv::Layout layout;
     
     bcsv::ColumnDefinition col1("id", bcsv::ColumnDataType::UINT32);
     bcsv::ColumnDefinition col2("large_data", bcsv::ColumnDataType::STRING);
-    layout->insertColumn(col1);
-    layout->insertColumn(col2);
+    layout.addColumn(col1);
+    layout.addColumn(col2);
 
     std::string filename = test_dir_ + "/multipacket_test.bcsv";
     const size_t MULTIPACKET_ROWS = 1000;
     
     // Write rows with very large strings to force multiple packets
     {
-        bcsv::Writer<bcsv::Layout> writer(layout, filename);
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        if (!writer.open(filename)) {
+            FAIL() << "Failed to open file for writing";
+        }
         
         for (size_t i = 1; i <= MULTIPACKET_ROWS; ++i) {
-            auto row = layout->createRow();
-            row->set(0, static_cast<uint32_t>(i));
+            writer.row.set(0, static_cast<uint32_t>(i));
             
             // Create large string data (should force packet boundaries)
             std::string large_data = "LargeDataString" + std::to_string(i) + "_";
             for (int j = 0; j < 100; ++j) {  // Very large strings
                 large_data += "ExtraDataPadding" + std::to_string(j) + "_";
             }
-            row->set(1, large_data);
+            writer.row.set(1, large_data);
             
-            writer.writeRow(*row);
+            writer.writeRow();
         }
+        writer.close();
     }
     
     // Verify all data can be read back correctly
     {
-        bcsv::Reader<bcsv::Layout> reader(layout, filename);
-        bcsv::RowView rowView(layout);
+        bcsv::Reader<bcsv::Layout> reader;
+        if (!reader.open(filename)) {
+            FAIL() << "Failed to open file for reading";
+        }
         
         size_t count = 0;
-        while (reader.readRow(rowView)) {
+        while (reader.readNext()) {
             count++;
-            uint32_t id = rowView.get<uint32_t>(0);
-            std::string data = rowView.get<std::string>(1);
+            auto& row = reader.row();
+            uint32_t id = row.get<uint32_t>(0);
+            std::string data = row.get<std::string>(1);
             
             EXPECT_EQ(id, count) << "Row ID mismatch at row " << count;
             EXPECT_TRUE(data.find("LargeDataString" + std::to_string(count)) != std::string::npos) 
                 << "Large data content mismatch at row " << count;
         }
+        reader.close();
         
         EXPECT_EQ(count, MULTIPACKET_ROWS) << "Expected to read " << MULTIPACKET_ROWS << " rows, but got " << count;
     }
@@ -1296,13 +1405,13 @@ TEST_F(BCSVTestSuite, CompressionLevels_FlexibleInterface_AllLevels) {
     std::cout << "\nTesting all compression levels (0-9) with flexible interface..." << std::endl;
     
     // Create test layout with diverse data types for good compression testing
-    auto layout = bcsv::Layout::create();
-    layout->insertColumn({"id", bcsv::ColumnDataType::UINT32});
-    layout->insertColumn({"name", bcsv::ColumnDataType::STRING});
-    layout->insertColumn({"value", bcsv::ColumnDataType::DOUBLE});
-    layout->insertColumn({"score", bcsv::ColumnDataType::FLOAT});
-    layout->insertColumn({"active", bcsv::ColumnDataType::BOOL});
-    layout->insertColumn({"counter", bcsv::ColumnDataType::INT64});
+    bcsv::Layout layout;
+    layout.addColumn({"id", bcsv::ColumnDataType::UINT32});
+    layout.addColumn({"name", bcsv::ColumnDataType::STRING});
+    layout.addColumn({"value", bcsv::ColumnDataType::DOUBLE});
+    layout.addColumn({"score", bcsv::ColumnDataType::FLOAT});
+    layout.addColumn({"active", bcsv::ColumnDataType::BOOL});
+    layout.addColumn({"counter", bcsv::ColumnDataType::INT64});
     
     const size_t test_rows = 1000;
     
@@ -1313,19 +1422,20 @@ TEST_F(BCSVTestSuite, CompressionLevels_FlexibleInterface_AllLevels) {
         // Write with specific compression level
         {
             bcsv::Writer<bcsv::Layout> writer(layout);
-            writer.setCompressionLevel(level);
-            writer.open(filename, true);
+            if (!writer.open(filename, true, static_cast<uint8_t>(level))) {
+                FAIL() << "Failed to open file for writing at compression level " << level;
+            }
             
             for (size_t i = 0; i < test_rows; i++) {
-                auto row = layout->createRow();
-                (*row).set(0, static_cast<uint32_t>(i));
-                (*row).set(1, "TestString_" + std::to_string(i % 100)); // Repeating pattern for compression
-                (*row).set(2, i * 3.14159265359);
-                (*row).set(3, static_cast<float>(i % 1000) / 10.0f);
-                (*row).set(4, (i % 2) == 0);
-                (*row).set(5, static_cast<int64_t>(i * 1000));
-                writer.writeRow(*row);
+                writer.row.set(0, static_cast<uint32_t>(i));
+                writer.row.set(1, "TestString_" + std::to_string(i % 100)); // Repeating pattern for compression
+                writer.row.set(2, i * 3.14159265359);
+                writer.row.set(3, static_cast<float>(i % 1000) / 10.0f);
+                writer.row.set(4, (i % 2) == 0);
+                writer.row.set(5, static_cast<int64_t>(i * 1000));
+                writer.writeRow();
             }
+            writer.close();
         }
         
         // Verify file exists and get size
@@ -1334,25 +1444,29 @@ TEST_F(BCSVTestSuite, CompressionLevels_FlexibleInterface_AllLevels) {
         
         // Read and verify all data
         {
-            bcsv::Reader<bcsv::Layout> reader(layout, filename);
-            bcsv::RowView rowView(layout);
+            bcsv::Reader<bcsv::Layout> reader;
+            if (!reader.open(filename)) {
+                FAIL() << "Failed to open file for reading at compression level " << level;
+            }
             
             size_t count = 0;
-            while (reader.readRow(rowView)) {
+            while (reader.readNext()) {
+                auto& row = reader.row();
                 // Verify data integrity
-                EXPECT_EQ(rowView.get<uint32_t>(0), count) << "ID mismatch at row " << count << ", level " << level;
-                EXPECT_EQ(rowView.get<std::string>(1), "TestString_" + std::to_string(count % 100)) 
+                EXPECT_EQ(row.get<uint32_t>(0), count) << "ID mismatch at row " << count << ", level " << level;
+                EXPECT_EQ(row.get<std::string>(1), "TestString_" + std::to_string(count % 100)) 
                     << "String mismatch at row " << count << ", level " << level;
-                EXPECT_NEAR(rowView.get<double>(2), count * 3.14159265359, 1e-10) 
+                EXPECT_NEAR(row.get<double>(2), count * 3.14159265359, 1e-10) 
                     << "Double mismatch at row " << count << ", level " << level;
-                EXPECT_NEAR(rowView.get<float>(3), static_cast<float>(count % 1000) / 10.0f, 1e-5) 
+                EXPECT_NEAR(row.get<float>(3), static_cast<float>(count % 1000) / 10.0f, 1e-5) 
                     << "Float mismatch at row " << count << ", level " << level;
-                EXPECT_EQ(rowView.get<bool>(4), (count % 2) == 0) 
+                EXPECT_EQ(row.get<bool>(4), (count % 2) == 0) 
                     << "Bool mismatch at row " << count << ", level " << level;
-                EXPECT_EQ(rowView.get<int64_t>(5), static_cast<int64_t>(count * 1000)) 
+                EXPECT_EQ(row.get<int64_t>(5), static_cast<int64_t>(count * 1000)) 
                     << "Int64 mismatch at row " << count << ", level " << level;
                 count++;
             }
+            reader.close();
             
             EXPECT_EQ(count, test_rows) << "Row count mismatch for compression level " << level;
         }
@@ -1369,7 +1483,7 @@ TEST_F(BCSVTestSuite, CompressionLevels_StaticInterface_AllLevels) {
     
     // Create static layout with same structure
     using TestLayout = bcsv::LayoutStatic<uint32_t, std::string, double, float, bool, int64_t>;
-    auto layout = TestLayout::create();
+    TestLayout layout({"id", "name", "value", "score", "active", "counter"});
     
     const size_t test_rows = 1000;
     
@@ -1380,19 +1494,20 @@ TEST_F(BCSVTestSuite, CompressionLevels_StaticInterface_AllLevels) {
         // Write with specific compression level
         {
             bcsv::Writer<TestLayout> writer(layout);
-            writer.setCompressionLevel(level);
-            writer.open(filename, true);
+            if (!writer.open(filename, true, static_cast<uint8_t>(level))) {
+                FAIL() << "Failed to open file for writing at compression level " << level;
+            }
             
             for (size_t i = 0; i < test_rows; i++) {
-                auto row = layout->createRow();
-                (*row).set<0>(static_cast<uint32_t>(i));
-                (*row).set<1>("TestString_" + std::to_string(i % 100));
-                (*row).set<2>(i * 3.14159265359);
-                (*row).set<3>(static_cast<float>(i % 1000) / 10.0f);
-                (*row).set<4>((i % 2) == 0);
-                (*row).set<5>(static_cast<int64_t>(i * 1000));
-                writer.writeRow(*row);
+                writer.row.set<0>(static_cast<uint32_t>(i));
+                writer.row.set<1>("TestString_" + std::to_string(i % 100));
+                writer.row.set<2>(i * 3.14159265359);
+                writer.row.set<3>(static_cast<float>(i % 1000) / 10.0f);
+                writer.row.set<4>((i % 2) == 0);
+                writer.row.set<5>(static_cast<int64_t>(i * 1000));
+                writer.writeRow();
             }
+            writer.close();
         }
         
         // Verify file exists and get size
@@ -1401,25 +1516,29 @@ TEST_F(BCSVTestSuite, CompressionLevels_StaticInterface_AllLevels) {
         
         // Read and verify all data
         {
-            bcsv::Reader<TestLayout> reader(layout, filename);
-            typename TestLayout::RowViewType rowView(layout);
+            bcsv::Reader<TestLayout> reader;
+            if (!reader.open(filename)) {
+                FAIL() << "Failed to open file for reading at compression level " << level;
+            }
             
             size_t count = 0;
-            while (reader.readRow(rowView)) {
+            while (reader.readNext()) {
+                auto& row = reader.row();
                 // Verify data integrity
-                EXPECT_EQ(rowView.get<0>(), count) << "ID mismatch at row " << count << ", level " << level;
-                EXPECT_EQ(rowView.get<1>(), "TestString_" + std::to_string(count % 100)) 
+                EXPECT_EQ(row.get<0>(), count) << "ID mismatch at row " << count << ", level " << level;
+                EXPECT_EQ(row.get<1>(), "TestString_" + std::to_string(count % 100)) 
                     << "String mismatch at row " << count << ", level " << level;
-                EXPECT_NEAR(rowView.get<2>(), count * 3.14159265359, 1e-10) 
+                EXPECT_NEAR(row.get<2>(), count * 3.14159265359, 1e-10) 
                     << "Double mismatch at row " << count << ", level " << level;
-                EXPECT_NEAR(rowView.get<3>(), static_cast<float>(count % 1000) / 10.0f, 1e-5) 
+                EXPECT_NEAR(row.get<3>(), static_cast<float>(count % 1000) / 10.0f, 1e-5) 
                     << "Float mismatch at row " << count << ", level " << level;
-                EXPECT_EQ(rowView.get<4>(), (count % 2) == 0) 
+                EXPECT_EQ(row.get<4>(), (count % 2) == 0) 
                     << "Bool mismatch at row " << count << ", level " << level;
-                EXPECT_EQ(rowView.get<5>(), static_cast<int64_t>(count * 1000)) 
+                EXPECT_EQ(row.get<5>(), static_cast<int64_t>(count * 1000)) 
                     << "Int64 mismatch at row " << count << ", level " << level;
                 count++;
             }
+            reader.close();
             
             EXPECT_EQ(count, test_rows) << "Row count mismatch for compression level " << level;
         }
@@ -1435,13 +1554,13 @@ TEST_F(BCSVTestSuite, CompressionLevels_CrossCompatibility) {
     std::cout << "\nTesting compression level cross-compatibility..." << std::endl;
     
     // Create layouts
-    auto flexLayout = bcsv::Layout::create();
-    flexLayout->insertColumn({"Column0", bcsv::ColumnDataType::UINT32});
-    flexLayout->insertColumn({"Column1", bcsv::ColumnDataType::STRING});
-    flexLayout->insertColumn({"Column2", bcsv::ColumnDataType::DOUBLE});
+    bcsv::Layout flexLayout;
+    flexLayout.addColumn({"Column0", bcsv::ColumnDataType::UINT32});
+    flexLayout.addColumn({"Column1", bcsv::ColumnDataType::STRING});
+    flexLayout.addColumn({"Column2", bcsv::ColumnDataType::DOUBLE});
     
     using StaticLayout = bcsv::LayoutStatic<uint32_t, std::string, double>;
-    auto staticLayout = StaticLayout::create();
+    StaticLayout staticLayout({"Column0", "Column1", "Column2"});
     
     const size_t test_rows = 100;
     
@@ -1452,32 +1571,37 @@ TEST_F(BCSVTestSuite, CompressionLevels_CrossCompatibility) {
         // Write with flexible interface
         {
             bcsv::Writer<bcsv::Layout> writer(flexLayout);
-            writer.setCompressionLevel(write_level);
-            writer.open(filename, true);
+            if (!writer.open(filename, true, static_cast<uint8_t>(write_level))) {
+                FAIL() << "Failed to open file for writing at compression level " << write_level;
+            }
             
             for (size_t i = 0; i < test_rows; i++) {
-                auto row = flexLayout->createRow();
-                (*row).set(0, static_cast<uint32_t>(i));
-                (*row).set(1, "CrossTest_" + std::to_string(i));
-                (*row).set(2, i * 2.71828);
-                writer.writeRow(*row);
+                writer.row.set(0, static_cast<uint32_t>(i));
+                writer.row.set(1, "CrossTest_" + std::to_string(i));
+                writer.row.set(2, i * 2.71828);
+                writer.writeRow();
             }
+            writer.close();
         }
         
         // Read with static interface
         {
-            bcsv::Reader<StaticLayout> reader(staticLayout, filename);
-            typename StaticLayout::RowViewType rowView(staticLayout);
+            bcsv::Reader<StaticLayout> reader;
+            if (!reader.open(filename)) {
+                FAIL() << "Failed to open file for reading at compression level " << write_level;
+            }
             
             size_t count = 0;
-            while (reader.readRow(rowView)) {
-                EXPECT_EQ(rowView.get<0>(), count) << "Cross-compat ID mismatch at row " << count;
-                EXPECT_EQ(rowView.get<1>(), "CrossTest_" + std::to_string(count)) 
+            while (reader.readNext()) {
+                auto& row = reader.row();
+                EXPECT_EQ(row.get<0>(), count) << "Cross-compat ID mismatch at row " << count;
+                EXPECT_EQ(row.get<1>(), "CrossTest_" + std::to_string(count)) 
                     << "Cross-compat string mismatch at row " << count;
-                EXPECT_NEAR(rowView.get<2>(), count * 2.71828, 1e-10) 
+                EXPECT_NEAR(row.get<2>(), count * 2.71828, 1e-10) 
                     << "Cross-compat double mismatch at row " << count;
                 count++;
             }
+            reader.close();
             
             EXPECT_EQ(count, test_rows) << "Cross-compat row count mismatch for level " << write_level;
         }
@@ -1490,39 +1614,88 @@ TEST_F(BCSVTestSuite, CompressionLevels_CrossCompatibility) {
 TEST_F(BCSVTestSuite, CompressionLevels_ValidationAndRestrictions) {
     std::cout << "\nTesting compression level validation and restrictions..." << std::endl;
     
-    auto layout = bcsv::Layout::create();
-    layout->insertColumn({"test", bcsv::ColumnDataType::INT32});
+    auto layout = bcsv::Layout();
+    layout.addColumn({"test", bcsv::ColumnDataType::INT32});
     
-    // Test invalid compression levels
+    // Test invalid compression levels in open() method
     {
         bcsv::Writer<bcsv::Layout> writer(layout);
+        std::string test_file = test_dir_ + "/compression_validation.bcsv";
         
-        // Test negative level
-        EXPECT_THROW(writer.setCompressionLevel(-1), std::invalid_argument);
+        // Test too high level (10 should succeed but clamp to 9 - the highest valid level)
+        EXPECT_TRUE(writer.open(test_file, true, 10)) << "Should succeed with compression level 10 (clamped to 9)";
+        EXPECT_EQ(writer.getCompressionLevel(), 9) << "Compression level 10 should be clamped to 9";
+        writer.close();
         
-        // Test too high level
-        EXPECT_THROW(writer.setCompressionLevel(10), std::invalid_argument);
+        // Valid levels should work
+        EXPECT_TRUE(writer.open(test_file, true, 0)) << "Should open with compression level 0";
+        EXPECT_EQ(writer.getCompressionLevel(), 0) << "Compression level should be 0";
+        writer.close();
         
-        // Valid levels should not throw
-        EXPECT_NO_THROW(writer.setCompressionLevel(0));
-        EXPECT_NO_THROW(writer.setCompressionLevel(5));
-        EXPECT_NO_THROW(writer.setCompressionLevel(9));
+        EXPECT_TRUE(writer.open(test_file, true, 5)) << "Should open with compression level 5";
+        EXPECT_EQ(writer.getCompressionLevel(), 5) << "Compression level should be 5";
+        writer.close();
+        
+        EXPECT_TRUE(writer.open(test_file, true, 9)) << "Should open with compression level 9";
+        EXPECT_EQ(writer.getCompressionLevel(), 9) << "Compression level should be 9";
+        writer.close();
     }
     
-    // Test restriction when file is open
+    // Test compression level is properly set and retrieved
     {
-        std::string filename = test_dir_ + "/restriction_test.bcsv";
+        std::string filename = test_dir_ + "/compression_level_test.bcsv";
         bcsv::Writer<bcsv::Layout> writer(layout);
-        writer.open(filename, true);
         
-        // Should not change compression level when file is open
-        int original_level = writer.getCompressionLevel();
-        writer.setCompressionLevel(5); // Should be ignored
-        EXPECT_EQ(writer.getCompressionLevel(), original_level) 
-            << "Compression level should not change when file is open";
-        
+        // Test that compression level is correctly reported
+        EXPECT_TRUE(writer.open(filename, true, 3));
+        EXPECT_EQ(writer.getCompressionLevel(), 3) << "Compression level should be 3";
         writer.close();
+        
+        // Test different level
+        EXPECT_TRUE(writer.open(filename, true, 7));
+        EXPECT_EQ(writer.getCompressionLevel(), 7) << "Compression level should be 7";
+        writer.close();
+        
         fs::remove(filename);
+    }
+    
+    // Test compression level clamping with actual write/read operations
+    {
+        std::string clamp_test_file = test_dir_ + "/compression_clamp_test.bcsv";
+        const size_t test_rows = 100;
+        
+        // Write with compression level 10 (should clamp to 9)
+        {
+            bcsv::Writer<bcsv::Layout> writer(layout);
+            EXPECT_TRUE(writer.open(clamp_test_file, true, 10)) << "Should open with compression level 10";
+            EXPECT_EQ(writer.getCompressionLevel(), 9) << "Compression level 10 should be clamped to 9";
+            
+            // Write test data
+            for (size_t i = 0; i < test_rows; ++i) {
+                writer.row.set(0, static_cast<int32_t>(i));
+                writer.writeRow();
+            }
+            writer.close();
+        }
+        
+        // Read back and verify data integrity
+        {
+            bcsv::Reader<bcsv::Layout> reader;
+            EXPECT_TRUE(reader.open(clamp_test_file)) << "Should be able to read file written with clamped compression";
+            
+            size_t count = 0;
+            while (reader.readNext()) {
+                auto& row = reader.row();
+                EXPECT_EQ(row.get<int32_t>(0), static_cast<int32_t>(count)) 
+                    << "Data integrity check failed for clamped compression level at row " << count;
+                count++;
+            }
+            reader.close();
+            
+            EXPECT_EQ(count, test_rows) << "Should read all rows written with clamped compression level";
+        }
+        
+        fs::remove(clamp_test_file);
     }
     
     std::cout << "Validation and restrictions test completed" << std::endl;
@@ -1531,9 +1704,9 @@ TEST_F(BCSVTestSuite, CompressionLevels_ValidationAndRestrictions) {
 TEST_F(BCSVTestSuite, CompressionLevels_PerformanceCharacteristics) {
     std::cout << "\nTesting compression level performance characteristics..." << std::endl;
     
-    auto layout = bcsv::Layout::create();
-    layout->insertColumn({"id", bcsv::ColumnDataType::UINT32});
-    layout->insertColumn({"data", bcsv::ColumnDataType::STRING});
+    auto layout = bcsv::Layout();
+    layout.addColumn({"id", bcsv::ColumnDataType::UINT32});
+    layout.addColumn({"data", bcsv::ColumnDataType::STRING});
     
     const size_t test_rows = 5000;
     std::vector<std::pair<int, size_t>> level_sizes; // (level, file_size)
@@ -1546,20 +1719,21 @@ TEST_F(BCSVTestSuite, CompressionLevels_PerformanceCharacteristics) {
         
         {
             bcsv::Writer<bcsv::Layout> writer(layout);
-            writer.setCompressionLevel(level);
-            writer.open(filename, true);
+            if (!writer.open(filename, true, static_cast<uint8_t>(level))) {
+                FAIL() << "Failed to open file for performance test at level " << level;
+            }
             
             for (size_t i = 0; i < test_rows; i++) {
-                auto row = layout->createRow();
-                (*row).set(0, static_cast<uint32_t>(i));
+                writer.row.set(0, static_cast<uint32_t>(i));
                 // Create repetitive data that compresses well
                 std::string data = "RepeatingDataPattern_" + std::to_string(i % 10) + "_";
                 for (int j = 0; j < 5; j++) {
                     data += "MoreRepetitiveContent";
                 }
-                (*row).set(1, data);
-                writer.writeRow(*row);
+                writer.row.set(1, data);
+                writer.writeRow();
             }
+            writer.close();
         }
         
         auto end = std::chrono::high_resolution_clock::now();

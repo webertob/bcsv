@@ -20,10 +20,6 @@ target_link_libraries(example_static PRIVATE bcsv)
 add_executable(performance_benchmark performance_benchmark.cpp)
 target_link_libraries(performance_benchmark PRIVATE bcsv)
 
-# Compression levels test
-add_executable(test_compression_levels ../test_compression_levels.cpp)
-target_link_libraries(test_compression_levels PRIVATE bcsv)
-
 # CSV to BCSV converter CLI tool
 add_executable(csv2bcsv csv2bcsv.cpp)
 target_link_libraries(csv2bcsv PRIVATE bcsv)

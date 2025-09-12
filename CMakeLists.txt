@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.50)
 project(bcsv VERSION 1.0.0 LANGUAGES CXX C)
 
 # Set C++ standard
@@ -17,42 +17,60 @@ endif()
 # Include FetchContent for external dependencies
 include(FetchContent)
 
-# Find Boost CRC library
-find_package(Boost QUIET)
-if(NOT Boost_FOUND)
-    message(STATUS "Boost not found, using FetchContent to download...")
-    FetchContent_Declare(
-        boost
-        GIT_REPOSITORY https://github.com/boostorg/boost.git
-        GIT_TAG boost-1.82.0
-        GIT_SHALLOW TRUE
+# Find Boost CRC library (version >= 1.70 required)
+find_package(Boost 1.70 QUIET COMPONENTS headers)
+if(Boost_FOUND)
+    message(STATUS "Found system Boost ${Boost_VERSION} - using system version")
+    set(BOOST_TARGET Boost::boost)
+else()
+    message(STATUS "System Boost not found or too old (need >= 1.70) - using local copy")
+    # Use local Boost copy in include/boost-1.89.0/
+    add_library(boost_local INTERFACE)
+    target_include_directories(boost_local INTERFACE 
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/boost-1.89.0>
+        $<INSTALL_INTERFACE:include/boost-1.89.0>
     )
-    FetchContent_MakeAvailable(boost)
+    set(BOOST_TARGET boost_local)
 endif()
 
-# Integrate LZ4 compression library
-find_package(lz4 QUIET)
-if(NOT lz4_FOUND)
-    message(STATUS "LZ4 not found, using FetchContent to download...")
-    FetchContent_Declare(
-        lz4
-        GIT_REPOSITORY https://github.com/lz4/lz4.git
-        GIT_TAG v1.9.4
-        GIT_SHALLOW TRUE
-    )
-    FetchContent_MakeAvailable(lz4)
+# Find LZ4 library (version >= 1.9 required)
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(LZ4 QUIET liblz4>=1.9)
+endif()
 
-    # Create a simple interface library for LZ4
-    add_library(lz4_interface INTERFACE)
-    target_include_directories(lz4_interface INTERFACE ${lz4_SOURCE_DIR}/lib)
-
-    # Manually compile LZ4 sources
-    file(GLOB LZ4_SOURCES ${lz4_SOURCE_DIR}/lib/*.c)
-    add_library(lz4_static STATIC ${LZ4_SOURCES})
-    target_include_directories(lz4_static PUBLIC 
-        $<BUILD_INTERFACE:${lz4_SOURCE_DIR}/lib>
-        $<INSTALL_INTERFACE:include/lz4>
+if(LZ4_FOUND)
+    message(STATUS "Found system LZ4 ${LZ4_VERSION} - using system version")
+    add_library(lz4_system INTERFACE)
+    target_include_directories(lz4_system INTERFACE ${LZ4_INCLUDE_DIRS})
+    target_link_libraries(lz4_system INTERFACE ${LZ4_LIBRARIES})
+    target_compile_options(lz4_system INTERFACE ${LZ4_CFLAGS_OTHER})
+    set(LZ4_TARGET lz4_system)
+else()
+    message(STATUS "System LZ4 not found or too old (need >= 1.9) - using local copy")
+    # Use local LZ4 copy in include/lz4-1.10.0/
+    set(LZ4_LOCAL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include/lz4-1.10.0)
+    
+    # Create LZ4 static library from local sources
+    add_library(lz4_local STATIC 
+        ${LZ4_LOCAL_DIR}/lz4.c
+        ${LZ4_LOCAL_DIR}/lz4hc.c
+        ${LZ4_LOCAL_DIR}/lz4frame.c
+        ${LZ4_LOCAL_DIR}/xxhash.c
     )
+    
+    target_include_directories(lz4_local PUBLIC 
+        $<BUILD_INTERFACE:${LZ4_LOCAL_DIR}>
+        $<INSTALL_INTERFACE:include/lz4-1.10.0>
+    )
+    
+    # Set properties for the library
+    set_target_properties(lz4_local PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        C_STANDARD 99
+    )
+    
+    set(LZ4_TARGET lz4_local)
 endif()
 
 # Create interface library for modular header-only bcsv
@@ -64,22 +82,8 @@ target_include_directories(bcsv INTERFACE
     $<INSTALL_INTERFACE:include>
 )
 
-# Add LZ4 include directories
-if(TARGET lz4_static)
-    target_include_directories(bcsv INTERFACE
-        $<BUILD_INTERFACE:${lz4_SOURCE_DIR}/lib>
-    )
-endif()
-
-# Link Boost and LZ4 libraries
-if(Boost_FOUND)
-    target_link_libraries(bcsv INTERFACE Boost::boost)
-else()
-    target_link_libraries(bcsv INTERFACE boost)
-endif()
-
-# Link LZ4 library (privately to avoid export issues)
-target_link_libraries(bcsv INTERFACE lz4_static)
+# Link Boost and LZ4 libraries using our target variables
+target_link_libraries(bcsv INTERFACE ${BOOST_TARGET} ${LZ4_TARGET})
 
 # Compiler-specific options
 target_compile_features(bcsv INTERFACE cxx_std_20)
@@ -105,7 +109,19 @@ endif()
 
 # Installation rules
 install(DIRECTORY include/ DESTINATION include)
-install(DIRECTORY ${lz4_SOURCE_DIR}/lib/ DESTINATION include/lz4 FILES_MATCHING PATTERN "*.h")
+
+# Install bcsv target
 install(TARGETS bcsv EXPORT bcsvConfig)
-install(TARGETS lz4_static EXPORT bcsvConfig)
+
+# Install local Boost target if using local copy
+if(NOT Boost_FOUND)
+    install(TARGETS boost_local EXPORT bcsvConfig)
+endif()
+
+# Install LZ4 headers and target if using local copy
+if(NOT LZ4_FOUND)
+    # Install local LZ4 target (using the actual target name)
+    install(TARGETS lz4_local EXPORT bcsvConfig)
+endif()
+
 install(EXPORT bcsvConfig DESTINATION lib/cmake/bcsv)

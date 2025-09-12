@@ -66,6 +66,7 @@ namespace bcsv {
         STRING = 0x000C
     };
 
+    using std::string;
     template<typename T>
     static constexpr ColumnDataType toColumnDataType() {
         if constexpr (std::is_same_v<T, bool>) return ColumnDataType::BOOL;
@@ -79,7 +80,7 @@ namespace bcsv {
         else if constexpr (std::is_same_v<T, uint64_t>) return ColumnDataType::UINT64;
         else if constexpr (std::is_same_v<T, float>) return ColumnDataType::FLOAT;
         else if constexpr (std::is_same_v<T, double>) return ColumnDataType::DOUBLE;
-        else if constexpr (std::is_same_v<T, std::string>) return ColumnDataType::STRING;
+        else if constexpr (std::is_same_v<T, string>) return ColumnDataType::STRING;
         else static_assert(always_false<T>, "Unsupported type");
     };
 
@@ -101,14 +102,18 @@ namespace bcsv {
     template<> struct fromColumnDataTypeT<ColumnDataType::INT64> { using type = int64_t; };
     template<> struct fromColumnDataTypeT<ColumnDataType::FLOAT> { using type = float; };
     template<> struct fromColumnDataTypeT<ColumnDataType::DOUBLE> { using type = double; };
-    template<> struct fromColumnDataTypeT<ColumnDataType::STRING> { using type = std::string; };
+    template<> struct fromColumnDataTypeT<ColumnDataType::STRING> { using type = string; };
 
     // Convert ValueType variant to ColumnDataType
     template<ColumnDataType Type>
     using fromColumnDataType = typename fromColumnDataTypeT<Type>::type;
 
     // Define ValueType early since it's used by other functions
-    using ValueType = std::variant<bool, uint8_t, uint16_t, uint32_t, uint64_t, int8_t, int16_t, int32_t, int64_t, float, double, std::string>;
+    using ValueType = std::variant< bool, 
+                                    uint8_t, uint16_t, uint32_t, uint64_t, 
+                                    int8_t, int16_t, int32_t, int64_t, 
+                                    float, double, 
+                                    string>;
 
     ColumnDataType toColumnDataType(const ValueType& value) {
         return std::visit([](auto&& arg) -> ColumnDataType {
@@ -157,23 +162,21 @@ namespace bcsv {
      * @return Default ValueType for the specified type
      */
     inline ValueType defaultValue(ColumnDataType type) {
-        ValueType value;
         switch (type) {
-            case ColumnDataType::INT8: value = int8_t{0}; break;
-            case ColumnDataType::INT16: value = int16_t{0}; break;
-            case ColumnDataType::INT32: value = int32_t{0}; break;
-            case ColumnDataType::INT64: value = int64_t{0}; break;
-            case ColumnDataType::UINT8: value = uint8_t{0}; break;
-            case ColumnDataType::UINT16: value = uint16_t{0}; break;
-            case ColumnDataType::UINT32: value = uint32_t{0}; break;
-            case ColumnDataType::UINT64: value = uint64_t{0}; break;
-            case ColumnDataType::FLOAT: value = float{0.0f}; break;
-            case ColumnDataType::DOUBLE: value = double{0.0}; break;
-            case ColumnDataType::BOOL: value = bool{false}; break;
-            case ColumnDataType::STRING: value = std::string{}; break;
+            case ColumnDataType::INT8: return ValueType{int8_t{0}};
+            case ColumnDataType::INT16: return ValueType{int16_t{0}};
+            case ColumnDataType::INT32: return ValueType{int32_t{0}};
+            case ColumnDataType::INT64: return ValueType{int64_t{0}};
+            case ColumnDataType::UINT8: return ValueType{uint8_t{0}};
+            case ColumnDataType::UINT16: return ValueType{uint16_t{0}};
+            case ColumnDataType::UINT32: return ValueType{uint32_t{0}};
+            case ColumnDataType::UINT64: return ValueType{uint64_t{0}};
+            case ColumnDataType::FLOAT: return ValueType{float{0.0f}};
+            case ColumnDataType::DOUBLE: return ValueType{double{0.0}};
+            case ColumnDataType::BOOL: return ValueType{bool{false}};
+            case ColumnDataType::STRING: return ValueType{string{}};
             default: throw std::runtime_error("Unknown column type");
         }
-        return value;
     }
 
     template<typename Type>
@@ -257,7 +260,7 @@ namespace bcsv {
             else if constexpr (std::is_same_v<T, uint64_t>) return type == ColumnDataType::UINT64;
             else if constexpr (std::is_same_v<T, float>) return type == ColumnDataType::FLOAT;
             else if constexpr (std::is_same_v<T, double>) return type == ColumnDataType::DOUBLE;
-            else if constexpr (std::is_same_v<T, std::string>) return type == ColumnDataType::STRING;
+            else if constexpr (std::is_same_v<T, string>) return type == ColumnDataType::STRING;
             else return false;
         }, value);
     }
@@ -310,57 +313,68 @@ namespace bcsv {
     ValueType convertValueType(const ValueType &value, ColumnDataType targetType) {
         return std::visit([targetType](const auto& v) -> ValueType {
             using SrcType = std::decay_t<decltype(v)>;
-
             switch (targetType)
             {
             case ColumnDataType::BOOL:
-                if constexpr (std::is_same_v<SrcType, bool>) return v;
-                else if constexpr (std::is_convertible_v<SrcType, bool>) return static_cast<bool>(v);
-                break;
+                if constexpr (std::is_same_v<SrcType, bool>) 
+                    return v;
+                else if constexpr (std::is_convertible_v<SrcType, bool>) 
+                    return static_cast<bool>(v);
             case ColumnDataType::UINT8:
-                if constexpr (std::is_same_v<SrcType, uint8_t>) return v;
-                else if constexpr (std::is_convertible_v<SrcType, uint8_t>) return static_cast<uint8_t>(v);
-                break;
+                if constexpr (std::is_same_v<SrcType, uint8_t>) 
+                    return v;
+                else if constexpr (std::is_convertible_v<SrcType, uint8_t>) 
+                    return static_cast<uint8_t>(v);
             case ColumnDataType::UINT16:
-                if constexpr (std::is_same_v<SrcType, uint16_t>) return v;
-                else if constexpr (std::is_convertible_v<SrcType, uint16_t>) return static_cast<uint16_t>(v);
-                break;
+                if constexpr (std::is_same_v<SrcType, uint16_t>) 
+                return v;
+                else if constexpr (std::is_convertible_v<SrcType, uint16_t>) 
+                    return static_cast<uint16_t>(v);
             case ColumnDataType::UINT32:
-                if constexpr (std::is_same_v<SrcType, uint32_t>) return v;
-                else if constexpr (std::is_convertible_v<SrcType, uint32_t>) return static_cast<uint32_t>(v);
-                break;
+                if constexpr (std::is_same_v<SrcType, uint32_t>) 
+                    return v;
+                else if constexpr (std::is_convertible_v<SrcType, uint32_t>) 
+                    return static_cast<uint32_t>(v);
             case ColumnDataType::UINT64:
-                if constexpr (std::is_same_v<SrcType, uint64_t>) return v;
-                else if constexpr (std::is_convertible_v<SrcType, uint64_t>) return static_cast<uint64_t>(v);
-                break;
+                if constexpr (std::is_same_v<SrcType, uint64_t>) 
+                    return v;
+                else if constexpr (std::is_convertible_v<SrcType, uint64_t>) 
+                    return static_cast<uint64_t>(v);
             case ColumnDataType::INT8:
-                if constexpr (std::is_same_v<SrcType, int8_t>) return v;
-                else if constexpr (std::is_convertible_v<SrcType, int8_t>) return static_cast<int8_t>(v);
-                break;
+                if constexpr (std::is_same_v<SrcType, int8_t>) 
+                    return v;
+                else if constexpr (std::is_convertible_v<SrcType, int8_t>) 
+                    return static_cast<int8_t>(v);
             case ColumnDataType::INT16:
-                if constexpr (std::is_same_v<SrcType, int16_t>) return v;
-                else if constexpr (std::is_convertible_v<SrcType, int16_t>) return static_cast<int16_t>(v);
-                break;
+                if constexpr (std::is_same_v<SrcType, int16_t>) 
+                    return v;
+                else if constexpr (std::is_convertible_v<SrcType, int16_t>) 
+                    return static_cast<int16_t>(v);
             case ColumnDataType::INT32:
-                if constexpr (std::is_same_v<SrcType, int32_t>) return v;
-                else if constexpr (std::is_convertible_v<SrcType, int32_t>) return static_cast<int32_t>(v);
-                break;
+                if constexpr (std::is_same_v<SrcType, int32_t>) 
+                    return v;
+                else if constexpr (std::is_convertible_v<SrcType, int32_t>) 
+                    return static_cast<int32_t>(v);
             case ColumnDataType::INT64:
-                if constexpr (std::is_same_v<SrcType, int64_t>) return v;
-                else if constexpr (std::is_convertible_v<SrcType, int64_t>) return static_cast<int64_t>(v);
-                break;
+                if constexpr (std::is_same_v<SrcType, int64_t>) 
+                    return v;
+                else if constexpr (std::is_convertible_v<SrcType, int64_t>) 
+                    return static_cast<int64_t>(v);
             case ColumnDataType::FLOAT:
-                if constexpr (std::is_same_v<SrcType, float>) return v;
-                else if constexpr (std::is_convertible_v<SrcType, float>) return static_cast<float>(v);
-                break;
+                if constexpr (std::is_same_v<SrcType, float>) 
+                    return v;
+                else if constexpr (std::is_convertible_v<SrcType, float>) 
+                    return static_cast<float>(v);
             case ColumnDataType::DOUBLE:
-                if constexpr (std::is_same_v<SrcType, double>) return v;
-                else if constexpr (std::is_convertible_v<SrcType, double>) return static_cast<double>(v);
-                break;
+                if constexpr (std::is_same_v<SrcType, double>) 
+                    return v;
+                else if constexpr (std::is_convertible_v<SrcType, double>) 
+                    return static_cast<double>(v);
             case ColumnDataType::STRING:
-                if constexpr (std::is_same_v<SrcType, std::string>) return v;
-                else if constexpr (std::is_convertible_v<SrcType, std::string>) return static_cast<std::string>(v);
-                break;
+                if constexpr (std::is_same_v<SrcType, std::string>) 
+                    return v;
+                else if constexpr (std::is_convertible_v<SrcType, std::string>) 
+                    return static_cast<std::string>(v);
             default:
                 break;
             }

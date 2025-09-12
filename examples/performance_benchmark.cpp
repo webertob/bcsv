@@ -67,33 +67,42 @@ public:
         std::cout << "Benchmarking Flexible Interface...\n";
         
         // Create flexible layout
-        auto layout = bcsv::Layout::create();
-        layout->insertColumn({"id", bcsv::ColumnDataType::INT32});
-        layout->insertColumn({"name", bcsv::ColumnDataType::STRING});
-        layout->insertColumn({"score1", bcsv::ColumnDataType::FLOAT});
-        layout->insertColumn({"score2", bcsv::ColumnDataType::DOUBLE});
-        layout->insertColumn({"active", bcsv::ColumnDataType::BOOL});
-        layout->insertColumn({"timestamp", bcsv::ColumnDataType::INT64});
-        layout->insertColumn({"count", bcsv::ColumnDataType::UINT32});
-        layout->insertColumn({"category", bcsv::ColumnDataType::STRING});
+        bcsv::Layout layout;
+        layout.addColumn({"id", bcsv::ColumnDataType::INT32});
+        layout.addColumn({"name", bcsv::ColumnDataType::STRING});
+        layout.addColumn({"score1", bcsv::ColumnDataType::FLOAT});
+        layout.addColumn({"score2", bcsv::ColumnDataType::DOUBLE});
+        layout.addColumn({"active", bcsv::ColumnDataType::BOOL});
+        layout.addColumn({"timestamp", bcsv::ColumnDataType::INT64});
+        layout.addColumn({"count", bcsv::ColumnDataType::UINT32});
+        layout.addColumn({"category", bcsv::ColumnDataType::STRING});
 
         // Benchmark writing
         auto writeStart = std::chrono::high_resolution_clock::now();
         {
-            bcsv::Writer<bcsv::Layout> writer(layout, FLEXIBLE_FILENAME, true);
+            bcsv::Writer<bcsv::Layout> writer(layout);
+            // Use compression level 1 for better performance vs no compression
+            writer.open(FLEXIBLE_FILENAME, true, 1);
+            
+            // Pre-calculate frequently used values outside the loop
+            const size_t stringCount = sampleStrings_.size();
             
             for (size_t i = 0; i < numRows_; ++i) {
-                auto row = layout->createRow();
-                (*row).set(0, int_dist_(gen_));
-                (*row).set(1, sampleStrings_[i % sampleStrings_.size()]);
-                (*row).set(2, float_dist_(gen_));
-                (*row).set(3, double_dist_(gen_));
-                (*row).set(4, (i % 2) == 0);
-                (*row).set(5, static_cast<int64_t>(i * 1000));
-                (*row).set(6, static_cast<uint32_t>(i));
-                (*row).set(7, sampleStrings_[(i * 7) % sampleStrings_.size()]);
-                writer.writeRow(*row);
+                // Use direct assignment instead of function calls where possible
+                const size_t stringIndex1 = i % stringCount;
+                const size_t stringIndex2 = (i * 7) % stringCount;
+                
+                writer.row.set(0, int_dist_(gen_));
+                writer.row.set(1, sampleStrings_[stringIndex1]);
+                writer.row.set(2, float_dist_(gen_));
+                writer.row.set(3, double_dist_(gen_));
+                writer.row.set(4, (i & 1) == 0);  // Bitwise AND faster than modulo
+                writer.row.set(5, static_cast<int64_t>(i * 1000));
+                writer.row.set(6, static_cast<uint32_t>(i));
+                writer.row.set(7, sampleStrings_[stringIndex2]);
+                writer.writeRow();
             }
+            writer.close();
         }
         auto writeEnd = std::chrono::high_resolution_clock::now();
         double writeTime = std::chrono::duration<double, std::milli>(writeEnd - writeStart).count();
@@ -101,29 +110,42 @@ public:
         // Benchmark reading
         auto readStart = std::chrono::high_resolution_clock::now();
         {
-            bcsv::Reader<bcsv::Layout> reader(layout, FLEXIBLE_FILENAME);
-            bcsv::RowView rowView(layout);
+            bcsv::Reader<bcsv::Layout> reader;
+            reader.open(FLEXIBLE_FILENAME);
             size_t rowCount = 0;
             
-            while (reader.readRow(rowView)) {
+            // Pre-declare variables to avoid repeated construction
+            int32_t id;
+            std::string name, category;
+            name.reserve(32);    // Pre-allocate string capacity
+            category.reserve(32);
+            float score1;
+            double score2;
+            bool active;
+            int64_t timestamp;
+            uint32_t count;
+            
+            while (reader.readNext()) {
                 // Read all values to ensure fair comparison
-                auto id = rowView.get<int32_t>(0);
-                auto name = rowView.get<std::string>(1);
-                auto score1 = rowView.get<float>(2);
-                auto score2 = rowView.get<double>(3);
-                auto active = rowView.get<bool>(4);
-                auto timestamp = rowView.get<int64_t>(5);
-                auto count = rowView.get<uint32_t>(6);
-                auto category = rowView.get<std::string>(7);
+                // Use assignment to pre-declared variables for better performance
+                id = reader.row().get<int32_t>(0);
+                name = reader.row().get<std::string>(1);
+                score1 = reader.row().get<float>(2);
+                score2 = reader.row().get<double>(3);
+                active = reader.row().get<bool>(4);
+                timestamp = reader.row().get<int64_t>(5);
+                count = reader.row().get<uint32_t>(6);
+                category = reader.row().get<std::string>(7);
                 
                 // Prevent optimization by using the values
                 (void)id; (void)name; (void)score1; (void)score2; 
                 (void)active; (void)timestamp; (void)count; (void)category;
-                rowCount++;
+                ++rowCount;  // Pre-increment is slightly faster
             }
+            reader.close();
         }
         auto readEnd = std::chrono::high_resolution_clock::now();
-        double readTime = std::chrono::duration<double, std::milli>(readEnd - readStart).count();
+        double readTime = std::chrono::duration<double, std::milli>(readEnd - writeStart).count();
 
         std::cout << "  Write time: " << std::fixed << std::setprecision(2) << writeTime << " ms\n";
         std::cout << "  Read time:  " << std::fixed << std::setprecision(2) << readTime << " ms\n\n";
@@ -136,28 +158,37 @@ public:
         std::cout << "Benchmarking Static Interface...\n";
         
         // Create static layout
-        std::vector<std::string> columnNames = {
+        std::array<std::string, 8> columnNames = {
             "id", "name", "score1", "score2", "active", "timestamp", "count", "category"
         };
-        auto layout = BenchmarkLayoutStatic::create(columnNames);
+        BenchmarkLayoutStatic layout(columnNames);
 
         // Benchmark writing
         auto writeStart = std::chrono::high_resolution_clock::now();
         {
-            bcsv::Writer<BenchmarkLayoutStatic> writer(layout, STATIC_FILENAME, true);
+            bcsv::Writer<BenchmarkLayoutStatic> writer(layout);
+            // Use compression level 1 for better performance vs no compression
+            writer.open(STATIC_FILENAME, true, 1);
+            
+            // Pre-calculate frequently used values outside the loop
+            const size_t stringCount = sampleStrings_.size();
             
             for (size_t i = 0; i < numRows_; ++i) {
-                auto row = layout->createRow();
-                (*row).set<0>(int_dist_(gen_));
-                (*row).set<1>(sampleStrings_[i % sampleStrings_.size()]);
-                (*row).set<2>(float_dist_(gen_));
-                (*row).set<3>(double_dist_(gen_));
-                (*row).set<4>((i % 2) == 0);
-                (*row).set<5>(static_cast<int64_t>(i * 1000));
-                (*row).set<6>(static_cast<uint32_t>(i));
-                (*row).set<7>(sampleStrings_[(i * 7) % sampleStrings_.size()]);
-                writer.writeRow(*row);
+                // Use direct assignment instead of function calls where possible
+                const size_t stringIndex1 = i % stringCount;
+                const size_t stringIndex2 = (i * 7) % stringCount;
+                
+                writer.row.set<0>(int_dist_(gen_));
+                writer.row.set<1>(sampleStrings_[stringIndex1]);
+                writer.row.set<2>(float_dist_(gen_));
+                writer.row.set<3>(double_dist_(gen_));
+                writer.row.set<4>((i & 1) == 0);  // Bitwise AND faster than modulo
+                writer.row.set<5>(static_cast<int64_t>(i * 1000));
+                writer.row.set<6>(static_cast<uint32_t>(i));
+                writer.row.set<7>(sampleStrings_[stringIndex2]);
+                writer.writeRow();
             }
+            writer.close();
         }
         auto writeEnd = std::chrono::high_resolution_clock::now();
         double writeTime = std::chrono::duration<double, std::milli>(writeEnd - writeStart).count();
@@ -165,26 +196,39 @@ public:
         // Benchmark reading
         auto readStart = std::chrono::high_resolution_clock::now();
         {
-            bcsv::Reader<BenchmarkLayoutStatic> reader(layout, STATIC_FILENAME);
-            typename BenchmarkLayoutStatic::RowViewType rowView(layout);
+            bcsv::Reader<BenchmarkLayoutStatic> reader;
+            reader.open(STATIC_FILENAME);
             size_t rowCount = 0;
             
-            while (reader.readRow(rowView)) {
+            // Pre-declare variables to avoid repeated construction
+            int32_t id;
+            std::string name, category;
+            name.reserve(32);    // Pre-allocate string capacity
+            category.reserve(32);
+            float score1;
+            double score2;
+            bool active;
+            int64_t timestamp;
+            uint32_t count;
+            
+            while (reader.readNext()) {
                 // Read all values to ensure fair comparison
-                auto id = rowView.get<0>();
-                auto name = rowView.get<1>();
-                auto score1 = rowView.get<2>();
-                auto score2 = rowView.get<3>();
-                auto active = rowView.get<4>();
-                auto timestamp = rowView.get<5>();
-                auto count = rowView.get<6>();
-                auto category = rowView.get<7>();
+                // Use assignment to pre-declared variables for better performance
+                id = reader.row().get<0>();
+                name = reader.row().get<1>();
+                score1 = reader.row().get<2>();
+                score2 = reader.row().get<3>();
+                active = reader.row().get<4>();
+                timestamp = reader.row().get<5>();
+                count = reader.row().get<6>();
+                category = reader.row().get<7>();
                 
                 // Prevent optimization by using the values
                 (void)id; (void)name; (void)score1; (void)score2; 
                 (void)active; (void)timestamp; (void)count; (void)category;
-                rowCount++;
+                ++rowCount;  // Pre-increment is slightly faster
             }
+            reader.close();
         }
         auto readEnd = std::chrono::high_resolution_clock::now();
         double readTime = std::chrono::duration<double, std::milli>(readEnd - readStart).count();

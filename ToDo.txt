@@ -1,9 +1,15 @@
-1. refactor interface, get rid of shared_ptrs reduce complexity 
-
-2. Add BLOB data type
-3. change column order, column order at the API level still follows user definition, but for serialization ensure String and BLOB are most right, while bool is most left
-4. Use bitmaps to hold bools
-5. Introduce ZeroOrderHold (ZoH), to reduce file size:
+1. Create a function layout.toString() to write column header to a string, it should be human readable and inform on the column name and type. --> create example and test
+2. Create a function layout.toJSON() to write column header to string using a JSON notation. --> create example and test
+3. Check for code that is not used / isn't required, i.e. in definition.h, comment out if you find some.
+4. Introduce ZeroOrderHold (ZoH), to reduce file size:
+    - Row to hold a vector<std::bool> that has one bit per column
+    - RowStatic to hold a std::bitset<COLUMN_COUNT>
+    - Implement a ZoH-access pattern for writer (track if changes are made to a row and update the bits accordingly)
+    - When serilize, only write those columns to file that need to be written (have changed):
+        - special handling for bool (never write a bool, the bit itself is enough)
+        - first row in a packet is always written completly
+        - ensure the ZoH overhead is stored correctly in the file (8bit / 1 byte alignment)
+        - if ZoH is disabled avoid the overhead (ZoH)
     - first row per paket always is fully populated (keyframe)
     - ZeroOrderHold infromation is stored in a bitmask/bitmap, most left in each row, 0 indicates a change, 1 indicates same as before,
     - bitmask for ZoH and bool parameter to be united into one big mask, apply padding for byte alignment, i.e. 33columns with 3 bools would result in a bitmask of 33bits -> 5bytes = 40bits 

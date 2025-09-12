@@ -37,6 +37,9 @@ struct ColumnStats {
     bool all_integers = true;
     bool all_booleans = true;
     bool all_empty = true;
+    bool all_float_compatible = true;  // New: tracks if all values can be represented exactly in float
+    uint32_t max_decimal_places = 0;  // Track the maximum decimal places in input strings
+    bool requires_high_precision = false;  // True if any value has >6 decimal places or >7 total digits
     size_t sample_count = 0;
 };
 
@@ -72,18 +75,77 @@ bcsv::ColumnDataType detectOptimalType(const ColumnStats& stats) {
     }
     
     if (stats.has_decimals) {
-        // Check if float precision is sufficient
-        float min_f = static_cast<float>(stats.min_double);
-        float max_f = static_cast<float>(stats.max_double);
-        if (static_cast<double>(min_f) == stats.min_double && 
-            static_cast<double>(max_f) == stats.max_double) {
+        // Use string-based precision analysis to choose optimal floating-point type
+        if (stats.requires_high_precision) {
+            // High precision explicitly requested by user (>6 decimal places or >7 total digits)
+#if BCSV_HAS_FLOAT128
+            // Use 128-bit quadruple precision for maximum accuracy
+            return bcsv::ColumnDataType::FLOAT128;
+#else
+            // Fall back to double precision
+            return bcsv::ColumnDataType::DOUBLE;
+#endif
+        } else if (stats.max_decimal_places <= 2) {
+            // Very low precision requirements - consider half precision types
+#if BCSV_HAS_FLOAT16
+            // Use 16-bit half precision for maximum space efficiency
+            return bcsv::ColumnDataType::FLOAT16;
+#else
+            // Fall back to single precision
+            return bcsv::ColumnDataType::FLOAT;
+#endif
+        } else if (stats.max_decimal_places <= 6) {
+            // User provided reasonable precision - use single precision
+            // Float provides ~7 decimal digits, which is sufficient for ≤6 decimal places
             return bcsv::ColumnDataType::FLOAT;
         } else {
+            // Higher precision requirements need double precision
             return bcsv::ColumnDataType::DOUBLE;
         }
     }
     
     return bcsv::ColumnDataType::STRING;
+}
+
+// Analyze the precision requirements from the original string
+std::pair<uint32_t, bool> analyzeStringPrecision(const std::string& value, char decimal_separator = '.') {
+    // Find decimal point
+    size_t decimal_pos = value.find(decimal_separator);
+    if (decimal_pos == std::string::npos) {
+        return {0, false}; // No decimal places, not high precision
+    }
+    
+    // Count meaningful decimal places (excluding trailing zeros)
+    std::string decimal_part = value.substr(decimal_pos + 1);
+    
+    // Remove trailing zeros
+    while (!decimal_part.empty() && decimal_part.back() == '0') {
+        decimal_part.pop_back();
+    }
+    
+    uint32_t decimal_places = static_cast<uint32_t>(decimal_part.length());
+    
+    // Count total significant digits
+    std::string digits_only;
+    bool found_first_nonzero = false;
+    bool after_decimal = false;
+    
+    for (char c : value) {
+        if (c == decimal_separator) {
+            after_decimal = true;
+        } else if (std::isdigit(c)) {
+            if (c != '0' || found_first_nonzero || after_decimal) {
+                digits_only += c;
+                if (c != '0') found_first_nonzero = true;
+            }
+        }
+    }
+    
+    // Determine if high precision is required
+    // Use >6 decimal places or >7 total significant digits as threshold
+    bool high_precision = (decimal_places > 6) || (digits_only.length() > 7);
+    
+    return {decimal_places, high_precision};
 }
 
 // Enhanced data type detection helper
@@ -97,7 +159,8 @@ void analyzeValue(const std::string& value, ColumnStats& stats, char decimal_sep
     
     // Check for boolean
     std::string lower_val = value;
-    std::transform(lower_val.begin(), lower_val.end(), lower_val.begin(), ::tolower);
+    std::transform(lower_val.begin(), lower_val.end(), lower_val.begin(), 
+        [](char c) { return static_cast<char>(::tolower(c)); });
     if (lower_val == "true" || lower_val == "false" || lower_val == "1" || lower_val == "0") {
         if (stats.all_booleans) {
             return; // Still could be boolean
@@ -135,6 +198,23 @@ void analyzeValue(const std::string& value, ColumnStats& stats, char decimal_sep
         stats.has_decimals = true;
         stats.min_double = std::min(stats.min_double, double_val);
         stats.max_double = std::max(stats.max_double, double_val);
+        
+        // Analyze the precision requirements from the original string
+        auto [decimal_places, high_precision] = analyzeStringPrecision(value, decimal_separator);
+        stats.max_decimal_places = std::max(stats.max_decimal_places, decimal_places);
+        if (high_precision) {
+            stats.requires_high_precision = true;
+        }
+        
+        // Check if this specific value can be represented exactly in float
+        // (only relevant if string precision doesn't already require double)
+        if (stats.all_float_compatible && !high_precision) {
+            float float_val = static_cast<float>(double_val);
+            if (static_cast<double>(float_val) != double_val) {
+                stats.all_float_compatible = false;
+            }
+        }
+        
         return;
     }
     
@@ -185,7 +265,8 @@ bcsv::ColumnDataType detectDataType(const std::string& value) {
     
     // Check for boolean
     std::string lower_val = value;
-    std::transform(lower_val.begin(), lower_val.end(), lower_val.begin(), ::tolower);
+    std::transform(lower_val.begin(), lower_val.end(), lower_val.begin(), 
+        [](char c) { return static_cast<char>(::tolower(c)); });
     if (lower_val == "true" || lower_val == "false" || lower_val == "1" || lower_val == "0") {
         return bcsv::ColumnDataType::BOOL;
     }
@@ -255,49 +336,49 @@ std::vector<std::string> parseCSVLine(const std::string& line, char delimiter, c
 }
 
 // Convert string value to appropriate type and set in row
-void setRowValue(std::shared_ptr<bcsv::Row> row, size_t column_index, 
+void setRowValue(bcsv::Writer<bcsv::Layout>& writer, size_t column_index, 
                  const std::string& value, bcsv::ColumnDataType type, char decimal_separator = '.') {
     if (value.empty()) {
         // Handle empty values - set default values
         switch (type) {
             case bcsv::ColumnDataType::BOOL:
-                row->set(column_index, false);
+                writer.row.set(column_index, false);
                 break;
             case bcsv::ColumnDataType::INT8:
-                row->set(column_index, static_cast<int8_t>(0));
+                writer.row.set(column_index, static_cast<int8_t>(0));
                 break;
             case bcsv::ColumnDataType::UINT8:
-                row->set(column_index, static_cast<uint8_t>(0));
+                writer.row.set(column_index, static_cast<uint8_t>(0));
                 break;
             case bcsv::ColumnDataType::INT16:
-                row->set(column_index, static_cast<int16_t>(0));
+                writer.row.set(column_index, static_cast<int16_t>(0));
                 break;
             case bcsv::ColumnDataType::UINT16:
-                row->set(column_index, static_cast<uint16_t>(0));
+                writer.row.set(column_index, static_cast<uint16_t>(0));
                 break;
             case bcsv::ColumnDataType::INT32:
-                row->set(column_index, static_cast<int32_t>(0));
+                writer.row.set(column_index, static_cast<int32_t>(0));
                 break;
             case bcsv::ColumnDataType::UINT32:
-                row->set(column_index, static_cast<uint32_t>(0));
+                writer.row.set(column_index, static_cast<uint32_t>(0));
                 break;
             case bcsv::ColumnDataType::INT64:
-                row->set(column_index, static_cast<int64_t>(0));
+                writer.row.set(column_index, static_cast<int64_t>(0));
                 break;
             case bcsv::ColumnDataType::UINT64:
-                row->set(column_index, static_cast<uint64_t>(0));
+                writer.row.set(column_index, static_cast<uint64_t>(0));
                 break;
             case bcsv::ColumnDataType::FLOAT:
-                row->set(column_index, 0.0f);
+                writer.row.set(column_index, 0.0f);
                 break;
             case bcsv::ColumnDataType::DOUBLE:
-                row->set(column_index, 0.0);
+                writer.row.set(column_index, 0.0);
                 break;
             case bcsv::ColumnDataType::STRING:
-                row->set(column_index, std::string(""));
+                writer.row.set(column_index, std::string(""));
                 break;
             default:
-                row->set(column_index, std::string(""));
+                writer.row.set(column_index, std::string(""));
         }
         return;
     }
@@ -312,49 +393,50 @@ void setRowValue(std::shared_ptr<bcsv::Row> row, size_t column_index,
         switch (type) {
             case bcsv::ColumnDataType::BOOL: {
                 std::string lower_val = value;
-                std::transform(lower_val.begin(), lower_val.end(), lower_val.begin(), ::tolower);
+                std::transform(lower_val.begin(), lower_val.end(), lower_val.begin(), 
+                    [](char c) { return static_cast<char>(::tolower(c)); });
                 bool bool_val = (lower_val == "true" || lower_val == "1");
-                row->set(column_index, bool_val);
+                writer.row.set(column_index, bool_val);
                 break;
             }
             case bcsv::ColumnDataType::INT8:
-                row->set(column_index, static_cast<int8_t>(std::stoll(value)));
+                writer.row.set(column_index, static_cast<int8_t>(std::stoll(value)));
                 break;
             case bcsv::ColumnDataType::UINT8:
-                row->set(column_index, static_cast<uint8_t>(std::stoull(value)));
+                writer.row.set(column_index, static_cast<uint8_t>(std::stoull(value)));
                 break;
             case bcsv::ColumnDataType::INT16:
-                row->set(column_index, static_cast<int16_t>(std::stoll(value)));
+                writer.row.set(column_index, static_cast<int16_t>(std::stoll(value)));
                 break;
             case bcsv::ColumnDataType::UINT16:
-                row->set(column_index, static_cast<uint16_t>(std::stoull(value)));
+                writer.row.set(column_index, static_cast<uint16_t>(std::stoull(value)));
                 break;
             case bcsv::ColumnDataType::INT32:
-                row->set(column_index, static_cast<int32_t>(std::stoll(value)));
+                writer.row.set(column_index, static_cast<int32_t>(std::stoll(value)));
                 break;
             case bcsv::ColumnDataType::UINT32:
-                row->set(column_index, static_cast<uint32_t>(std::stoull(value)));
+                writer.row.set(column_index, static_cast<uint32_t>(std::stoull(value)));
                 break;
             case bcsv::ColumnDataType::INT64:
-                row->set(column_index, static_cast<int64_t>(std::stoll(value)));
+                writer.row.set(column_index, static_cast<int64_t>(std::stoll(value)));
                 break;
             case bcsv::ColumnDataType::UINT64:
-                row->set(column_index, static_cast<uint64_t>(std::stoull(value)));
+                writer.row.set(column_index, static_cast<uint64_t>(std::stoull(value)));
                 break;
             case bcsv::ColumnDataType::FLOAT:
-                row->set(column_index, std::stof(normalized_value));
+                writer.row.set(column_index, std::stof(normalized_value));
                 break;
             case bcsv::ColumnDataType::DOUBLE:
-                row->set(column_index, std::stod(normalized_value));
+                writer.row.set(column_index, std::stod(normalized_value));
                 break;
             case bcsv::ColumnDataType::STRING:
             default:
-                row->set(column_index, value);
+                writer.row.set(column_index, value);
                 break;
         }
     } catch (const std::exception&) {
         // If conversion fails, store as string
-        row->set(column_index, value);
+        writer.row.set(column_index, value);
     }
 }
 
@@ -602,10 +684,10 @@ int main(int argc, char* argv[]) {
         }
         
         // Create BCSV layout
-        auto layout = std::make_shared<bcsv::Layout>();
+        bcsv::Layout layout;
         for (size_t i = 0; i < headers.size(); ++i) {
             bcsv::ColumnDefinition col(headers[i], column_types[i]);
-            layout->insertColumn(col);
+            layout.addColumn(col);
         }
         
         // Reset file and skip header if present
@@ -617,48 +699,53 @@ int main(int argc, char* argv[]) {
         
         // Create BCSV writer and convert data
         {
-            bcsv::Writer<bcsv::Layout> writer(layout, config.output_file);
+            bcsv::Writer<bcsv::Layout> writer(layout);
+            // Use compression level 1 for better performance vs file size
+            writer.open(config.output_file, true, 1);
             size_t row_count = 0;
+            
+            // Pre-calculate frequently used values outside the loop
+            const size_t num_columns = headers.size();
             
             while (std::getline(input, line)) {
                 auto row_data = parseCSVLine(line, config.delimiter, config.quote_char);
                 
                 // Apply same flexible row handling as during sampling
-                while (row_data.size() > headers.size() && !row_data.empty() && row_data.back().empty()) {
+                while (row_data.size() > num_columns && !row_data.empty() && row_data.back().empty()) {
                     row_data.pop_back();
                 }
                 
                 bool process_row = false;
-                if (row_data.size() == headers.size()) {
+                if (row_data.size() == num_columns) {
                     process_row = true;
-                } else if (row_data.size() < headers.size()) {
+                } else if (row_data.size() < num_columns) {
                     // Pad with empty strings if row is shorter
-                    row_data.resize(headers.size(), "");
+                    row_data.resize(num_columns, "");
                     process_row = true;
-                } else if (row_data.size() <= headers.size() + 3) {
+                } else if (row_data.size() <= num_columns + 3) {
                     // If only a few extra fields, truncate
-                    row_data.resize(headers.size());
+                    row_data.resize(num_columns);
                     process_row = true;
                 } else if (config.verbose) {
                     std::cerr << "Warning: Row " << (row_count + 1) << " has " << row_data.size() 
-                              << " fields, expected " << headers.size() << ". Skipping." << std::endl;
+                              << " fields, expected " << num_columns << ". Skipping." << std::endl;
                 }
                 
                 if (process_row) {
-                    auto bcsv_row = layout->createRow();
-                    for (size_t col = 0; col < headers.size(); ++col) {
-                        setRowValue(bcsv_row, col, row_data[col], column_types[col], config.decimal_separator);
+                    for (size_t col = 0; col < num_columns; ++col) {
+                        setRowValue(writer, col, row_data[col], column_types[col], config.decimal_separator);
                     }
                     
-                    writer.writeRow(*bcsv_row);
-                    row_count++;
+                    writer.writeRow();
+                    ++row_count;  // Pre-increment is slightly faster
                     
-                    if (config.verbose && row_count % 10000 == 0) {
+                    if (config.verbose && (row_count & 0x3FFF) == 0) {  // Every 16384 rows for better performance
                         std::cout << "Processed " << row_count << " rows..." << std::endl;
                     }
                 }
             }
             
+            writer.close();
             std::cout << "Successfully converted " << row_count << " rows to " << config.output_file << std::endl;
         }
         
