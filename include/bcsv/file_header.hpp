@@ -172,7 +172,7 @@ namespace bcsv {
                 if (!stream.good()) {
                     throw std::runtime_error("Failed to read column data type at index " + std::to_string(i));
                 }
-                columnDefinitions[i].type = static_cast<ColumnDataType>(typeValue);
+                columnDefinitions[i].type = static_cast<ColumnType>(typeValue);
             }
 
             // Read column name lengths
@@ -243,7 +243,7 @@ namespace bcsv {
 
         // Read column data types and validate against static definition
         for (uint16_t i = 0; i < layout.getColumnCount(); ++i) {
-            ColumnDataType type;
+            ColumnType type;
             stream.read(reinterpret_cast<char*>(&type), sizeof(type));
             if (!stream.good()) {
                 std::cerr << "error: Failed to read column data type at index " << std::to_string(i) << std::endl;
@@ -251,8 +251,8 @@ namespace bcsv {
             }
             if (type != layout.getColumnType(i)) {
                 std::cerr << "error: Column type mismatch at index " << std::to_string(i) << 
-                            ". Static layout expects " << dataTypeToString(layout.getColumnType(i)) << 
-                            ", but binary has " << dataTypeToString(type) << std::endl;
+                            ". Static layout expects " << toString(layout.getColumnType(i)) << 
+                            ", but binary has " << toString(type) << std::endl;
                 return false;
             }
         }

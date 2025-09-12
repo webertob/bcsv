@@ -98,26 +98,26 @@ std::string valueToString(const T& value, int precision = -1) {
 }
 
 // Get string value from BCSV row based on column type
-std::string getRowValueAsString(const bcsv::Reader<bcsv::Layout>& reader, size_t column_index, bcsv::ColumnDataType type, int float_precision = -1) {
+std::string getRowValueAsString(const bcsv::Reader<bcsv::Layout>& reader, size_t column_index, bcsv::ColumnType type, int float_precision = -1) {
     try {
         switch (type) {
-            case bcsv::ColumnDataType::BOOL:
+            case bcsv::ColumnType::BOOL:
                 return valueToString(reader.row().get<bool>(column_index));
-            case bcsv::ColumnDataType::INT8:
+            case bcsv::ColumnType::INT8:
                 return valueToString(reader.row().get<int8_t>(column_index));
-            case bcsv::ColumnDataType::INT16:
+            case bcsv::ColumnType::INT16:
                 return valueToString(reader.row().get<int16_t>(column_index));
-            case bcsv::ColumnDataType::INT32:
+            case bcsv::ColumnType::INT32:
                 return valueToString(reader.row().get<int32_t>(column_index));
-            case bcsv::ColumnDataType::INT64:
+            case bcsv::ColumnType::INT64:
                 return valueToString(reader.row().get<int64_t>(column_index));
-            case bcsv::ColumnDataType::UINT8:
+            case bcsv::ColumnType::UINT8:
                 return valueToString(reader.row().get<uint8_t>(column_index));
-            case bcsv::ColumnDataType::UINT16:
+            case bcsv::ColumnType::UINT16:
                 return valueToString(reader.row().get<uint16_t>(column_index));
-            case bcsv::ColumnDataType::UINT32:
+            case bcsv::ColumnType::UINT32:
                 return valueToString(reader.row().get<uint32_t>(column_index));
-            case bcsv::ColumnDataType::UINT64:
+            case bcsv::ColumnType::UINT64:
                 return valueToString(reader.row().get<uint64_t>(column_index));
 #if BCSV_HAS_FLOAT16
             case bcsv::ColumnDataType::FLOAT16:
@@ -127,15 +127,15 @@ std::string getRowValueAsString(const bcsv::Reader<bcsv::Layout>& reader, size_t
             case bcsv::ColumnDataType::BFLOAT16:
                 return valueToString(reader.row().get<std::bfloat16_t>(column_index), float_precision);
 #endif
-            case bcsv::ColumnDataType::FLOAT:
+            case bcsv::ColumnType::FLOAT:
                 return valueToString(reader.row().get<float>(column_index), float_precision);
-            case bcsv::ColumnDataType::DOUBLE:
+            case bcsv::ColumnType::DOUBLE:
                 return valueToString(reader.row().get<double>(column_index), float_precision);
 #if BCSV_HAS_FLOAT128
             case bcsv::ColumnDataType::FLOAT128:
                 return valueToString(reader.row().get<std::float128_t>(column_index), float_precision);
 #endif
-            case bcsv::ColumnDataType::STRING:
+            case bcsv::ColumnType::STRING:
                 return reader.row().get<std::string>(column_index);
             default:
                 return "";
@@ -270,27 +270,27 @@ int main(int argc, char* argv[]) {
             for (size_t i = 0; i < layout.getColumnCount(); ++i) {
                 std::cout << "  " << layout.getColumnName(i) << " (";
                 switch (layout.getColumnType(i)) {
-                    case bcsv::ColumnDataType::BOOL: std::cout << "BOOL"; break;
-                    case bcsv::ColumnDataType::INT8: std::cout << "INT8"; break;
-                    case bcsv::ColumnDataType::INT16: std::cout << "INT16"; break;
-                    case bcsv::ColumnDataType::INT32: std::cout << "INT32"; break;
-                    case bcsv::ColumnDataType::INT64: std::cout << "INT64"; break;
-                    case bcsv::ColumnDataType::UINT8: std::cout << "UINT8"; break;
-                    case bcsv::ColumnDataType::UINT16: std::cout << "UINT16"; break;
-                    case bcsv::ColumnDataType::UINT32: std::cout << "UINT32"; break;
-                    case bcsv::ColumnDataType::UINT64: std::cout << "UINT64"; break;
+                    case bcsv::ColumnType::BOOL: std::cout << "BOOL"; break;
+                    case bcsv::ColumnType::INT8: std::cout << "INT8"; break;
+                    case bcsv::ColumnType::INT16: std::cout << "INT16"; break;
+                    case bcsv::ColumnType::INT32: std::cout << "INT32"; break;
+                    case bcsv::ColumnType::INT64: std::cout << "INT64"; break;
+                    case bcsv::ColumnType::UINT8: std::cout << "UINT8"; break;
+                    case bcsv::ColumnType::UINT16: std::cout << "UINT16"; break;
+                    case bcsv::ColumnType::UINT32: std::cout << "UINT32"; break;
+                    case bcsv::ColumnType::UINT64: std::cout << "UINT64"; break;
 #if BCSV_HAS_FLOAT16
                     case bcsv::ColumnDataType::FLOAT16: std::cout << "FLOAT16"; break;
 #endif
 #if BCSV_HAS_BFLOAT16
                     case bcsv::ColumnDataType::BFLOAT16: std::cout << "BFLOAT16"; break;
 #endif
-                    case bcsv::ColumnDataType::FLOAT: std::cout << "FLOAT"; break;
-                    case bcsv::ColumnDataType::DOUBLE: std::cout << "DOUBLE"; break;
+                    case bcsv::ColumnType::FLOAT: std::cout << "FLOAT"; break;
+                    case bcsv::ColumnType::DOUBLE: std::cout << "DOUBLE"; break;
 #if BCSV_HAS_FLOAT128
                     case bcsv::ColumnDataType::FLOAT128: std::cout << "FLOAT128"; break;
 #endif
-                    case bcsv::ColumnDataType::STRING: std::cout << "STRING"; break;
+                    case bcsv::ColumnType::STRING: std::cout << "STRING"; break;
                     default: std::cout << "UNKNOWN"; break;
                 }
                 std::cout << ")" << std::endl;
@@ -336,6 +336,8 @@ int main(int argc, char* argv[]) {
         }
         
         reader.close();
+        output.flush();  // Ensure all data is written to file
+        output.close();  // Close the output file
         
         std::cout << "Successfully converted " << row_count << " rows to " << config.output_file << std::endl;
         

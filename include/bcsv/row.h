@@ -268,19 +268,15 @@ namespace bcsv {
         // Layout access
         const Layout& getLayout() const { return layout_; }
 
-        template<typename T>
-        T getAs(size_t index) const;
-        const ValueType& get(size_t index) const;
-
+        template<typename T = ValueType>
+        const T& get(size_t index) const;
+        
         void set(size_t index, const auto& value);
 
         // serialization/deserialization
         void serializedSize(size_t& fixedSize, size_t& totalSize) const;
         void serializeTo(std::span<std::byte> buffer) const;
-        void deserializeFrom(const std::span<const std::byte> buffer);  //ToDo: implement
-    
-        // Assignment validates layout compatibility
-        Row& operator=(const Row& other);
+        bool deserializeFrom(const std::span<const std::byte> buffer);
     };
 
 
@@ -364,14 +360,14 @@ namespace bcsv {
         // serialization/deserialization 
         void serializedSize(size_t& fixedSize, size_t& totalSize) const;
         void serializeTo(std::span<std::byte> buffer) const;
-        void deserializeFrom(const std::span<const std::byte> buffer);  //ToDo: implement
+        bool deserializeFrom(const std::span<const std::byte> buffer);
 
     private:
         template<size_t Index>
         void serializeElements(std::span<std::byte> &dstBuffer, size_t& strOffset) const;
 
         template<size_t Index>
-        void deserializeElements(const std::span<std::byte> &srcBuffer);
+        bool deserializeElements(const std::span<const std::byte> &srcBuffer);
 
         template<size_t Index>
         void calculateStringSizes(size_t& totalSize) const;

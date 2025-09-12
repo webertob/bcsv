@@ -13,12 +13,13 @@
 #include "row.h"
 #include <fstream>
 #include <type_traits>
+#include <utility>
 
 namespace bcsv {
 
     template<LayoutConcept LayoutType>
     Reader<LayoutType>::Reader(ReaderMode mode) 
-    : layout_(), mode_(mode), row_view_(layout_), fileHeader_() 
+    : mode_(mode), row_(LayoutType()), fileHeader_() 
     {
         buffer_raw_.reserve(LZ4_BLOCK_SIZE_KB * 1024);
         buffer_zip_.reserve(LZ4_COMPRESSBOUND(LZ4_BLOCK_SIZE_KB * 1024));
@@ -43,8 +44,7 @@ namespace bcsv {
             return;
         }
         fileHeader_ = FileHeader();
-        layout_ = LayoutType(); // reset layout
-        row_view_ = LayoutType::RowViewType(layout_);
+        row_ = LayoutType::RowType(LayoutType()); // reset layout and row
         stream_.close();
         filePath_.clear();
         buffer_raw_.clear();
@@ -125,13 +125,14 @@ namespace bcsv {
             return false;
         }
         
-        if(!fileHeader_.readFromBinary(stream_, layout_)) {
+        LayoutType layout;
+        if(!fileHeader_.readFromBinary(stream_, layout)) {
             fileHeader_ = FileHeader();
-            layout_ = LayoutType(); // reset layout
+            row_ = LayoutType::RowType(LayoutType()); // reset layout and row
             std::cerr << "Error: Failed to read or validate file header" << std::endl;
             return false;
         } else {
-            row_view_ = LayoutType::RowViewType(layout_);
+            row_ = LayoutType::RowType(layout);
         }
         return true;
     }
@@ -266,8 +267,7 @@ namespace bcsv {
             row_offsets_[row_index_packet_] - row_offset : 
             buffer_raw_.size() - row_offset;
 
-        row_view_.setBuffer({buffer_raw_.begin() + row_offset, row_length});
-        if (!row_view_.validate()) {
+        if (!row_.deserializeFrom({buffer_raw_.begin() + row_offset, row_length})) {
             return false;
         }
         row_index_packet_++;

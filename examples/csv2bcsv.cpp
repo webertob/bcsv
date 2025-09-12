@@ -44,33 +44,33 @@ struct ColumnStats {
 };
 
 // Detect optimal data type based on column statistics
-bcsv::ColumnDataType detectOptimalType(const ColumnStats& stats) {
+bcsv::ColumnType detectOptimalType(const ColumnStats& stats) {
     if (stats.all_empty || stats.sample_count == 0) {
-        return bcsv::ColumnDataType::STRING;
+        return bcsv::ColumnType::STRING;
     }
     
     if (stats.all_booleans && stats.sample_count > 0) {
-        return bcsv::ColumnDataType::BOOL;
+        return bcsv::ColumnType::BOOL;
     }
     
     if (stats.all_integers && !stats.has_decimals) {
         // Choose smallest integer type that can hold the range
         if (stats.min_int >= 0 && stats.max_int <= 255) {
-            return bcsv::ColumnDataType::UINT8;
+            return bcsv::ColumnType::UINT8;
         } else if (stats.min_int >= -128 && stats.max_int <= 127) {
-            return bcsv::ColumnDataType::INT8;
+            return bcsv::ColumnType::INT8;
         } else if (stats.min_int >= 0 && stats.max_int <= 65535) {
-            return bcsv::ColumnDataType::UINT16;
+            return bcsv::ColumnType::UINT16;
         } else if (stats.min_int >= -32768 && stats.max_int <= 32767) {
-            return bcsv::ColumnDataType::INT16;
+            return bcsv::ColumnType::INT16;
         } else if (stats.min_int >= 0 && stats.max_int <= 4294967295ULL) {
-            return bcsv::ColumnDataType::UINT32;
+            return bcsv::ColumnType::UINT32;
         } else if (stats.min_int >= INT32_MIN && stats.max_int <= INT32_MAX) {
-            return bcsv::ColumnDataType::INT32;
+            return bcsv::ColumnType::INT32;
         } else if (stats.min_int >= 0) {
-            return bcsv::ColumnDataType::UINT64;
+            return bcsv::ColumnType::UINT64;
         } else {
-            return bcsv::ColumnDataType::INT64;
+            return bcsv::ColumnType::INT64;
         }
     }
     
@@ -83,7 +83,7 @@ bcsv::ColumnDataType detectOptimalType(const ColumnStats& stats) {
             return bcsv::ColumnDataType::FLOAT128;
 #else
             // Fall back to double precision
-            return bcsv::ColumnDataType::DOUBLE;
+            return bcsv::ColumnType::DOUBLE;
 #endif
         } else if (stats.max_decimal_places <= 2) {
             // Very low precision requirements - consider half precision types
@@ -92,19 +92,19 @@ bcsv::ColumnDataType detectOptimalType(const ColumnStats& stats) {
             return bcsv::ColumnDataType::FLOAT16;
 #else
             // Fall back to single precision
-            return bcsv::ColumnDataType::FLOAT;
+            return bcsv::ColumnType::FLOAT;
 #endif
         } else if (stats.max_decimal_places <= 6) {
             // User provided reasonable precision - use single precision
             // Float provides ~7 decimal digits, which is sufficient for ≤6 decimal places
-            return bcsv::ColumnDataType::FLOAT;
+            return bcsv::ColumnType::FLOAT;
         } else {
             // Higher precision requirements need double precision
-            return bcsv::ColumnDataType::DOUBLE;
+            return bcsv::ColumnType::DOUBLE;
         }
     }
     
-    return bcsv::ColumnDataType::STRING;
+    return bcsv::ColumnType::STRING;
 }
 
 // Analyze the precision requirements from the original string
@@ -258,9 +258,9 @@ char detectDelimiter(const std::string& sample_line) {
 }
 
 // Legacy simple type detection (kept for compatibility)
-bcsv::ColumnDataType detectDataType(const std::string& value) {
+bcsv::ColumnType detectDataType(const std::string& value) {
     if (value.empty()) {
-        return bcsv::ColumnDataType::STRING; // Default to string for empty values
+        return bcsv::ColumnType::STRING; // Default to string for empty values
     }
     
     // Check for boolean
@@ -268,7 +268,7 @@ bcsv::ColumnDataType detectDataType(const std::string& value) {
     std::transform(lower_val.begin(), lower_val.end(), lower_val.begin(), 
         [](char c) { return static_cast<char>(::tolower(c)); });
     if (lower_val == "true" || lower_val == "false" || lower_val == "1" || lower_val == "0") {
-        return bcsv::ColumnDataType::BOOL;
+        return bcsv::ColumnType::BOOL;
     }
     
     // Check for integer
@@ -276,20 +276,20 @@ bcsv::ColumnDataType detectDataType(const std::string& value) {
     if (std::regex_match(value, int_pattern)) {
         long long num = std::stoll(value);
         if (num >= INT32_MIN && num <= INT32_MAX) {
-            return bcsv::ColumnDataType::INT32;
+            return bcsv::ColumnType::INT32;
         } else {
-            return bcsv::ColumnDataType::INT64;
+            return bcsv::ColumnType::INT64;
         }
     }
     
     // Check for float/double
     std::regex float_pattern(R"(^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$)");
     if (std::regex_match(value, float_pattern)) {
-        return bcsv::ColumnDataType::DOUBLE;
+        return bcsv::ColumnType::DOUBLE;
     }
     
     // Default to string
-    return bcsv::ColumnDataType::STRING;
+    return bcsv::ColumnType::STRING;
 }
 
 // Parse CSV line with proper quote handling
@@ -337,44 +337,44 @@ std::vector<std::string> parseCSVLine(const std::string& line, char delimiter, c
 
 // Convert string value to appropriate type and set in row
 void setRowValue(bcsv::Writer<bcsv::Layout>& writer, size_t column_index, 
-                 const std::string& value, bcsv::ColumnDataType type, char decimal_separator = '.') {
+                 const std::string& value, bcsv::ColumnType type, char decimal_separator = '.') {
     if (value.empty()) {
         // Handle empty values - set default values
         switch (type) {
-            case bcsv::ColumnDataType::BOOL:
+            case bcsv::ColumnType::BOOL:
                 writer.row.set(column_index, false);
                 break;
-            case bcsv::ColumnDataType::INT8:
+            case bcsv::ColumnType::INT8:
                 writer.row.set(column_index, static_cast<int8_t>(0));
                 break;
-            case bcsv::ColumnDataType::UINT8:
+            case bcsv::ColumnType::UINT8:
                 writer.row.set(column_index, static_cast<uint8_t>(0));
                 break;
-            case bcsv::ColumnDataType::INT16:
+            case bcsv::ColumnType::INT16:
                 writer.row.set(column_index, static_cast<int16_t>(0));
                 break;
-            case bcsv::ColumnDataType::UINT16:
+            case bcsv::ColumnType::UINT16:
                 writer.row.set(column_index, static_cast<uint16_t>(0));
                 break;
-            case bcsv::ColumnDataType::INT32:
+            case bcsv::ColumnType::INT32:
                 writer.row.set(column_index, static_cast<int32_t>(0));
                 break;
-            case bcsv::ColumnDataType::UINT32:
+            case bcsv::ColumnType::UINT32:
                 writer.row.set(column_index, static_cast<uint32_t>(0));
                 break;
-            case bcsv::ColumnDataType::INT64:
+            case bcsv::ColumnType::INT64:
                 writer.row.set(column_index, static_cast<int64_t>(0));
                 break;
-            case bcsv::ColumnDataType::UINT64:
+            case bcsv::ColumnType::UINT64:
                 writer.row.set(column_index, static_cast<uint64_t>(0));
                 break;
-            case bcsv::ColumnDataType::FLOAT:
+            case bcsv::ColumnType::FLOAT:
                 writer.row.set(column_index, 0.0f);
                 break;
-            case bcsv::ColumnDataType::DOUBLE:
+            case bcsv::ColumnType::DOUBLE:
                 writer.row.set(column_index, 0.0);
                 break;
-            case bcsv::ColumnDataType::STRING:
+            case bcsv::ColumnType::STRING:
                 writer.row.set(column_index, std::string(""));
                 break;
             default:
@@ -385,13 +385,13 @@ void setRowValue(bcsv::Writer<bcsv::Layout>& writer, size_t column_index,
     
     // Normalize decimal separator for parsing
     std::string normalized_value = value;
-    if (decimal_separator != '.' && (type == bcsv::ColumnDataType::FLOAT || type == bcsv::ColumnDataType::DOUBLE)) {
+    if (decimal_separator != '.' && (type == bcsv::ColumnType::FLOAT || type == bcsv::ColumnType::DOUBLE)) {
         std::replace(normalized_value.begin(), normalized_value.end(), decimal_separator, '.');
     }
     
     try {
         switch (type) {
-            case bcsv::ColumnDataType::BOOL: {
+            case bcsv::ColumnType::BOOL: {
                 std::string lower_val = value;
                 std::transform(lower_val.begin(), lower_val.end(), lower_val.begin(), 
                     [](char c) { return static_cast<char>(::tolower(c)); });
@@ -399,37 +399,37 @@ void setRowValue(bcsv::Writer<bcsv::Layout>& writer, size_t column_index,
                 writer.row.set(column_index, bool_val);
                 break;
             }
-            case bcsv::ColumnDataType::INT8:
+            case bcsv::ColumnType::INT8:
                 writer.row.set(column_index, static_cast<int8_t>(std::stoll(value)));
                 break;
-            case bcsv::ColumnDataType::UINT8:
+            case bcsv::ColumnType::UINT8:
                 writer.row.set(column_index, static_cast<uint8_t>(std::stoull(value)));
                 break;
-            case bcsv::ColumnDataType::INT16:
+            case bcsv::ColumnType::INT16:
                 writer.row.set(column_index, static_cast<int16_t>(std::stoll(value)));
                 break;
-            case bcsv::ColumnDataType::UINT16:
+            case bcsv::ColumnType::UINT16:
                 writer.row.set(column_index, static_cast<uint16_t>(std::stoull(value)));
                 break;
-            case bcsv::ColumnDataType::INT32:
+            case bcsv::ColumnType::INT32:
                 writer.row.set(column_index, static_cast<int32_t>(std::stoll(value)));
                 break;
-            case bcsv::ColumnDataType::UINT32:
+            case bcsv::ColumnType::UINT32:
                 writer.row.set(column_index, static_cast<uint32_t>(std::stoull(value)));
                 break;
-            case bcsv::ColumnDataType::INT64:
+            case bcsv::ColumnType::INT64:
                 writer.row.set(column_index, static_cast<int64_t>(std::stoll(value)));
                 break;
-            case bcsv::ColumnDataType::UINT64:
+            case bcsv::ColumnType::UINT64:
                 writer.row.set(column_index, static_cast<uint64_t>(std::stoull(value)));
                 break;
-            case bcsv::ColumnDataType::FLOAT:
+            case bcsv::ColumnType::FLOAT:
                 writer.row.set(column_index, std::stof(normalized_value));
                 break;
-            case bcsv::ColumnDataType::DOUBLE:
+            case bcsv::ColumnType::DOUBLE:
                 writer.row.set(column_index, std::stod(normalized_value));
                 break;
-            case bcsv::ColumnDataType::STRING:
+            case bcsv::ColumnType::STRING:
             default:
                 writer.row.set(column_index, value);
                 break;
@@ -568,7 +568,7 @@ int main(int argc, char* argv[]) {
 
         std::string line;
         std::vector<std::string> headers;
-        std::vector<bcsv::ColumnDataType> column_types;
+        std::vector<bcsv::ColumnType> column_types;
         std::vector<std::vector<std::string>> sample_data;
         
         // Read first line for auto-detection
@@ -665,18 +665,18 @@ int main(int argc, char* argv[]) {
             for (size_t i = 0; i < headers.size(); ++i) {
                 std::cout << "  " << headers[i] << " -> ";
                 switch (column_types[i]) {
-                    case bcsv::ColumnDataType::BOOL: std::cout << "BOOL"; break;
-                    case bcsv::ColumnDataType::INT8: std::cout << "INT8"; break;
-                    case bcsv::ColumnDataType::UINT8: std::cout << "UINT8"; break;
-                    case bcsv::ColumnDataType::INT16: std::cout << "INT16"; break;
-                    case bcsv::ColumnDataType::UINT16: std::cout << "UINT16"; break;
-                    case bcsv::ColumnDataType::INT32: std::cout << "INT32"; break;
-                    case bcsv::ColumnDataType::UINT32: std::cout << "UINT32"; break;
-                    case bcsv::ColumnDataType::INT64: std::cout << "INT64"; break;
-                    case bcsv::ColumnDataType::UINT64: std::cout << "UINT64"; break;
-                    case bcsv::ColumnDataType::FLOAT: std::cout << "FLOAT"; break;
-                    case bcsv::ColumnDataType::DOUBLE: std::cout << "DOUBLE"; break;
-                    case bcsv::ColumnDataType::STRING: std::cout << "STRING"; break;
+                    case bcsv::ColumnType::BOOL: std::cout << "BOOL"; break;
+                    case bcsv::ColumnType::INT8: std::cout << "INT8"; break;
+                    case bcsv::ColumnType::UINT8: std::cout << "UINT8"; break;
+                    case bcsv::ColumnType::INT16: std::cout << "INT16"; break;
+                    case bcsv::ColumnType::UINT16: std::cout << "UINT16"; break;
+                    case bcsv::ColumnType::INT32: std::cout << "INT32"; break;
+                    case bcsv::ColumnType::UINT32: std::cout << "UINT32"; break;
+                    case bcsv::ColumnType::INT64: std::cout << "INT64"; break;
+                    case bcsv::ColumnType::UINT64: std::cout << "UINT64"; break;
+                    case bcsv::ColumnType::FLOAT: std::cout << "FLOAT"; break;
+                    case bcsv::ColumnType::DOUBLE: std::cout << "DOUBLE"; break;
+                    case bcsv::ColumnType::STRING: std::cout << "STRING"; break;
                     default: std::cout << "UNKNOWN"; break;
                 }
                 std::cout << std::endl;

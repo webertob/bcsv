@@ -8,7 +8,7 @@
 #include <algorithm>
 
 namespace bcsv {
-
+    
     // Configuration
     constexpr bool RANGE_CHECKING = true;
 
@@ -50,108 +50,121 @@ namespace bcsv {
         // Bits 4-15 also reserved
     };
 
-    // Column data type enumeration (stored as uint16_t in file)
-    enum class ColumnDataType : uint16_t {
-        BOOL = 0x0001,
-        UINT8 = 0x0002,
-        UINT16 = 0x0003,
-        UINT32 = 0x0004,
-        UINT64 = 0x0005,
-        INT8 = 0x0006,
-        INT16 = 0x0007,
-        INT32 = 0x0008,
-        INT64 = 0x0009,
-        FLOAT = 0x000A,
-        DOUBLE = 0x000B,
-        STRING = 0x000C
+    /** Column data type enumeration (stored as uint16_t in file) 
+     * Ensure the order matches ValueType variant! As we rely on index() to match note isType()
+     */
+    enum class ColumnType : uint16_t {
+        BOOL,
+        UINT8,
+        UINT16,
+        UINT32,
+        UINT64,
+        INT8,
+        INT16,
+        INT32,
+        INT64,
+        FLOAT,
+        DOUBLE,
+        STRING
     };
-
     using std::string;
+
+    /** Variant type representing all possible column value types
+     *  Ensure the order matches ColumnType enum! As we rely on index() to match note isType()
+     */
+    using ValueType = std::variant< bool, 
+                                    uint8_t, 
+                                    uint16_t, 
+                                    uint32_t, 
+                                    uint64_t, 
+                                    int8_t, 
+                                    int16_t, 
+                                    int32_t, 
+                                    int64_t, 
+                                    float, 
+                                    double, 
+                                    string>;
+
+    inline bool isType(const ValueType& value, const ColumnType& type) {
+        return value.index() == static_cast<size_t>(type);
+    }
+    
+
+    // Convert C++ type to ColumnType enum
     template<typename T>
-    static constexpr ColumnDataType toColumnDataType() {
-        if constexpr (std::is_same_v<T, bool>) return ColumnDataType::BOOL;
-        else if constexpr (std::is_same_v<T, int8_t>) return ColumnDataType::INT8;
-        else if constexpr (std::is_same_v<T, int16_t>) return ColumnDataType::INT16;
-        else if constexpr (std::is_same_v<T, int32_t>) return ColumnDataType::INT32;
-        else if constexpr (std::is_same_v<T, int64_t>) return ColumnDataType::INT64;
-        else if constexpr (std::is_same_v<T, uint8_t>) return ColumnDataType::UINT8;
-        else if constexpr (std::is_same_v<T, uint16_t>) return ColumnDataType::UINT16;
-        else if constexpr (std::is_same_v<T, uint32_t>) return ColumnDataType::UINT32;
-        else if constexpr (std::is_same_v<T, uint64_t>) return ColumnDataType::UINT64;
-        else if constexpr (std::is_same_v<T, float>) return ColumnDataType::FLOAT;
-        else if constexpr (std::is_same_v<T, double>) return ColumnDataType::DOUBLE;
-        else if constexpr (std::is_same_v<T, string>) return ColumnDataType::STRING;
+    static constexpr ColumnType toColumnType() {
+             if constexpr (std::is_same_v<T, bool>)     return ColumnType::BOOL;
+        else if constexpr (std::is_same_v<T, int8_t>)   return ColumnType::INT8;
+        else if constexpr (std::is_same_v<T, int16_t>)  return ColumnType::INT16;
+        else if constexpr (std::is_same_v<T, int32_t>)  return ColumnType::INT32;
+        else if constexpr (std::is_same_v<T, int64_t>)  return ColumnType::INT64;
+        else if constexpr (std::is_same_v<T, uint8_t>)  return ColumnType::UINT8;
+        else if constexpr (std::is_same_v<T, uint16_t>) return ColumnType::UINT16;
+        else if constexpr (std::is_same_v<T, uint32_t>) return ColumnType::UINT32;
+        else if constexpr (std::is_same_v<T, uint64_t>) return ColumnType::UINT64;
+        else if constexpr (std::is_same_v<T, float>)    return ColumnType::FLOAT;
+        else if constexpr (std::is_same_v<T, double>)   return ColumnType::DOUBLE;
+        else if constexpr (std::is_same_v<T, string>)   return ColumnType::STRING;
         else static_assert(always_false<T>, "Unsupported type");
     };
 
     // Base template
-    template<ColumnDataType Type>
-    struct fromColumnDataTypeT {
+    template<ColumnType Type>
+    struct getTypeT {
         using type = void; // Invalid by default
     };
 
     // Specializations
-    template<> struct fromColumnDataTypeT<ColumnDataType::BOOL> { using type = bool; };
-    template<> struct fromColumnDataTypeT<ColumnDataType::UINT8> { using type = uint8_t; };
-    template<> struct fromColumnDataTypeT<ColumnDataType::UINT16> { using type = uint16_t; };
-    template<> struct fromColumnDataTypeT<ColumnDataType::UINT32> { using type = uint32_t; };
-    template<> struct fromColumnDataTypeT<ColumnDataType::UINT64> { using type = uint64_t; };
-    template<> struct fromColumnDataTypeT<ColumnDataType::INT8> { using type = int8_t; };
-    template<> struct fromColumnDataTypeT<ColumnDataType::INT16> { using type = int16_t; };
-    template<> struct fromColumnDataTypeT<ColumnDataType::INT32> { using type = int32_t; };
-    template<> struct fromColumnDataTypeT<ColumnDataType::INT64> { using type = int64_t; };
-    template<> struct fromColumnDataTypeT<ColumnDataType::FLOAT> { using type = float; };
-    template<> struct fromColumnDataTypeT<ColumnDataType::DOUBLE> { using type = double; };
-    template<> struct fromColumnDataTypeT<ColumnDataType::STRING> { using type = string; };
+    template<> struct getTypeT< ColumnType::BOOL   > { using type = bool;     };
+    template<> struct getTypeT< ColumnType::UINT8  > { using type = uint8_t;  };
+    template<> struct getTypeT< ColumnType::UINT16 > { using type = uint16_t; };
+    template<> struct getTypeT< ColumnType::UINT32 > { using type = uint32_t; };
+    template<> struct getTypeT< ColumnType::UINT64 > { using type = uint64_t; };
+    template<> struct getTypeT< ColumnType::INT8   > { using type = int8_t;   };
+    template<> struct getTypeT< ColumnType::INT16  > { using type = int16_t;  };
+    template<> struct getTypeT< ColumnType::INT32  > { using type = int32_t;  };
+    template<> struct getTypeT< ColumnType::INT64  > { using type = int64_t;  };
+    template<> struct getTypeT< ColumnType::FLOAT  > { using type = float;    };
+    template<> struct getTypeT< ColumnType::DOUBLE > { using type = double;   };
+    template<> struct getTypeT< ColumnType::STRING > { using type = string;   };  
 
-    // Convert ValueType variant to ColumnDataType
-    template<ColumnDataType Type>
-    using fromColumnDataType = typename fromColumnDataTypeT<Type>::type;
-
-    // Define ValueType early since it's used by other functions
-    using ValueType = std::variant< bool, 
-                                    uint8_t, uint16_t, uint32_t, uint64_t, 
-                                    int8_t, int16_t, int32_t, int64_t, 
-                                    float, double, 
-                                    string>;
-
-    ColumnDataType toColumnDataType(const ValueType& value) {
-        return std::visit([](auto&& arg) -> ColumnDataType {
+    ColumnType toColumnType(const ValueType& value) {
+        return std::visit([](auto&& arg) -> ColumnType {
             using T = std::decay_t<decltype(arg)>;
-            return toColumnDataType<T>();
+            return toColumnType<T>();
         }, value);
     }
 
     // Helper functions for type conversion
-    inline ColumnDataType stringToDataType(const std::string& typeString) {
-        if (typeString == "bool") return ColumnDataType::BOOL;
-        if (typeString == "uint8") return ColumnDataType::UINT8;
-        if (typeString == "uint16") return ColumnDataType::UINT16;
-        if (typeString == "uint32") return ColumnDataType::UINT32;
-        if (typeString == "uint64") return ColumnDataType::UINT64;
-        if (typeString == "int8") return ColumnDataType::INT8;
-        if (typeString == "int16") return ColumnDataType::INT16;
-        if (typeString == "int32") return ColumnDataType::INT32;
-        if (typeString == "int64") return ColumnDataType::INT64;
-        if (typeString == "float") return ColumnDataType::FLOAT;
-        if (typeString == "double") return ColumnDataType::DOUBLE;
-        return ColumnDataType::STRING; // default
+    inline ColumnType toColumnType(const std::string& typeString) {
+        if (typeString == "bool")   return ColumnType::BOOL;
+        if (typeString == "uint8")  return ColumnType::UINT8;
+        if (typeString == "uint16") return ColumnType::UINT16;
+        if (typeString == "uint32") return ColumnType::UINT32;
+        if (typeString == "uint64") return ColumnType::UINT64;
+        if (typeString == "int8")   return ColumnType::INT8;
+        if (typeString == "int16")  return ColumnType::INT16;
+        if (typeString == "int32")  return ColumnType::INT32;
+        if (typeString == "int64")  return ColumnType::INT64;
+        if (typeString == "float")  return ColumnType::FLOAT;
+        if (typeString == "double") return ColumnType::DOUBLE;
+        return ColumnType::STRING; // default
     }
 
-    inline std::string dataTypeToString(ColumnDataType type) {
+    inline std::string toString(ColumnType type) {
         switch (type) {
-            case ColumnDataType::BOOL: return "bool";
-            case ColumnDataType::UINT8: return "uint8";
-            case ColumnDataType::UINT16: return "uint16";
-            case ColumnDataType::UINT32: return "uint32";
-            case ColumnDataType::UINT64: return "uint64";
-            case ColumnDataType::INT8: return "int8";
-            case ColumnDataType::INT16: return "int16";
-            case ColumnDataType::INT32: return "int32";
-            case ColumnDataType::INT64: return "int64";
-            case ColumnDataType::FLOAT: return "float";
-            case ColumnDataType::DOUBLE: return "double";
-            case ColumnDataType::STRING: return "string";
+            case ColumnType::BOOL:   return "bool";
+            case ColumnType::UINT8:  return "uint8";
+            case ColumnType::UINT16: return "uint16";
+            case ColumnType::UINT32: return "uint32";
+            case ColumnType::UINT64: return "uint64";
+            case ColumnType::INT8:   return "int8";
+            case ColumnType::INT16:  return "int16";
+            case ColumnType::INT32:  return "int32";
+            case ColumnType::INT64:  return "int64";
+            case ColumnType::FLOAT:  return "float";
+            case ColumnType::DOUBLE: return "double";
+            case ColumnType::STRING: return "string";
             default: return "undefined";
         }
     }
@@ -161,37 +174,29 @@ namespace bcsv {
      * @param type The column data type
      * @return Default ValueType for the specified type
      */
-    inline ValueType defaultValue(ColumnDataType type) {
+    inline ValueType defaultValue(ColumnType type) {
         switch (type) {
-            case ColumnDataType::INT8: return ValueType{int8_t{0}};
-            case ColumnDataType::INT16: return ValueType{int16_t{0}};
-            case ColumnDataType::INT32: return ValueType{int32_t{0}};
-            case ColumnDataType::INT64: return ValueType{int64_t{0}};
-            case ColumnDataType::UINT8: return ValueType{uint8_t{0}};
-            case ColumnDataType::UINT16: return ValueType{uint16_t{0}};
-            case ColumnDataType::UINT32: return ValueType{uint32_t{0}};
-            case ColumnDataType::UINT64: return ValueType{uint64_t{0}};
-            case ColumnDataType::FLOAT: return ValueType{float{0.0f}};
-            case ColumnDataType::DOUBLE: return ValueType{double{0.0}};
-            case ColumnDataType::BOOL: return ValueType{bool{false}};
-            case ColumnDataType::STRING: return ValueType{string{}};
+            case ColumnType::BOOL:   return ValueType{bool{false}};
+            case ColumnType::UINT8:  return ValueType{uint8_t{0} };
+            case ColumnType::UINT16: return ValueType{uint16_t{0}};
+            case ColumnType::UINT32: return ValueType{uint32_t{0}};
+            case ColumnType::UINT64: return ValueType{uint64_t{0}};
+            case ColumnType::INT8:   return ValueType{int8_t{0}  };
+            case ColumnType::INT16:  return ValueType{int16_t{0} };
+            case ColumnType::INT32:  return ValueType{int32_t{0} };
+            case ColumnType::INT64:  return ValueType{int64_t{0} };
+            case ColumnType::FLOAT:  return ValueType{float{0.0f}};
+            case ColumnType::DOUBLE: return ValueType{double{0.0}};
+            case ColumnType::STRING: return ValueType{string{}   };
             default: throw std::runtime_error("Unknown column type");
         }
     }
 
     template<typename Type>
     constexpr Type defaultValueT() {
-        if constexpr (std::is_same_v<Type, std::string>) {
-            return std::string{};  // Empty string
-        } else if constexpr (std::is_same_v<Type, int8_t>) {
-            return int8_t{0};
-        } else if constexpr (std::is_same_v<Type, int16_t>) {
-            return int16_t{0};
-        } else if constexpr (std::is_same_v<Type, int32_t>) {
-            return int32_t{0};
-        } else if constexpr (std::is_same_v<Type, int64_t>) {
-            return int64_t{0};
-        } else if constexpr (std::is_same_v<Type, uint8_t>) {
+        if constexpr (std::is_same_v<Type, bool>) {
+            return bool{false};
+        } else if constexpr (std::is_same_v<Type, uint8_t> ) {
             return uint8_t{0};
         } else if constexpr (std::is_same_v<Type, uint16_t>) {
             return uint16_t{0};
@@ -199,12 +204,20 @@ namespace bcsv {
             return uint32_t{0};
         } else if constexpr (std::is_same_v<Type, uint64_t>) {
             return uint64_t{0};
-        } else if constexpr (std::is_same_v<Type, float>) {
+        } else if constexpr (std::is_same_v<Type, int8_t>  ) {
+            return int8_t{0};
+        } else if constexpr (std::is_same_v<Type, int16_t> ) {
+            return int16_t{0};
+        } else if constexpr (std::is_same_v<Type, int32_t> ) {
+            return int32_t{0};
+        } else if constexpr (std::is_same_v<Type, int64_t> ) {
+            return int64_t{0}; 
+        } else if constexpr (std::is_same_v<Type, float>   ) {
             return float{0.0f};
-        } else if constexpr (std::is_same_v<Type, double>) {
+        } else if constexpr (std::is_same_v<Type, double>  ) {
             return double{0.0};
-        } else if constexpr (std::is_same_v<Type, bool>) {
-            return bool{false};
+        } else if constexpr (std::is_same_v<Type, string>  ) {
+            return string{};  // Empty string
         } else {
             static_assert(always_false<Type>, "Unsupported type for defaultValueT");
         }
@@ -212,57 +225,38 @@ namespace bcsv {
 
     template<typename T>
     constexpr size_t binaryFieldLength() {
-        if constexpr (std::is_same_v<T, int8_t>) return sizeof(int8_t);
-        else if constexpr (std::is_same_v<T, int16_t>) return sizeof(int16_t);
-        else if constexpr (std::is_same_v<T, int32_t>) return sizeof(int32_t);
-        else if constexpr (std::is_same_v<T, int64_t>) return sizeof(int64_t);
-        else if constexpr (std::is_same_v<T, uint8_t>) return sizeof(uint8_t);
+             if constexpr (std::is_same_v<T, bool>    ) return sizeof(bool);
+        else if constexpr (std::is_same_v<T, uint8_t> ) return sizeof(uint8_t);
         else if constexpr (std::is_same_v<T, uint16_t>) return sizeof(uint16_t);
         else if constexpr (std::is_same_v<T, uint32_t>) return sizeof(uint32_t);
         else if constexpr (std::is_same_v<T, uint64_t>) return sizeof(uint64_t);
-        else if constexpr (std::is_same_v<T, float>) return sizeof(float);
-        else if constexpr (std::is_same_v<T, double>) return sizeof(double);
-        else if constexpr (std::is_same_v<T, bool>) return sizeof(bool);
-        else if constexpr (std::is_same_v<T, std::string>) return sizeof(uint64_t); // StringAddress
+        else if constexpr (std::is_same_v<T, int8_t>  ) return sizeof(int8_t);
+        else if constexpr (std::is_same_v<T, int16_t> ) return sizeof(int16_t);
+        else if constexpr (std::is_same_v<T, int32_t> ) return sizeof(int32_t);
+        else if constexpr (std::is_same_v<T, int64_t> ) return sizeof(int64_t);
+        else if constexpr (std::is_same_v<T, float>   ) return sizeof(float);
+        else if constexpr (std::is_same_v<T, double>  ) return sizeof(double);
+        else if constexpr (std::is_same_v<T, string>  ) return sizeof(uint64_t); // StringAddress
         else static_assert(always_false<T>, "Unsupported type");
     }
 
     // Helper function to get size for each column type
-    constexpr size_t binaryFieldLength(ColumnDataType type) {
+    constexpr size_t binaryFieldLength(ColumnType type) {
         switch (type) {
-            case ColumnDataType::INT8: return sizeof(int8_t);
-            case ColumnDataType::INT16: return sizeof(int16_t);
-            case ColumnDataType::INT32: return sizeof(int32_t);
-            case ColumnDataType::INT64: return sizeof(int64_t);
-            case ColumnDataType::UINT8: return sizeof(uint8_t);
-            case ColumnDataType::UINT16: return sizeof(uint16_t);
-            case ColumnDataType::UINT32: return sizeof(uint32_t);
-            case ColumnDataType::UINT64: return sizeof(uint64_t);
-            case ColumnDataType::FLOAT: return sizeof(float);
-            case ColumnDataType::DOUBLE: return sizeof(double);
-            case ColumnDataType::BOOL: return sizeof(bool);
-            case ColumnDataType::STRING: return sizeof(uint64_t); // StringAddress
+            case ColumnType::BOOL:   return sizeof(bool);
+            case ColumnType::UINT8:  return sizeof(uint8_t);
+            case ColumnType::UINT16: return sizeof(uint16_t);
+            case ColumnType::UINT32: return sizeof(uint32_t);
+            case ColumnType::UINT64: return sizeof(uint64_t);
+            case ColumnType::INT8:   return sizeof(int8_t);
+            case ColumnType::INT16:  return sizeof(int16_t);
+            case ColumnType::INT32:  return sizeof(int32_t);
+            case ColumnType::INT64:  return sizeof(int64_t);
+            case ColumnType::FLOAT:  return sizeof(float);
+            case ColumnType::DOUBLE: return sizeof(double);
+            case ColumnType::STRING: return sizeof(uint64_t); // StringAddress
             default: throw std::runtime_error("Unknown column type");
         }
-    }
-
-    inline bool isType(const ValueType& value, ColumnDataType type) {
-        return std::visit([type](auto&& arg) -> bool {
-            using T = std::decay_t<decltype(arg)>;
-            if constexpr (std::is_same_v<T, bool>) return type == ColumnDataType::BOOL;
-            else if constexpr (std::is_same_v<T, int8_t>) return type == ColumnDataType::INT8;
-            else if constexpr (std::is_same_v<T, int16_t>) return type == ColumnDataType::INT16;
-            else if constexpr (std::is_same_v<T, int32_t>) return type == ColumnDataType::INT32;
-            else if constexpr (std::is_same_v<T, int64_t>) return type == ColumnDataType::INT64;
-            else if constexpr (std::is_same_v<T, uint8_t>) return type == ColumnDataType::UINT8;
-            else if constexpr (std::is_same_v<T, uint16_t>) return type == ColumnDataType::UINT16;
-            else if constexpr (std::is_same_v<T, uint32_t>) return type == ColumnDataType::UINT32;
-            else if constexpr (std::is_same_v<T, uint64_t>) return type == ColumnDataType::UINT64;
-            else if constexpr (std::is_same_v<T, float>) return type == ColumnDataType::FLOAT;
-            else if constexpr (std::is_same_v<T, double>) return type == ColumnDataType::DOUBLE;
-            else if constexpr (std::is_same_v<T, string>) return type == ColumnDataType::STRING;
-            else return false;
-        }, value);
     }
 
     /* Get the serialized size of a value (cell)
@@ -310,67 +304,67 @@ namespace bcsv {
         }
     } 
 
-    ValueType convertValueType(const ValueType &value, ColumnDataType targetType) {
+    ValueType convertValueType(const ValueType &value, ColumnType targetType) {
         return std::visit([targetType](const auto& v) -> ValueType {
             using SrcType = std::decay_t<decltype(v)>;
             switch (targetType)
             {
-            case ColumnDataType::BOOL:
+            case ColumnType::BOOL:
                 if constexpr (std::is_same_v<SrcType, bool>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, bool>) 
                     return static_cast<bool>(v);
-            case ColumnDataType::UINT8:
+            case ColumnType::UINT8:
                 if constexpr (std::is_same_v<SrcType, uint8_t>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, uint8_t>) 
                     return static_cast<uint8_t>(v);
-            case ColumnDataType::UINT16:
+            case ColumnType::UINT16:
                 if constexpr (std::is_same_v<SrcType, uint16_t>) 
                 return v;
                 else if constexpr (std::is_convertible_v<SrcType, uint16_t>) 
                     return static_cast<uint16_t>(v);
-            case ColumnDataType::UINT32:
+            case ColumnType::UINT32:
                 if constexpr (std::is_same_v<SrcType, uint32_t>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, uint32_t>) 
                     return static_cast<uint32_t>(v);
-            case ColumnDataType::UINT64:
+            case ColumnType::UINT64:
                 if constexpr (std::is_same_v<SrcType, uint64_t>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, uint64_t>) 
                     return static_cast<uint64_t>(v);
-            case ColumnDataType::INT8:
+            case ColumnType::INT8:
                 if constexpr (std::is_same_v<SrcType, int8_t>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, int8_t>) 
                     return static_cast<int8_t>(v);
-            case ColumnDataType::INT16:
+            case ColumnType::INT16:
                 if constexpr (std::is_same_v<SrcType, int16_t>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, int16_t>) 
                     return static_cast<int16_t>(v);
-            case ColumnDataType::INT32:
+            case ColumnType::INT32:
                 if constexpr (std::is_same_v<SrcType, int32_t>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, int32_t>) 
                     return static_cast<int32_t>(v);
-            case ColumnDataType::INT64:
+            case ColumnType::INT64:
                 if constexpr (std::is_same_v<SrcType, int64_t>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, int64_t>) 
                     return static_cast<int64_t>(v);
-            case ColumnDataType::FLOAT:
+            case ColumnType::FLOAT:
                 if constexpr (std::is_same_v<SrcType, float>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, float>) 
                     return static_cast<float>(v);
-            case ColumnDataType::DOUBLE:
+            case ColumnType::DOUBLE:
                 if constexpr (std::is_same_v<SrcType, double>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, double>) 
                     return static_cast<double>(v);
-            case ColumnDataType::STRING:
+            case ColumnType::STRING:
                 if constexpr (std::is_same_v<SrcType, std::string>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, std::string>) 

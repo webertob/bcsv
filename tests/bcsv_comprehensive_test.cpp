@@ -172,30 +172,30 @@ protected:
         bcsv::Layout layout;
         
         std::vector<bcsv::ColumnDefinition> columns = {
-            {"bool1", bcsv::ColumnDataType::BOOL},
-            {"bool2", bcsv::ColumnDataType::BOOL},
-            {"int8_1", bcsv::ColumnDataType::INT8},
-            {"int8_2", bcsv::ColumnDataType::INT8},
-            {"int16_1", bcsv::ColumnDataType::INT16},
-            {"int16_2", bcsv::ColumnDataType::INT16},
-            {"int32_1", bcsv::ColumnDataType::INT32},
-            {"int32_2", bcsv::ColumnDataType::INT32},
-            {"int64_1", bcsv::ColumnDataType::INT64},
-            {"int64_2", bcsv::ColumnDataType::INT64},
-            {"uint8_1", bcsv::ColumnDataType::UINT8},
-            {"uint8_2", bcsv::ColumnDataType::UINT8},
-            {"uint16_1", bcsv::ColumnDataType::UINT16},
-            {"uint16_2", bcsv::ColumnDataType::UINT16},
-            {"uint32_1", bcsv::ColumnDataType::UINT32},
-            {"uint32_2", bcsv::ColumnDataType::UINT32},
-            {"uint64_1", bcsv::ColumnDataType::UINT64},
-            {"uint64_2", bcsv::ColumnDataType::UINT64},
-            {"float1", bcsv::ColumnDataType::FLOAT},
-            {"float2", bcsv::ColumnDataType::FLOAT},
-            {"double1", bcsv::ColumnDataType::DOUBLE},
-            {"double2", bcsv::ColumnDataType::DOUBLE},
-            {"string1", bcsv::ColumnDataType::STRING},
-            {"string2", bcsv::ColumnDataType::STRING}
+            {"bool1", bcsv::ColumnType::BOOL},
+            {"bool2", bcsv::ColumnType::BOOL},
+            {"int8_1", bcsv::ColumnType::INT8},
+            {"int8_2", bcsv::ColumnType::INT8},
+            {"int16_1", bcsv::ColumnType::INT16},
+            {"int16_2", bcsv::ColumnType::INT16},
+            {"int32_1", bcsv::ColumnType::INT32},
+            {"int32_2", bcsv::ColumnType::INT32},
+            {"int64_1", bcsv::ColumnType::INT64},
+            {"int64_2", bcsv::ColumnType::INT64},
+            {"uint8_1", bcsv::ColumnType::UINT8},
+            {"uint8_2", bcsv::ColumnType::UINT8},
+            {"uint16_1", bcsv::ColumnType::UINT16},
+            {"uint16_2", bcsv::ColumnType::UINT16},
+            {"uint32_1", bcsv::ColumnType::UINT32},
+            {"uint32_2", bcsv::ColumnType::UINT32},
+            {"uint64_1", bcsv::ColumnType::UINT64},
+            {"uint64_2", bcsv::ColumnType::UINT64},
+            {"float1", bcsv::ColumnType::FLOAT},
+            {"float2", bcsv::ColumnType::FLOAT},
+            {"double1", bcsv::ColumnType::DOUBLE},
+            {"double2", bcsv::ColumnType::DOUBLE},
+            {"string1", bcsv::ColumnType::STRING},
+            {"string2", bcsv::ColumnType::STRING}
         };
         
         for (const auto& col : columns) {
@@ -302,6 +302,62 @@ protected:
     
     // Validate static row data
     void validateStaticRowData(const TestData& expected, const typename FullTestLayoutStatic::RowViewType& actual, size_t row_index) {
+        EXPECT_EQ(expected.bool1, actual.template get<0>()) << "Row " << row_index << " bool1 mismatch";
+        EXPECT_EQ(expected.bool2, actual.template get<1>()) << "Row " << row_index << " bool2 mismatch";
+        EXPECT_EQ(expected.int8_1, actual.template get<2>()) << "Row " << row_index << " int8_1 mismatch";
+        EXPECT_EQ(expected.int8_2, actual.template get<3>()) << "Row " << row_index << " int8_2 mismatch";
+        EXPECT_EQ(expected.int16_1, actual.template get<4>()) << "Row " << row_index << " int16_1 mismatch";
+        EXPECT_EQ(expected.int16_2, actual.template get<5>()) << "Row " << row_index << " int16_2 mismatch";
+        EXPECT_EQ(expected.int32_1, actual.template get<6>()) << "Row " << row_index << " int32_1 mismatch";
+        EXPECT_EQ(expected.int32_2, actual.template get<7>()) << "Row " << row_index << " int32_2 mismatch";
+        EXPECT_EQ(expected.int64_1, actual.template get<8>()) << "Row " << row_index << " int64_1 mismatch";
+        EXPECT_EQ(expected.int64_2, actual.template get<9>()) << "Row " << row_index << " int64_2 mismatch";
+        EXPECT_EQ(expected.uint8_1, actual.template get<10>()) << "Row " << row_index << " uint8_1 mismatch";
+        EXPECT_EQ(expected.uint8_2, actual.template get<11>()) << "Row " << row_index << " uint8_2 mismatch";
+        EXPECT_EQ(expected.uint16_1, actual.template get<12>()) << "Row " << row_index << " uint16_1 mismatch";
+        EXPECT_EQ(expected.uint16_2, actual.template get<13>()) << "Row " << row_index << " uint16_2 mismatch";
+        EXPECT_EQ(expected.uint32_1, actual.template get<14>()) << "Row " << row_index << " uint32_1 mismatch";
+        EXPECT_EQ(expected.uint32_2, actual.template get<15>()) << "Row " << row_index << " uint32_2 mismatch";
+        EXPECT_EQ(expected.uint64_1, actual.template get<16>()) << "Row " << row_index << " uint64_1 mismatch";
+        EXPECT_EQ(expected.uint64_2, actual.template get<17>()) << "Row " << row_index << " uint64_2 mismatch";
+        EXPECT_FLOAT_EQ(expected.float1, actual.template get<18>()) << "Row " << row_index << " float1 mismatch";
+        EXPECT_FLOAT_EQ(expected.float2, actual.template get<19>()) << "Row " << row_index << " float2 mismatch";
+        EXPECT_DOUBLE_EQ(expected.double1, actual.template get<20>()) << "Row " << row_index << " double1 mismatch";
+        EXPECT_DOUBLE_EQ(expected.double2, actual.template get<21>()) << "Row " << row_index << " double2 mismatch";
+        EXPECT_EQ(expected.string1, actual.template get<22>()) << "Row " << row_index << " string1 mismatch";
+        EXPECT_EQ(expected.string2, actual.template get<23>()) << "Row " << row_index << " string2 mismatch";
+    }
+    
+    // Overloaded validation for Row (owning) types
+    void validateFlexibleRowData(const TestData& expected, const bcsv::Row& actual, size_t row_index) {
+        EXPECT_EQ(expected.bool1, actual.get<bool>(0)) << "Row " << row_index << " bool1 mismatch";
+        EXPECT_EQ(expected.bool2, actual.get<bool>(1)) << "Row " << row_index << " bool2 mismatch";
+        EXPECT_EQ(expected.int8_1, actual.get<int8_t>(2)) << "Row " << row_index << " int8_1 mismatch";
+        EXPECT_EQ(expected.int8_2, actual.get<int8_t>(3)) << "Row " << row_index << " int8_2 mismatch";
+        EXPECT_EQ(expected.int16_1, actual.get<int16_t>(4)) << "Row " << row_index << " int16_1 mismatch";
+        EXPECT_EQ(expected.int16_2, actual.get<int16_t>(5)) << "Row " << row_index << " int16_2 mismatch";
+        EXPECT_EQ(expected.int32_1, actual.get<int32_t>(6)) << "Row " << row_index << " int32_1 mismatch";
+        EXPECT_EQ(expected.int32_2, actual.get<int32_t>(7)) << "Row " << row_index << " int32_2 mismatch";
+        EXPECT_EQ(expected.int64_1, actual.get<int64_t>(8)) << "Row " << row_index << " int64_1 mismatch";
+        EXPECT_EQ(expected.int64_2, actual.get<int64_t>(9)) << "Row " << row_index << " int64_2 mismatch";
+        EXPECT_EQ(expected.uint8_1, actual.get<uint8_t>(10)) << "Row " << row_index << " uint8_1 mismatch";
+        EXPECT_EQ(expected.uint8_2, actual.get<uint8_t>(11)) << "Row " << row_index << " uint8_2 mismatch";
+        EXPECT_EQ(expected.uint16_1, actual.get<uint16_t>(12)) << "Row " << row_index << " uint16_1 mismatch";
+        EXPECT_EQ(expected.uint16_2, actual.get<uint16_t>(13)) << "Row " << row_index << " uint16_2 mismatch";
+        EXPECT_EQ(expected.uint32_1, actual.get<uint32_t>(14)) << "Row " << row_index << " uint32_1 mismatch";
+        EXPECT_EQ(expected.uint32_2, actual.get<uint32_t>(15)) << "Row " << row_index << " uint32_2 mismatch";
+        EXPECT_EQ(expected.uint64_1, actual.get<uint64_t>(16)) << "Row " << row_index << " uint64_1 mismatch";
+        EXPECT_EQ(expected.uint64_2, actual.get<uint64_t>(17)) << "Row " << row_index << " uint64_2 mismatch";
+        EXPECT_FLOAT_EQ(expected.float1, actual.get<float>(18)) << "Row " << row_index << " float1 mismatch";
+        EXPECT_FLOAT_EQ(expected.float2, actual.get<float>(19)) << "Row " << row_index << " float2 mismatch";
+        EXPECT_DOUBLE_EQ(expected.double1, actual.get<double>(20)) << "Row " << row_index << " double1 mismatch";
+        EXPECT_DOUBLE_EQ(expected.double2, actual.get<double>(21)) << "Row " << row_index << " double2 mismatch";
+        EXPECT_EQ(expected.string1, actual.get<std::string>(22)) << "Row " << row_index << " string1 mismatch";
+        EXPECT_EQ(expected.string2, actual.get<std::string>(23)) << "Row " << row_index << " string2 mismatch";
+    }
+    
+    // Overloaded validation for RowStatic (owning) types
+    void validateStaticRowData(const TestData& expected, const typename FullTestLayoutStatic::RowType& actual, size_t row_index) {
         EXPECT_EQ(expected.bool1, actual.template get<0>()) << "Row " << row_index << " bool1 mismatch";
         EXPECT_EQ(expected.bool2, actual.template get<1>()) << "Row " << row_index << " bool2 mismatch";
         EXPECT_EQ(expected.int8_1, actual.template get<2>()) << "Row " << row_index << " int8_1 mismatch";
@@ -1256,7 +1312,7 @@ TEST_F(BCSVTestSuite, EdgeCase_MixedEmptyOperations) {
                 layout = createFullFlexibleLayout();
             } else if (i == 2 || i == 3) {
                 // Single column layout
-                bcsv::ColumnDefinition col("single_col", bcsv::ColumnDataType::INT64);
+                bcsv::ColumnDefinition col("single_col", bcsv::ColumnType::INT64);
                 layout.addColumn(col);
             }
             
@@ -1293,7 +1349,7 @@ TEST_F(BCSVTestSuite, EdgeCase_MixedEmptyOperations) {
                         std::string col_name = layout.getColumnName(col);
                         // Just verify we can call the accessor without crashing
                         switch (layout.getColumnType(col)) {
-                            case bcsv::ColumnDataType::INT64:
+                            case bcsv::ColumnType::INT64:
                                 {
                                     auto val = row.get<int64_t>(col);
                                     if (i == 3) {
@@ -1301,7 +1357,7 @@ TEST_F(BCSVTestSuite, EdgeCase_MixedEmptyOperations) {
                                     }
                                 }
                                 break;
-                            case bcsv::ColumnDataType::STRING:
+                            case bcsv::ColumnType::STRING:
                                 row.get<std::string>(col);
                                 break;
                             default:
@@ -1341,8 +1397,8 @@ TEST_F(BCSVTestSuite, EdgeCase_MixedEmptyOperations) {
 TEST_F(BCSVTestSuite, Multipacket_LargeData) {
     bcsv::Layout layout;
     
-    bcsv::ColumnDefinition col1("id", bcsv::ColumnDataType::UINT32);
-    bcsv::ColumnDefinition col2("large_data", bcsv::ColumnDataType::STRING);
+    bcsv::ColumnDefinition col1("id", bcsv::ColumnType::UINT32);
+    bcsv::ColumnDefinition col2("large_data", bcsv::ColumnType::STRING);
     layout.addColumn(col1);
     layout.addColumn(col2);
 
@@ -1406,12 +1462,12 @@ TEST_F(BCSVTestSuite, CompressionLevels_FlexibleInterface_AllLevels) {
     
     // Create test layout with diverse data types for good compression testing
     bcsv::Layout layout;
-    layout.addColumn({"id", bcsv::ColumnDataType::UINT32});
-    layout.addColumn({"name", bcsv::ColumnDataType::STRING});
-    layout.addColumn({"value", bcsv::ColumnDataType::DOUBLE});
-    layout.addColumn({"score", bcsv::ColumnDataType::FLOAT});
-    layout.addColumn({"active", bcsv::ColumnDataType::BOOL});
-    layout.addColumn({"counter", bcsv::ColumnDataType::INT64});
+    layout.addColumn({"id", bcsv::ColumnType::UINT32});
+    layout.addColumn({"name", bcsv::ColumnType::STRING});
+    layout.addColumn({"value", bcsv::ColumnType::DOUBLE});
+    layout.addColumn({"score", bcsv::ColumnType::FLOAT});
+    layout.addColumn({"active", bcsv::ColumnType::BOOL});
+    layout.addColumn({"counter", bcsv::ColumnType::INT64});
     
     const size_t test_rows = 1000;
     
@@ -1555,9 +1611,9 @@ TEST_F(BCSVTestSuite, CompressionLevels_CrossCompatibility) {
     
     // Create layouts
     bcsv::Layout flexLayout;
-    flexLayout.addColumn({"Column0", bcsv::ColumnDataType::UINT32});
-    flexLayout.addColumn({"Column1", bcsv::ColumnDataType::STRING});
-    flexLayout.addColumn({"Column2", bcsv::ColumnDataType::DOUBLE});
+    flexLayout.addColumn({"Column0", bcsv::ColumnType::UINT32});
+    flexLayout.addColumn({"Column1", bcsv::ColumnType::STRING});
+    flexLayout.addColumn({"Column2", bcsv::ColumnType::DOUBLE});
     
     using StaticLayout = bcsv::LayoutStatic<uint32_t, std::string, double>;
     StaticLayout staticLayout({"Column0", "Column1", "Column2"});
@@ -1615,7 +1671,7 @@ TEST_F(BCSVTestSuite, CompressionLevels_ValidationAndRestrictions) {
     std::cout << "\nTesting compression level validation and restrictions..." << std::endl;
     
     auto layout = bcsv::Layout();
-    layout.addColumn({"test", bcsv::ColumnDataType::INT32});
+    layout.addColumn({"test", bcsv::ColumnType::INT32});
     
     // Test invalid compression levels in open() method
     {
@@ -1705,8 +1761,8 @@ TEST_F(BCSVTestSuite, CompressionLevels_PerformanceCharacteristics) {
     std::cout << "\nTesting compression level performance characteristics..." << std::endl;
     
     auto layout = bcsv::Layout();
-    layout.addColumn({"id", bcsv::ColumnDataType::UINT32});
-    layout.addColumn({"data", bcsv::ColumnDataType::STRING});
+    layout.addColumn({"id", bcsv::ColumnType::UINT32});
+    layout.addColumn({"data", bcsv::ColumnType::STRING});
     
     const size_t test_rows = 5000;
     std::vector<std::pair<int, size_t>> level_sizes; // (level, file_size)

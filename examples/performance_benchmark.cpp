@@ -10,9 +10,16 @@
 /**
  * BCSV Performance Benchmark
  * 
- * This benchmark compares the performance of flexible vs static interfaces
- * for large file operations. It tests both write and read performance
- * with configurable row counts and data complexity.
+ * This comprehensive benchmark compares the performance of flexible vs static interfaces
+ * for large file operations. It tests both write and read performance with configurable
+ * row counts, data complexity, and compression levels.
+ * 
+ * Key metrics measured:
+ * - Write performance (time to write all rows)
+ * - Read performance (time to read all rows)  
+ * - File size comparison
+ * - Memory efficiency
+ * - Throughput (rows per second)
  */
 
 class PerformanceBenchmark {
@@ -58,8 +65,12 @@ public:
         
         std::cout << "BCSV Performance Benchmark\n";
         std::cout << "==========================\n";
-        std::cout << "Rows to process: " << numRows_ << "\n";
-        std::cout << "Columns per row: 8 (mixed data types)\n\n";
+        std::cout << "Test Configuration:\n";
+        std::cout << "  Rows to process: " << numRows_ << "\n";
+        std::cout << "  Columns per row: 8 (mixed data types)\n";
+        std::cout << "  Data types: INT32, STRING, FLOAT, DOUBLE, BOOL, INT64, UINT32, STRING\n";
+        std::cout << "  Compression: LZ4 Level 1 (balanced performance/size)\n";
+        std::cout << "  Platform: " << sizeof(void*) * 8 << "-bit\n\n";
     }
 
     // Flexible interface benchmark
@@ -68,14 +79,14 @@ public:
         
         // Create flexible layout
         bcsv::Layout layout;
-        layout.addColumn({"id", bcsv::ColumnDataType::INT32});
-        layout.addColumn({"name", bcsv::ColumnDataType::STRING});
-        layout.addColumn({"score1", bcsv::ColumnDataType::FLOAT});
-        layout.addColumn({"score2", bcsv::ColumnDataType::DOUBLE});
-        layout.addColumn({"active", bcsv::ColumnDataType::BOOL});
-        layout.addColumn({"timestamp", bcsv::ColumnDataType::INT64});
-        layout.addColumn({"count", bcsv::ColumnDataType::UINT32});
-        layout.addColumn({"category", bcsv::ColumnDataType::STRING});
+        layout.addColumn({"id", bcsv::ColumnType::INT32});
+        layout.addColumn({"name", bcsv::ColumnType::STRING});
+        layout.addColumn({"score1", bcsv::ColumnType::FLOAT});
+        layout.addColumn({"score2", bcsv::ColumnType::DOUBLE});
+        layout.addColumn({"active", bcsv::ColumnType::BOOL});
+        layout.addColumn({"timestamp", bcsv::ColumnType::INT64});
+        layout.addColumn({"count", bcsv::ColumnType::UINT32});
+        layout.addColumn({"category", bcsv::ColumnType::STRING});
 
         // Benchmark writing
         auto writeStart = std::chrono::high_resolution_clock::now();
@@ -91,15 +102,15 @@ public:
                 // Use direct assignment instead of function calls where possible
                 const size_t stringIndex1 = i % stringCount;
                 const size_t stringIndex2 = (i * 7) % stringCount;
-                
-                writer.row.set(0, int_dist_(gen_));
-                writer.row.set(1, sampleStrings_[stringIndex1]);
-                writer.row.set(2, float_dist_(gen_));
-                writer.row.set(3, double_dist_(gen_));
-                writer.row.set(4, (i & 1) == 0);  // Bitwise AND faster than modulo
-                writer.row.set(5, static_cast<int64_t>(i * 1000));
-                writer.row.set(6, static_cast<uint32_t>(i));
-                writer.row.set(7, sampleStrings_[stringIndex2]);
+                auto& row = writer.row; // Reference for brevity
+                row.set(0, int_dist_(gen_));
+                row.set(1, sampleStrings_[stringIndex1]);
+                row.set(2, float_dist_(gen_));
+                row.set(3, double_dist_(gen_));
+                row.set(4, (i & 1) == 0);  // Bitwise AND faster than modulo
+                row.set(5, static_cast<int64_t>(i * 1000));
+                row.set(6, static_cast<uint32_t>(i));
+                row.set(7, sampleStrings_[stringIndex2]);
                 writer.writeRow();
             }
             writer.close();
@@ -128,15 +139,16 @@ public:
             while (reader.readNext()) {
                 // Read all values to ensure fair comparison
                 // Use assignment to pre-declared variables for better performance
-                id = reader.row().get<int32_t>(0);
-                name = reader.row().get<std::string>(1);
-                score1 = reader.row().get<float>(2);
-                score2 = reader.row().get<double>(3);
-                active = reader.row().get<bool>(4);
-                timestamp = reader.row().get<int64_t>(5);
-                count = reader.row().get<uint32_t>(6);
-                category = reader.row().get<std::string>(7);
-                
+                const auto& row = reader.row();
+                id = row.get<int32_t>(0);
+                name = row.get<std::string>(1);
+                score1 = row.get<float>(2);
+                score2 = row.get<double>(3);
+                active = row.get<bool>(4);
+                timestamp = row.get<int64_t>(5);
+                count = row.get<uint32_t>(6);
+                category = row.get<std::string>(7);
+
                 // Prevent optimization by using the values
                 (void)id; (void)name; (void)score1; (void)score2; 
                 (void)active; (void)timestamp; (void)count; (void)category;
@@ -145,7 +157,7 @@ public:
             reader.close();
         }
         auto readEnd = std::chrono::high_resolution_clock::now();
-        double readTime = std::chrono::duration<double, std::milli>(readEnd - writeStart).count();
+        double readTime = std::chrono::duration<double, std::milli>(readEnd - readStart).count();
 
         std::cout << "  Write time: " << std::fixed << std::setprecision(2) << writeTime << " ms\n";
         std::cout << "  Read time:  " << std::fixed << std::setprecision(2) << readTime << " ms\n\n";
@@ -177,15 +189,15 @@ public:
                 // Use direct assignment instead of function calls where possible
                 const size_t stringIndex1 = i % stringCount;
                 const size_t stringIndex2 = (i * 7) % stringCount;
-                
-                writer.row.set<0>(int_dist_(gen_));
-                writer.row.set<1>(sampleStrings_[stringIndex1]);
-                writer.row.set<2>(float_dist_(gen_));
-                writer.row.set<3>(double_dist_(gen_));
-                writer.row.set<4>((i & 1) == 0);  // Bitwise AND faster than modulo
-                writer.row.set<5>(static_cast<int64_t>(i * 1000));
-                writer.row.set<6>(static_cast<uint32_t>(i));
-                writer.row.set<7>(sampleStrings_[stringIndex2]);
+                auto& row = writer.row; // Reference for brevity
+                row.set<0>(int_dist_(gen_));
+                row.set<1>(sampleStrings_[stringIndex1]);
+                row.set<2>(float_dist_(gen_));
+                row.set<3>(double_dist_(gen_));
+                row.set<4>((i & 1) == 0);  // Bitwise AND faster than modulo
+                row.set<5>(static_cast<int64_t>(i * 1000));
+                row.set<6>(static_cast<uint32_t>(i));
+                row.set<7>(sampleStrings_[stringIndex2]);
                 writer.writeRow();
             }
             writer.close();
@@ -214,15 +226,16 @@ public:
             while (reader.readNext()) {
                 // Read all values to ensure fair comparison
                 // Use assignment to pre-declared variables for better performance
-                id = reader.row().get<0>();
-                name = reader.row().get<1>();
-                score1 = reader.row().get<2>();
-                score2 = reader.row().get<3>();
-                active = reader.row().get<4>();
-                timestamp = reader.row().get<5>();
-                count = reader.row().get<6>();
-                category = reader.row().get<7>();
-                
+                const auto& row = reader.row();
+                id = row.get<0>();
+                name = row.get<1>();
+                score1 = row.get<2>();
+                score2 = row.get<3>();
+                active = row.get<4>();
+                timestamp = row.get<5>();
+                count = row.get<6>();
+                category = row.get<7>();
+
                 // Prevent optimization by using the values
                 (void)id; (void)name; (void)score1; (void)score2; 
                 (void)active; (void)timestamp; (void)count; (void)category;
@@ -249,9 +262,14 @@ public:
         auto staticSize = std::filesystem::file_size(STATIC_FILENAME);
         
         std::cout << "File Sizes:\n";
-        std::cout << "  Flexible: " << flexibleSize << " bytes\n";
-        std::cout << "  Static:   " << staticSize << " bytes\n";
-        std::cout << "  Difference: " << (flexibleSize == staticSize ? "None (binary compatible)" : "Different") << "\n\n";
+        std::cout << "  Flexible: " << flexibleSize << " bytes (" << std::fixed << std::setprecision(1) << (flexibleSize / 1024.0 / 1024.0) << " MB)\n";
+        std::cout << "  Static:   " << staticSize << " bytes (" << std::fixed << std::setprecision(1) << (staticSize / 1024.0 / 1024.0) << " MB)\n";
+        std::cout << "  Difference: " << (flexibleSize == staticSize ? "None (binary compatible)" : std::to_string(static_cast<long long>(staticSize) - static_cast<long long>(flexibleSize)) + " bytes") << "\n";
+        
+        // Calculate compression ratio (estimate based on raw data size)
+        size_t estimatedRawSize = numRows_ * (4 + 8 + 4 + 8 + 1 + 8 + 4 + 8); // Approximate raw data size
+        double compressionRatio = static_cast<double>(estimatedRawSize) / flexibleSize;
+        std::cout << "  Compression ratio: " << std::fixed << std::setprecision(1) << compressionRatio << ":1 (" << std::setprecision(1) << (100.0 - (flexibleSize * 100.0 / estimatedRawSize)) << "% reduction)\n\n";
 
         // Performance comparison
         double flexibleTotal = flexibleTimes.first + flexibleTimes.second;
@@ -284,6 +302,35 @@ public:
         std::cout << "Throughput (rows/second):\n";
         std::cout << "  Flexible: " << std::fixed << std::setprecision(0) << flexibleThroughput << "\n";
         std::cout << "  Static:   " << std::fixed << std::setprecision(0) << staticThroughput << "\n\n";
+        
+        // Data transfer rates
+        double flexibleMBps = (flexibleSize / 1024.0 / 1024.0) / (flexibleTotal / 1000.0);
+        double staticMBps = (staticSize / 1024.0 / 1024.0) / (staticTotal / 1000.0);
+        
+        std::cout << "Data Transfer Rate (MB/s):\n";
+        std::cout << "  Flexible: " << std::fixed << std::setprecision(1) << flexibleMBps << " MB/s\n";
+        std::cout << "  Static:   " << std::fixed << std::setprecision(1) << staticMBps << " MB/s\n\n";
+        
+        // Performance per row
+        double flexibleUsPerRow = (flexibleTotal * 1000.0) / numRows_;
+        double staticUsPerRow = (staticTotal * 1000.0) / numRows_;
+        
+        std::cout << "Performance per Row:\n";
+        std::cout << "  Flexible: " << std::fixed << std::setprecision(2) << flexibleUsPerRow << " µs/row\n";
+        std::cout << "  Static:   " << std::fixed << std::setprecision(2) << staticUsPerRow << " µs/row\n\n";
+        
+        std::cout << "Recommendations:\n";
+        if (writeSpeedup > 1.1) {
+            std::cout << "  ✓ Use Static interface for write-heavy workloads (" << std::setprecision(1) << writeSpeedup << "x faster writing)\n";
+        }
+        if (readSpeedup < 0.9) {
+            std::cout << "  ✓ Use Flexible interface for read-heavy workloads (" << std::setprecision(1) << (1.0/readSpeedup) << "x faster reading)\n";
+        }
+        if (std::abs(speedup - 1.0) < 0.1) {
+            std::cout << "  → Both interfaces show similar overall performance\n";
+        }
+        std::cout << "  → Choose Static for compile-time type safety and write performance\n";
+        std::cout << "  → Choose Flexible for runtime schema flexibility and read performance\n\n";
     }
 
     void runBenchmark() {
@@ -294,11 +341,230 @@ public:
         // Print summary
         printSummary(flexibleTimes, staticTimes);
         
+        // Test compression levels
+        testCompressionLevels();
+        
+        // Compare with CSV baseline
+        benchmarkCSVBaseline();
+        
         // Cleanup
         std::filesystem::remove(FLEXIBLE_FILENAME);
         std::filesystem::remove(STATIC_FILENAME);
         
         std::cout << "Benchmark completed successfully!\n";
+    }
+    
+    void testCompressionLevels() {
+        std::cout << "Compression Level Analysis\n";
+        std::cout << "=========================\n";
+        
+        bcsv::Layout layout;
+        layout.addColumn({"id", bcsv::ColumnType::INT32});
+        layout.addColumn({"name", bcsv::ColumnType::STRING});
+        layout.addColumn({"score", bcsv::ColumnType::FLOAT});
+        layout.addColumn({"data", bcsv::ColumnType::STRING});
+        
+        // Test different compression levels (0-9)
+        std::vector<int> compressionLevels = {0, 1, 3, 6, 9};
+        const size_t testRows = 10000; // Smaller dataset for compression test
+        
+        std::cout << "Testing " << testRows << " rows with different compression levels:\n\n";
+        std::cout << "Level | Time (ms) | Size (bytes) | Ratio | Speed (MB/s)\n";
+        std::cout << "------|-----------|--------------|-------|-------------\n";
+        
+        for (int level : compressionLevels) {
+            std::string filename = "compression_test_" + std::to_string(level) + ".bcsv";
+            
+            auto start = std::chrono::high_resolution_clock::now();
+            {
+                bcsv::Writer<bcsv::Layout> writer(layout);
+                writer.open(filename, true, level);
+                
+                for (size_t i = 0; i < testRows; ++i) {
+                    writer.row.set(0, static_cast<int32_t>(i));
+                    writer.row.set(1, sampleStrings_[i % sampleStrings_.size()]);
+                    writer.row.set(2, float_dist_(gen_));
+                    writer.row.set(3, "Data row " + std::to_string(i) + " with some additional text for compression testing");
+                    writer.writeRow();
+                }
+                writer.close();
+            }
+            auto end = std::chrono::high_resolution_clock::now();
+            
+            double timeMs = std::chrono::duration<double, std::milli>(end - start).count();
+            size_t fileSize = std::filesystem::file_size(filename);
+            size_t estimatedRaw = testRows * 50; // Rough estimate
+            double ratio = static_cast<double>(estimatedRaw) / fileSize;
+            double mbps = (fileSize / 1024.0 / 1024.0) / (timeMs / 1000.0);
+            
+            std::cout << std::setw(5) << level << " | " 
+                      << std::setw(9) << std::fixed << std::setprecision(1) << timeMs << " | " 
+                      << std::setw(12) << fileSize << " | " 
+                      << std::setw(5) << std::setprecision(1) << ratio << " | " 
+                      << std::setw(11) << std::setprecision(1) << mbps << "\n";
+            
+            std::filesystem::remove(filename);
+        }
+        
+        std::cout << "\nCompression Notes:\n";
+        std::cout << "  Level 0: No compression (fastest)\n";
+        std::cout << "  Level 1: Fast compression (recommended default)\n";
+        std::cout << "  Level 3: Balanced compression/speed\n";
+        std::cout << "  Level 6: High compression\n";
+        std::cout << "  Level 9: Maximum compression (slowest)\n\n";
+    }
+    
+    void benchmarkCSVBaseline() {
+        std::cout << "CSV Baseline Comparison\n";
+        std::cout << "======================\n";
+        
+        const size_t testRows = 50000; // Smaller dataset for CSV comparison
+        const std::string csvFilename = "baseline_test.csv";
+        
+        // Write CSV file
+        auto csvWriteStart = std::chrono::high_resolution_clock::now();
+        {
+            std::ofstream csv(csvFilename);
+            csv << "id,name,score1,score2,active,timestamp,count,category\n";
+            
+            for (size_t i = 0; i < testRows; ++i) {
+                csv << int_dist_(gen_) << ","
+                    << sampleStrings_[i % sampleStrings_.size()] << ","
+                    << float_dist_(gen_) << ","
+                    << double_dist_(gen_) << ","
+                    << ((i & 1) == 0 ? "true" : "false") << ","
+                    << (i * 1000) << ","
+                    << i << ","
+                    << sampleStrings_[(i * 7) % sampleStrings_.size()] << "\n";
+            }
+        }
+        auto csvWriteEnd = std::chrono::high_resolution_clock::now();
+        double csvWriteTime = std::chrono::duration<double, std::milli>(csvWriteEnd - csvWriteStart).count();
+        
+        // Read CSV file
+        auto csvReadStart = std::chrono::high_resolution_clock::now();
+        {
+            std::ifstream csv(csvFilename);
+            std::string line;
+            std::getline(csv, line); // Skip header
+            
+            size_t rowCount = 0;
+            while (std::getline(csv, line)) {
+                // Simple parsing to simulate data access
+                size_t pos = 0;
+                for (int col = 0; col < 8; ++col) {
+                    size_t nextPos = line.find(',', pos);
+                    if (nextPos == std::string::npos) nextPos = line.length();
+                    std::string value = line.substr(pos, nextPos - pos);
+                    pos = nextPos + 1;
+                    
+                    // Simulate type conversion overhead
+                    if (col == 0 || col == 5 || col == 6) {
+                        volatile int dummy = std::stoi(value); (void)dummy;
+                    } else if (col == 2) {
+                        volatile float dummy = std::stof(value); (void)dummy;
+                    } else if (col == 3) {
+                        volatile double dummy = std::stod(value); (void)dummy;
+                    }
+                }
+                ++rowCount;
+            }
+        }
+        auto csvReadEnd = std::chrono::high_resolution_clock::now();
+        double csvReadTime = std::chrono::duration<double, std::milli>(csvReadEnd - csvReadStart).count();
+        
+        // Write BCSV equivalent for comparison
+        const std::string bcsvFilename = "baseline_test.bcsv";
+        bcsv::Layout layout;
+        layout.addColumn({"id", bcsv::ColumnType::INT32});
+        layout.addColumn({"name", bcsv::ColumnType::STRING});
+        layout.addColumn({"score1", bcsv::ColumnType::FLOAT});
+        layout.addColumn({"score2", bcsv::ColumnType::DOUBLE});
+        layout.addColumn({"active", bcsv::ColumnType::BOOL});
+        layout.addColumn({"timestamp", bcsv::ColumnType::INT64});
+        layout.addColumn({"count", bcsv::ColumnType::UINT32});
+        layout.addColumn({"category", bcsv::ColumnType::STRING});
+        
+        auto bcsvWriteStart = std::chrono::high_resolution_clock::now();
+        {
+            bcsv::Writer<bcsv::Layout> writer(layout);
+            writer.open(bcsvFilename, true, 1);
+            
+            for (size_t i = 0; i < testRows; ++i) {
+                writer.row.set(0, int_dist_(gen_));
+                writer.row.set(1, sampleStrings_[i % sampleStrings_.size()]);
+                writer.row.set(2, float_dist_(gen_));
+                writer.row.set(3, double_dist_(gen_));
+                writer.row.set(4, (i & 1) == 0);
+                writer.row.set(5, static_cast<int64_t>(i * 1000));
+                writer.row.set(6, static_cast<uint32_t>(i));
+                writer.row.set(7, sampleStrings_[(i * 7) % sampleStrings_.size()]);
+                writer.writeRow();
+            }
+            writer.close();
+        }
+        auto bcsvWriteEnd = std::chrono::high_resolution_clock::now();
+        double bcsvWriteTime = std::chrono::duration<double, std::milli>(bcsvWriteEnd - bcsvWriteStart).count();
+        
+        // Read BCSV
+        auto bcsvReadStart = std::chrono::high_resolution_clock::now();
+        {
+            bcsv::Reader<bcsv::Layout> reader;
+            reader.open(bcsvFilename);
+            
+            size_t rowCount = 0;
+            while (reader.readNext()) {
+                // Access all fields for fair comparison
+                volatile auto id = reader.row().get<int32_t>(0);
+                volatile auto name = reader.row().get<std::string>(1);
+                volatile auto score1 = reader.row().get<float>(2);
+                volatile auto score2 = reader.row().get<double>(3);
+                volatile auto active = reader.row().get<bool>(4);
+                volatile auto timestamp = reader.row().get<int64_t>(5);
+                volatile auto count = reader.row().get<uint32_t>(6);
+                volatile auto category = reader.row().get<std::string>(7);
+                
+                (void)id; (void)name; (void)score1; (void)score2;
+                (void)active; (void)timestamp; (void)count; (void)category;
+                ++rowCount;
+            }
+            reader.close();
+        }
+        auto bcsvReadEnd = std::chrono::high_resolution_clock::now();
+        double bcsvReadTime = std::chrono::duration<double, std::milli>(bcsvReadEnd - bcsvReadStart).count();
+        
+        // File sizes
+        size_t csvSize = std::filesystem::file_size(csvFilename);
+        size_t bcsvSize = std::filesystem::file_size(bcsvFilename);
+        
+        std::cout << "Testing " << testRows << " rows:\n\n";
+        std::cout << "Format | Write (ms) | Read (ms) | Total (ms) | Size (bytes) | Size (MB)\n";
+        std::cout << "-------|------------|-----------|------------|--------------|----------\n";
+        
+        double csvTotal = csvWriteTime + csvReadTime;
+        double bcsvTotal = bcsvWriteTime + bcsvReadTime;
+        
+        std::cout << "CSV    | " << std::setw(10) << std::fixed << std::setprecision(1) << csvWriteTime
+                  << " | " << std::setw(9) << csvReadTime
+                  << " | " << std::setw(10) << csvTotal
+                  << " | " << std::setw(12) << csvSize
+                  << " | " << std::setw(8) << std::setprecision(2) << (csvSize / 1024.0 / 1024.0) << "\n";
+        
+        std::cout << "BCSV   | " << std::setw(10) << std::fixed << std::setprecision(1) << bcsvWriteTime
+                  << " | " << std::setw(9) << bcsvReadTime
+                  << " | " << std::setw(10) << bcsvTotal
+                  << " | " << std::setw(12) << bcsvSize
+                  << " | " << std::setw(8) << std::setprecision(2) << (bcsvSize / 1024.0 / 1024.0) << "\n";
+        
+        std::cout << "\nBCSV vs CSV Performance:\n";
+        std::cout << "  Write speedup: " << std::fixed << std::setprecision(2) << (csvWriteTime / bcsvWriteTime) << "x\n";
+        std::cout << "  Read speedup:  " << std::setprecision(2) << (csvReadTime / bcsvReadTime) << "x\n";
+        std::cout << "  Total speedup: " << std::setprecision(2) << (csvTotal / bcsvTotal) << "x\n";
+        std::cout << "  Size reduction: " << std::setprecision(1) << (100.0 - (bcsvSize * 100.0 / csvSize)) << "%\n\n";
+        
+        // Cleanup
+        std::filesystem::remove(csvFilename);
+        std::filesystem::remove(bcsvFilename);
     }
 };
 

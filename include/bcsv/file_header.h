@@ -13,7 +13,7 @@ namespace bcsv {
     class Layout;
     template<typename... ColumnTypes>
     class LayoutStatic;
-    enum class ColumnDataType : uint16_t;
+    enum class ColumnType : uint16_t;
 
     /**
      * @brief Represents the file header with controlled memory layout for direct I/O

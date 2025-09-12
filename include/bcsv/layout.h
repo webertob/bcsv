@@ -23,11 +23,11 @@ namespace bcsv {
 namespace bcsv {
 
     struct ColumnDefinition {
-        ColumnDefinition() : name(""), type(ColumnDataType::STRING) {}
-        ColumnDefinition(const std::string& n, ColumnDataType t)
+        ColumnDefinition() : name(""), type(ColumnType::STRING) {}
+        ColumnDefinition(const std::string& n, ColumnType t)
             : name(n), type(t) {}
         std::string name;
-        ColumnDataType type;
+        ColumnType type;
     };
     
     // ========================================================================
@@ -42,7 +42,7 @@ namespace bcsv {
         { const_layout.getColumnLength(index) } -> std::convertible_to<size_t>;
         { const_layout.getColumnName(index) } -> std::convertible_to<std::string>;
         { const_layout.getColumnOffset(index) } -> std::convertible_to<size_t>;
-        { const_layout.getColumnType(index) } -> std::convertible_to<ColumnDataType>;
+        { const_layout.getColumnType(index) } -> std::convertible_to<ColumnType>;
         { layout.setColumnName(index, name) } -> std::same_as<bool>;
         { const_layout.isCompatibleWith(const_layout) } -> std::convertible_to<bool>;
         
@@ -59,7 +59,7 @@ namespace bcsv {
     class Layout {
         std::vector<std::string> column_names_;
         std::unordered_map<std::string, size_t> column_index_;
-        std::vector<ColumnDataType> column_types_;
+        std::vector<ColumnType> column_types_;
         std::vector<size_t> column_lengths_; // Lengths of each column in [bytes] --> serialized data
         std::vector<size_t> column_offsets_; // Offsets of each column in [bytes] --> serialized data
         void updateIndex();
@@ -80,7 +80,7 @@ namespace bcsv {
         size_t getColumnLength(size_t index) const { if constexpr (RANGE_CHECKING) {return column_lengths_.at(index);} else { return column_lengths_[index]; } }
         const std::string& getColumnName(size_t index) const { if constexpr (RANGE_CHECKING) {return column_names_.at(index);} else { return column_names_[index]; } }
         size_t getColumnOffset(size_t index) const { if constexpr (RANGE_CHECKING) {return column_offsets_.at(index);} else { return column_offsets_[index]; } }
-        ColumnDataType getColumnType(size_t index) const { if constexpr (RANGE_CHECKING) {return column_types_.at(index);} else { return column_types_[index]; } }
+        ColumnType getColumnType(size_t index) const { if constexpr (RANGE_CHECKING) {return column_types_.at(index);} else { return column_types_[index]; } }
         bool setColumnName(size_t index, const std::string& name);
 
         // Compatibility checking
@@ -89,13 +89,13 @@ namespace bcsv {
         void clear();
         bool addColumn(const ColumnDefinition& column, size_t position = SIZE_MAX);
         void removeColumn(size_t index);
-        void setColumnType(size_t index, ColumnDataType type);
+        void setColumnType(size_t index, ColumnType type);
         void setColumns(const std::vector<ColumnDefinition>& columns);
 
         template<typename OtherLayout>
         requires requires(const OtherLayout& other) {
             { other.getColumnCount() } -> std::convertible_to<size_t>;
-            { other.getColumnType(size_t{}) } -> std::convertible_to<ColumnDataType>;
+            { other.getColumnType(size_t{}) } -> std::convertible_to<ColumnType>;
         }
         Layout& operator=(const OtherLayout& other);
     };
@@ -155,28 +155,28 @@ namespace bcsv {
         constexpr size_t getColumnLength(size_t index) const { if constexpr (RANGE_CHECKING) {return column_lengths.at(index);} else { return column_lengths[index]; } }
         const std::string& getColumnName(size_t index) const { if constexpr (RANGE_CHECKING) {return column_names_.at(index);} else { return column_names_[index]; } }
         constexpr size_t getColumnOffset(size_t index) const { if constexpr (RANGE_CHECKING) {return column_offsets.at(index);} else { return column_offsets[index]; } }
-        ColumnDataType getColumnType(size_t index) const { return getColumnTypeT<0>(index); }
+        ColumnType getColumnType(size_t index) const { return getColumnTypeT<0>(index); }
         bool setColumnName(size_t index, const std::string& name);
 
 
         template<size_t Index = 0>
-        ColumnDataType getColumnTypeT(size_t index) const;
+        ColumnType getColumnTypeT(size_t index) const;
 
         template<size_t Index>
-        static constexpr ColumnDataType getColumnType() { return toColumnDataType< column_type<Index> >(); }
+        static constexpr ColumnType getColumnType() { return toColumnType< column_type<Index> >(); }
 
         // Compatibility checking
         template<typename OtherLayout>
         requires requires(const OtherLayout& other) {
             { other.getColumnCount() } -> std::convertible_to<size_t>;
-            { other.getColumnType(size_t{}) } -> std::convertible_to<ColumnDataType>;
+            { other.getColumnType(size_t{}) } -> std::convertible_to<ColumnType>;
         }
         bool isCompatibleWith(const OtherLayout& other) const;
 
         template<typename OtherLayout>
         requires requires(const OtherLayout& other) {
             { other.getColumnCount() } -> std::convertible_to<size_t>;
-            { other.getColumnType(size_t{}) } -> std::convertible_to<ColumnDataType>;
+            { other.getColumnType(size_t{}) } -> std::convertible_to<ColumnType>;
         }
 
         LayoutStatic& operator=(const OtherLayout& other);

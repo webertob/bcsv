@@ -102,13 +102,12 @@ void readStaticBCSV() {
     size_t rowIndex = 0;
     while (reader.readNext()) {
         // Use template get<N>() method for type-safe access
-        const auto& rowView = reader.row();
-        auto id = rowView.get<0>();
-        auto name = rowView.get<1>();
-        auto score = rowView.get<2>();
-        auto active = rowView.get<3>();
-        
-        std::cout << std::setw(2) << id << " | " 
+        auto id = reader.row().get<0>();
+        auto name = reader.row().get<1>();
+        auto score = reader.row().get<2>();
+        auto active = reader.row().get<3>();
+
+        std::cout << std::setw(2) << id << " | "
                   << std::setw(14) << std::left << name << " | "
                   << std::setw(5) << std::right << std::fixed << std::setprecision(1) << score << " | "
                   << (active ? "Yes" : "No") << "\n";

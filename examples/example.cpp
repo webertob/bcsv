@@ -20,10 +20,10 @@ void writeFlexibleBCSV() {
     bcsv::Layout layout;
     
     // Add columns with name and data type
-    layout.addColumn({"id", bcsv::ColumnDataType::INT32});
-    layout.addColumn({"name", bcsv::ColumnDataType::STRING});
-    layout.addColumn({"score", bcsv::ColumnDataType::FLOAT});
-    layout.addColumn({"active", bcsv::ColumnDataType::BOOL});
+    layout.addColumn({"id", bcsv::ColumnType::INT32});
+    layout.addColumn({"name", bcsv::ColumnType::STRING});
+    layout.addColumn({"score", bcsv::ColumnType::FLOAT});
+    layout.addColumn({"active", bcsv::ColumnType::BOOL});
     std::cout << "Created layout with " << layout.getColumnCount() << " columns\n";
 
     // Step 2: Create a writer
@@ -72,10 +72,10 @@ void readFlexibleBCSV() {
     // Step 1: Create matching layout for reading
     // Must match the layout used for writing
     bcsv::Layout layoutExpected;
-    layoutExpected.addColumn({"id", bcsv::ColumnDataType::INT32});
-    layoutExpected.addColumn({"name", bcsv::ColumnDataType::STRING});
-    layoutExpected.addColumn({"score", bcsv::ColumnDataType::FLOAT});
-    layoutExpected.addColumn({"active", bcsv::ColumnDataType::BOOL});
+    layoutExpected.addColumn({"id", bcsv::ColumnType::INT32});
+    layoutExpected.addColumn({"name", bcsv::ColumnType::STRING});
+    layoutExpected.addColumn({"score", bcsv::ColumnType::FLOAT});
+    layoutExpected.addColumn({"active", bcsv::ColumnType::BOOL});
 
     // Step 2: Create a reader
     const std::string filename = "example_flexible.bcsv";
@@ -109,11 +109,10 @@ void readFlexibleBCSV() {
     // Step 3: Read rows using RowView
     size_t rowIndex = 0;
     while (reader.readNext()) {
-        auto row = reader.row();
-        auto id = row.get<int32_t>(0);
-        auto name = row.get<std::string>(1);
-        auto score = row.get<float>(2);
-        auto active = row.get<bool>(3);
+        auto id = reader.row().get<int32_t>(0);
+        auto name = reader.row().get<std::string>(1);
+        auto score = reader.row().get<float>(2);
+        auto active = reader.row().get<bool>(3);
 
         std::cout << std::setw(2) << id << " | "
                   << std::setw(14) << std::left << name << " | "

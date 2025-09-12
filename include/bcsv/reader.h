@@ -30,7 +30,9 @@ namespace bcsv {
      */
     template<LayoutConcept LayoutType>
     class Reader {
-        LayoutType              layout_;
+        using RowType = typename LayoutType::RowType;
+        using RowViewType = typename LayoutType::RowViewType;
+
         ReaderMode              mode_ = ReaderMode::STRICT; // Default to strict mode for backward compatibility
         FileHeader              fileHeader_;                // File header for accessing flags and metadata
         std::filesystem::path   filePath_;                  // Always present
@@ -41,7 +43,7 @@ namespace bcsv {
         std::vector<uint16_t>   row_offsets_;                // Row offsets for indexing
         size_t                  row_index_file_   = 0;       // current row index within the file
         size_t                  row_index_packet_ = 0;       // current row index within the packet
-        LayoutType::RowViewType row_view_;                   // current row view
+        RowType                 row_;                        // current row
         size_t                  packet_row_count_ = 0;       // number of rows in the current packet
 
     public:
@@ -56,7 +58,7 @@ namespace bcsv {
         void                                close();
         uint8_t                             getCompressionLevel() const { return fileHeader_.getCompressionLevel(); }
         const std::filesystem::path&        getFilePath() const { return filePath_; }
-        const LayoutType&                   getLayout() const { return layout_; }
+        const LayoutType&                   getLayout() const { return row_.getLayout(); }
         ReaderMode                          getMode() const { return mode_; }
         size_t                              getCurrentRowIndex() const { return row_index_file_; }
         
@@ -64,8 +66,7 @@ namespace bcsv {
         bool                                open(const std::filesystem::path& filepath);
 
         bool                                readNext();
-        const LayoutType::RowViewType&      row() const { return row_view_; }
-
+        const RowType&                      row() const { return row_; }
         void                                setMode(ReaderMode mode) { mode_ = mode; }
 
     private:
