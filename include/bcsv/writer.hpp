@@ -113,7 +113,7 @@ namespace bcsv {
             fileHeader_ = FileHeader(layout_.getColumnCount(), static_cast<uint8_t>(compressionLevel));
             fileHeader_.writeToBinary(stream_, layout_);
             row_cnt_ = 0;
-            row = LayoutType::RowType(layout_);
+            row = typename LayoutType::RowType(layout_);
             return true;
 
         } catch (const std::filesystem::filesystem_error& ex) {

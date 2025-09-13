@@ -26,6 +26,17 @@ namespace bcsv {
         column_offsets_ = other.column_offsets_;
     }
 
+    inline Layout& Layout::operator=(const Layout& other) {
+        if (this != &other) {
+            column_types_ = other.column_types_;
+            column_names_ = other.column_names_;
+            column_index_ = other.column_index_;
+            column_lengths_ = other.column_lengths_;
+            column_offsets_ = other.column_offsets_;
+        }
+        return *this;
+    }
+
     // Implementation included inline for header-only library
     inline Layout::Layout(const std::vector<ColumnDefinition>& columns) {
         setColumns(columns);

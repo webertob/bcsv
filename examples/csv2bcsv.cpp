@@ -63,7 +63,7 @@ bcsv::ColumnType detectOptimalType(const ColumnStats& stats) {
             return bcsv::ColumnType::UINT16;
         } else if (stats.min_int >= -32768 && stats.max_int <= 32767) {
             return bcsv::ColumnType::INT16;
-        } else if (stats.min_int >= 0 && stats.max_int <= 4294967295ULL) {
+        } else if (stats.min_int >= 0 && stats.max_int <= static_cast<int64_t>(4294967295ULL)) {
             return bcsv::ColumnType::UINT32;
         } else if (stats.min_int >= INT32_MIN && stats.max_int <= INT32_MAX) {
             return bcsv::ColumnType::INT32;

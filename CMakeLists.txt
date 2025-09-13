@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.50)
+cmake_minimum_required(VERSION 3.28)
 project(bcsv VERSION 1.0.0 LANGUAGES CXX C)
 
 # Set C++ standard
@@ -46,6 +46,7 @@ if(LZ4_FOUND)
     target_link_libraries(lz4_system INTERFACE ${LZ4_LIBRARIES})
     target_compile_options(lz4_system INTERFACE ${LZ4_CFLAGS_OTHER})
     set(LZ4_TARGET lz4_system)
+    set(USING_SYSTEM_LZ4 TRUE)
 else()
     message(STATUS "System LZ4 not found or too old (need >= 1.9) - using local copy")
     # Use local LZ4 copy in include/lz4-1.10.0/
@@ -71,6 +72,7 @@ else()
     )
     
     set(LZ4_TARGET lz4_local)
+    set(USING_SYSTEM_LZ4 FALSE)
 endif()
 
 # Create interface library for modular header-only bcsv
@@ -82,8 +84,27 @@ target_include_directories(bcsv INTERFACE
     $<INSTALL_INTERFACE:include>
 )
 
-# Link Boost and LZ4 libraries using our target variables
-target_link_libraries(bcsv INTERFACE ${BOOST_TARGET} ${LZ4_TARGET})
+# Link dependencies differently for build vs install
+if(Boost_FOUND)
+    # For system boost, add the include paths directly to bcsv
+    target_include_directories(bcsv INTERFACE ${Boost_INCLUDE_DIRS})
+    if(TARGET Boost::boost)
+        target_link_libraries(bcsv INTERFACE Boost::boost)
+    endif()
+else()
+    # For local boost, link the target
+    target_link_libraries(bcsv INTERFACE ${BOOST_TARGET})
+endif()
+
+if(USING_SYSTEM_LZ4)
+    # For system LZ4, add paths directly to bcsv
+    target_include_directories(bcsv INTERFACE ${LZ4_INCLUDE_DIRS})
+    target_link_libraries(bcsv INTERFACE ${LZ4_LIBRARIES})
+    target_compile_options(bcsv INTERFACE ${LZ4_CFLAGS_OTHER})
+else()
+    # For local LZ4, link the target
+    target_link_libraries(bcsv INTERFACE ${LZ4_TARGET})
+endif()
 
 # Compiler-specific options
 target_compile_features(bcsv INTERFACE cxx_std_20)
@@ -110,18 +131,18 @@ endif()
 # Installation rules
 install(DIRECTORY include/ DESTINATION include)
 
-# Install bcsv target
-install(TARGETS bcsv EXPORT bcsvConfig)
+# Only install our own targets, not system libraries
+set(INSTALL_TARGETS bcsv)
 
 # Install local Boost target if using local copy
 if(NOT Boost_FOUND)
-    install(TARGETS boost_local EXPORT bcsvConfig)
+    list(APPEND INSTALL_TARGETS boost_local)
 endif()
 
-# Install LZ4 headers and target if using local copy
-if(NOT LZ4_FOUND)
-    # Install local LZ4 target (using the actual target name)
-    install(TARGETS lz4_local EXPORT bcsvConfig)
+# Install LZ4 target if using local copy
+if(NOT USING_SYSTEM_LZ4)
+    list(APPEND INSTALL_TARGETS lz4_local)
 endif()
 
+install(TARGETS ${INSTALL_TARGETS} EXPORT bcsvConfig)
 install(EXPORT bcsvConfig DESTINATION lib/cmake/bcsv)

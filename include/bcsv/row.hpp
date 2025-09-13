@@ -318,7 +318,7 @@ namespace bcsv {
             throw std::out_of_range("Index out of range");
         }
 
-        if (toColumnDataType<T>() != layout_.getColumnType(index)) {
+        if (toColumnType<T>() != layout_.getColumnType(index)) {
             throw std::runtime_error("Type mismatch with layout");
         }
 
@@ -665,15 +665,15 @@ namespace bcsv {
             }
 
             // Copy string data into buffer (truncate to strLen)
-            std::memcpy(buffer_ + strOff, value.data(), std::min(value.size(), strLen));
+            std::memcpy(buffer_.data() + strOff, value.data(), std::min(value.size(), strLen));
             if(value.size() < strLen) {
                 // Pad with null bytes if shorter
-                std::memset(buffer_ + strOff + value.size(), 0, strLen - value.size());
+                std::memset(buffer_.data() + strOff + value.size(), 0, strLen - value.size());
             }
         
         } else {
             // Handle primitive case
-            std::memcpy(buffer_ + off, &value, len);
+            std::memcpy(buffer_.data() + off, &value, len);
         }
     }
 
@@ -711,11 +711,18 @@ namespace bcsv {
     template<typename... ColumnTypes>
     RowStatic<ColumnTypes...> RowViewStatic<ColumnTypes...>::toRow() const
     {
-        RowStatic<ColumnTypes...> row;
-        for(size_t i = 0; i < column_count; ++i) {
-            row.set<i>(this->get<i>());
-        }
+        RowStatic<ColumnTypes...> row(layout_);
+        copyElements<0>(row);
         return row;
+    }
+
+    template<typename... ColumnTypes>
+    template<size_t Index>
+    void RowViewStatic<ColumnTypes...>::copyElements(RowStatic<ColumnTypes...>& row) const {
+        if constexpr (Index < column_count) {
+            row.template set<Index>(this->template get<Index>());
+            copyElements<Index + 1>(row);
+        }
     }
 
     template<typename... ColumnTypes>

@@ -19,7 +19,7 @@ namespace bcsv {
 
     template<LayoutConcept LayoutType>
     Reader<LayoutType>::Reader(ReaderMode mode) 
-    : mode_(mode), row_(LayoutType()), fileHeader_() 
+    : mode_(mode), fileHeader_(), row_(LayoutType())
     {
         buffer_raw_.reserve(LZ4_BLOCK_SIZE_KB * 1024);
         buffer_zip_.reserve(LZ4_COMPRESSBOUND(LZ4_BLOCK_SIZE_KB * 1024));
@@ -44,7 +44,7 @@ namespace bcsv {
             return;
         }
         fileHeader_ = FileHeader();
-        row_ = LayoutType::RowType(LayoutType()); // reset layout and row
+        row_ = typename LayoutType::RowType(LayoutType()); // reset layout and row
         stream_.close();
         filePath_.clear();
         buffer_raw_.clear();
@@ -128,11 +128,11 @@ namespace bcsv {
         LayoutType layout;
         if(!fileHeader_.readFromBinary(stream_, layout)) {
             fileHeader_ = FileHeader();
-            row_ = LayoutType::RowType(LayoutType()); // reset layout and row
+            row_ = typename LayoutType::RowType(LayoutType()); // reset layout and row
             std::cerr << "Error: Failed to read or validate file header" << std::endl;
             return false;
         } else {
-            row_ = LayoutType::RowType(layout);
+            row_ = typename LayoutType::RowType(layout);
         }
         return true;
     }

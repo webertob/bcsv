@@ -3,6 +3,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <vector>
+#include <limits>
+#include <new>
+#include <cstdlib>
 
 namespace bcsv {
 

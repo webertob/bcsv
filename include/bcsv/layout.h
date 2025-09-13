@@ -65,11 +65,12 @@ namespace bcsv {
         void updateIndex();
 
     public:
-        using RowType = typename Row;
-        using RowViewType = typename RowView;
+        using RowType = Row;
+        using RowViewType = RowView;
 
         Layout() = default;
         Layout(const Layout& other);
+        Layout& operator=(const Layout& other);
         explicit Layout(const std::vector<ColumnDefinition>& columns);
         ~Layout() = default;
 
@@ -115,8 +116,8 @@ namespace bcsv {
         void updateIndex();
 
     public:
-        using RowType = typename RowStatic<ColumnTypes...>;
-        using RowViewType = typename RowViewStatic<ColumnTypes...>;
+        using RowType = RowStatic<ColumnTypes...>;
+        using RowViewType = RowViewStatic<ColumnTypes...>;
 
         using column_types = std::tuple<ColumnTypes...>;
         template<size_t Index>

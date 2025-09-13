@@ -96,7 +96,7 @@ namespace bcsv {
 
     // FileHeader method implementations that require ColumnLayout definition
     template<LayoutConcept LayoutType>
-    inline static size_t FileHeader::getBinarySize(const LayoutType& layout) {
+    inline size_t FileHeader::getBinarySize(const LayoutType& layout) {
         size_t size = sizeof(FileHeaderStruct);                    // Fixed header
         size += layout.getColumnCount() * sizeof(uint16_t);        // Column data types
         size += layout.getColumnCount() * sizeof(uint16_t);        // Column name lengths

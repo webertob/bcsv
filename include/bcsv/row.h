@@ -419,6 +419,9 @@ namespace bcsv {
     private:
         template<size_t Index = 0>
         bool validateStringPayloads() const;
+        
+        template<size_t Index = 0>
+        void copyElements(RowStatic<ColumnTypes...>& row) const;
     };
 
 } // namespace bcsv
