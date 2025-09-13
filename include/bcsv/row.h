@@ -276,7 +276,7 @@ namespace bcsv {
 
         // serialization/deserialization
         void serializedSize(size_t& fixedSize, size_t& totalSize) const;
-        void serializeTo(std::span<std::byte> buffer) const;
+        void serializeTo(ByteBuffer& buffer) const;
         bool deserializeFrom(const std::span<const std::byte> buffer);
     };
 
@@ -364,7 +364,7 @@ namespace bcsv {
 
         // serialization/deserialization 
         void serializedSize(size_t& fixedSize, size_t& totalSize) const;
-        void serializeTo(std::span<std::byte> buffer) const;
+        void serializeTo(ByteBuffer& buffer) const;
         bool deserializeFrom(const std::span<const std::byte> buffer);
 
     private:

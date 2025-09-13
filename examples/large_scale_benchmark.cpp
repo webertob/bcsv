@@ -590,14 +590,19 @@ public:
         std::cout << "  BCSV Static:     " << staticThroughput << "\n\n";
         
         std::cout << "Recommendations for Large-Scale Data Processing:\n";
-        if (staticTimes.first < flexibleTimes.first * 0.9) {
-            std::cout << "  ✓ Use BCSV Static for write-heavy workloads\n";
-        }
-        if (staticTimes.second < flexibleTimes.second * 0.9) {
-            std::cout << "  ✓ Use BCSV Static for read-heavy workloads\n";
-        }
-        std::cout << "  ✓ BCSV provides significant performance and storage benefits over CSV\n";
-        std::cout << "  ✓ File size reduction of " << std::setprecision(1) << (100.0 - (flexibleSize * 100.0 / csvSize)) << "% saves substantial disk space\n";
+            // Only recommend BCSV over CSV if it is actually faster or smaller
+            bool bcsvFaster = (flexibleTimes.first + flexibleTimes.second) < (csvTimes.first + csvTimes.second);
+            bool bcsvSmaller = flexibleSize < csvSize;
+            if (bcsvFaster && bcsvSmaller) {
+                std::cout << "  ✓ BCSV provides significant performance and storage benefits over CSV\n";
+            } else if (bcsvFaster) {
+                std::cout << "  ✓ BCSV is faster than CSV, but CSV is smaller in this run\n";
+            } else if (bcsvSmaller) {
+                std::cout << "  ✓ BCSV is smaller than CSV, but CSV is faster in this run\n";
+            } else {
+                std::cout << "  → CSV outperformed BCSV in both speed and size in this run\n";
+            }
+            std::cout << "  File size reduction: " << std::setprecision(1) << (100.0 - (flexibleSize * 100.0 / csvSize)) << "%\n";
     }
 
     void runLargeScaleBenchmark() {

@@ -103,7 +103,6 @@ namespace bcsv {
     void Row::serializedSize(size_t& fixedSize, size_t& totalSize) const {
         fixedSize = 0;
         totalSize = 0;
-        
         for (const auto& value : data_) {
             std::visit([&](const auto& v) {
                 using T = std::decay_t<decltype(v)>; 
@@ -118,21 +117,19 @@ namespace bcsv {
         }
         totalSize += fixedSize;
         // Calculate padding needed for 4-byte alignment
-        size_t paddingBytes = (4 - (totalSize % 4)) % 4;
-        totalSize += paddingBytes;
+        // size_t paddingBytes = (4 - (totalSize % 4)) % 4;
+        // totalSize += paddingBytes;
     }
 
-    void Row::serializeTo(std::span<std::byte> buffer) const  {
-        size_t totalSize = 0;
-        size_t fixedSize = 0;
+    void Row::serializeTo(ByteBuffer& buffer) const  {
+        size_t fixedSize, totalSize;
         serializedSize(fixedSize, totalSize);
 
-        if (RANGE_CHECKING && buffer.size() < totalSize) {
-            throw std::runtime_error("Buffer too small for serialization");
-        }
-
-        std::byte*  ptrFix = buffer.data();             // Pointer to the start of fixed-size data
-        std::byte*  ptrStr = buffer.data() + fixedSize; // Pointer to the start of string data
+        // we append to the end of the buffer
+        std::byte*  ptrFix = buffer.data() + buffer.size(); // Pointer to the start of fixed-size data
+        std::byte*  ptrStr = ptrFix + fixedSize;            // Pointer to the start of string data
+        buffer.resize(buffer.size() + totalSize);           // Ensure buffer is large enough
+        
         size_t strOff = fixedSize;
         for (const auto& value : data_) {
             std::visit([&](const auto& v) {
@@ -152,7 +149,7 @@ namespace bcsv {
             }, value);
         }
         // Zero out any padding bytes to maintain clean data
-        std::memset(ptrStr, 0, totalSize - (ptrStr - buffer.data()));
+        // std::memset(ptrStr, 0, totalSize - (ptrStr - buffer.data()));
     }
 
     bool Row::deserializeFrom(const std::span<const std::byte> buffer)
@@ -400,7 +397,6 @@ namespace bcsv {
 
 
 
-
     // ========================================================================
     // RowStatic Implementation
     // ========================================================================
@@ -524,7 +520,7 @@ namespace bcsv {
         calculateStringSizes<0>(totalSize);
         
         // Calculate padding needed for 4-byte alignment
-        totalSize += (4 - (totalSize % 4)) % 4;
+        //totalSize += (4 - (totalSize % 4)) % 4;
     }
 
     template<typename... ColumnTypes>
@@ -540,48 +536,37 @@ namespace bcsv {
     }
 
     template<typename... ColumnTypes>
-    void RowStatic<ColumnTypes...>::serializeTo(std::span<std::byte> buffer) const {
-        size_t totalSize = 0;
-        size_t fixedSize = 0;
+    void RowStatic<ColumnTypes...>::serializeTo(ByteBuffer& buffer) const {
+        size_t fixedSize, totalSize;
         serializedSize(fixedSize, totalSize);
 
-        if (RANGE_CHECKING && buffer.size() < totalSize) {
-            throw std::runtime_error("Buffer is too small for serialization");
-        }
+        std::span<std::byte> rowBuffer(buffer.data()+buffer.size(), totalSize);
+        buffer.resize(buffer.size() + totalSize); // Ensure buffer is large enough
 
         // Serialize each tuple element using compile-time recursion
-        size_t str_offset = fixedSize;
-        
-        serializeElements<0>(buffer, str_offset);
+        serializeElements<0>(rowBuffer, fixedSize);
+
         // Zero out any remaining padding bytes to maintain clean data
-        std::memset(buffer.data() + str_offset, 0, buffer.size() - str_offset);
+        // std::memset(buffer.data() + str_offset, 0, buffer.size() - str_offset);
     }
 
     template<typename... ColumnTypes>
     template<size_t Index>
-    void RowStatic<ColumnTypes...>::serializeElements(std::span<std::byte> &dstBuffer, size_t& strOffset) const {
+    void RowStatic<ColumnTypes...>::serializeElements(std::span<std::byte> &buffer, size_t& strPtr) const {
         if constexpr (Index < column_count) {
             constexpr size_t len = LayoutType::column_lengths[Index];
             constexpr size_t off = LayoutType::column_offsets[Index];
-
             if constexpr (std::is_same_v<column_type<Index>, std::string>) {
                 size_t strLength = std::min(std::get<Index>(data_).size(), MAX_STRING_LENGTH);
-                size_t strAddress = StringAddress::pack(strOffset, strLength);
-                std::memcpy(dstBuffer.data() + off, &strAddress, len);     //write string address field
-                if (RANGE_CHECKING && (strOffset + strLength > dstBuffer.size())) {
-                    throw std::runtime_error("String data at index " + std::to_string(Index) +
-                                               " extends beyond buffer (offset=" + std::to_string(strOffset) +
-                                               ", length=" + std::to_string(strLength) +
-                                               ", bufferSize=" + std::to_string(dstBuffer.size()) + ")");
-                }
-                std::memcpy(dstBuffer.data() + strOffset, std::get<Index>(data_).c_str(), strLength); //write string payload
-                strOffset += strLength;
+                size_t strAddress = StringAddress::pack(strPtr, strLength);
+                std::memcpy(buffer.data() + off, &strAddress, len);                                 //write string address
+                std::memcpy(buffer.data() + strPtr, std::get<Index>(data_).c_str(), strLength);     //write string payload
+                strPtr += strLength;
             } else {
-                std::memcpy(dstBuffer.data() + off, &std::get<Index>(data_), len);
+                std::memcpy(buffer.data() + off, &std::get<Index>(data_), len);
             }
-            
             // Recursively process next element
-            serializeElements<Index + 1>(dstBuffer, strOffset);
+            serializeElements<Index + 1>(buffer, strPtr);
         }
     }
 
