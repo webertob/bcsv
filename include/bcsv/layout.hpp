@@ -42,7 +42,7 @@ namespace bcsv {
         setColumns(columns);
     }
 
-    inline size_t Layout::getColumnIndex(const std::string& columnName) const {
+    inline size_t Layout::columnIndex(const std::string& columnName) const {
         return column_index_.at(columnName);
     }
 
@@ -186,14 +186,13 @@ namespace bcsv {
      */
     inline bool Layout::isCompatibleWith(const Layout& other) const {
         // different column counts means not equivalent
-        if (getColumnCount() != other.getColumnCount()) {
+        if (columnCount() != other.columnCount()) {
             return false;
         }
 
         // different column types means not equivalent
-        const size_t columnCount = getColumnCount();
-        for (size_t i = 0; i < columnCount; ++i) {
-            if (getColumnType(i) != other.getColumnType(i)) {
+        for (size_t i = 0; i < columnCount(); ++i) {
+            if (columnType(i) != other.columnType(i)) {
                 return false;
             }
         }
@@ -202,20 +201,20 @@ namespace bcsv {
 
     template<typename OtherLayout>
     requires requires(const OtherLayout& other) {
-        { other.getColumnCount() } -> std::convertible_to<size_t>;
-        { other.getColumnType(size_t{}) } -> std::convertible_to<ColumnType>;
+        { other.columnCount() } -> std::convertible_to<size_t>;
+        { other.columnType(size_t{}) } -> std::convertible_to<ColumnType>;
     }
     inline Layout& Layout::operator=(const OtherLayout& other) {
         clear();
-        size_t size = other.getColumnCount();
+        size_t size = other.columnCount();
         column_names_.resize(size);
         column_types_.resize(size);
         column_lengths_.resize(size);
         column_offsets_.resize(size);
 
         for (size_t i = 0; i < size; ++i) {
-            column_types_[i] = other.getColumnType(i);
-            column_names_[i] = other.getColumnName(i);
+            column_types_[i] = other.columnType(i);
+            column_names_[i] = other.columnName(i);
             column_lengths_[i] = other.getColumnLength(i);
             column_index_[column_names_[i]] = i;
         }
@@ -262,7 +261,7 @@ namespace bcsv {
     }
 
     template<typename... ColumnTypes>
-    inline size_t LayoutStatic<ColumnTypes...>::getColumnIndex(const std::string& columnName) const {
+    inline size_t LayoutStatic<ColumnTypes...>::columnIndex(const std::string& columnName) const {
         return column_index_.at(columnName);
     }
 
@@ -294,12 +293,12 @@ namespace bcsv {
     // Recursive helper to get type at runtime index
     template<typename... ColumnTypes>
     template<size_t Index>
-    inline ColumnType LayoutStatic<ColumnTypes...>::getColumnTypeT(size_t index) const {
+    inline ColumnType LayoutStatic<ColumnTypes...>::columnTypeT(size_t index) const {
         if constexpr (Index < sizeof...(ColumnTypes)) {
             if (Index == index) {
                 return toColumnType< column_type<Index> >();
             } else {
-                return this->getColumnTypeT<Index + 1>(index);
+                return this->columnTypeT<Index + 1>(index);
             }
         } else {
             return ColumnType::STRING; // Should never reach here with valid index
@@ -309,18 +308,18 @@ namespace bcsv {
     template<typename... ColumnTypes>
     template<typename OtherLayout>
     requires requires(const OtherLayout& other) {
-        { other.getColumnCount() } -> std::convertible_to<size_t>;
-        { other.getColumnType(size_t{}) } -> std::convertible_to<ColumnType>;
+        { other.columnCount() } -> std::convertible_to<size_t>;
+        { other.columnType(size_t{}) } -> std::convertible_to<ColumnType>;
     }
     inline bool LayoutStatic<ColumnTypes...>::isCompatibleWith(const OtherLayout& other) const {
         // Check if the number of columns is the same
-        if (sizeof...(ColumnTypes) != other.getColumnCount()) {
+        if (sizeof...(ColumnTypes) != other.columnCount()) {
             return false;
         }
 
         // Check if the column types are the same
         for (size_t i = 0; i < sizeof...(ColumnTypes); ++i) {
-            if (getColumnType(i) != other.getColumnType(i)) {
+            if (columnType(i) != other.columnType(i)) {
                 return false;
             }
         }
@@ -331,8 +330,8 @@ namespace bcsv {
     template<typename... ColumnTypes>
     template<typename OtherLayout>
     requires requires(const OtherLayout& other) {
-        { other.getColumnCount() } -> std::convertible_to<size_t>;
-        { other.getColumnType(size_t{}) } -> std::convertible_to<ColumnType>;
+        { other.columnCount() } -> std::convertible_to<size_t>;
+        { other.columnType(size_t{}) } -> std::convertible_to<ColumnType>;
     }
     inline LayoutStatic<ColumnTypes...>& LayoutStatic<ColumnTypes...>::operator=(const OtherLayout& other) {
         if (!this->isCompatibleWith(other)) {
@@ -340,7 +339,7 @@ namespace bcsv {
         }
         if (this != &other) {
             for (size_t i = 0; i < column_names_.size(); ++i) {
-                column_names_[i] = other.getColumnName(i);
+                column_names_[i] = other.columnName(i);
             }
             updateIndex();
         }

@@ -156,7 +156,7 @@ namespace bcsv {
 
         // Compression management
         void setCompressionLevel(uint8_t level);
-        uint8_t getCompressionLevel() const;
+        uint8_t compressionLevel() const;
 
         // Flags management
         void setFlag(uint16_t flag, bool value);

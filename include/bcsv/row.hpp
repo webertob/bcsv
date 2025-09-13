@@ -38,19 +38,48 @@ namespace bcsv {
     // ========================================================================
 
     Row::Row(const Layout &layout)
-        : layout_(layout), data_(layout.getColumnCount()) 
+        : layout_(layout), data_(layout.columnCount()) 
     {
-        for(size_t i = 0; i < layout.getColumnCount(); ++i) {
-            data_[i] = defaultValue(layout.getColumnType(i));
+        for(size_t i = 0; i < layout.columnCount(); ++i) {
+            data_[i] = defaultValue(layout.columnType(i));
         }
     }
 
     /** Clear the row to its default state (default values) */
     void Row::clear()
     {
-        for(size_t i = 0; i < layout_.getColumnCount(); ++i) {
-            data_[i] = defaultValue(layout_.getColumnType(i));
+        for(size_t i = 0; i < layout_.columnCount(); ++i) {
+            data_[i] = defaultValue(layout_.columnType(i));
         }
+    }
+
+    /** Enable or disable change tracking (i.e. used for Zero-Order-Hold compression)*/
+    inline
+    void Row::trackChanges(bool enable)
+    {
+        if (enable) {
+            // add one extra entry for overall change flag
+            // we start with all true to indicate everything is "changed"
+            changes_.resize(layout_.columnCount() + 1, true); 
+        } else {
+            changes_.clear();
+        }
+    }
+
+    /** Check if change tracking is enabled */ 
+    inline
+    bool Row::tracksChanges() const
+    {
+        return !changes_.empty();
+    }
+    
+    /** Reset all change flags to false
+     *  Indicates that no columns have been modified since last reset.
+     */
+    inline
+    void Row::resetChanges()
+    { 
+        std::fill(changes_.begin(), changes_.end(), false);
     }
 
     /** Get the value at the specified column index */
@@ -85,13 +114,21 @@ namespace bcsv {
             using CurrentType = std::decay_t<decltype(currentValue)>;
             
             // Ensure current variant matches layout (should always be true)
-            if (RANGE_CHECKING && toColumnType<CurrentType>() != layout_.getColumnType(index)) {
+            if (RANGE_CHECKING && toColumnType<CurrentType>() != layout_.columnType(index)) {
                 throw std::runtime_error("Internal error: variant type doesn't match layout");
             }
             
             if constexpr (std::is_same_v<ProvidedType, CurrentType>) {
+                if(tracksChanges() && (std::get<CurrentType>(data_[index]) != value)) {
+                    changes_[index] = true; // mark this column as changed
+                    changes_.back() = true; // mark overall change
+                }
                 data_[index] = value;  // Direct assignment
             } else if constexpr (std::is_convertible_v<ProvidedType, CurrentType>) {
+                if(tracksChanges() && (std::get<CurrentType>(data_[index]) != static_cast<CurrentType>(value))) {
+                    changes_[index] = true; // mark this column as changed
+                    changes_.back() = true; // mark overall change
+                }
                 data_[index] = static_cast<CurrentType>(value);  // Safe conversion
             } else {
                 throw std::runtime_error("Cannot convert " + std::string(typeid(ProvidedType).name()) + 
@@ -154,10 +191,10 @@ namespace bcsv {
 
     bool Row::deserializeFrom(const std::span<const std::byte> buffer)
     {
-        for(size_t i = 0; i < layout_.getColumnCount(); ++i) {
-            ColumnType type = layout_.getColumnType(i);
-            size_t len = layout_.getColumnLength(i);
-            size_t off = layout_.getColumnOffset(i);
+        for(size_t i = 0; i < layout_.columnCount(); ++i) {
+            ColumnType type = layout_.columnType(i);
+            size_t len = layout_.columnLength(i);
+            size_t off = layout_.columnOffset(i);
 
             if (RANGE_CHECKING && (off + len > buffer.size())) {
                 std::cerr << "Field end exceeds buffer size" << std::endl;
@@ -237,12 +274,12 @@ namespace bcsv {
     template<typename T>
     T RowView::get(size_t index) const
     {
-        if (toColumnType<T>() != layout_.getColumnType(index)) {
+        if (toColumnType<T>() != layout_.columnType(index)) {
             throw std::runtime_error("Type mismatch");
         }
 
-        size_t len = layout_.getColumnLength(index);
-        size_t off = layout_.getColumnOffset(index);
+        size_t len = layout_.columnLength(index);
+        size_t off = layout_.columnOffset(index);
         if (RANGE_CHECKING && (off + len > buffer_.size())) {
             throw std::runtime_error("Field end exceeds buffer size");
         }
@@ -269,7 +306,7 @@ namespace bcsv {
     template<>
     ValueType RowView::get<ValueType>(size_t index) const
     {
-        switch (layout_.getColumnType(index)) {
+        switch (layout_.columnType(index)) {
             case ColumnType::BOOL:
                 return ValueType{get<bool>(index)};
             case ColumnType::UINT8:
@@ -321,16 +358,16 @@ namespace bcsv {
     {
         // does not support ValueType
         static_assert(!std::is_same_v<T, ValueType>, "setExplicit does not support ValueType");
-        if (RANGE_CHECKING && index >= layout_.getColumnCount()) {
+        if (RANGE_CHECKING && index >= layout_.columnCount()) {
             throw std::out_of_range("Index out of range");
         }
 
-        if (toColumnType<T>() != layout_.getColumnType(index)) {
+        if (toColumnType<T>() != layout_.columnType(index)) {
             throw std::runtime_error("Type mismatch with layout");
         }
 
-        size_t len = layout_.getColumnLength(index);
-        size_t off = layout_.getColumnOffset(index);
+        size_t len = layout_.columnLength(index);
+        size_t off = layout_.columnOffset(index);
         if (RANGE_CHECKING && (off + len > buffer_.size())) {
             throw std::runtime_error("Field end exceeds buffer size");
         }
@@ -362,7 +399,7 @@ namespace bcsv {
     Row RowView::toRow() const
     {
         Row row(layout_);
-        for(size_t i = 0; i < layout_.getColumnCount(); ++i) {
+        for(size_t i = 0; i < layout_.columnCount(); ++i) {
             ValueType value = get<ValueType>(i);
             row.set(i, value);
         }
@@ -371,20 +408,20 @@ namespace bcsv {
 
     bool RowView::validate() const 
     {
-        if (layout_.getColumnCount() == 0) {
+        if (layout_.columnCount() == 0) {
             return true; // Nothing to validate
         }
         
         // Check last fixed offset (this also covers all previous fields)
-        size_t col_count = layout_.getColumnCount();
-        if (layout_.getColumnOffset(col_count-1) + layout_.getColumnLength(col_count-1) > buffer_.size()) {
+        size_t col_count = layout_.columnCount();
+        if (layout_.columnOffset(col_count-1) + layout_.columnLength(col_count-1) > buffer_.size()) {
             return false;
         }
 
         // special check for strings // variant length
         for(size_t i = 0; i < col_count; ++i) {
-            if (layout_.getColumnType(i) == ColumnType::STRING) {
-                uint64_t packedAddr = *reinterpret_cast<const uint64_t*>(buffer_.data() + layout_.getColumnOffset(i));
+            if (layout_.columnType(i) == ColumnType::STRING) {
+                uint64_t packedAddr = *reinterpret_cast<const uint64_t*>(buffer_.data() + layout_.columnOffset(i));
                 size_t strOff, strLen;
                 StringAddress::unpack(packedAddr, strOff, strLen);
                 if (strOff + strLen > buffer_.size()) {
@@ -409,13 +446,36 @@ namespace bcsv {
     }
 
     template<typename... ColumnTypes>
-    template<size_t I>
+    template<size_t Index>
     void RowStatic<ColumnTypes...>::clearHelper()
     {
-        if constexpr (I < column_count) {
-            std::get<I>(data_) = {};  // Use default construction
-            clearHelper<I + 1>();
+        if constexpr (Index < column_count) {
+            std::get<Index>(data_) = defaultValueT<column_type<Index>>();
+            clearHelper<Index + 1>();
         }
+    }
+
+    template<typename... ColumnTypes>
+    void RowStatic<ColumnTypes...>::trackChanges(bool enable)
+    {
+        if (enable) {
+            changes_.set();     // mark everything as changed initially, this also enables tracking (last bit is 1)
+        } else {
+            changes_.reset();   // disable tracking (last bit is 0)
+        }
+    }
+
+    template<typename... ColumnTypes>
+    bool RowStatic<ColumnTypes...>::trackChanges() const
+    {
+        return changes_.test(column_count + 1); // last bit indicates if tracking is enabled
+    }
+
+    template<typename... ColumnTypes>
+    void RowStatic<ColumnTypes...>::resetChanges()
+    {
+        std::bitset<column_count+2> mask(1 << (column_count + 1));  // keep tracking enabled/disabled state
+        changes_ &= mask;                                           // reset all change flags, keep tracking state
     }
 
     /** Get the value at the specified column index */
@@ -437,59 +497,52 @@ namespace bcsv {
     template<size_t Index>
     void RowStatic<ColumnTypes...>::set(const auto& value) {
         static_assert(Index < column_count, "Index out of bounds");
-
-        using ProvidedType = std::decay_t<decltype(value)>;
         using ExpectedType = column_type<Index>;
 
-        if constexpr (std::is_same_v<ProvidedType, ValueType>) {
-            // Handle ValueType (variant) - extract actual type
+        if constexpr (std::is_same_v<decltype(value), ValueType>) {
             std::visit([this](auto&& actualValue) {
                 using ActualType = std::decay_t<decltype(actualValue)>;
                 if constexpr (std::is_same_v<ActualType, ExpectedType>) {
-                    std::get<Index>(data_) = actualValue;
+                    markChangedAndSet<Index>(actualValue);
+                } else if constexpr (std::is_convertible_v<ActualType, ExpectedType>) {
+                    markChangedAndSet<Index>(static_cast<ExpectedType>(actualValue));
                 } else {
-                    throw std::runtime_error("ValueType contains wrong type for column " + std::to_string(Index));
+                    static_assert(std::is_convertible_v<ActualType, ExpectedType>,
+                                "Cannot convert provided type to column type");
                 }
             }, value);
-        } else if constexpr (std::is_same_v<ProvidedType, ExpectedType>) {
-            // Direct assignment for matching types
-            std::get<Index>(data_) = value;
-        } else if constexpr (std::is_convertible_v<ProvidedType, ExpectedType>) {
-            // Safe conversion
-            std::get<Index>(data_) = static_cast<ExpectedType>(value);
         } else {
-            static_assert(std::is_convertible_v<ProvidedType, ExpectedType>,
-                        "Cannot convert provided type to column type");
-        }
+            const auto& actualValue = value;  // Now this can be a reference!
+            using ActualType = std::decay_t<decltype(actualValue)>;
+            if constexpr (std::is_same_v<ActualType, ExpectedType>) {
+                markChangedAndSet<Index>(actualValue);
+            } else if constexpr (std::is_convertible_v<ActualType, ExpectedType>) {
+                markChangedAndSet<Index>(static_cast<ExpectedType>(actualValue));
+            } else {
+                static_assert(std::is_convertible_v<ActualType, ExpectedType>,
+                            "Cannot convert provided type to column type");
+            }
+        }        
     }
 
     template<typename... ColumnTypes>
     template<size_t Index, typename T>
-    void RowStatic<ColumnTypes...>::setExplicit(const T& value) {
-        static_assert(Index < column_count, "Index out of bounds");
-
-        using ExpectedType = column_type<Index>;
-
-        if constexpr (std::is_same_v<T, ExpectedType>) {
-            // Direct assignment for matching types
-            std::get<Index>(data_) = value;
-        } else if constexpr (std::is_convertible_v<T, ExpectedType>) {
-            // Safe conversion
-            std::get<Index>(data_) = static_cast<ExpectedType>(value);
-        } else {
-            static_assert(std::is_convertible_v<T, ExpectedType>,
-                        "Cannot convert provided type to column type");
+    void RowStatic<ColumnTypes...>::markChangedAndSet(const T& value) {
+        if(trackChanges() && (std::get<Index>(data_) != value)) {
+            changes_.set(Index);
+            changes_.set(column_count);
         }
+        std::get<Index>(data_) = value;
     }
 
     template<typename... ColumnTypes>
-    template<size_t I>
+    template<size_t Index>
     ValueType RowStatic<ColumnTypes...>::get(size_t index) const {
-        if constexpr (I < column_count) {
-            if(index == I) {
-                return ValueType{std::get<I>(data_)}; 
+        if constexpr (Index < column_count) {
+            if(index == Index) {
+                return ValueType{std::get<Index>(data_)}; 
             } else {
-                return this->get<I + 1>(index);
+                return this->get<Index + 1>(index);
             }
         } else {
             throw std::out_of_range("Index out of range");
@@ -497,13 +550,13 @@ namespace bcsv {
     }
 
     template<typename... ColumnTypes>
-    template<size_t I>
+    template<size_t Index>
     void RowStatic<ColumnTypes...>::set(size_t index, const auto& value) {
-        if constexpr (I < column_count) {
-            if(index == I) {
-                this->set<I>(value);
+        if constexpr (Index < column_count) {
+            if(index == Index) {
+                this->set<Index>(value);
             } else {
-                this->set<I + 1>(index, value);
+                this->set<Index + 1>(index, value);
             }
         } else {
             throw std::out_of_range("Index out of range");

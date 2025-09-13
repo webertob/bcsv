@@ -1,6 +1,6 @@
 #pragma once
 
-
+#include <bitset>
 #include <cstring>
 #include <iostream>
 #include <map>
@@ -257,57 +257,62 @@ namespace bcsv {
 
     /* Dynamic row with flexible layout (runtime-defined)*/
     class Row {
-        Layout                    layout_;    
-        std::vector<ValueType>    data_;
-    
+        Layout                    layout_;  // layout defining column types and order
+        std::vector<ValueType>    data_;    // store values for each column
+        std::vector<bool>         changes_; // change tracking
+        /* change tracking i.e. for Zero-Order-Hold compression
+        *  changes_[0:column_count  ] == true   indicates column i has been modified since last reset.
+        *  changes_[column_count    ] == true   indicates that at least one column has been modified.
+        *  changes_.empty()           == true   indicates change tracking is disabled.
+        */
+        
     public:
         Row(const Layout& layout);
         Row() = delete;
         ~Row() = default;
 
-        void clear(); 
+        void                    clear(); 
+        const Layout&           layout() const                  { return layout_; }
+        void                    trackChanges(bool enable);      
+        bool                    tracksChanges() const;
+        void                    resetChanges();
 
-        // Layout access
-        const Layout& getLayout() const { return layout_; }
-        
-        template<typename T = ValueType>
-        const T& get(size_t index) const;
-        void set(size_t index, const auto& value);
+                                template<typename T = ValueType>
+        const T&                get(size_t index) const;
+        void                    set(size_t index, const auto& value);
 
-        // serialization/deserialization
-        void serializedSize(size_t& fixedSize, size_t& totalSize) const;
-        void serializeTo(ByteBuffer& buffer) const;
-        bool deserializeFrom(const std::span<const std::byte> buffer);
+        void                    serializedSize(size_t& fixedSize, size_t& totalSize) const;
+        void                    serializeTo(ByteBuffer& buffer) const;
+        bool                    deserializeFrom(const std::span<const std::byte> buffer);
     };
 
 
 
     /* Direct view into a buffer. Supports Row interface */
     class RowView {
-        Layout                  layout_;
-        std::span<std::byte>    buffer_;
-
-        template<typename T>
-        void setExplicit(size_t index, const T& value);
+        Layout                          layout_;
+        std::span<std::byte>            buffer_;
 
     public:
         RowView() = delete;
         RowView(const Layout& layout, std::span<std::byte> buffer = {})
-            : layout_(layout), buffer_(buffer) {}
+            : layout_(layout), buffer_(buffer)                                          {}
         ~RowView() = default;
 
-        template<typename T = ValueType>
-        T get(size_t index) const;
-        const std::span<std::byte>& getBuffer() const { return buffer_; }
-        const Layout& getLayout() const { return layout_; }
-        void set(size_t index, const auto& value);
-        void setBuffer(const std::span<std::byte> &buffer) { buffer_ = buffer; }
+                                        template<typename T = ValueType>
+        T                               get(size_t index) const;
+        const std::span<std::byte>&     buffer() const                                  { return buffer_; }
+        const Layout&                   layout() const                                  { return layout_; }
+        void                            set(size_t index, const auto& value);
+        void                            setBuffer(const std::span<std::byte> &buffer)   { buffer_ = buffer; }
 
-        Row toRow() const;
-        bool validate() const;
+        Row                             toRow() const;
+        bool                            validate() const;
+    private:
+    
+                                        template<typename T>
+        void                            setExplicit(size_t index, const T& value);
     };
-
-
 
 
 
@@ -325,12 +330,15 @@ namespace bcsv {
         using column_types = typename LayoutType::column_types;
 
     private:
-        LayoutType   layout_;
-        column_types data_;
-        
-        template<size_t I>
-        void clearHelper();
-        
+        LayoutType                      layout_;
+        column_types                    data_;
+        std::bitset<column_count + 2>   changes_; 
+        /* change tracking i.e. for Zero-Order-Hold compression
+        *  changes_[0:column_count  ] == true   indicates column i has been modified since last reset.
+        *  changes_[column_count    ] == true   indicates that at least one column has been modified.
+        *  changes_[column_count + 1] == false  indicates change tracking is disabled.
+        */
+
     public:
         
         // Constructors
@@ -338,44 +346,42 @@ namespace bcsv {
         RowStatic(const LayoutType& layout) : layout_(layout), data_() {}
         ~RowStatic() = default;
        
-        void clear();
-        // Layout access
-        const LayoutType& getLayout() const { return layout_; }
+        void                        clear();
+        const LayoutType&           layout() const { return layout_; }
+        void                        trackChanges(bool enable);
+        bool                        trackChanges() const;
+        void                        resetChanges();
 
-        // get/set using compile time fixed indices
-        template<size_t Index>
-        auto& get();
+                                    template<size_t Index>
+        auto&                       get();
+                                    template<size_t Index>
+        const auto&                 get() const;
+                                    template<size_t Index = 0>
+        ValueType                   get(size_t index) const;
+                                    template<size_t Index = 0>
+        void                        set(size_t index, const auto& value);
+                                    template<size_t Index>
+        void                        set(const auto& value);
 
-        template<size_t Index>
-        const auto& get() const;
-
-        template<size_t Index>
-        void set(const auto& value);
-
-        template<size_t Index, typename T>
-        void setExplicit(const T& value);
-
-        // get/set using run time variable indices
-        template<size_t I = 0>
-        ValueType get(size_t index) const;
-
-        template<size_t I = 0>
-        void set(size_t index, const auto& value);
-
-        // serialization/deserialization 
-        void serializedSize(size_t& fixedSize, size_t& totalSize) const;
-        void serializeTo(ByteBuffer& buffer) const;
-        bool deserializeFrom(const std::span<const std::byte> buffer);
+        void                        serializedSize(size_t& fixedSize, size_t& totalSize) const;
+        void                        serializeTo(ByteBuffer& buffer) const;
+        bool                        deserializeFrom(const std::span<const std::byte> buffer);
 
     private:
-        template<size_t Index>
-        void serializeElements(std::span<std::byte> &dstBuffer, size_t& strOffset) const;
+                                    template<size_t Index>
+        void                        clearHelper();
 
-        template<size_t Index>
-        bool deserializeElements(const std::span<const std::byte> &srcBuffer);
+                                    template<size_t Index, typename T>
+        void                        markChangedAndSet(const T& value);
 
-        template<size_t Index>
-        void calculateStringSizes(size_t& totalSize) const;
+                                    template<size_t Index>
+        void                        serializeElements(std::span<std::byte> &dstBuffer, size_t& strOffset) const;
+
+                                    template<size_t Index>
+        bool                        deserializeElements(const std::span<const std::byte> &srcBuffer);
+
+                                    template<size_t Index>
+        void                        calculateStringSizes(size_t& totalSize) const;
     };
 
 
@@ -407,8 +413,8 @@ namespace bcsv {
         auto get() const;
         template<size_t I = 0>
         ValueType get(size_t index) const;
-        const std::span<std::byte>& getBuffer() const { return buffer_; }
-        const LayoutType& getLayout() const { return layout_; }
+        const std::span<std::byte>& buffer() const { return buffer_; }
+        const LayoutType& layout() const { return layout_; }
         
         template<size_t Index>
         void set(const auto& value);

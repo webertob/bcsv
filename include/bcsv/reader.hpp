@@ -195,7 +195,7 @@ namespace bcsv {
                 }
 
                 // Handle decompression based on file compression level
-                if (getCompressionLevel() == 0) {
+                if (compressionLevel() == 0) {
                     // No compression - use compressed buffer directly (avoid LZ4 overhead)
                     buffer_raw_.swap(buffer_zip_); // Efficient swap instead of copy
                 } else {

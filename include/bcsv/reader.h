@@ -57,11 +57,11 @@ namespace bcsv {
                                 ~Reader();
 
         void                    close();
-        uint8_t                 getCompressionLevel() const     { return fileHeader_.getCompressionLevel(); }
-        const FilePath&         getFilePath() const             { return filePath_; }
-        const LayoutType&       getLayout() const               { return row_.getLayout(); }
-        ReaderMode              getMode() const                 { return mode_; }
-        size_t                  getRowIndex() const             { return row_index_file_; }
+        uint8_t                 compressionLevel() const        { return fileHeader_.compressionLevel(); }
+        const FilePath&         filePath() const                { return filePath_; }
+        const LayoutType&       layout() const                  { return row_.layout(); }
+        ReaderMode              mode() const                    { return mode_; }
+        size_t                  rowIndex() const                { return row_index_file_; }
 
         bool                    isOpen() const                  { return stream_.is_open(); }
         bool                    open(const FilePath& filepath);

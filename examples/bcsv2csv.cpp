@@ -261,15 +261,15 @@ int main(int argc, char* argv[]) {
         bcsv::Reader<bcsv::Layout> reader;
         reader.open(config.input_file);
         
-        const auto& layout = reader.getLayout();
+        const auto& layout = reader.layout();
         
         if (config.verbose) {
             std::cout << "Opened BCSV file successfully" << std::endl;
-            std::cout << "Layout contains " << layout.getColumnCount() << " columns:" << std::endl;
+            std::cout << "Layout contains " << layout.columnCount() << " columns:" << std::endl;
             
-            for (size_t i = 0; i < layout.getColumnCount(); ++i) {
-                std::cout << "  " << layout.getColumnName(i) << " (";
-                switch (layout.getColumnType(i)) {
+            for (size_t i = 0; i < layout.columnCount(); ++i) {
+                std::cout << "  " << layout.columnName(i) << " (";
+                switch (layout.columnType(i)) {
                     case bcsv::ColumnType::BOOL: std::cout << "BOOL"; break;
                     case bcsv::ColumnType::INT8: std::cout << "INT8"; break;
                     case bcsv::ColumnType::INT16: std::cout << "INT16"; break;
@@ -305,9 +305,9 @@ int main(int argc, char* argv[]) {
         
         // Write header if requested
         if (config.include_header) {
-            for (size_t i = 0; i < layout.getColumnCount(); ++i) {
+            for (size_t i = 0; i < layout.columnCount(); ++i) {
                 if (i > 0) output << config.delimiter;
-                output << escapeCSVField(layout.getColumnName(i), config.delimiter, config.quote_char, config.quote_all);
+                output << escapeCSVField(layout.columnName(i), config.delimiter, config.quote_char, config.quote_all);
             }
             output << "\n";
         }
@@ -316,7 +316,7 @@ int main(int argc, char* argv[]) {
         size_t row_count = 0;
         
         // Pre-calculate frequently used values outside the loop
-        const size_t num_columns = layout.getColumnCount();
+        const size_t num_columns = layout.columnCount();
         std::string value;  // Reuse string object to reduce allocations
         value.reserve(256); // Pre-allocate capacity for typical field sizes
         
@@ -324,7 +324,7 @@ int main(int argc, char* argv[]) {
             for (size_t col = 0; col < num_columns; ++col) {
                 if (col > 0) output << config.delimiter;
                 
-                value = getRowValueAsString(reader, col, layout.getColumnType(col), config.float_precision);
+                value = getRowValueAsString(reader, col, layout.columnType(col), config.float_precision);
                 output << escapeCSVField(value, config.delimiter, config.quote_char, config.quote_all);
             }
             output << "\n";

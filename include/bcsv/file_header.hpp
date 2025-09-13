@@ -62,7 +62,7 @@ namespace bcsv {
         }
     }
 
-    inline uint8_t FileHeader::getCompressionLevel() const {
+    inline uint8_t FileHeader::compressionLevel() const {
         return header_.compressionLevel;
     }
 
@@ -98,10 +98,10 @@ namespace bcsv {
     template<LayoutConcept LayoutType>
     inline size_t FileHeader::getBinarySize(const LayoutType& layout) {
         size_t size = sizeof(FileHeaderStruct);                    // Fixed header
-        size += layout.getColumnCount() * sizeof(uint16_t);        // Column data types
-        size += layout.getColumnCount() * sizeof(uint16_t);        // Column name lengths
-        for (size_t i = 0; i < layout.getColumnCount(); ++i) {     // Column names
-            size += layout.getColumnName(i).length();
+        size += layout.columnCount() * sizeof(uint16_t);        // Column data types
+        size += layout.columnCount() * sizeof(uint16_t);        // Column name lengths
+        for (size_t i = 0; i < layout.columnCount(); ++i) {     // Column names
+            size += layout.columnName(i).length();
         }
         return size;
     }
@@ -109,29 +109,29 @@ namespace bcsv {
     template<LayoutConcept LayoutType>
     inline bool FileHeader::writeToBinary(std::ostream& stream, const LayoutType& layout) {
         // Update header with current column count
-        header_.columnCount = static_cast<uint16_t>(layout.getColumnCount());
+        header_.columnCount = static_cast<uint16_t>(layout.columnCount());
 
         // Write fixed header
         stream.write(reinterpret_cast<const char*>(&header_), sizeof(header_));
         if (!stream.good()) return false;
 
         // Write column data types
-        for (size_t i = 0; i < layout.getColumnCount(); ++i) {
-            const uint16_t val = static_cast<uint16_t>(layout.getColumnType(i));
+        for (size_t i = 0; i < layout.columnCount(); ++i) {
+            const uint16_t val = static_cast<uint16_t>(layout.columnType(i));
             stream.write(reinterpret_cast<const char*>(&val), sizeof(val));
             if (!stream.good()) return false;
         }
 
         // Write column name lengths
-        for (size_t i = 0; i < layout.getColumnCount(); ++i) {
-            uint16_t val = static_cast<uint16_t>(layout.getColumnName(i).length());
+        for (size_t i = 0; i < layout.columnCount(); ++i) {
+            uint16_t val = static_cast<uint16_t>(layout.columnName(i).length());
             stream.write(reinterpret_cast<const char*>(&val), sizeof(val));
             if (!stream.good()) return false;
         }
 
         // Write column names (without null terminator)
-        for (size_t i = 0; i < layout.getColumnCount(); ++i) {
-            const std::string& name = layout.getColumnName(i);
+        for (size_t i = 0; i < layout.columnCount(); ++i) {
+            const std::string& name = layout.columnName(i);
             if (!name.empty()) {
                 stream.write(name.c_str(), name.length());
                 if (!stream.good()) return false;
@@ -232,8 +232,8 @@ namespace bcsv {
         }
         
         // Validate column count matches static definition
-        if (header_.columnCount != layout.getColumnCount()) {
-            std::cerr << "error: Column count mismatch. Static layout expects " << layout.getColumnCount() << " columns, but binary has " << header_.columnCount << " columns" << std::endl;
+        if (header_.columnCount != layout.columnCount()) {
+            std::cerr << "error: Column count mismatch. Static layout expects " << layout.columnCount() << " columns, but binary has " << header_.columnCount << " columns" << std::endl;
             return false;
         }
         if (header_.columnCount > MAX_COLUMN_COUNT) {
@@ -242,24 +242,24 @@ namespace bcsv {
         }   
 
         // Read column data types and validate against static definition
-        for (uint16_t i = 0; i < layout.getColumnCount(); ++i) {
+        for (uint16_t i = 0; i < layout.columnCount(); ++i) {
             ColumnType type;
             stream.read(reinterpret_cast<char*>(&type), sizeof(type));
             if (!stream.good()) {
                 std::cerr << "error: Failed to read column data type at index " << std::to_string(i) << std::endl;
                 return false;
             }
-            if (type != layout.getColumnType(i)) {
+            if (type != layout.columnType(i)) {
                 std::cerr << "error: Column type mismatch at index " << std::to_string(i) << 
-                            ". Static layout expects " << toString(layout.getColumnType(i)) << 
+                            ". Static layout expects " << toString(layout.columnType(i)) << 
                             ", but binary has " << toString(type) << std::endl;
                 return false;
             }
         }
 
         // Read column name lengths (we must read them to advance the stream)
-        std::vector<uint16_t> nameLengths(layout.getColumnCount());
-        for (uint16_t i = 0; i < layout.getColumnCount(); ++i) {
+        std::vector<uint16_t> nameLengths(layout.columnCount());
+        for (uint16_t i = 0; i < layout.columnCount(); ++i) {
             stream.read(reinterpret_cast<char*>(&nameLengths[i]), sizeof(uint16_t));
             if (!stream.good()) {
                 std::cerr << "error: Failed to read column name length at index " << std::to_string(i) << std::endl;
@@ -276,7 +276,7 @@ namespace bcsv {
 
         // Read column names and optionally validate against static definition
         std::vector<char> nameBuffer;
-        for (uint16_t i = 0; i < layout.getColumnCount(); ++i) {
+        for (uint16_t i = 0; i < layout.columnCount(); ++i) {
             if (nameLengths[i] > 0) {
                 nameBuffer.resize(nameLengths[i]);
                 stream.read(nameBuffer.data(), nameLengths[i]);
@@ -301,20 +301,20 @@ namespace bcsv {
                   << static_cast<int>(header_.versionPatch) << " (3 bytes)\n";
         std::cout << "  Compression: " << static_cast<int>(header_.compressionLevel) << " (1 byte)\n";
         std::cout << "  Flags:       0x" << std::hex << header_.flags << std::dec << " (2 bytes)\n";
-        std::cout << "  Columns:     " << static_cast<uint16_t>(layout.getColumnCount()) << " (2 bytes)\n";
-        std::cout << "  Column Data Types: " << layout.getColumnCount() * sizeof(uint16_t) << " bytes\n";
-        for (size_t i = 0; i < layout.getColumnCount(); ++i) {
-            std::cout << "    [" << i << "]: " << static_cast<uint16_t>(layout.getColumnType(i)) << "\n";
+        std::cout << "  Columns:     " << static_cast<uint16_t>(layout.columnCount()) << " (2 bytes)\n";
+        std::cout << "  Column Data Types: " << layout.columnCount() * sizeof(uint16_t) << " bytes\n";
+        for (size_t i = 0; i < layout.columnCount(); ++i) {
+            std::cout << "    [" << i << "]: " << static_cast<uint16_t>(layout.columnType(i)) << "\n";
         }
-        std::cout << "  Column Name Lengths: " << layout.getColumnCount() * sizeof(uint16_t) << " bytes\n";
+        std::cout << "  Column Name Lengths: " << layout.columnCount() * sizeof(uint16_t) << " bytes\n";
         size_t totalNameBytes = 0;
-        for (size_t i = 0; i < layout.getColumnCount(); ++i) {
-            std::cout << "    [" << i << "]: " << layout.getColumnName(i).length() << " bytes\n";
-            totalNameBytes += layout.getColumnName(i).length();
+        for (size_t i = 0; i < layout.columnCount(); ++i) {
+            std::cout << "    [" << i << "]: " << layout.columnName(i).length() << " bytes\n";
+            totalNameBytes += layout.columnName(i).length();
         }
         std::cout << "  Column Names: " << totalNameBytes << " bytes\n";
-        for (size_t i = 0; i < layout.getColumnCount(); ++i) {
-            std::cout << "    [" << i << "]: \"" << layout.getColumnName(i) << "\"\n";
+        for (size_t i = 0; i < layout.columnCount(); ++i) {
+            std::cout << "    [" << i << "]: \"" << layout.columnName(i) << "\"\n";
         }
     }
 

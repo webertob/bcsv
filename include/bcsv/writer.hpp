@@ -20,7 +20,7 @@ namespace bcsv {
 
     template<LayoutConcept LayoutType>
     Writer<LayoutType>::Writer(const LayoutType& layout) 
-    : fileHeader_(layout.getColumnCount(), 1), row_(layout)
+    : fileHeader_(layout.columnCount(), 1), row_(layout)
     {
         buffer_raw_.reserve(LZ4_BLOCK_SIZE_KB * 1024);
         buffer_zip_.reserve(LZ4_COMPRESSBOUND(LZ4_BLOCK_SIZE_KB * 1024));
@@ -110,8 +110,8 @@ namespace bcsv {
 
             // Store file path
             filePath_ = absolutePath;
-            fileHeader_ = FileHeader(getLayout().getColumnCount(), static_cast<uint8_t>(compressionLevel));
-            fileHeader_.writeToBinary(stream_, getLayout());
+            fileHeader_ = FileHeader(layout().columnCount(), static_cast<uint8_t>(compressionLevel));
+            fileHeader_.writeToBinary(stream_, layout());
             row_cnt_ = 0;
             row_.clear();
             return true;
@@ -138,7 +138,7 @@ namespace bcsv {
         }
 
         // Handle compression based on level
-        if (getCompressionLevel() == 0) {
+        if (compressionLevel() == 0) {
             // No compression - use raw data directly (avoid LZ4 overhead)
             // Optimize by reusing the raw buffer as compressed buffer to avoid copying
             buffer_zip_.swap(buffer_raw_); // Efficient swap instead of copy
@@ -147,7 +147,7 @@ namespace bcsv {
             buffer_zip_.resize(buffer_zip_.capacity());
             int compressedSize;
             
-            if (getCompressionLevel() == 1) {
+            if (compressionLevel() == 1) {
                 // Use fast default compression
                 compressedSize = LZ4_compress_default(reinterpret_cast<const char*>(buffer_raw_.data()), 
                                                       reinterpret_cast<char*>(buffer_zip_.data()),
@@ -159,7 +159,7 @@ namespace bcsv {
                                                  reinterpret_cast<char*>(buffer_zip_.data()),
                                                  static_cast<int>(buffer_raw_.size()),
                                                  static_cast<int>(buffer_zip_.size()),
-                                                 getCompressionLevel());
+                                                 compressionLevel());
             }
             
             if (compressedSize <= 0) {

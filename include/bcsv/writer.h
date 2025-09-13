@@ -44,9 +44,9 @@ namespace bcsv {
 
         void                    close();
         void                    flush();
-        uint8_t                 getCompressionLevel() const     { return fileHeader_.getCompressionLevel(); }
-        const FilePath&         getFilePath() const             { return filePath_; }
-        const LayoutType&       getLayout() const               { return row_.getLayout(); }
+        uint8_t                 compressionLevel() const        { return fileHeader_.compressionLevel(); }
+        const FilePath&         filePath() const                { return filePath_; }
+        const LayoutType&       layout() const                  { return row_.layout(); }
         bool                    is_open() const                 { return stream_.is_open(); }
         bool                    open(const FilePath& filepath, bool overwrite = false, uint8_t compressionLevel = 1);
         RowType&                row()                           { return row_; }

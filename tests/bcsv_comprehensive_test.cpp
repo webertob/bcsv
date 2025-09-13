@@ -500,7 +500,7 @@ TEST_F(BCSVTestSuite, FlexibleInterface_SequentialRead_DataIntegrity) {
         }
         
         // Validate layout compatibility
-        if (!reader.getLayout().isCompatibleWith(layout)) {
+        if (!reader.layout().isCompatibleWith(layout)) {
             FAIL() << "File layout is not compatible with expected layout";
         }
         
@@ -510,7 +510,7 @@ TEST_F(BCSVTestSuite, FlexibleInterface_SequentialRead_DataIntegrity) {
         
         while (reader.readNext()) {
             auto row = reader.row();
-            size_t row_index = reader.getRowIndex() - 1; // Convert to 0-based
+            size_t row_index = reader.rowIndex() - 1; // Convert to 0-based
             rows_read++;
             
             if (row_index < test_data.size()) {
@@ -571,7 +571,7 @@ TEST_F(BCSVTestSuite, StaticInterface_SequentialRead_DataIntegrity) {
         }
         
         // Validate layout compatibility  
-        if (!reader.getLayout().isCompatibleWith(layout)) {
+        if (!reader.layout().isCompatibleWith(layout)) {
             FAIL() << "File layout is not compatible with expected layout";
         }
         
@@ -581,7 +581,7 @@ TEST_F(BCSVTestSuite, StaticInterface_SequentialRead_DataIntegrity) {
         
         while (reader.readNext()) {
             auto row = reader.row();
-            size_t row_index = reader.getRowIndex() - 1; // Convert to 0-based
+            size_t row_index = reader.rowIndex() - 1; // Convert to 0-based
             rows_read++;
             
             if (row_index < test_data.size()) {
@@ -641,7 +641,7 @@ TEST_F(BCSVTestSuite, CrossCompatibility_FlexibleWrite_StaticRead) {
         }
         
         // Validate layout compatibility
-        if (!reader.getLayout().isCompatibleWith(layout)) {
+        if (!reader.layout().isCompatibleWith(layout)) {
             FAIL() << "File layout is not compatible with expected layout";
         }
         
@@ -696,7 +696,7 @@ TEST_F(BCSVTestSuite, CrossCompatibility_StaticWrite_FlexibleRead) {
         }
         
         // Validate layout compatibility
-        if (!reader.getLayout().isCompatibleWith(layout)) {
+        if (!reader.layout().isCompatibleWith(layout)) {
             FAIL() << "File layout is not compatible with expected layout";
         }
         
@@ -820,7 +820,7 @@ TEST_F(BCSVTestSuite, CRC32_CorruptionDetection) {
         }
         
         // Validate layout compatibility
-        if (!reader.getLayout().isCompatibleWith(layout)) {
+        if (!reader.layout().isCompatibleWith(layout)) {
             FAIL() << "File layout is not compatible with expected layout";
         }
         
@@ -1343,12 +1343,12 @@ TEST_F(BCSVTestSuite, EdgeCase_MixedEmptyOperations) {
                 rows_read++;
                 auto& row = reader.row();
                 // Validate data if we have columns
-                if (layout.getColumnCount() > 0) {
+                if (layout.columnCount() > 0) {
                     // Basic validation that we can access the data
-                    for (size_t col = 0; col < layout.getColumnCount(); ++col) {
-                        std::string col_name = layout.getColumnName(col);
+                    for (size_t col = 0; col < layout.columnCount(); ++col) {
+                        std::string col_name = layout.columnName(col);
                         // Just verify we can call the accessor without crashing
-                        switch (layout.getColumnType(col)) {
+                        switch (layout.columnType(col)) {
                             case bcsv::ColumnType::INT64:
                                 {
                                     auto val = row.get<int64_t>(col);
@@ -1680,20 +1680,20 @@ TEST_F(BCSVTestSuite, CompressionLevels_ValidationAndRestrictions) {
         
         // Test too high level (10 should succeed but clamp to 9 - the highest valid level)
         EXPECT_TRUE(writer.open(test_file, true, 10)) << "Should succeed with compression level 10 (clamped to 9)";
-        EXPECT_EQ(writer.getCompressionLevel(), 9) << "Compression level 10 should be clamped to 9";
+        EXPECT_EQ(writer.compressionLevel(), 9) << "Compression level 10 should be clamped to 9";
         writer.close();
         
         // Valid levels should work
         EXPECT_TRUE(writer.open(test_file, true, 0)) << "Should open with compression level 0";
-        EXPECT_EQ(writer.getCompressionLevel(), 0) << "Compression level should be 0";
+        EXPECT_EQ(writer.compressionLevel(), 0) << "Compression level should be 0";
         writer.close();
         
         EXPECT_TRUE(writer.open(test_file, true, 5)) << "Should open with compression level 5";
-        EXPECT_EQ(writer.getCompressionLevel(), 5) << "Compression level should be 5";
+        EXPECT_EQ(writer.compressionLevel(), 5) << "Compression level should be 5";
         writer.close();
         
         EXPECT_TRUE(writer.open(test_file, true, 9)) << "Should open with compression level 9";
-        EXPECT_EQ(writer.getCompressionLevel(), 9) << "Compression level should be 9";
+        EXPECT_EQ(writer.compressionLevel(), 9) << "Compression level should be 9";
         writer.close();
     }
     
@@ -1704,12 +1704,12 @@ TEST_F(BCSVTestSuite, CompressionLevels_ValidationAndRestrictions) {
         
         // Test that compression level is correctly reported
         EXPECT_TRUE(writer.open(filename, true, 3));
-        EXPECT_EQ(writer.getCompressionLevel(), 3) << "Compression level should be 3";
+        EXPECT_EQ(writer.compressionLevel(), 3) << "Compression level should be 3";
         writer.close();
         
         // Test different level
         EXPECT_TRUE(writer.open(filename, true, 7));
-        EXPECT_EQ(writer.getCompressionLevel(), 7) << "Compression level should be 7";
+        EXPECT_EQ(writer.compressionLevel(), 7) << "Compression level should be 7";
         writer.close();
         
         fs::remove(filename);
@@ -1724,7 +1724,7 @@ TEST_F(BCSVTestSuite, CompressionLevels_ValidationAndRestrictions) {
         {
             bcsv::Writer<bcsv::Layout> writer(layout);
             EXPECT_TRUE(writer.open(clamp_test_file, true, 10)) << "Should open with compression level 10";
-            EXPECT_EQ(writer.getCompressionLevel(), 9) << "Compression level 10 should be clamped to 9";
+            EXPECT_EQ(writer.compressionLevel(), 9) << "Compression level 10 should be clamped to 9";
             
             // Write test data
             for (size_t i = 0; i < test_rows; ++i) {

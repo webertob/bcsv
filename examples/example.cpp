@@ -24,7 +24,7 @@ void writeFlexibleBCSV() {
     layout.addColumn({"name", bcsv::ColumnType::STRING});
     layout.addColumn({"score", bcsv::ColumnType::FLOAT});
     layout.addColumn({"active", bcsv::ColumnType::BOOL});
-    std::cout << "Created layout with " << layout.getColumnCount() << " columns\n";
+    std::cout << "Created layout with " << layout.columnCount() << " columns\n";
 
     // Step 2: Create a writer
     const std::string filename = "example_flexible.bcsv";
@@ -85,18 +85,18 @@ void readFlexibleBCSV() {
         return;
     }
     // Validate layout compatibility (column count, types)
-    if (!reader.getLayout().isCompatibleWith(layoutExpected)) {
+    if (!reader.layout().isCompatibleWith(layoutExpected)) {
         std::cerr << "Error: File layout is not compatible with expected layout\n";
         reader.close();
         return;
     }
 
     //Optional: Compare column names
-    for (size_t i = 0; i < layoutExpected.getColumnCount(); i++) {
-        if (layoutExpected.getColumnName(i) != reader.getLayout().getColumnName(i)) {
+    for (size_t i = 0; i < layoutExpected.columnCount(); i++) {
+        if (layoutExpected.columnName(i) != reader.layout().columnName(i)) {
             std::cerr << "Warning: Column name mismatch at index " << i
-                      << " (expected: " << layoutExpected.getColumnName(i)
-                      << ", found: " << reader.getLayout().getColumnName(i) << ")\n";
+                      << " (expected: " << layoutExpected.columnName(i)
+                      << ", found: " << reader.layout().columnName(i) << ")\n";
         }
     }
 
@@ -118,7 +118,7 @@ void readFlexibleBCSV() {
                   << std::setw(14) << std::left << name << " | "
                   << std::setw(5) << std::right << std::fixed << std::setprecision(1) << score << " | "
                   << (active ? "Yes" : "No") << "\n";
-        rowIndex = reader.getRowIndex();
+        rowIndex = reader.rowIndex();
     }
 
     reader.close();

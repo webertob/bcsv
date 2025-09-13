@@ -26,7 +26,7 @@ void writeStaticBCSV() {
     // Step 1: Create static layout with column names
     ExampleLayout layout({"id", "name", "score", "active"});
 
-    std::cout << "Created static layout with " << layout.getColumnCount() << " columns\n";
+    std::cout << "Created static layout with " << layout.columnCount() << " columns\n";
 
     // Step 2: Create a writer
     const std::string filename = "example_static.bcsv";
@@ -70,7 +70,7 @@ void readStaticBCSV() {
 
     // Step 1: Create matching layout for reading
     ExampleLayout layout({"id", "name", "score", "active"});
-    std::cout << "Created static layout with " << layout.getColumnCount() << " columns\n";
+    std::cout << "Created static layout with " << layout.columnCount() << " columns\n";
     
     // Step 2: Create a reader
     const std::string filename = "example_static.bcsv";
@@ -80,17 +80,17 @@ void readStaticBCSV() {
         return;
     }
 
-    if (!reader.getLayout().isCompatibleWith(layout)) {
+    if (!reader.layout().isCompatibleWith(layout)) {
         std::cerr << "Incompatible layout for reading BCSV file\n";
         return;
     }
 
     //optional check column names
-    for (size_t i = 0; i < layout.getColumnCount(); i++) {
-        if (reader.getLayout().getColumnName(i) != layout.getColumnName(i)) {
+    for (size_t i = 0; i < layout.columnCount(); i++) {
+        if (reader.layout().columnName(i) != layout.columnName(i)) {
             std::cerr << "Warning: Column name mismatch at index " << i 
-                      << ": expected '" << layout.getColumnName(i) 
-                      << "', got '" << reader.getLayout().getColumnName(i) << "'\n";
+                      << ": expected '" << layout.columnName(i) 
+                      << "', got '" << reader.layout().columnName(i) << "'\n";
         }
     }
 
