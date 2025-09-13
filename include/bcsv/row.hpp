@@ -45,6 +45,15 @@ namespace bcsv {
         }
     }
 
+    /** Clear the row to its default state (default values) */
+    void Row::clear()
+    {
+        for(size_t i = 0; i < layout_.getColumnCount(); ++i) {
+            data_[i] = defaultValue(layout_.getColumnType(i));
+        }
+    }
+
+    /** Get the value at the specified column index */
     template<typename T>
     const T& Row::get(size_t index) const {
         if (RANGE_CHECKING) {
@@ -53,6 +62,7 @@ namespace bcsv {
         return std::get<T>(data_[index]);
     }
 
+    /** Get the value at the specified column index */
     template<>
     const ValueType& Row::get(size_t index) const {
         if (RANGE_CHECKING) {
@@ -395,6 +405,24 @@ namespace bcsv {
     // RowStatic Implementation
     // ========================================================================
 
+    /** Clear the row to its default state (default values) */
+    template<typename... ColumnTypes>
+    void RowStatic<ColumnTypes...>::clear()
+    {
+        clearHelper<0>();
+    }
+
+    template<typename... ColumnTypes>
+    template<size_t I>
+    void RowStatic<ColumnTypes...>::clearHelper()
+    {
+        if constexpr (I < column_count) {
+            std::get<I>(data_) = {};  // Use default construction
+            clearHelper<I + 1>();
+        }
+    }
+
+    /** Get the value at the specified column index */
     template<typename... ColumnTypes>
     template<size_t Index>
     auto& RowStatic<ColumnTypes...>::get() {

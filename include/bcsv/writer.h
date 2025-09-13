@@ -23,34 +23,38 @@ namespace bcsv {
      */
     template<LayoutConcept LayoutType>
     class Writer {
-        LayoutType              layout_;
+        using RowType           = typename LayoutType::RowType;
+        using RowViewType       = typename LayoutType::RowViewType;
+        using FilePath          = std::filesystem::path;
+
         FileHeader              fileHeader_;                // File header for accessing flags and metadata
-        std::filesystem::path   filePath_;                  // Always present
+        FilePath                filePath_;                  // Always present
         std::ofstream           stream_;                    // Always binary file stream
 
         ByteBuffer              buffer_raw_;
         ByteBuffer              buffer_zip_;
         std::vector<uint16_t>   row_offsets_;               // Row offsets for indexing
         size_t                  row_cnt_ = 0;
-    
-    public:
-        LayoutType::RowType     row;
-
+        RowType                 row_;
+ 
     public:
         Writer() = delete;
         Writer(const LayoutType& layout);
         ~Writer();
 
-        void                            close();
-        void                            flush();
-        uint8_t                         getCompressionLevel() const     { return fileHeader_.getCompressionLevel(); }
-        const std::filesystem::path&    getFilePath() const             { return filePath_; }
-        bool                            is_open() const                 { return stream_.is_open(); }
-        bool                            open(const std::filesystem::path& filepath, bool overwrite = false, uint8_t compressionLevel = 1);
-        bool                            writeRow();
+        void                    close();
+        void                    flush();
+        uint8_t                 getCompressionLevel() const     { return fileHeader_.getCompressionLevel(); }
+        const FilePath&         getFilePath() const             { return filePath_; }
+        const LayoutType&       getLayout() const               { return row_.getLayout(); }
+        bool                    is_open() const                 { return stream_.is_open(); }
+        bool                    open(const FilePath& filepath, bool overwrite = false, uint8_t compressionLevel = 1);
+        RowType&                row()                           { return row_; }
+        const RowType&          row() const                     { return row_; }
+        bool                    writeRow();
 
     private:
-        void                            writePacket();
+        void                    writePacket();
     };
 
 } // namespace bcsv

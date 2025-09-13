@@ -216,60 +216,60 @@ protected:
         return FullTestLayoutStatic(columnNames);
     }
     
-    // Populate flexible row using new API (writer.row.set())
+    // Populate flexible row using new API (writer.row().set())
     void populateFlexibleRow(bcsv::Writer<bcsv::Layout>& writer, const TestData& data) {
-        writer.row.set(0, data.bool1);
-        writer.row.set(1, data.bool2);
-        writer.row.set(2, data.int8_1);
-        writer.row.set(3, data.int8_2);
-        writer.row.set(4, data.int16_1);
-        writer.row.set(5, data.int16_2);
-        writer.row.set(6, data.int32_1);
-        writer.row.set(7, data.int32_2);
-        writer.row.set(8, data.int64_1);
-        writer.row.set(9, data.int64_2);
-        writer.row.set(10, data.uint8_1);
-        writer.row.set(11, data.uint8_2);
-        writer.row.set(12, data.uint16_1);
-        writer.row.set(13, data.uint16_2);
-        writer.row.set(14, data.uint32_1);
-        writer.row.set(15, data.uint32_2);
-        writer.row.set(16, data.uint64_1);
-        writer.row.set(17, data.uint64_2);
-        writer.row.set(18, data.float1);
-        writer.row.set(19, data.float2);
-        writer.row.set(20, data.double1);
-        writer.row.set(21, data.double2);
-        writer.row.set(22, data.string1);
-        writer.row.set(23, data.string2);
+        writer.row().set(0, data.bool1);
+        writer.row().set(1, data.bool2);
+        writer.row().set(2, data.int8_1);
+        writer.row().set(3, data.int8_2);
+        writer.row().set(4, data.int16_1);
+        writer.row().set(5, data.int16_2);
+        writer.row().set(6, data.int32_1);
+        writer.row().set(7, data.int32_2);
+        writer.row().set(8, data.int64_1);
+        writer.row().set(9, data.int64_2);
+        writer.row().set(10, data.uint8_1);
+        writer.row().set(11, data.uint8_2);
+        writer.row().set(12, data.uint16_1);
+        writer.row().set(13, data.uint16_2);
+        writer.row().set(14, data.uint32_1);
+        writer.row().set(15, data.uint32_2);
+        writer.row().set(16, data.uint64_1);
+        writer.row().set(17, data.uint64_2);
+        writer.row().set(18, data.float1);
+        writer.row().set(19, data.float2);
+        writer.row().set(20, data.double1);
+        writer.row().set(21, data.double2);
+        writer.row().set(22, data.string1);
+        writer.row().set(23, data.string2);
     }
     
-    // Populate static row using new API (writer.row.set<INDEX>())
+    // Populate static row using new API (writer.row().set<INDEX>())
     void populateStaticRow(bcsv::Writer<FullTestLayoutStatic>& writer, const TestData& data) {
-        writer.row.set<0>(data.bool1);
-        writer.row.set<1>(data.bool2);
-        writer.row.set<2>(data.int8_1);
-        writer.row.set<3>(data.int8_2);
-        writer.row.set<4>(data.int16_1);
-        writer.row.set<5>(data.int16_2);
-        writer.row.set<6>(data.int32_1);
-        writer.row.set<7>(data.int32_2);
-        writer.row.set<8>(data.int64_1);
-        writer.row.set<9>(data.int64_2);
-        writer.row.set<10>(data.uint8_1);
-        writer.row.set<11>(data.uint8_2);
-        writer.row.set<12>(data.uint16_1);
-        writer.row.set<13>(data.uint16_2);
-        writer.row.set<14>(data.uint32_1);
-        writer.row.set<15>(data.uint32_2);
-        writer.row.set<16>(data.uint64_1);
-        writer.row.set<17>(data.uint64_2);
-        writer.row.set<18>(data.float1);
-        writer.row.set<19>(data.float2);
-        writer.row.set<20>(data.double1);
-        writer.row.set<21>(data.double2);
-        writer.row.set<22>(data.string1);
-        writer.row.set<23>(data.string2);
+        writer.row().set<0>(data.bool1);
+        writer.row().set<1>(data.bool2);
+        writer.row().set<2>(data.int8_1);
+        writer.row().set<3>(data.int8_2);
+        writer.row().set<4>(data.int16_1);
+        writer.row().set<5>(data.int16_2);
+        writer.row().set<6>(data.int32_1);
+        writer.row().set<7>(data.int32_2);
+        writer.row().set<8>(data.int64_1);
+        writer.row().set<9>(data.int64_2);
+        writer.row().set<10>(data.uint8_1);
+        writer.row().set<11>(data.uint8_2);
+        writer.row().set<12>(data.uint16_1);
+        writer.row().set<13>(data.uint16_2);
+        writer.row().set<14>(data.uint32_1);
+        writer.row().set<15>(data.uint32_2);
+        writer.row().set<16>(data.uint64_1);
+        writer.row().set<17>(data.uint64_2);
+        writer.row().set<18>(data.float1);
+        writer.row().set<19>(data.float2);
+        writer.row().set<20>(data.double1);
+        writer.row().set<21>(data.double2);
+        writer.row().set<22>(data.string1);
+        writer.row().set<23>(data.string2);
     }
     
     // Validate flexible row data  
@@ -510,7 +510,7 @@ TEST_F(BCSVTestSuite, FlexibleInterface_SequentialRead_DataIntegrity) {
         
         while (reader.readNext()) {
             auto row = reader.row();
-            size_t row_index = reader.getCurrentRowIndex() - 1; // Convert to 0-based
+            size_t row_index = reader.getRowIndex() - 1; // Convert to 0-based
             rows_read++;
             
             if (row_index < test_data.size()) {
@@ -581,7 +581,7 @@ TEST_F(BCSVTestSuite, StaticInterface_SequentialRead_DataIntegrity) {
         
         while (reader.readNext()) {
             auto row = reader.row();
-            size_t row_index = reader.getCurrentRowIndex() - 1; // Convert to 0-based
+            size_t row_index = reader.getRowIndex() - 1; // Convert to 0-based
             rows_read++;
             
             if (row_index < test_data.size()) {
@@ -1324,7 +1324,7 @@ TEST_F(BCSVTestSuite, EdgeCase_MixedEmptyOperations) {
             
             if (i == 3) {
                 // Write one row for scenario 3
-                writer.row.set(0, static_cast<int64_t>(42));
+                writer.row().set(0, static_cast<int64_t>(42));
                 writer.writeRow();
             }
             // For other scenarios, write nothing
@@ -1413,14 +1413,14 @@ TEST_F(BCSVTestSuite, Multipacket_LargeData) {
         }
         
         for (size_t i = 1; i <= MULTIPACKET_ROWS; ++i) {
-            writer.row.set(0, static_cast<uint32_t>(i));
+            writer.row().set(0, static_cast<uint32_t>(i));
             
             // Create large string data (should force packet boundaries)
             std::string large_data = "LargeDataString" + std::to_string(i) + "_";
             for (int j = 0; j < 100; ++j) {  // Very large strings
                 large_data += "ExtraDataPadding" + std::to_string(j) + "_";
             }
-            writer.row.set(1, large_data);
+            writer.row().set(1, large_data);
             
             writer.writeRow();
         }
@@ -1483,12 +1483,12 @@ TEST_F(BCSVTestSuite, CompressionLevels_FlexibleInterface_AllLevels) {
             }
             
             for (size_t i = 0; i < test_rows; i++) {
-                writer.row.set(0, static_cast<uint32_t>(i));
-                writer.row.set(1, "TestString_" + std::to_string(i % 100)); // Repeating pattern for compression
-                writer.row.set(2, i * 3.14159265359);
-                writer.row.set(3, static_cast<float>(i % 1000) / 10.0f);
-                writer.row.set(4, (i % 2) == 0);
-                writer.row.set(5, static_cast<int64_t>(i * 1000));
+                writer.row().set(0, static_cast<uint32_t>(i));
+                writer.row().set(1, "TestString_" + std::to_string(i % 100)); // Repeating pattern for compression
+                writer.row().set(2, i * 3.14159265359);
+                writer.row().set(3, static_cast<float>(i % 1000) / 10.0f);
+                writer.row().set(4, (i % 2) == 0);
+                writer.row().set(5, static_cast<int64_t>(i * 1000));
                 writer.writeRow();
             }
             writer.close();
@@ -1555,12 +1555,12 @@ TEST_F(BCSVTestSuite, CompressionLevels_StaticInterface_AllLevels) {
             }
             
             for (size_t i = 0; i < test_rows; i++) {
-                writer.row.set<0>(static_cast<uint32_t>(i));
-                writer.row.set<1>("TestString_" + std::to_string(i % 100));
-                writer.row.set<2>(i * 3.14159265359);
-                writer.row.set<3>(static_cast<float>(i % 1000) / 10.0f);
-                writer.row.set<4>((i % 2) == 0);
-                writer.row.set<5>(static_cast<int64_t>(i * 1000));
+                writer.row().set<0>(static_cast<uint32_t>(i));
+                writer.row().set<1>("TestString_" + std::to_string(i % 100));
+                writer.row().set<2>(i * 3.14159265359);
+                writer.row().set<3>(static_cast<float>(i % 1000) / 10.0f);
+                writer.row().set<4>((i % 2) == 0);
+                writer.row().set<5>(static_cast<int64_t>(i * 1000));
                 writer.writeRow();
             }
             writer.close();
@@ -1632,9 +1632,9 @@ TEST_F(BCSVTestSuite, CompressionLevels_CrossCompatibility) {
             }
             
             for (size_t i = 0; i < test_rows; i++) {
-                writer.row.set(0, static_cast<uint32_t>(i));
-                writer.row.set(1, "CrossTest_" + std::to_string(i));
-                writer.row.set(2, i * 2.71828);
+                writer.row().set(0, static_cast<uint32_t>(i));
+                writer.row().set(1, "CrossTest_" + std::to_string(i));
+                writer.row().set(2, i * 2.71828);
                 writer.writeRow();
             }
             writer.close();
@@ -1728,7 +1728,7 @@ TEST_F(BCSVTestSuite, CompressionLevels_ValidationAndRestrictions) {
             
             // Write test data
             for (size_t i = 0; i < test_rows; ++i) {
-                writer.row.set(0, static_cast<int32_t>(i));
+                writer.row().set(0, static_cast<int32_t>(i));
                 writer.writeRow();
             }
             writer.close();
@@ -1780,13 +1780,13 @@ TEST_F(BCSVTestSuite, CompressionLevels_PerformanceCharacteristics) {
             }
             
             for (size_t i = 0; i < test_rows; i++) {
-                writer.row.set(0, static_cast<uint32_t>(i));
+                writer.row().set(0, static_cast<uint32_t>(i));
                 // Create repetitive data that compresses well
                 std::string data = "RepeatingDataPattern_" + std::to_string(i % 10) + "_";
                 for (int j = 0; j < 5; j++) {
                     data += "MoreRepetitiveContent";
                 }
-                writer.row.set(1, data);
+                writer.row().set(1, data);
                 writer.writeRow();
             }
             writer.close();

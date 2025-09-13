@@ -51,11 +51,11 @@ void writeFlexibleBCSV() {
     };
 
     for (const auto& data : sampleData) {
-        // Use the pattern from working tests: (*row).set() instead of row->set()
-        writer.row.set(0, data.id);
-        writer.row.set(1, data.name);
-        writer.row.set(2, data.score);
-        writer.row.set(3, data.active);
+        auto& row = writer.row();
+        row.set(0, data.id);
+        row.set(1, data.name);
+        row.set(2, data.score);
+        row.set(3, data.active);
         if (!writer.writeRow()) {
             std::cerr << "Failed to write row\n";
             break;
@@ -118,7 +118,7 @@ void readFlexibleBCSV() {
                   << std::setw(14) << std::left << name << " | "
                   << std::setw(5) << std::right << std::fixed << std::setprecision(1) << score << " | "
                   << (active ? "Yes" : "No") << "\n";
-        rowIndex = reader.getCurrentRowIndex();
+        rowIndex = reader.getRowIndex();
     }
 
     reader.close();

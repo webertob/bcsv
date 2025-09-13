@@ -265,12 +265,13 @@ namespace bcsv {
         Row() = delete;
         ~Row() = default;
 
+        void clear(); 
+
         // Layout access
         const Layout& getLayout() const { return layout_; }
-
+        
         template<typename T = ValueType>
         const T& get(size_t index) const;
-        
         void set(size_t index, const auto& value);
 
         // serialization/deserialization
@@ -327,6 +328,9 @@ namespace bcsv {
         LayoutType   layout_;
         column_types data_;
         
+        template<size_t I>
+        void clearHelper();
+        
     public:
         
         // Constructors
@@ -334,6 +338,7 @@ namespace bcsv {
         RowStatic(const LayoutType& layout) : layout_(layout), data_() {}
         ~RowStatic() = default;
        
+        void clear();
         // Layout access
         const LayoutType& getLayout() const { return layout_; }
 

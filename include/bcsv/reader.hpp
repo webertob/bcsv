@@ -61,7 +61,7 @@ namespace bcsv {
      * @return true if file was successfully opened, false otherwise
      */
     template<LayoutConcept LayoutType>
-    bool Reader<LayoutType>::open(const std::filesystem::path& filepath) {
+    bool Reader<LayoutType>::open(const FilePath& filepath) {
         if(isOpen()) {
             std::cerr << "Warning: File is already open: " << filePath_ << std::endl;
             return false;
@@ -69,7 +69,7 @@ namespace bcsv {
 
         try {
             // Convert to absolute path for consistent handling
-            std::filesystem::path absolutePath = std::filesystem::absolute(filepath);
+            FilePath absolutePath = std::filesystem::absolute(filepath);
             
             // Check if file exists
             if (!std::filesystem::exists(absolutePath)) {

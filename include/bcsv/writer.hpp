@@ -20,7 +20,7 @@ namespace bcsv {
 
     template<LayoutConcept LayoutType>
     Writer<LayoutType>::Writer(const LayoutType& layout) 
-    : layout_(layout), fileHeader_(layout.getColumnCount(), 1), row(layout)
+    : fileHeader_(layout.getColumnCount(), 1), row_(layout)
     {
         buffer_raw_.reserve(LZ4_BLOCK_SIZE_KB * 1024);
         buffer_zip_.reserve(LZ4_COMPRESSBOUND(LZ4_BLOCK_SIZE_KB * 1024));
@@ -66,7 +66,7 @@ namespace bcsv {
      * @return true if file was successfully opened, false otherwise
      */
     template<LayoutConcept LayoutType>
-    bool Writer<LayoutType>::open(const std::filesystem::path& filepath, bool overwrite, uint8_t compressionLevel) {
+    bool Writer<LayoutType>::open(const FilePath& filepath, bool overwrite, uint8_t compressionLevel) {
         if(is_open()) {
             std::cerr << "Warning: File is already open: " << filePath_ << std::endl;
             return false;
@@ -74,10 +74,10 @@ namespace bcsv {
 
         try {
             // Convert to absolute path for consistent handling
-            std::filesystem::path absolutePath = std::filesystem::absolute(filepath);
-            
+            FilePath absolutePath = std::filesystem::absolute(filepath);
+
             // Check if parent directory exists, create if needed
-            std::filesystem::path parentDir = absolutePath.parent_path();
+            FilePath parentDir = absolutePath.parent_path();
             if (!parentDir.empty() && !std::filesystem::exists(parentDir)) {
                 std::error_code ec;
                 if (!std::filesystem::create_directories(parentDir, ec)) {
@@ -110,10 +110,10 @@ namespace bcsv {
 
             // Store file path
             filePath_ = absolutePath;
-            fileHeader_ = FileHeader(layout_.getColumnCount(), static_cast<uint8_t>(compressionLevel));
-            fileHeader_.writeToBinary(stream_, layout_);
+            fileHeader_ = FileHeader(getLayout().getColumnCount(), static_cast<uint8_t>(compressionLevel));
+            fileHeader_.writeToBinary(stream_, getLayout());
             row_cnt_ = 0;
-            row = typename LayoutType::RowType(layout_);
+            row_.clear();
             return true;
 
         } catch (const std::filesystem::filesystem_error& ex) {
@@ -213,7 +213,7 @@ namespace bcsv {
         // check if the new row fits into the current packet
         // if not write the current packet to file and start a new one
         size_t fixedSize, totalSize;
-        row.serializedSize(fixedSize, totalSize);
+        row_.serializedSize(fixedSize, totalSize);
         if(buffer_raw_.size() + totalSize > buffer_raw_.capacity()) {
             writePacket();
         }
@@ -222,7 +222,7 @@ namespace bcsv {
         size_t row_offset = buffer_raw_.size();
         size_t row_length = totalSize;
         buffer_raw_.resize(buffer_raw_.size() + row_length);
-        row.serializeTo({buffer_raw_.data() + row_offset, row_length});
+        row_.serializeTo({buffer_raw_.data() + row_offset, row_length});
         row_offsets_.push_back(static_cast<uint16_t>(buffer_raw_.size()));
         return true;
     }

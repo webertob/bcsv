@@ -184,59 +184,61 @@ public:
     void populateFlexibleRow(bcsv::Writer<bcsv::Layout>& writer, const RowData& data) {
         size_t colIdx = 0;
         
+        auto& row = writer.row();
         // Populate all columns in order
-        for (size_t i = 0; i < 6; ++i) writer.row.set(colIdx++, data.bools[i]);
-        for (size_t i = 0; i < 6; ++i) writer.row.set(colIdx++, data.int8s[i]);
-        for (size_t i = 0; i < 6; ++i) writer.row.set(colIdx++, data.int16s[i]);
-        for (size_t i = 0; i < 6; ++i) writer.row.set(colIdx++, data.int32s[i]);
-        for (size_t i = 0; i < 6; ++i) writer.row.set(colIdx++, data.int64s[i]);
-        for (size_t i = 0; i < 6; ++i) writer.row.set(colIdx++, data.uint8s[i]);
-        for (size_t i = 0; i < 6; ++i) writer.row.set(colIdx++, data.uint16s[i]);
-        for (size_t i = 0; i < 6; ++i) writer.row.set(colIdx++, data.uint32s[i]);
-        for (size_t i = 0; i < 6; ++i) writer.row.set(colIdx++, data.uint64s[i]);
-        for (size_t i = 0; i < 6; ++i) writer.row.set(colIdx++, data.floats[i]);
-        for (size_t i = 0; i < 6; ++i) writer.row.set(colIdx++, data.doubles[i]);
-        for (size_t i = 0; i < 6; ++i) writer.row.set(colIdx++, data.strings[i]);
+        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.bools[i]);
+        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.int8s[i]);
+        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.int16s[i]);
+        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.int32s[i]);
+        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.int64s[i]);
+        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.uint8s[i]);
+        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.uint16s[i]);
+        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.uint32s[i]);
+        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.uint64s[i]);
+        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.floats[i]);
+        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.doubles[i]);
+        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.strings[i]);
     }
 
     // Populate static row (using template magic)
     void populateStaticRow(bcsv::Writer<LargeTestLayoutStatic>& writer, const RowData& data) {
+        auto& row = writer.row();
         // Using template indices for static setting
-        writer.row.set<0>(data.bools[0]); writer.row.set<1>(data.bools[1]); writer.row.set<2>(data.bools[2]); 
-        writer.row.set<3>(data.bools[3]); writer.row.set<4>(data.bools[4]); writer.row.set<5>(data.bools[5]);
+        row.set<0>(data.bools[0]); row.set<1>(data.bools[1]); row.set<2>(data.bools[2]); 
+        row.set<3>(data.bools[3]); row.set<4>(data.bools[4]); row.set<5>(data.bools[5]);
         
-        writer.row.set<6>(data.int8s[0]); writer.row.set<7>(data.int8s[1]); writer.row.set<8>(data.int8s[2]); 
-        writer.row.set<9>(data.int8s[3]); writer.row.set<10>(data.int8s[4]); writer.row.set<11>(data.int8s[5]);
+        row.set<6>(data.int8s[0]); row.set<7>(data.int8s[1]); row.set<8>(data.int8s[2]); 
+        row.set<9>(data.int8s[3]); row.set<10>(data.int8s[4]); row.set<11>(data.int8s[5]);
+
+        row.set<12>(data.int16s[0]); row.set<13>(data.int16s[1]); row.set<14>(data.int16s[2]); 
+        row.set<15>(data.int16s[3]); row.set<16>(data.int16s[4]); row.set<17>(data.int16s[5]);
+
+        row.set<18>(data.int32s[0]); row.set<19>(data.int32s[1]); row.set<20>(data.int32s[2]); 
+        row.set<21>(data.int32s[3]); row.set<22>(data.int32s[4]); row.set<23>(data.int32s[5]);
         
-        writer.row.set<12>(data.int16s[0]); writer.row.set<13>(data.int16s[1]); writer.row.set<14>(data.int16s[2]); 
-        writer.row.set<15>(data.int16s[3]); writer.row.set<16>(data.int16s[4]); writer.row.set<17>(data.int16s[5]);
+        row.set<24>(data.int64s[0]); row.set<25>(data.int64s[1]); row.set<26>(data.int64s[2]); 
+        row.set<27>(data.int64s[3]); row.set<28>(data.int64s[4]); row.set<29>(data.int64s[5]);
         
-        writer.row.set<18>(data.int32s[0]); writer.row.set<19>(data.int32s[1]); writer.row.set<20>(data.int32s[2]); 
-        writer.row.set<21>(data.int32s[3]); writer.row.set<22>(data.int32s[4]); writer.row.set<23>(data.int32s[5]);
+        row.set<30>(data.uint8s[0]); row.set<31>(data.uint8s[1]); row.set<32>(data.uint8s[2]); 
+        row.set<33>(data.uint8s[3]); row.set<34>(data.uint8s[4]); row.set<35>(data.uint8s[5]);
+
+        row.set<36>(data.uint16s[0]); row.set<37>(data.uint16s[1]); row.set<38>(data.uint16s[2]); 
+        row.set<39>(data.uint16s[3]); row.set<40>(data.uint16s[4]); row.set<41>(data.uint16s[5]);
+
+        row.set<42>(data.uint32s[0]); row.set<43>(data.uint32s[1]); row.set<44>(data.uint32s[2]); 
+        row.set<45>(data.uint32s[3]); row.set<46>(data.uint32s[4]); row.set<47>(data.uint32s[5]);
+
+        row.set<48>(data.uint64s[0]); row.set<49>(data.uint64s[1]); row.set<50>(data.uint64s[2]); 
+        row.set<51>(data.uint64s[3]); row.set<52>(data.uint64s[4]); row.set<53>(data.uint64s[5]);
+
+        row.set<54>(data.floats[0]); row.set<55>(data.floats[1]); row.set<56>(data.floats[2]); 
+        row.set<57>(data.floats[3]); row.set<58>(data.floats[4]); row.set<59>(data.floats[5]);
+
+        row.set<60>(data.doubles[0]); row.set<61>(data.doubles[1]); row.set<62>(data.doubles[2]); 
+        row.set<63>(data.doubles[3]); row.set<64>(data.doubles[4]); row.set<65>(data.doubles[5]);
         
-        writer.row.set<24>(data.int64s[0]); writer.row.set<25>(data.int64s[1]); writer.row.set<26>(data.int64s[2]); 
-        writer.row.set<27>(data.int64s[3]); writer.row.set<28>(data.int64s[4]); writer.row.set<29>(data.int64s[5]);
-        
-        writer.row.set<30>(data.uint8s[0]); writer.row.set<31>(data.uint8s[1]); writer.row.set<32>(data.uint8s[2]); 
-        writer.row.set<33>(data.uint8s[3]); writer.row.set<34>(data.uint8s[4]); writer.row.set<35>(data.uint8s[5]);
-        
-        writer.row.set<36>(data.uint16s[0]); writer.row.set<37>(data.uint16s[1]); writer.row.set<38>(data.uint16s[2]); 
-        writer.row.set<39>(data.uint16s[3]); writer.row.set<40>(data.uint16s[4]); writer.row.set<41>(data.uint16s[5]);
-        
-        writer.row.set<42>(data.uint32s[0]); writer.row.set<43>(data.uint32s[1]); writer.row.set<44>(data.uint32s[2]); 
-        writer.row.set<45>(data.uint32s[3]); writer.row.set<46>(data.uint32s[4]); writer.row.set<47>(data.uint32s[5]);
-        
-        writer.row.set<48>(data.uint64s[0]); writer.row.set<49>(data.uint64s[1]); writer.row.set<50>(data.uint64s[2]); 
-        writer.row.set<51>(data.uint64s[3]); writer.row.set<52>(data.uint64s[4]); writer.row.set<53>(data.uint64s[5]);
-        
-        writer.row.set<54>(data.floats[0]); writer.row.set<55>(data.floats[1]); writer.row.set<56>(data.floats[2]); 
-        writer.row.set<57>(data.floats[3]); writer.row.set<58>(data.floats[4]); writer.row.set<59>(data.floats[5]);
-        
-        writer.row.set<60>(data.doubles[0]); writer.row.set<61>(data.doubles[1]); writer.row.set<62>(data.doubles[2]); 
-        writer.row.set<63>(data.doubles[3]); writer.row.set<64>(data.doubles[4]); writer.row.set<65>(data.doubles[5]);
-        
-        writer.row.set<66>(data.strings[0]); writer.row.set<67>(data.strings[1]); writer.row.set<68>(data.strings[2]); 
-        writer.row.set<69>(data.strings[3]); writer.row.set<70>(data.strings[4]); writer.row.set<71>(data.strings[5]);
+        row.set<66>(data.strings[0]); row.set<67>(data.strings[1]); row.set<68>(data.strings[2]); 
+        row.set<69>(data.strings[3]); row.set<70>(data.strings[4]); row.set<71>(data.strings[5]);
     }
 
     // CSV benchmark
@@ -363,8 +365,9 @@ public:
             size_t rowCount = 0;
             while (reader.readNext()) {
                 // Read all values for fair comparison
+                const auto& row = reader.row();
                 for (size_t col = 0; col < 72; ++col) {
-                    auto val = reader.row().get<bcsv::ValueType>(col);
+                    auto val = row.get<bcsv::ValueType>(col);
                     volatile size_t dummy = std::visit([](const auto& v) { return sizeof(v); }, val);
                     (void)dummy;
                 }
@@ -421,10 +424,80 @@ public:
             while (reader.readNext()) {
                 // Read all values using template indices for fair comparison
                 const auto& row = reader.row();
-                volatile auto v0 = row.get<0>(); volatile auto v1 = row.get<1>(); volatile auto v2 = row.get<2>();
-                volatile auto v3 = row.get<3>(); volatile auto v4 = row.get<4>(); volatile auto v5 = row.get<5>();
+                volatile const auto& v0 = row.get<0>();
+                volatile const auto& v1 = row.get<1>(); 
+                volatile const auto& v2 = row.get<2>();
+                volatile const auto& v3 = row.get<3>();
+                volatile const auto& v4 = row.get<4>();
+                volatile const auto& v5 = row.get<5>();
+                volatile const auto& v6 = row.get<6>();
+                volatile const auto& v7 = row.get<7>();
+                volatile const auto& v8 = row.get<8>();
+                volatile const auto& v9 = row.get<9>();
+                volatile const auto& v10 = row.get<10>();
+                volatile const auto& v11 = row.get<11>();
+                volatile const auto& v12 = row.get<12>();
+                volatile const auto& v13 = row.get<13>();
+                volatile const auto& v14 = row.get<14>();
+                volatile const auto& v15 = row.get<15>();
+                volatile const auto& v16 = row.get<16>();
+                volatile const auto& v17 = row.get<17>();
+                volatile const auto& v18 = row.get<18>();
+                volatile const auto& v19 = row.get<19>();
+                volatile const auto& v20 = row.get<20>();
+                volatile const auto& v21 = row.get<21>();
+                volatile const auto& v22 = row.get<22>();
+                volatile const auto& v23 = row.get<23>();
+                volatile const auto& v24 = row.get<24>();
+                volatile const auto& v25 = row.get<25>();
+                volatile const auto& v26 = row.get<26>();
+                volatile const auto& v27 = row.get<27>();
+                volatile const auto& v28 = row.get<28>();
+                volatile const auto& v29 = row.get<29>();
+                volatile const auto& v30 = row.get<30>();
+                volatile const auto& v31 = row.get<31>();
+                volatile const auto& v32 = row.get<32>();
+                volatile const auto& v33 = row.get<33>();
+                volatile const auto& v34 = row.get<34>();
+                volatile const auto& v35 = row.get<35>();
+                volatile const auto& v36 = row.get<36>();
+                volatile const auto& v37 = row.get<37>();
+                volatile const auto& v38 = row.get<38>();
+                volatile const auto& v39 = row.get<39>();
+                volatile const auto& v40 = row.get<40>();
+                volatile const auto& v41 = row.get<41>();
+                volatile const auto& v42 = row.get<42>();
+                volatile const auto& v43 = row.get<43>();
+                volatile const auto& v44 = row.get<44>();
+                volatile const auto& v45 = row.get<45>();
+                volatile const auto& v46 = row.get<46>();
+                volatile const auto& v47 = row.get<47>();
+                volatile const auto& v48 = row.get<48>();
+                volatile const auto& v49 = row.get<49>();
+                volatile const auto& v50 = row.get<50>();
+                volatile const auto& v51 = row.get<51>();
+                volatile const auto& v52 = row.get<52>();
+                volatile const auto& v53 = row.get<53>();
+                volatile const auto& v54 = row.get<54>();
+                volatile const auto& v55 = row.get<55>();
+                volatile const auto& v56 = row.get<56>();
+                volatile const auto& v57 = row.get<57>();
+                volatile const auto& v58 = row.get<58>();
+                volatile const auto& v59 = row.get<59>();
+                volatile const auto& v60 = row.get<60>();
+                volatile const auto& v61 = row.get<61>();
+                volatile const auto& v62 = row.get<62>();
+                volatile const auto& v63 = row.get<63>();
+                volatile const auto& v64 = row.get<64>();
+                volatile const auto& v65 = row.get<65>();
+                volatile const auto& v66 = row.get<66>();
+                volatile const auto& v67 = row.get<67>();
+                volatile const auto& v68 = row.get<68>();
+                volatile const auto& v69 = row.get<69>();
+                volatile const auto& v70 = row.get<70>();
+                volatile const auto& v71 = row.get<71>();
                 // Continue pattern for performance but simplified for brevity
-                (void)v0; (void)v1; (void)v2; (void)v3; (void)v4; (void)v5;
+                (void)v0; (void)v1; (void)v2; (void)v3; (void)v4; (void)v5; (void)v6; (void)v7; (void)v8; (void)v9; (void)v10; (void)v11; (void)v12; (void)v13; (void)v14; (void)v15; (void)v16; (void)v17; (void)v18; (void)v19; (void)v20; (void)v21; (void)v22; (void)v23; (void)v24; (void)v25; (void)v26; (void)v27; (void)v28; (void)v29; (void)v30; (void)v31; (void)v32; (void)v33; (void)v34; (void)v35; (void)v36; (void)v37; (void)v38; (void)v39; (void)v40; (void)v41; (void)v42; (void)v43; (void)v44; (void)v45; (void)v46; (void)v47; (void)v48; (void)v49; (void)v50; (void)v51; (void)v52; (void)v53; (void)v54; (void)v55; (void)v56; (void)v57; (void)v58; (void)v59; (void)v60; (void)v61; (void)v62; (void)v63; (void)v64; (void)v65; (void)v66; (void)v67; (void)v68; (void)v69; (void)v70; (void)v71;
                 ++rowCount;
                 
                 if (rowCount % 50000 == 0) {

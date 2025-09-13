@@ -1,4 +1,8 @@
 # Ignore build artifacts
+build_release/
+build_debug/
+build-release/
+build-debug/
 build/
 bin/
 lib/

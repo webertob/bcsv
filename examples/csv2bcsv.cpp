@@ -342,43 +342,43 @@ void setRowValue(bcsv::Writer<bcsv::Layout>& writer, size_t column_index,
         // Handle empty values - set default values
         switch (type) {
             case bcsv::ColumnType::BOOL:
-                writer.row.set(column_index, false);
+                writer.row().set(column_index, false);
                 break;
             case bcsv::ColumnType::INT8:
-                writer.row.set(column_index, static_cast<int8_t>(0));
+                writer.row().set(column_index, static_cast<int8_t>(0));
                 break;
             case bcsv::ColumnType::UINT8:
-                writer.row.set(column_index, static_cast<uint8_t>(0));
+                writer.row().set(column_index, static_cast<uint8_t>(0));
                 break;
             case bcsv::ColumnType::INT16:
-                writer.row.set(column_index, static_cast<int16_t>(0));
+                writer.row().set(column_index, static_cast<int16_t>(0));
                 break;
             case bcsv::ColumnType::UINT16:
-                writer.row.set(column_index, static_cast<uint16_t>(0));
+                writer.row().set(column_index, static_cast<uint16_t>(0));
                 break;
             case bcsv::ColumnType::INT32:
-                writer.row.set(column_index, static_cast<int32_t>(0));
+                writer.row().set(column_index, static_cast<int32_t>(0));
                 break;
             case bcsv::ColumnType::UINT32:
-                writer.row.set(column_index, static_cast<uint32_t>(0));
+                writer.row().set(column_index, static_cast<uint32_t>(0));
                 break;
             case bcsv::ColumnType::INT64:
-                writer.row.set(column_index, static_cast<int64_t>(0));
+                writer.row().set(column_index, static_cast<int64_t>(0));
                 break;
             case bcsv::ColumnType::UINT64:
-                writer.row.set(column_index, static_cast<uint64_t>(0));
+                writer.row().set(column_index, static_cast<uint64_t>(0));
                 break;
             case bcsv::ColumnType::FLOAT:
-                writer.row.set(column_index, 0.0f);
+                writer.row().set(column_index, 0.0f);
                 break;
             case bcsv::ColumnType::DOUBLE:
-                writer.row.set(column_index, 0.0);
+                writer.row().set(column_index, 0.0);
                 break;
             case bcsv::ColumnType::STRING:
-                writer.row.set(column_index, std::string(""));
+                writer.row().set(column_index, std::string(""));
                 break;
             default:
-                writer.row.set(column_index, std::string(""));
+                writer.row().set(column_index, std::string(""));
         }
         return;
     }
@@ -396,47 +396,47 @@ void setRowValue(bcsv::Writer<bcsv::Layout>& writer, size_t column_index,
                 std::transform(lower_val.begin(), lower_val.end(), lower_val.begin(), 
                     [](char c) { return static_cast<char>(::tolower(c)); });
                 bool bool_val = (lower_val == "true" || lower_val == "1");
-                writer.row.set(column_index, bool_val);
+                writer.row().set(column_index, bool_val);
                 break;
             }
             case bcsv::ColumnType::INT8:
-                writer.row.set(column_index, static_cast<int8_t>(std::stoll(value)));
+                writer.row().set(column_index, static_cast<int8_t>(std::stoll(value)));
                 break;
             case bcsv::ColumnType::UINT8:
-                writer.row.set(column_index, static_cast<uint8_t>(std::stoull(value)));
+                writer.row().set(column_index, static_cast<uint8_t>(std::stoull(value)));
                 break;
             case bcsv::ColumnType::INT16:
-                writer.row.set(column_index, static_cast<int16_t>(std::stoll(value)));
+                writer.row().set(column_index, static_cast<int16_t>(std::stoll(value)));
                 break;
             case bcsv::ColumnType::UINT16:
-                writer.row.set(column_index, static_cast<uint16_t>(std::stoull(value)));
+                writer.row().set(column_index, static_cast<uint16_t>(std::stoull(value)));
                 break;
             case bcsv::ColumnType::INT32:
-                writer.row.set(column_index, static_cast<int32_t>(std::stoll(value)));
+                writer.row().set(column_index, static_cast<int32_t>(std::stoll(value)));
                 break;
             case bcsv::ColumnType::UINT32:
-                writer.row.set(column_index, static_cast<uint32_t>(std::stoull(value)));
+                writer.row().set(column_index, static_cast<uint32_t>(std::stoull(value)));
                 break;
             case bcsv::ColumnType::INT64:
-                writer.row.set(column_index, static_cast<int64_t>(std::stoll(value)));
+                writer.row().set(column_index, static_cast<int64_t>(std::stoll(value)));
                 break;
             case bcsv::ColumnType::UINT64:
-                writer.row.set(column_index, static_cast<uint64_t>(std::stoull(value)));
+                writer.row().set(column_index, static_cast<uint64_t>(std::stoull(value)));
                 break;
             case bcsv::ColumnType::FLOAT:
-                writer.row.set(column_index, std::stof(normalized_value));
+                writer.row().set(column_index, std::stof(normalized_value));
                 break;
             case bcsv::ColumnType::DOUBLE:
-                writer.row.set(column_index, std::stod(normalized_value));
+                writer.row().set(column_index, std::stod(normalized_value));
                 break;
             case bcsv::ColumnType::STRING:
             default:
-                writer.row.set(column_index, value);
+                writer.row().set(column_index, value);
                 break;
         }
     } catch (const std::exception&) {
         // If conversion fails, store as string
-        writer.row.set(column_index, value);
+        writer.row().set(column_index, value);
     }
 }
 

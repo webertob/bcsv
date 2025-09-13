@@ -30,12 +30,13 @@ namespace bcsv {
      */
     template<LayoutConcept LayoutType>
     class Reader {
-        using RowType = typename LayoutType::RowType;
-        using RowViewType = typename LayoutType::RowViewType;
+        using RowType           = typename LayoutType::RowType;
+        using RowViewType       = typename LayoutType::RowViewType;
+        using FilePath          = std::filesystem::path;
 
         ReaderMode              mode_ = ReaderMode::STRICT; // Default to strict mode for backward compatibility
         FileHeader              fileHeader_;                // File header for accessing flags and metadata
-        std::filesystem::path   filePath_;                  // Always present
+        FilePath                filePath_;                  // Always present
         std::ifstream           stream_;                    // Always binary file stream
 
         ByteBuffer              buffer_raw_;
@@ -52,26 +53,26 @@ namespace bcsv {
          * @param layout The layout defining the structure of rows
          * @param mode The reader mode for error handling (default: STRICT)
          */
-        explicit                            Reader(ReaderMode mode = ReaderMode::STRICT);
-                                            ~Reader();
+        explicit                Reader(ReaderMode mode = ReaderMode::STRICT);
+                                ~Reader();
 
-        void                                close();
-        uint8_t                             getCompressionLevel() const { return fileHeader_.getCompressionLevel(); }
-        const std::filesystem::path&        getFilePath() const { return filePath_; }
-        const LayoutType&                   getLayout() const { return row_.getLayout(); }
-        ReaderMode                          getMode() const { return mode_; }
-        size_t                              getCurrentRowIndex() const { return row_index_file_; }
-        
-        bool                                isOpen() const {  return stream_.is_open(); }
-        bool                                open(const std::filesystem::path& filepath);
+        void                    close();
+        uint8_t                 getCompressionLevel() const     { return fileHeader_.getCompressionLevel(); }
+        const FilePath&         getFilePath() const             { return filePath_; }
+        const LayoutType&       getLayout() const               { return row_.getLayout(); }
+        ReaderMode              getMode() const                 { return mode_; }
+        size_t                  getRowIndex() const             { return row_index_file_; }
 
-        bool                                readNext();
-        const RowType&                      row() const { return row_; }
-        void                                setMode(ReaderMode mode) { mode_ = mode; }
+        bool                    isOpen() const                  { return stream_.is_open(); }
+        bool                    open(const FilePath& filepath);
+
+        bool                    readNext();
+        const RowType&          row() const                     { return row_; }
+        void                    setMode(ReaderMode mode)        { mode_ = mode; }
 
     private:
-        bool                                readFileHeader();
-        bool                                readPacket();        
+        bool                    readFileHeader();
+        bool                    readPacket();        
     };
 
 } // namespace bcsv

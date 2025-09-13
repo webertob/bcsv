@@ -53,10 +53,11 @@ void writeStaticBCSV() {
     };
 
     for (const auto& data : sampleData) {
-        writer.row.set<0>(data.id);
-        writer.row.set<1>(data.name);
-        writer.row.set<2>(data.score);
-        writer.row.set<3>(data.active);
+        auto& row = writer.row();
+        row.set<0>(data.id);
+        row.set<1>(data.name);
+        row.set<2>(data.score);
+        row.set<3>(data.active);
         writer.writeRow();
     }
 
@@ -102,10 +103,11 @@ void readStaticBCSV() {
     size_t rowIndex = 0;
     while (reader.readNext()) {
         // Use template get<N>() method for type-safe access
-        auto id = reader.row().get<0>();
-        auto name = reader.row().get<1>();
-        auto score = reader.row().get<2>();
-        auto active = reader.row().get<3>();
+        const auto& row = reader.row();
+        auto id = row.get<0>();
+        auto name = row.get<1>();
+        auto score = row.get<2>();
+        auto active = row.get<3>();
 
         std::cout << std::setw(2) << id << " | "
                   << std::setw(14) << std::left << name << " | "

@@ -102,7 +102,7 @@ public:
                 // Use direct assignment instead of function calls where possible
                 const size_t stringIndex1 = i % stringCount;
                 const size_t stringIndex2 = (i * 7) % stringCount;
-                auto& row = writer.row; // Reference for brevity
+                auto& row = writer.row(); // Reference for brevity
                 row.set(0, int_dist_(gen_));
                 row.set(1, sampleStrings_[stringIndex1]);
                 row.set(2, float_dist_(gen_));
@@ -189,7 +189,7 @@ public:
                 // Use direct assignment instead of function calls where possible
                 const size_t stringIndex1 = i % stringCount;
                 const size_t stringIndex2 = (i * 7) % stringCount;
-                auto& row = writer.row; // Reference for brevity
+                auto& row = writer.row(); // Reference for brevity
                 row.set<0>(int_dist_(gen_));
                 row.set<1>(sampleStrings_[stringIndex1]);
                 row.set<2>(float_dist_(gen_));
@@ -381,10 +381,11 @@ public:
                 writer.open(filename, true, level);
                 
                 for (size_t i = 0; i < testRows; ++i) {
-                    writer.row.set(0, static_cast<int32_t>(i));
-                    writer.row.set(1, sampleStrings_[i % sampleStrings_.size()]);
-                    writer.row.set(2, float_dist_(gen_));
-                    writer.row.set(3, "Data row " + std::to_string(i) + " with some additional text for compression testing");
+                    auto& row = writer.row();
+                    row.set(0, static_cast<int32_t>(i));
+                    row.set(1, sampleStrings_[i % sampleStrings_.size()]);
+                    row.set(2, float_dist_(gen_));
+                    row.set(3, "Data row " + std::to_string(i) + " with some additional text for compression testing");
                     writer.writeRow();
                 }
                 writer.close();
@@ -491,14 +492,15 @@ public:
             writer.open(bcsvFilename, true, 1);
             
             for (size_t i = 0; i < testRows; ++i) {
-                writer.row.set(0, int_dist_(gen_));
-                writer.row.set(1, sampleStrings_[i % sampleStrings_.size()]);
-                writer.row.set(2, float_dist_(gen_));
-                writer.row.set(3, double_dist_(gen_));
-                writer.row.set(4, (i & 1) == 0);
-                writer.row.set(5, static_cast<int64_t>(i * 1000));
-                writer.row.set(6, static_cast<uint32_t>(i));
-                writer.row.set(7, sampleStrings_[(i * 7) % sampleStrings_.size()]);
+                auto& row = writer.row();
+                row.set(0, int_dist_(gen_));
+                row.set(1, sampleStrings_[i % sampleStrings_.size()]);
+                row.set(2, float_dist_(gen_));
+                row.set(3, double_dist_(gen_));
+                row.set(4, (i & 1) == 0);
+                row.set(5, static_cast<int64_t>(i * 1000));
+                row.set(6, static_cast<uint32_t>(i));
+                row.set(7, sampleStrings_[(i * 7) % sampleStrings_.size()]);
                 writer.writeRow();
             }
             writer.close();
@@ -515,14 +517,15 @@ public:
             size_t rowCount = 0;
             while (reader.readNext()) {
                 // Access all fields for fair comparison
-                volatile auto id = reader.row().get<int32_t>(0);
-                volatile auto name = reader.row().get<std::string>(1);
-                volatile auto score1 = reader.row().get<float>(2);
-                volatile auto score2 = reader.row().get<double>(3);
-                volatile auto active = reader.row().get<bool>(4);
-                volatile auto timestamp = reader.row().get<int64_t>(5);
-                volatile auto count = reader.row().get<uint32_t>(6);
-                volatile auto category = reader.row().get<std::string>(7);
+                const auto& row = reader.row();
+                volatile auto id = row.get<int32_t>(0);
+                volatile auto name = row.get<std::string>(1);
+                volatile auto score1 = row.get<float>(2);
+                volatile auto score2 = row.get<double>(3);
+                volatile auto active = row.get<bool>(4);
+                volatile auto timestamp = row.get<int64_t>(5);
+                volatile auto count = row.get<uint32_t>(6);
+                volatile auto category = row.get<std::string>(7);
                 
                 (void)id; (void)name; (void)score1; (void)score2;
                 (void)active; (void)timestamp; (void)count; (void)category;
