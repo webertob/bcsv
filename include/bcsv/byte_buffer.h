@@ -51,9 +51,11 @@ namespace bcsv {
             std::free(p);
         }
         
-        // Don't construct elements (lazy allocation)
+        // Construct elements properly for insert operations
         template<typename U, typename... Args>
-        void construct(U*, Args&&...) noexcept {}
+        void construct(U* p, Args&&... args) {
+            new(p) U(std::forward<Args>(args)...);
+        }
         
         // Don't destroy elements  
         template<typename U>

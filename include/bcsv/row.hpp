@@ -51,18 +51,22 @@ namespace bcsv {
         for(size_t i = 0; i < layout_.columnCount(); ++i) {
             data_[i] = defaultValue(layout_.columnType(i));
         }
+        if(tracksChanges()) {
+            changes_.set(); // mark everything as changed
+        }
     }
 
     /** Enable or disable change tracking (i.e. used for Zero-Order-Hold compression)*/
     inline
     void Row::trackChanges(bool enable)
     {
-        if (enable) {
-            // add one extra entry for overall change flag
-            // we start with all true to indicate everything is "changed"
-            changes_.resize(layout_.columnCount() + 1, true); 
+        if(enable == tracksChanges()) {
+            return; // no-op if already in desired state
+        }
+        if (enable) {            
+            changes_.resize(layout_.columnCount(), true);   // we start with all bit set true to indicate everything has "changed"
         } else {
-            changes_.clear();
+            changes_.clear();                               // disable tracking
         }
     }
 
@@ -73,15 +77,6 @@ namespace bcsv {
         return !changes_.empty();
     }
     
-    /** Reset all change flags to false
-     *  Indicates that no columns have been modified since last reset.
-     */
-    inline
-    void Row::resetChanges()
-    { 
-        std::fill(changes_.begin(), changes_.end(), false);
-    }
-
     /** Get the value at the specified column index */
     template<typename T>
     const T& Row::get(size_t index) const {
@@ -121,13 +116,11 @@ namespace bcsv {
             if constexpr (std::is_same_v<ProvidedType, CurrentType>) {
                 if(tracksChanges() && (std::get<CurrentType>(data_[index]) != value)) {
                     changes_[index] = true; // mark this column as changed
-                    changes_.back() = true; // mark overall change
                 }
                 data_[index] = value;  // Direct assignment
             } else if constexpr (std::is_convertible_v<ProvidedType, CurrentType>) {
                 if(tracksChanges() && (std::get<CurrentType>(data_[index]) != static_cast<CurrentType>(value))) {
                     changes_[index] = true; // mark this column as changed
-                    changes_.back() = true; // mark overall change
                 }
                 data_[index] = static_cast<CurrentType>(value);  // Safe conversion
             } else {
@@ -153,9 +146,6 @@ namespace bcsv {
             }, value);  
         }
         totalSize += fixedSize;
-        // Calculate padding needed for 4-byte alignment
-        // size_t paddingBytes = (4 - (totalSize % 4)) % 4;
-        // totalSize += paddingBytes;
     }
 
     void Row::serializeTo(ByteBuffer& buffer) const  {
@@ -185,8 +175,6 @@ namespace bcsv {
                 }
             }, value);
         }
-        // Zero out any padding bytes to maintain clean data
-        // std::memset(ptrStr, 0, totalSize - (ptrStr - buffer.data()));
     }
 
     bool Row::deserializeFrom(const std::span<const std::byte> buffer)
@@ -262,6 +250,252 @@ namespace bcsv {
                 default:
                     throw std::runtime_error("Unsupported column type");
             }
+        }
+        return true;
+    }
+
+    void Row::serializeToZoH(ByteBuffer& buffer) const {
+        if(!hasAnyChanges()) {
+            return; // nothing to serialize
+        }
+
+        // reserve space to store change bitset
+        size_t ptrChanges = buffer.size();
+        buffer.resize(buffer.size() + changes_.sizeBytes());
+        
+        // Serialize each element that has changed
+        for(size_t i = 0; i < layout_.columnCount(); ++i) {
+            ColumnType type = layout_.columnType(i);
+            
+            if (type == ColumnType::BOOL) {
+                // Special handling for bools: always serialize but store as single bit in changes_
+                bool value = std::get<bool>(data_[i]);
+                if (value) {
+                    changes_.set(i);
+                } else {
+                    changes_.reset(i);
+                }
+            } else if (changes_.test(i)) {
+                // All other types: only serialize if marked as changed
+                switch (type) {
+                    case ColumnType::UINT8: {
+                        const auto& value = std::get<uint8_t>(data_[i]);
+                        const std::byte* dataPtr = reinterpret_cast<const std::byte*>(&value);
+                        buffer.insert(buffer.end(), dataPtr, dataPtr + sizeof(uint8_t));
+                        break;
+                    }
+                    case ColumnType::UINT16: {
+                        const auto& value = std::get<uint16_t>(data_[i]);
+                        const std::byte* dataPtr = reinterpret_cast<const std::byte*>(&value);
+                        buffer.insert(buffer.end(), dataPtr, dataPtr + sizeof(uint16_t));
+                        break;
+                    }
+                    case ColumnType::UINT32: {
+                        const auto& value = std::get<uint32_t>(data_[i]);
+                        const std::byte* dataPtr = reinterpret_cast<const std::byte*>(&value);
+                        buffer.insert(buffer.end(), dataPtr, dataPtr + sizeof(uint32_t));
+                        break;
+                    }
+                    case ColumnType::UINT64: {
+                        const auto& value = std::get<uint64_t>(data_[i]);
+                        const std::byte* dataPtr = reinterpret_cast<const std::byte*>(&value);
+                        buffer.insert(buffer.end(), dataPtr, dataPtr + sizeof(uint64_t));
+                        break;
+                    }
+                    case ColumnType::INT8: {
+                        const auto& value = std::get<int8_t>(data_[i]);
+                        const std::byte* dataPtr = reinterpret_cast<const std::byte*>(&value);
+                        buffer.insert(buffer.end(), dataPtr, dataPtr + sizeof(int8_t));
+                        break;
+                    }
+                    case ColumnType::INT16: {
+                        const auto& value = std::get<int16_t>(data_[i]);
+                        const std::byte* dataPtr = reinterpret_cast<const std::byte*>(&value);
+                        buffer.insert(buffer.end(), dataPtr, dataPtr + sizeof(int16_t));
+                        break;
+                    }
+                    case ColumnType::INT32: {
+                        const auto& value = std::get<int32_t>(data_[i]);
+                        const std::byte* dataPtr = reinterpret_cast<const std::byte*>(&value);
+                        buffer.insert(buffer.end(), dataPtr, dataPtr + sizeof(int32_t));
+                        break;
+                    }
+                    case ColumnType::INT64: {
+                        const auto& value = std::get<int64_t>(data_[i]);
+                        const std::byte* dataPtr = reinterpret_cast<const std::byte*>(&value);
+                        buffer.insert(buffer.end(), dataPtr, dataPtr + sizeof(int64_t));
+                        break;
+                    }
+                    case ColumnType::FLOAT: {
+                        const auto& value = std::get<float>(data_[i]);
+                        const std::byte* dataPtr = reinterpret_cast<const std::byte*>(&value);
+                        buffer.insert(buffer.end(), dataPtr, dataPtr + sizeof(float));
+                        break;
+                    }
+                    case ColumnType::DOUBLE: {
+                        const auto& value = std::get<double>(data_[i]);
+                        const std::byte* dataPtr = reinterpret_cast<const std::byte*>(&value);
+                        buffer.insert(buffer.end(), dataPtr, dataPtr + sizeof(double));
+                        break;
+                    }
+                    case ColumnType::STRING: {
+                        // Special handling for strings - encoding in ZoH mode happens in place
+                        const auto& value = std::get<std::string>(data_[i]);
+                        uint16_t strLength = static_cast<uint16_t>(std::min(value.size(), MAX_STRING_LENGTH));
+                        
+                        const std::byte* lengthPtr = reinterpret_cast<const std::byte*>(&strLength);
+                        buffer.insert(buffer.end(), lengthPtr, lengthPtr + sizeof(uint16_t));
+                        const std::byte* dataPtr = reinterpret_cast<const std::byte*>(value.c_str());
+                        buffer.insert(buffer.end(), dataPtr, dataPtr + strLength);
+                        break;
+                    }
+                    default:
+                        throw std::runtime_error("Unsupported column type in ZoH serialization");
+                }
+            }
+        }
+
+        // Write change bitset to reserved location (we do it at the end as we encode bools into the bitset during element serialization)
+        std::memcpy(buffer.data() + ptrChanges, changes_.data(), changes_.sizeBytes());
+    }
+
+    bool Row::deserializeFromZoH(const std::span<const std::byte> buffer) {
+        // We expect the buffer to start with the change bitset, followed by the actual row data
+        if (buffer.size() < changes_.sizeBytes()) {
+            std::cerr << "Row::deserializeFromZoH() failed! Buffer too small to contain change bitset." << std::endl;
+            return false;
+        }
+        
+        // Read change bitset from beginning of buffer
+        std::memcpy(changes_.data(), buffer.data(), changes_.sizeBytes());
+        
+        auto dataBuffer = buffer.subspan(changes_.sizeBytes());
+        
+        // Deserialize each element that has changed
+        for(size_t i = 0; i < layout_.columnCount(); ++i) {
+            ColumnType type = layout_.columnType(i);
+            
+            if (type == ColumnType::BOOL) {
+                // Special handling for bools: always deserialize from bitset
+                bool value = changes_.test(i);
+                std::get<bool>(data_[i]) = value;
+            } else if (changes_.test(i)) {
+                // All other types: only deserialize if marked as changed
+                switch (type) {
+                    case ColumnType::UINT8: {
+                        if (dataBuffer.size() < sizeof(uint8_t)) {
+                            std::cerr << "Row::deserializeFromZoH() failed! Buffer too small for uint8." << std::endl;
+                            return false;
+                        }
+                        std::memcpy(&std::get<uint8_t>(data_[i]), dataBuffer.data(), sizeof(uint8_t));
+                        dataBuffer = dataBuffer.subspan(sizeof(uint8_t));
+                        break;
+                    }
+                    case ColumnType::UINT16: {
+                        if (dataBuffer.size() < sizeof(uint16_t)) {
+                            std::cerr << "Row::deserializeFromZoH() failed! Buffer too small for uint16." << std::endl;
+                            return false;
+                        }
+                        std::memcpy(&std::get<uint16_t>(data_[i]), dataBuffer.data(), sizeof(uint16_t));
+                        dataBuffer = dataBuffer.subspan(sizeof(uint16_t));
+                        break;
+                    }
+                    case ColumnType::UINT32: {
+                        if (dataBuffer.size() < sizeof(uint32_t)) {
+                            std::cerr << "Row::deserializeFromZoH() failed! Buffer too small for uint32." << std::endl;
+                            return false;
+                        }
+                        std::memcpy(&std::get<uint32_t>(data_[i]), dataBuffer.data(), sizeof(uint32_t));
+                        dataBuffer = dataBuffer.subspan(sizeof(uint32_t));
+                        break;
+                    }
+                    case ColumnType::UINT64: {
+                        if (dataBuffer.size() < sizeof(uint64_t)) {
+                            std::cerr << "Row::deserializeFromZoH() failed! Buffer too small for uint64." << std::endl;
+                            return false;
+                        }
+                        std::memcpy(&std::get<uint64_t>(data_[i]), dataBuffer.data(), sizeof(uint64_t));
+                        dataBuffer = dataBuffer.subspan(sizeof(uint64_t));
+                        break;
+                    }
+                    case ColumnType::INT8: {
+                        if (dataBuffer.size() < sizeof(int8_t)) {
+                            std::cerr << "Row::deserializeFromZoH() failed! Buffer too small for int8." << std::endl;
+                            return false;
+                        }
+                        std::memcpy(&std::get<int8_t>(data_[i]), dataBuffer.data(), sizeof(int8_t));
+                        dataBuffer = dataBuffer.subspan(sizeof(int8_t));
+                        break;
+                    }
+                    case ColumnType::INT16: {
+                        if (dataBuffer.size() < sizeof(int16_t)) {
+                            std::cerr << "Row::deserializeFromZoH() failed! Buffer too small for int16." << std::endl;
+                            return false;
+                        }
+                        std::memcpy(&std::get<int16_t>(data_[i]), dataBuffer.data(), sizeof(int16_t));
+                        dataBuffer = dataBuffer.subspan(sizeof(int16_t));
+                        break;
+                    }
+                    case ColumnType::INT32: {
+                        if (dataBuffer.size() < sizeof(int32_t)) {
+                            std::cerr << "Row::deserializeFromZoH() failed! Buffer too small for int32." << std::endl;
+                            return false;
+                        }
+                        std::memcpy(&std::get<int32_t>(data_[i]), dataBuffer.data(), sizeof(int32_t));
+                        dataBuffer = dataBuffer.subspan(sizeof(int32_t));
+                        break;
+                    }
+                    case ColumnType::INT64: {
+                        if (dataBuffer.size() < sizeof(int64_t)) {
+                            std::cerr << "Row::deserializeFromZoH() failed! Buffer too small for int64." << std::endl;
+                            return false;
+                        }
+                        std::memcpy(&std::get<int64_t>(data_[i]), dataBuffer.data(), sizeof(int64_t));
+                        dataBuffer = dataBuffer.subspan(sizeof(int64_t));
+                        break;
+                    }
+                    case ColumnType::FLOAT: {
+                        if (dataBuffer.size() < sizeof(float)) {
+                            std::cerr << "Row::deserializeFromZoH() failed! Buffer too small for float." << std::endl;
+                            return false;
+                        }
+                        std::memcpy(&std::get<float>(data_[i]), dataBuffer.data(), sizeof(float));
+                        dataBuffer = dataBuffer.subspan(sizeof(float));
+                        break;
+                    }
+                    case ColumnType::DOUBLE: {
+                        if (dataBuffer.size() < sizeof(double)) {
+                            std::cerr << "Row::deserializeFromZoH() failed! Buffer too small for double." << std::endl;
+                            return false;
+                        }
+                        std::memcpy(&std::get<double>(data_[i]), dataBuffer.data(), sizeof(double));
+                        dataBuffer = dataBuffer.subspan(sizeof(double));
+                        break;
+                    }
+                    case ColumnType::STRING: {
+                        // Special handling for strings
+                        if (dataBuffer.size() < sizeof(uint16_t)) {
+                            std::cerr << "Row::deserializeFromZoH() failed! Buffer too small for string length." << std::endl;
+                            return false;
+                        }
+                        uint16_t strLength;
+                        std::memcpy(&strLength, dataBuffer.data(), sizeof(uint16_t));
+                        
+                        if (dataBuffer.size() < sizeof(uint16_t) + strLength) {
+                            std::cerr << "Row::deserializeFromZoH() failed! Buffer too small for string payload." << std::endl;
+                            return false;
+                        }
+                        std::string value;
+                        value.assign(reinterpret_cast<const char*>(dataBuffer.data() + sizeof(uint16_t)), strLength);
+                        std::get<std::string>(data_[i]) = value;
+                        dataBuffer = dataBuffer.subspan(sizeof(uint16_t) + strLength);
+                        break;
+                    }
+                    default:
+                        throw std::runtime_error("Unsupported column type in ZoH deserialization");
+                }
+            }
+            // Column not changed - keeping previous value (no action needed)
         }
         return true;
     }
@@ -443,6 +677,9 @@ namespace bcsv {
     void RowStatic<ColumnTypes...>::clear()
     {
         clearHelper<0>();
+        if(trackChanges()) {
+            changes_.set(); // mark everything as changed initially
+        }
     }
 
     template<typename... ColumnTypes>
@@ -458,24 +695,15 @@ namespace bcsv {
     template<typename... ColumnTypes>
     void RowStatic<ColumnTypes...>::trackChanges(bool enable)
     {
-        if (enable) {
-            changes_.set();     // mark everything as changed initially, this also enables tracking (last bit is 1)
-        } else {
-            changes_.reset();   // disable tracking (last bit is 0)
+        if(tracks_changes_ == enable) {
+            return; // no-op if already in desired state
         }
-    }
-
-    template<typename... ColumnTypes>
-    bool RowStatic<ColumnTypes...>::trackChanges() const
-    {
-        return changes_.test(column_count + 1); // last bit indicates if tracking is enabled
-    }
-
-    template<typename... ColumnTypes>
-    void RowStatic<ColumnTypes...>::resetChanges()
-    {
-        std::bitset<column_count+2> mask(1 << (column_count + 1));  // keep tracking enabled/disabled state
-        changes_ &= mask;                                           // reset all change flags, keep tracking state
+        tracks_changes_ = enable;   // enable or disable tracking
+        if (enable) {
+            changes_.set();         // mark everything as changed initially
+        } else {
+            changes_.reset();       // mark all as unchanged (to have a defined state)
+        }
     }
 
     /** Get the value at the specified column index */
@@ -530,7 +758,6 @@ namespace bcsv {
     void RowStatic<ColumnTypes...>::markChangedAndSet(const T& value) {
         if(trackChanges() && (std::get<Index>(data_) != value)) {
             changes_.set(Index);
-            changes_.set(column_count);
         }
         std::get<Index>(data_) = value;
     }
@@ -568,12 +795,8 @@ namespace bcsv {
         // Use compile-time constant
         fixedSize = LayoutType::fixed_size;
         totalSize = LayoutType::fixed_size;
-
         // Calculate variable size for strings only using template recursion
         calculateStringSizes<0>(totalSize);
-        
-        // Calculate padding needed for 4-byte alignment
-        //totalSize += (4 - (totalSize % 4)) % 4;
     }
 
     template<typename... ColumnTypes>
@@ -598,9 +821,6 @@ namespace bcsv {
 
         // Serialize each tuple element using compile-time recursion
         serializeElements<0>(rowBuffer, fixedSize);
-
-        // Zero out any remaining padding bytes to maintain clean data
-        // std::memset(buffer.data() + str_offset, 0, buffer.size() - str_offset);
     }
 
     template<typename... ColumnTypes>
@@ -624,13 +844,72 @@ namespace bcsv {
     }
 
     template<typename... ColumnTypes>
-    bool RowStatic<ColumnTypes...>::deserializeFrom(const std::span<const std::byte> buffer)  {
-        return deserializeElements<0>(buffer);
+    void RowStatic<ColumnTypes...>::serializeToZoH(ByteBuffer& buffer) const {
+        if(!hasAnyChanges()) {
+            return; // nothing to serialize
+        }
+
+        // reserve space to store change bitset
+        size_t ptrChanges = buffer.size();
+        buffer.resize(buffer.size() + changes_.sizeBytes());
+        
+        // Serialize each tuple element using compile-time recursion
+        serializeElementsZoH<0>(buffer);
+
+        // write change bitset to reserved location (we do it at the end as we encode bools in to the bitset, during element serialization)
+        std::memcpy(buffer.data() + ptrChanges, changes_.data(), changes_.sizeBytes());
     }
-    
+
     template<typename... ColumnTypes>
     template<size_t Index>
-    bool RowStatic<ColumnTypes...>::deserializeElements(const std::span<const std::byte> &buffer) {
+    void RowStatic<ColumnTypes...>::serializeElementsZoH(ByteBuffer& buffer) const 
+    {
+        if constexpr (Index < column_count) {
+            if constexpr (std::is_same_v<column_type<Index>, bool>) {
+                // Special handling for bools: 
+                //  - always serialize!
+                //  - but store as single bit within changes_
+                bool value = std::get<Index>(data_);
+                if (value) {
+                    changes_.set(Index);
+                } else {
+                    changes_.reset(Index);
+                }
+            } else if (changes_.test(Index)) {
+                // all other types: only serialize if marked as changed)
+                if constexpr (std::is_same_v<column_type<Index>, std::string>) {
+                    // special handling for strings, as we need to determine string length
+                    // encoding in ZoH mode happens in place. Therefore no string offset is required!
+                    const auto& value = std::get<Index>(data_);
+                    uint16_t strLength = static_cast<uint16_t>(std::min(value.size(), MAX_STRING_LENGTH));
+                    
+                    const std::byte* lengthPtr = reinterpret_cast<const std::byte*>(&strLength);
+                    buffer.insert(buffer.end(), lengthPtr, lengthPtr + sizeof(uint16_t));
+                    const std::byte* dataPtr = reinterpret_cast<const std::byte*>(value.c_str());
+                    buffer.insert(buffer.end(), dataPtr, dataPtr + strLength);
+                } else {
+                    // for all other types, we append directly to the end of the buffer
+                    const auto& value = std::get<Index>(data_);
+                    const std::byte* dataPtr = reinterpret_cast<const std::byte*>(&value);
+                    buffer.insert(buffer.end(), dataPtr, dataPtr + sizeof(column_type<Index>));
+                }
+            }
+            // Recursively process next element
+            return serializeElementsZoH<Index + 1>(buffer); 
+        }
+    }
+
+
+    template<typename... ColumnTypes>
+    bool RowStatic<ColumnTypes...>::deserializeFrom(const std::span<const std::byte> buffer)  {
+        //we expect the buffer, starts with the first byte of the row and ends with the last byte of the row (no change bitset)
+        return deserializeElements<0>(buffer);
+    }
+
+    template<typename... ColumnTypes>
+    template<size_t Index>
+    bool RowStatic<ColumnTypes...>::deserializeElements(const std::span<const std::byte> &buffer) 
+    {
         if constexpr (Index < column_count) {
             constexpr size_t len = column_lengths[Index];
             constexpr size_t off = column_offsets[Index];
@@ -660,6 +939,70 @@ namespace bcsv {
         }
     }
 
+    template<typename... ColumnTypes>
+    bool RowStatic<ColumnTypes...>::deserializeFromZoH(const std::span<const std::byte> buffer)  
+    {
+        // we expect the buffer to start with the change bitset, followed by the actual row data
+        if (buffer.size() < changes_.sizeBytes()) {
+            std::cerr << "RowStatic::deserializeFromZoH() failed! Buffer too small to contain change bitset." << std::endl;
+            return false;
+        } else {
+            // read change bitset from beginning of buffer
+            std::memcpy(changes_.data(), buffer.data(), changes_.sizeBytes());
+        }
+        auto dataBuffer = buffer.subspan(changes_.sizeBytes());
+        return deserializeElementsZoH<0>(dataBuffer);
+    }
+
+    template<typename... ColumnTypes>
+    template<size_t Index>
+    bool RowStatic<ColumnTypes...>::deserializeElementsZoH(std::span<const std::byte> &buffer) {
+        // we expect the buffer to have the next element at the current position
+        // thus the buffer needs to get shorter as we read elements
+        // We also expect that the change bitset has been read already!
+
+        if constexpr (Index < column_count) {
+            if constexpr (std::is_same_v<column_type<Index>, bool>) {
+                // Special handling for bools: 
+                //  - always deserialize!
+                //  - but stored as single bit within changes_
+                bool value = changes_.test(Index);
+                std::get<Index>(data_) = value;
+            } else if(changes_.test(Index)) {
+                // all other types: only deserialize if marked as changed
+                if constexpr (std::is_same_v<column_type<Index>, std::string>) {
+                    // special handling for strings, as we need to determine string length
+                    if (buffer.size() < sizeof(uint16_t)) {
+                        std::cerr << "RowStatic::deserializeElementsZoH() failed! Buffer too small to contain string length." << std::endl;
+                        return false;
+                    }
+                    uint16_t strLength;
+                    std::memcpy(&strLength, buffer.data(), sizeof(uint16_t));
+                    
+                    if (buffer.size() < sizeof(uint16_t) + strLength) {
+                        std::cerr << "RowStatic::deserializeElementsZoH() failed! Buffer too small to contain string payload." << std::endl;
+                        return false;
+                    }
+                    std::string value;
+                    value.assign(reinterpret_cast<const char*>(buffer.data() + sizeof(uint16_t)), strLength);
+                    std::get<Index>(data_) = value;
+                    buffer = buffer.subspan(sizeof(uint16_t) + strLength);
+                } else {
+                    // for all other types, we read directly from the start of the buffer
+                    if (buffer.size() < sizeof(column_type<Index>)) {
+                        std::cerr << "RowStatic::deserializeElementsZoH() failed! Buffer too small to contain element." << std::endl;
+                        return false;
+                    }
+                    std::memcpy(&std::get<Index>(data_), buffer.data(), sizeof(column_type<Index>));
+                    buffer = buffer.subspan(sizeof(column_type<Index>));
+                }
+            }
+            // Column not changed - keeping previous value (no action needed)
+            return deserializeElementsZoH<Index + 1>(buffer);
+        } else {
+            return true; // All elements processed successfully
+        }
+    }
 
 
     // ========================================================================

@@ -27,13 +27,13 @@ namespace bcsv {
         if (header_.columnCount == MAX_COLUMN_COUNT) {
             std::cerr << "Warning: Maximum column count exceeded. Some columns may be ignored." << std::endl;
         }
-    }
+    }          
 
-    inline void FileHeader::setFlag(uint16_t flag, bool value) {
+    inline void FileHeader::setFlag(FileFlags flag, bool value) {
         if (value) {
-            header_.flags |= flag;
+            header_.flags |= static_cast<uint16_t>(flag);
         } else {
-            header_.flags &= ~flag;
+            header_.flags &= ~static_cast<uint16_t>(flag);
         }
     }
 

@@ -41,14 +41,25 @@ namespace bcsv {
      * Note: Core features (CHECKSUMS, ROW_INDEX, ALIGNED, COMPRESSED) are now
      * mandatory in v1.0+ and no longer require flag bits.
      */
-    enum FileFlags : uint16_t {
+    enum class FileFlags : uint16_t {
         // All bits currently reserved for future optional features
-        ZERO_ORDER_HOLD = 0x0001,       ///< Bit 0: Indicates this file uses zero-order hold compression (not implemented yet)
-        RESERVED2 = 0x0002,             ///< Bit 1: Reserved for future use
-        RESERVED3 = 0x0004,             ///< Bit 2: Reserved for future use
-        RESERVED4 = 0x0008,             ///< Bit 3: Reserved for future use
-        // Bits 4-15 also reserved
+        NONE                = 0x0000,                  ///< No special features enabled
+        ZERO_ORDER_HOLD     = 0x0001,                  ///< Bit 0: Indicates this file uses zero-order hold compression (not implemented yet)
+        // Bits 2-15 reserved for future use
     };
+
+    // Enable bitwise operations for FileFlags
+    constexpr FileFlags operator|(FileFlags lhs, FileFlags rhs) {
+        return static_cast<FileFlags>(static_cast<uint16_t>(lhs) | static_cast<uint16_t>(rhs));
+    }
+
+    constexpr FileFlags operator&(FileFlags lhs, FileFlags rhs) {
+        return static_cast<FileFlags>(static_cast<uint16_t>(lhs) & static_cast<uint16_t>(rhs));
+    }
+
+    constexpr FileFlags operator~(FileFlags flag) {
+        return static_cast<FileFlags>(~static_cast<uint16_t>(flag));
+    }
 
     /** Column data type enumeration (stored as uint16_t in file) 
      * Ensure the order matches ValueType variant! As we rely on index() to match note isType()

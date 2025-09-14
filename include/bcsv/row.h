@@ -16,6 +16,9 @@
 
 #include "definitions.h"
 #include "layout.h"
+#include "bitset.hpp"
+#include "bitset_dynamic.hpp"
+#include "byte_buffer.h"
 
 namespace bcsv {
 
@@ -25,17 +28,16 @@ namespace bcsv {
  * The BCSV row format uses a two-section layout optimized for performance and compression:
  * 1. Fixed Section: Contains all fixed-size data and string addresses
  * 2. Variable Section: Contains actual string payloads
- * 3. Padding Section: Zero-filled bytes for 4-byte alignment
  * 
  * =============================================================================
  * ROW BINARY FORMAT LAYOUT
  * =============================================================================
  * 
- * [Fixed Section] [Variable Section] [Padding Section]
- * |              | |              | |               |
- * | Col1 | Col2  | | Str1 | Str2  | | 0x00 | 0x00   |
- * |      | Col3  | |      | Str3  | |      | 0x00   |
- * |      | ...   | |      | ...   | |      | ...    |
+ * [Fixed Section] [Variable Section]
+ * |              | |              |
+ * | Col1 | Col2  | | Str1 | Str2  |
+ * |      | Col3  | |      | Str3  |
+ * |      | ...   | |      | ...   |
  * 
  * =============================================================================
  * FIXED SECTION FORMAT
@@ -77,29 +79,6 @@ namespace bcsv {
  * - Empty strings contribute 0 bytes to variable section
  * 
  * =============================================================================
- * PADDING SECTION FORMAT
- * =============================================================================
- * 
- * The padding section ensures 4-byte alignment for optimal performance:
- * 
- * ┌─────────────────┐
- * │   Padding       │
- * │   (0-3 bytes)   │
- * │   All 0x00      │
- * └─────────────────┘
- * 
- * Padding Calculation:
- * unpadded_size = fixed_section_size + variable_section_size
- * padding_bytes = (4 - (unpadded_size % 4)) % 4
- * 
- * Padding Examples:
- * - Unpadded size 45 bytes → 3 padding bytes → Total 48 bytes
- * - Unpadded size 48 bytes → 0 padding bytes → Total 48 bytes
- * - Unpadded size 49 bytes → 3 padding bytes → Total 52 bytes
- * - Unpadded size 50 bytes → 2 padding bytes → Total 52 bytes
- * - Unpadded size 51 bytes → 1 padding byte  → Total 52 bytes
- * 
- * =============================================================================
  * EXAMPLE: Row with ["John", 25, "Engineer", 3.14, true]
  * =============================================================================
  * 
@@ -119,13 +98,7 @@ namespace bcsv {
  * │  (4 bytes) │    (8 bytes)       │
  * └────────────┴────────────────────┘
  * 
- * Padding Section (3 bytes):
- * ┌────────────┬────────────┬────────────┐
- * │   0x00     │   0x00     │   0x00     │
- * │  (1 byte)  │  (1 byte)  │  (1 byte)  │
- * └────────────┴────────────┴────────────┘
- * 
- * Total Row Size: 48 bytes (45 + 3 padding)
+ * Total Row Size: 45 bytes
  * 
  * =============================================================================
  * STRING ADDRESS ENCODING DETAILS
@@ -162,11 +135,7 @@ namespace bcsv {
  * 2. Calculate Variable Section Size:
  *    - Sum lengths of all string values (truncated to MAX_STRING_LENGTH)
  * 
- * 3. Calculate Padding Size:
- *    unpadded_size = fixed_section_size + variable_section_size
- *    padding_bytes = (4 - (unpadded_size % 4)) % 4
- * 
- * 4. Write Fixed Section:
+ * 3. Write Fixed Section:
  *    current_payload_offset = fixed_section_size
  *    for each column:
  *        if STRING:
@@ -206,11 +175,6 @@ namespace bcsv {
  *        string_data = read_bytes(row_start + offset, length)
  *        store_string(string_data)
  * 
- * 3. Skip Padding Section:
- *    - Calculate expected padding bytes
- *    - Skip padding_bytes at end of row
- *    - Validate next row starts at aligned boundary
- * 
  * =============================================================================
  * PERFORMANCE CHARACTERISTICS
  * =============================================================================
@@ -221,23 +185,195 @@ namespace bcsv {
  * - Optimal for columnar processing (skip string parsing if not needed)
  * - Efficient compression (fixed section compresses well)
  * - Cache-friendly for numeric operations
- * - 4-byte alignment enables SIMD operations and reduces CPU stalls
  * - Memory-mapped file friendly
+ * - Compact representation with no padding overhead
  * 
  * Trade-offs:
  * - Two-pass parsing required for complete row reconstruction
  * - String access requires offset arithmetic
  * - Not optimal for row-at-a-time processing of mixed data
- * - Up to 3 bytes of padding overhead per row
  * 
  * =============================================================================
- * MEMORY ALIGNMENT CONSIDERATIONS
+ * MEMORY LAYOUT CONSIDERATIONS
  * =============================================================================
  * 
- * - All StringAddress values are 8-byte aligned
+ * - All StringAddress values are 8-byte aligned within the fixed section
  * - Primitive values follow their natural alignment within fixed section
  * - Variable section has no alignment requirements (byte-packed)
- * - Row start should be aligned to 8-byte boundary for optimal access
+ * - Row boundaries are not enforced to any specific alignment
+ * - Compact storage with no padding between sections or rows
+ * 
+ * =============================================================================
+ * ZERO ORDER HOLD (ZoH) COMPRESSION FORMAT
+ * =============================================================================
+ * 
+ * When Zero Order Hold compression is enabled (FileFlags::ZERO_ORDER_HOLD),
+ * rows use a completely different encoding optimized for time-series data
+ * where values remain constant for extended periods.
+ * 
+ * =============================================================================
+ * ZoH BINARY FORMAT LAYOUT
+ * =============================================================================
+ * 
+ * [Change Bitset] [Changed Data 1] [Changed Data 2] ... [Changed Data N]
+ * |              | |              | |              |   |              |
+ * | Column Flags | | Value 1      | | Value 2      |   | Value N      |
+ * | + Bool Values| | (if changed) | | (if changed) |   | (if changed) |
+ * 
+ * =============================================================================
+ * CHANGE BITSET FORMAT
+ * =============================================================================
+ * 
+ * The change bitset is a compact bitfield indicating which columns have changed:
+ * 
+ * Bit Layout (for N columns):
+ * ┌─────────────────────────────────────────────────────────────────┐
+ * │ N+1 │  N  │ N-1 │ ... │  2  │  1  │  0  │ Padding (if needed) │
+ * ├─────┼─────┼─────┼─────┼─────┼─────┼─────┼─────────────────────┤
+ * │ ANY │ ColN│Col-1│ ... │Col2 │Col1 │Col0 │     Zero-filled     │
+ * │CHNG │     │     │     │     │     │     │                     │
+ * └─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────────────────────┘
+ * 
+ * Bit Meanings:
+ * - Bit 0 to N-1: Column change flags (1 = changed, 0 = unchanged)
+ * - Bit N: Overall change indicator (1 = any column changed)
+ * - For BOOL columns: The bit value IS the boolean value (not just a change flag)
+ * 
+ * Bitset Size: Rounded up to nearest byte boundary for efficient storage
+ * 
+ * =============================================================================
+ * ZoH DATA SECTION FORMAT
+ * =============================================================================
+ * 
+ * Only columns marked as changed (bit = 1) have data in the data section.
+ * Data appears in layout order (column 0, column 1, ..., column N).
+ * 
+ * For BOOLEAN columns:
+ * - No data in data section (value stored directly in change bitset)
+ * - Bit 0 = false, Bit 1 = true
+ * - Always considered "changed" for bitset purposes
+ * 
+ * For STRING columns (if changed):
+ * ┌─────────────────┬─────────────────────────────────────────┐
+ * │   Length        │           String Payload                │
+ * │  (uint16_t)     │         (Length bytes)                  │
+ * │  (2 bytes)      │        (no null terminator)            │
+ * └─────────────────┴─────────────────────────────────────────┘
+ * - Length: String length in bytes (max 65,535)
+ * - Payload: Raw string bytes (UTF-8 encoded)
+ * - No offset calculation needed (in-place encoding)
+ * 
+ * For PRIMITIVE columns (if changed):
+ * ┌─────────────────────────────────────────────────────────────────┐
+ * │                     Raw Value Data                              │
+ * │                (1, 2, 4, or 8 bytes)                            │
+ * │              (little-endian encoding)                           │
+ * └─────────────────────────────────────────────────────────────────┘
+ * 
+ * =============================================================================
+ * ZoH EXAMPLE: Row with ["Alice", 30, "Manager", 75000.0, true]
+ * =============================================================================
+ * 
+ * Layout: [STRING, INT32, STRING, DOUBLE, BOOL]
+ * Scenario: Only INT32 and BOOL columns changed from previous row
+ * 
+ * Change Bitset (1 byte for 5 columns + 1 any-change bit):
+ * ┌─────┬─────┬─────┬─────┬─────┬─────┬─────┬─────┐
+ * │  7  │  6  │  5  │  4  │  3  │  2  │  1  │  0  │
+ * ├─────┼─────┼─────┼─────┼─────┼─────┼─────┼─────┤
+ * │  0  │ ANY │BOOL │DOUB │STR2 │INT32│STR1 │ PAD │
+ * │     │  1  │  1  │  0  │  0  │  1  │  0  │  0  │
+ * └─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────┘
+ * 
+ * Bitset Value: 0b01100100 = 0x64
+ * 
+ * Data Section (6 bytes):
+ * ┌────────────────────┬────────────────────┐
+ * │       INT32        │    (BOOL in        │
+ * │     (4 bytes)      │     bitset)        │
+ * │      30            │                    │
+ * └────────────────────┴────────────────────┘
+ * 
+ * Total ZoH Row Size: 5 bytes (1 + 4)
+ * vs. Standard Row Size: 45 bytes (33 fixed + 12 variable)
+ * Compression Ratio: 89% space savings!
+ * 
+ * =============================================================================
+ * ZoH SERIALIZATION ALGORITHM
+ * =============================================================================
+ * 
+ * 1. Check if any changes exist:
+ *    if (!hasAnyChanges()) return; // Skip serialization entirely
+ * 
+ * 2. Reserve space for change bitset:
+ *    bitset_size = (column_count + 1 + 7) / 8; // Round up to bytes
+ *    reserve_space(buffer, bitset_size);
+ * 
+ * 3. Process each column in layout order:
+ *    for each column i:
+ *        if column_type == BOOL:
+ *            bitset[i] = boolean_value; // Store value directly
+ *        else if changed[i]:
+ *            bitset[i] = 1;
+ *            if column_type == STRING:
+ *                append(buffer, string_length_uint16);
+ *                append(buffer, string_data);
+ *            else:
+ *                append(buffer, primitive_value);
+ * 
+ * 4. Write bitset to reserved location:
+ *    write_bitset_to_buffer(reserved_location);
+ * 
+ * =============================================================================
+ * ZoH DESERIALIZATION ALGORITHM
+ * =============================================================================
+ * 
+ * 1. Read change bitset:
+ *    bitset_size = (column_count + 1 + 7) / 8;
+ *    read_bitset(buffer, bitset_size);
+ *    data_start = buffer + bitset_size;
+ * 
+ * 2. Process each column in layout order:
+ *    current_pos = data_start;
+ *    for each column i:
+ *        if column_type == BOOL:
+ *            column_value[i] = bitset[i]; // Read directly from bitset
+ *        else if bitset[i] == 1: // Column changed
+ *            if column_type == STRING:
+ *                length = read_uint16(current_pos);
+ *                current_pos += 2;
+ *                column_value[i] = read_string(current_pos, length);
+ *                current_pos += length;
+ *            else:
+ *                column_value[i] = read_primitive(current_pos, column_type);
+ *                current_pos += sizeof(column_type);
+ *        // else: keep previous value (Zero Order Hold principle)
+ * 
+ * =============================================================================
+ * ZoH PERFORMANCE CHARACTERISTICS
+ * =============================================================================
+ * 
+ * Benefits:
+ * - Dramatic space savings for slowly-changing time-series data (70-95% typical)
+ * - Boolean values require only 1 bit instead of 1 byte (87.5% savings)
+ * - Improved compression ratios with LZ4 due to sparse data patterns
+ * - Reduced I/O bandwidth and memory usage
+ * - Cache-friendly due to smaller serialized data
+ * - Perfect for sensor data, financial tickers, configuration changes
+ * 
+ * Trade-offs:
+ * - Requires change tracking overhead during data modification
+ * - Not suitable for rapidly-changing data (overhead exceeds benefits)
+ * - Deserialization requires maintaining previous row state
+ * - Slightly more complex serialization/deserialization logic
+ * - First row in each packet must be fully populated (no compression)
+ * 
+ * Optimal Use Cases:
+ * - Time-series data with sparse updates
+ * - Configuration data that changes infrequently  
+ * - Sensor readings with stable periods
+ * - Financial data with hold periods
+ * - Any scenario where < 30% of columns change per row
  * 
  * =============================================================================
  */
@@ -259,10 +395,9 @@ namespace bcsv {
     class Row {
         Layout                    layout_;  // layout defining column types and order
         std::vector<ValueType>    data_;    // store values for each column
-        std::vector<bool>         changes_; // change tracking
+        mutable bitset_dynamic    changes_; // change tracking
         /* change tracking i.e. for Zero-Order-Hold compression
         *  changes_[0:column_count  ] == true   indicates column i has been modified since last reset.
-        *  changes_[column_count    ] == true   indicates that at least one column has been modified.
         *  changes_.empty()           == true   indicates change tracking is disabled.
         */
         
@@ -273,9 +408,11 @@ namespace bcsv {
 
         void                    clear(); 
         const Layout&           layout() const                  { return layout_; }
+        bool                    hasAnyChanges() const           { return tracksChanges() && changes_.any(); }
         void                    trackChanges(bool enable);      
         bool                    tracksChanges() const;
-        void                    resetChanges();
+        void                    setChanges()                    { changes_.set(); } // mark everything as changed
+        void                    resetChanges()                  { changes_.reset(); } // mark everything as unchanged
 
                                 template<typename T = ValueType>
         const T&                get(size_t index) const;
@@ -283,7 +420,9 @@ namespace bcsv {
 
         void                    serializedSize(size_t& fixedSize, size_t& totalSize) const;
         void                    serializeTo(ByteBuffer& buffer) const;
+        void                    serializeToZoH(ByteBuffer& buffer) const;
         bool                    deserializeFrom(const std::span<const std::byte> buffer);
+        bool                    deserializeFromZoH(const std::span<const std::byte> buffer);
     };
 
 
@@ -332,11 +471,10 @@ namespace bcsv {
     private:
         LayoutType                      layout_;
         column_types                    data_;
-        std::bitset<column_count + 2>   changes_; 
+        mutable bitset<column_count>    changes_;
+        bool                            tracks_changes_ = false;
         /* change tracking i.e. for Zero-Order-Hold compression
         *  changes_[0:column_count  ] == true   indicates column i has been modified since last reset.
-        *  changes_[column_count    ] == true   indicates that at least one column has been modified.
-        *  changes_[column_count + 1] == false  indicates change tracking is disabled.
         */
 
     public:
@@ -347,10 +485,13 @@ namespace bcsv {
         ~RowStatic() = default;
        
         void                        clear();
-        const LayoutType&           layout() const { return layout_; }
+        const LayoutType&           layout() const                  { return layout_; }
+        bool                        hasAnyChanges() const           { return tracks_changes_ && changes_.any(); }
         void                        trackChanges(bool enable);
-        bool                        trackChanges() const;
-        void                        resetChanges();
+        bool                        trackChanges() const            { return tracks_changes_; }
+        void                        setChanges()                    { if(tracks_changes_) changes_.set(); } // mark everything as changed
+        void                        resetChanges()                  { if(tracks_changes_) changes_.reset(); } // mark everything as unchanged
+
 
                                     template<size_t Index>
         auto&                       get();
@@ -365,7 +506,9 @@ namespace bcsv {
 
         void                        serializedSize(size_t& fixedSize, size_t& totalSize) const;
         void                        serializeTo(ByteBuffer& buffer) const;
+        void                        serializeToZoH(ByteBuffer& buffer) const;
         bool                        deserializeFrom(const std::span<const std::byte> buffer);
+        bool                        deserializeFromZoH(const std::span<const std::byte> buffer);
 
     private:
                                     template<size_t Index>
@@ -378,7 +521,13 @@ namespace bcsv {
         void                        serializeElements(std::span<std::byte> &dstBuffer, size_t& strOffset) const;
 
                                     template<size_t Index>
+        void                        serializeElementsZoH(ByteBuffer& buffer) const;
+
+                                    template<size_t Index>
         bool                        deserializeElements(const std::span<const std::byte> &srcBuffer);
+
+                                    template<size_t Index>
+        bool                        deserializeElementsZoH(std::span<const std::byte> &srcBuffer);
 
                                     template<size_t Index>
         void                        calculateStringSizes(size_t& totalSize) const;

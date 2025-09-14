@@ -133,6 +133,11 @@ namespace bcsv {
             return false;
         } else {
             row_ = typename LayoutType::RowType(layout);
+            if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
+                row_.trackChanges(true);
+            } else {
+                row_.trackChanges(false);
+            }
         }
         return true;
     }
@@ -201,6 +206,7 @@ namespace bcsv {
                 } else {
                     // Decompress the packet data using LZ4
                     buffer_raw_.resize(buffer_raw_.capacity());
+                    
                     int decompressedSize = LZ4_decompress_safe(
                         reinterpret_cast<const char*>(buffer_zip_.data()), 
                         reinterpret_cast<char*>(buffer_raw_.data()), 
@@ -267,8 +273,33 @@ namespace bcsv {
             row_offsets_[row_index_packet_] - row_offset : 
             buffer_raw_.size() - row_offset;
 
-        if (!row_.deserializeFrom({buffer_raw_.begin() + row_offset, row_length})) {
-            return false;
+        if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
+            if(!row_length) {
+                // special case: empty row in ZoH means "repeat previous row"
+                // if this is the first row in the file, we cannot repeat anything
+                if(row_index_file_ == 0) {
+                    std::cerr << "Error: First row in file cannot be empty in Zero-Order Hold mode" << std::endl;
+                    return false;
+                }
+                // otherwise do nothing, just keep previous row as-is
+            } else {
+                // ZoH deserialization is only supported by RowStatic, not by Row
+                if constexpr (std::is_same_v<typename LayoutType::RowType, bcsv::Row>) {
+                    // Row class doesn't support ZoH - use regular deserialization
+                    if (!row_.deserializeFrom({buffer_raw_.data() + row_offset, row_length})) {
+                        return false;
+                    }
+                } else {
+                    // RowStatic supports ZoH deserialization
+                    if (!row_.deserializeFromZoH({buffer_raw_.data() + row_offset, row_length})) {
+                        return false;
+                    }
+                }
+            }
+        } else {
+            if (!row_.deserializeFrom({buffer_raw_.data() + row_offset, row_length})) {
+                return false;
+            }
         }
         row_index_packet_++;
         row_index_file_++;

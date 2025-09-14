@@ -111,10 +111,15 @@ namespace bcsv {
             // Store file path
             filePath_ = absolutePath;
             fileHeader_ = FileHeader(layout().columnCount(), compressionLevel);
-            fileHeader_.setFlags(static_cast<uint16_t>(flags));
+            fileHeader_.setFlags(flags);
             fileHeader_.writeToBinary(stream_, layout());
             row_cnt_ = 0;
             row_.clear();
+            if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
+                row_.trackChanges(true);
+            } else {
+                row_.trackChanges(false);
+            }
             return true;
 
         } catch (const std::filesystem::filesystem_error& ex) {
@@ -146,6 +151,7 @@ namespace bcsv {
         } else {
             // Compress the raw buffer using LZ4 with specified level
             buffer_zip_.resize(buffer_zip_.capacity());
+            
             int compressedSize;
             
             if (compressionLevel() == 1) {
@@ -213,7 +219,20 @@ namespace bcsv {
 
         // serialize the row into the raw buffer
         size_t row_offset = buffer_raw_.size();
-        row_.serializeTo(buffer_raw_);
+        if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
+            // ZoH serialization is only supported by RowStatic, not by Row
+            if constexpr (std::is_same_v<typename LayoutType::RowType, bcsv::Row>) {
+                // Row class doesn't support ZoH - use regular serialization
+                row_.serializeTo(buffer_raw_);
+            } else {
+                // RowStatic supports ZoH serialization
+                row_.trackChanges(true);            // ensure tracking is enabled for ZoH
+                row_.serializeToZoH(buffer_raw_);   // specialized ZoH serialization
+                row_.resetChanges();                // reset all change flags after serialization
+            }
+        } else {
+            row_.serializeTo(buffer_raw_);
+        }
         size_t row_length = buffer_raw_.size() - row_offset;
         
         // store the offset of the next row (for indexing)
@@ -224,6 +243,9 @@ namespace bcsv {
         {
             // if packed gets too large, write current packet and start a new one
             writePacket();
+            if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
+                row_.setChanges();  // mark all fields as changed, by convention a new packet starts with a fully populated row
+            }
         }
         return true;
     }

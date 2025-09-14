@@ -31,7 +31,7 @@ void writeStaticBCSV() {
     // Step 2: Create a writer
     const std::string filename = "example_static.bcsv";
     bcsv::Writer<ExampleLayout> writer(layout);
-    if(!writer.open(filename, true)) {
+    if(!writer.open(filename, true, 1, bcsv::FileFlags::NONE)) {
         std::cerr << "Failed to open writer for BCSV file\n";
         return;
     }

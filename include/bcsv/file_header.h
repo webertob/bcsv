@@ -148,22 +148,23 @@ namespace bcsv {
                                                         { header_.versionMajor = major;
                                                           header_.versionMinor = minor;
                                                           header_.versionPatch = patch; }
-        std::string getVersionString() const            { return    std::to_string(header_.versionMajor) + "." + 
+        std::string versionString() const               { return    std::to_string(header_.versionMajor) + "." + 
                                                                     std::to_string(header_.versionMinor) + "." + 
                                                                     std::to_string(header_.versionPatch); }
-        uint8_t     getVersionMajor() const             { return header_.versionMajor; }
-        uint8_t     getVersionMinor() const             { return header_.versionMinor; }
-        uint8_t     getVersionPatch() const             { return header_.versionPatch; }
+        uint8_t     versionMajor() const                { return header_.versionMajor; }
+        uint8_t     versionMinor() const                { return header_.versionMinor; }
+        uint8_t     versionPatch() const                { return header_.versionPatch; }
 
         // Compression management
         void        setCompressionLevel(size_t level)   { header_.compressionLevel = (level > 9) ? 9 : level; }
         uint8_t     compressionLevel() const            { return header_.compressionLevel; }
 
         // Flags management
-        void        setFlag(uint16_t flag, bool value);
-        bool        getFlag(uint16_t flag) const        { return (header_.flags & flag) != 0; }
-        uint16_t    getFlags() const                    { return header_.flags; }
-        void        setFlags(uint16_t flags)            { header_.flags = flags; }
+        void        clearFlag(FileFlags flag)           { setFlag(flag, false); }
+        bool        hasFlag(FileFlags flag) const       { return (getFlags() & flag) != FileFlags::NONE; }
+        FileFlags   getFlags() const                    { return static_cast<FileFlags>(header_.flags); }
+        void        setFlags(FileFlags flags)           { header_.flags = static_cast<uint16_t>(flags); }
+        void        setFlag(FileFlags flag, bool value);
 
         // Magic number validation
         bool        isValidMagic() const                { return header_.magic == BCSV_MAGIC; }

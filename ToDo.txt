@@ -1,7 +1,4 @@
-1. Create a function layout.toString() to write column header to a string, it should be human readable and inform on the column name and type. --> create example and test
-2. Create a function layout.toJSON() to write column header to string using a JSON notation. --> create example and test
-3. Check for code that is not used / isn't required, i.e. in definition.h, comment out if you find some.
-4. Introduce ZeroOrderHold (ZoH), to reduce file size:
+1. Introduce ZeroOrderHold (ZoH), to reduce file size:
     - Row to hold a vector<std::bool> that has one bit per column
     - RowStatic to hold a std::bitset<COLUMN_COUNT>
     - Implement a ZoH-access pattern for writer (track if changes are made to a row and update the bits accordingly)
@@ -13,3 +10,21 @@
     - first row per paket always is fully populated (keyframe)
     - ZeroOrderHold infromation is stored in a bitmask/bitmap, most left in each row, 0 indicates a change, 1 indicates same as before,
     - bitmask for ZoH and bool parameter to be united into one big mask, apply padding for byte alignment, i.e. 33columns with 3 bools would result in a bitmask of 33bits -> 5bytes = 40bits 
+2. Create and test Python wrapper
+3. Create and test C# wrapper
+4. add copyright and publish
+5. Create randomAccess methods:
+    Row row(size_t index) {
+        if(index == current_index+1) {
+            //fall back to sequential
+            readNext();
+            return row_;
+        }
+        
+        //check if row is in current packet, if not read packet required, build an file wide index if needed
+        // use specific heuristics for ZoH, i.e. traverse several rows back and for to avoid complex reads
+    }
+    const auto& cell(size_t rowIndex, size_t colIndex) to directly access a cell, use RowView as a lightweight abstraction to avoid full deserilization
+6. Add other datatypes (float8_t, float16_t, float_123_t, uint128_t, int128_t, BLOB)
+7. Create versions that allow for certain mememory alignments (32bit, 64bit)
+8. Read and write to arbritatry streams (i.e. network, pipes) 

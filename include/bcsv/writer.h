@@ -48,7 +48,7 @@ namespace bcsv {
         const FilePath&         filePath() const                { return filePath_; }
         const LayoutType&       layout() const                  { return row_.layout(); }
         bool                    is_open() const                 { return stream_.is_open(); }
-        bool                    open(const FilePath& filepath, bool overwrite = false, size_t compressionLevel = 1, FileFlags flags = FileFlags::ZERO_ORDER_HOLD);
+        bool                    open(const FilePath& filepath, bool overwrite = false, size_t compressionLevel = 1, FileFlags flags = FileFlags::NONE);
         RowType&                row()                           { return row_; }
         const RowType&          row() const                     { return row_; }
         bool                    writeRow();
