@@ -66,7 +66,7 @@ namespace bcsv {
      * @return true if file was successfully opened, false otherwise
      */
     template<LayoutConcept LayoutType>
-    bool Writer<LayoutType>::open(const FilePath& filepath, bool overwrite, uint8_t compressionLevel) {
+    bool Writer<LayoutType>::open(const FilePath& filepath, bool overwrite, size_t compressionLevel, FileFlags flags) {
         if(is_open()) {
             std::cerr << "Warning: File is already open: " << filePath_ << std::endl;
             return false;
@@ -110,7 +110,8 @@ namespace bcsv {
 
             // Store file path
             filePath_ = absolutePath;
-            fileHeader_ = FileHeader(layout().columnCount(), static_cast<uint8_t>(compressionLevel));
+            fileHeader_ = FileHeader(layout().columnCount(), compressionLevel);
+            fileHeader_.setFlags(static_cast<uint16_t>(flags));
             fileHeader_.writeToBinary(stream_, layout());
             row_cnt_ = 0;
             row_.clear();

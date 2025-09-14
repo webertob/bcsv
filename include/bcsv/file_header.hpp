@@ -29,69 +29,12 @@ namespace bcsv {
         }
     }
 
-    inline void FileHeader::setVersion(uint8_t major, uint8_t minor, uint8_t patch) {
-        header_.versionMajor = major;
-        header_.versionMinor = minor;
-        header_.versionPatch = patch;
-    }
-
-    inline std::string FileHeader::getVersionString() const {
-        return std::to_string(header_.versionMajor) + "." + 
-               std::to_string(header_.versionMinor) + "." + 
-               std::to_string(header_.versionPatch);
-    }
-
-    inline uint8_t FileHeader::getVersionMajor() const {
-        return header_.versionMajor;
-    }
-
-    inline uint8_t FileHeader::getVersionMinor() const {
-        return header_.versionMinor;
-    }
-
-    inline uint8_t FileHeader::getVersionPatch() const {
-        return header_.versionPatch;
-    }
-
-    inline void FileHeader::setCompressionLevel(uint8_t level) { 
-        // In v1.0+, compression is always enabled - only the level can be changed
-        header_.compressionLevel = (level > 9) ? 9 : level;
-        // Ensure compression level is at least 1 since compression is mandatory
-        if (header_.compressionLevel == 0) {
-            header_.compressionLevel = 1;
-        }
-    }
-
-    inline uint8_t FileHeader::compressionLevel() const {
-        return header_.compressionLevel;
-    }
-
     inline void FileHeader::setFlag(uint16_t flag, bool value) {
         if (value) {
             header_.flags |= flag;
         } else {
             header_.flags &= ~flag;
         }
-    }
-
-    inline bool FileHeader::getFlag(uint16_t flag) const {
-        return (header_.flags & flag) != 0;
-    }
-
-    inline uint16_t FileHeader::getFlags() const {
-        return header_.flags;
-    }
-
-    inline void FileHeader::setFlags(uint16_t flags) {
-        header_.flags = flags;
-    }
-
-    inline bool FileHeader::isValidMagic() const {
-        return header_.magic == BCSV_MAGIC;
-    }
-
-    inline uint32_t FileHeader::getMagic() const {
-        return header_.magic;
     }
 
     // FileHeader method implementations that require ColumnLayout definition

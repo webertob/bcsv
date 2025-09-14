@@ -85,26 +85,22 @@ namespace bcsv {
      * @subsection data_types Column Data Type Encoding
      * 
      * Each column type is encoded as a 16-bit unsigned integer:
-     * - 0x08: bool
-     * - 0x09: int64  
-     * - 0x0A: int32
-     * - 0x0B: double
-     * - 0x0C: string
-     * - 0x0D: float
-     * - 0x0E: int16
-     * - 0x0F: int8
-     * - 0x10: uint32
-     * - 0x11: uint8
+     * - 0x00: bool
+     * - 0x01: uint8
+     * - 0x02: uint16
+     * - 0x03: uint32
+     * - 0x04: uint64
+     * - 0x05: int8
+     * - 0x06: int16
+     * - 0x07: int32
+     * - 0x08: int64
+     * - 0x09: float
+     * - 0x0A: double
+     * - 0x0B: string
      * 
      * @subsection flag_bits Feature Flags (16-bit bitfield)
-     * 
-     * Note: As of v1.0+, core features are mandatory and no longer use flag bits:
-     * - CHECKSUMS: Always enabled (CRC32 integrity verification)
-     * - ROW_INDEX: Always enabled (row offset indexing for random access)
-     * - ALIGNED: Always enabled (aligned data structures)  
-     * - COMPRESSED: Always enabled (LZ4 compression)
-     * 
-     * - Bits 0-15: Reserved for future optional features
+     * - 0x0001: Zero-Order-Hold compression enabled
+     * - Bits 1-15: Reserved for future optional features
      * 
      * @note All multi-byte integers are stored in little-endian format
      * @note Column names are stored without null terminators to save space
@@ -124,13 +120,13 @@ namespace bcsv {
          */
         #pragma pack(push, 1)
         struct FileHeaderStruct {
-            uint32_t magic;           ///< Magic number: 0x56534342 ("BCSV" in ASCII)
-            uint8_t versionMajor;     ///< Major version number (0-255)
-            uint8_t versionMinor;     ///< Minor version number (0-255)
-            uint8_t versionPatch;     ///< Patch version number (0-255)
-            uint8_t compressionLevel; ///< Compression level (0=none, 1-9=LZ4 levels)
-            uint16_t flags;           ///< Feature flags bitfield
-            uint16_t columnCount;     ///< Number of columns in the file
+            uint32_t magic;            ///< Magic number: 0x56534342 ("BCSV" in ASCII)
+            uint8_t  versionMajor;     ///< Major version number (0-255)
+            uint8_t  versionMinor;     ///< Minor version number (0-255)
+            uint8_t  versionPatch;     ///< Patch version number (0-255)
+            uint8_t  compressionLevel; ///< Compression level (0=none, 1-9=LZ4 levels)
+            uint16_t flags;            ///< Feature flags bitfield
+            uint16_t columnCount;      ///< Number of columns in the file
         };
         #pragma pack(pop)
 
@@ -139,34 +135,39 @@ namespace bcsv {
         /**
          * @brief File format constants and limits
          */
-        static constexpr size_t FIXED_HEADER_SIZE = sizeof(FileHeaderStruct);  ///< Size of fixed header: 12 bytes
-        static constexpr size_t COLUMN_TYPE_SIZE = sizeof(uint16_t);          ///< Size per column type: 2 bytes  
-        static constexpr size_t COLUMN_LENGTH_SIZE = sizeof(uint16_t);        ///< Size per name length: 2 bytes
+        static constexpr size_t FIXED_HEADER_SIZE  = sizeof(FileHeaderStruct);  ///< Size of fixed header: 12 bytes
+        static constexpr size_t COLUMN_TYPE_SIZE   = sizeof(uint16_t);          ///< Size per column type: 2 bytes  
+        static constexpr size_t COLUMN_LENGTH_SIZE = sizeof(uint16_t);          ///< Size per name length: 2 bytes
         
         // Constructors
         FileHeader(size_t columnCount = 0, uint8_t compressionLevel = 9, uint8_t major = VERSION_MAJOR, uint8_t minor = VERSION_MAJOR, uint8_t patch = VERSION_PATCH);
         ~FileHeader() = default;
 
         // Version management
-        void setVersion(uint8_t major, uint8_t minor, uint8_t patch);
-        std::string getVersionString() const;
-        uint8_t getVersionMajor() const;
-        uint8_t getVersionMinor() const;
-        uint8_t getVersionPatch() const;
+        void        setVersion(uint8_t major, uint8_t minor, uint8_t patch) 
+                                                        { header_.versionMajor = major;
+                                                          header_.versionMinor = minor;
+                                                          header_.versionPatch = patch; }
+        std::string getVersionString() const            { return    std::to_string(header_.versionMajor) + "." + 
+                                                                    std::to_string(header_.versionMinor) + "." + 
+                                                                    std::to_string(header_.versionPatch); }
+        uint8_t     getVersionMajor() const             { return header_.versionMajor; }
+        uint8_t     getVersionMinor() const             { return header_.versionMinor; }
+        uint8_t     getVersionPatch() const             { return header_.versionPatch; }
 
         // Compression management
-        void setCompressionLevel(uint8_t level);
-        uint8_t compressionLevel() const;
+        void        setCompressionLevel(size_t level)   { header_.compressionLevel = (level > 9) ? 9 : level; }
+        uint8_t     compressionLevel() const            { return header_.compressionLevel; }
 
         // Flags management
-        void setFlag(uint16_t flag, bool value);
-        bool getFlag(uint16_t flag) const;
-        uint16_t getFlags() const;
-        void setFlags(uint16_t flags);
+        void        setFlag(uint16_t flag, bool value);
+        bool        getFlag(uint16_t flag) const        { return (header_.flags & flag) != 0; }
+        uint16_t    getFlags() const                    { return header_.flags; }
+        void        setFlags(uint16_t flags)            { header_.flags = flags; }
 
         // Magic number validation
-        bool isValidMagic() const;
-        uint32_t getMagic() const;
+        bool        isValidMagic() const                { return header_.magic == BCSV_MAGIC; }
+        uint32_t    getMagic() const                    { return header_.magic; }
 
         /**
          * @brief Binary I/O operations for complete file headers
