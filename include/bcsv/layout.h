@@ -9,6 +9,8 @@
 #include <functional>
 #include <memory>
 #include <stdexcept>
+#include <iostream>
+#include <iomanip>
 
 #include "definitions.h"
 
@@ -184,5 +186,53 @@ namespace bcsv {
         }
         LayoutStatic& operator=(const OtherLayout& other);
    };
+
+
+    // Stream operator for Layout - provides human-readable column information
+    template<LayoutConcept LayoutType>
+    std::ostream& operator<<(std::ostream& os, const LayoutType& layout) {
+        const size_t column_count = layout.columnCount();
+        
+        if (column_count == 0) {
+            return os << "Empty layout (no columns)";
+        }
+        
+        // Calculate column widths for aligned output
+        const size_t num_width = std::max(std::to_string(column_count).length(), (size_t)3); // minimum width for "Col" header
+        
+        // Find the longest column name for alignment
+        size_t name_width = 4; // minimum width for "Name" header
+        size_t type_width = 4; // minimum width for "Type" header
+        for (size_t i = 0; i < column_count; ++i) {
+            name_width = std::max(name_width, layout.columnName(i).length());
+            type_width = std::max(type_width, toString(layout.columnType(i)).length());
+        }
+        
+        // Header
+        os << std::left << std::setw(num_width) << "Col"
+           << " | " << std::setw(name_width) << "Name"
+           << " | " << "Type" << std::endl;
+        
+        // Separator line
+        os << std::string( num_width, '-') << "-+-"
+           << std::string(name_width, '-') << "-+-"
+           << std::string(type_width, '-') << std::endl; // "STRING" is 6 chars, longest type name
+        
+        // Column information
+        for (size_t i = 0; i < column_count; ++i) {
+            os << std::right << std::setw(num_width) << i
+               << " | " << std::left << std::setw(name_width) << layout.columnName(i)
+               << " | " << std::left << std::setw(type_width) << toString(layout.columnType(i));
+            
+            if (i < column_count - 1) {
+                os << std::endl;
+            }
+        }
+        
+        // Always end with a newline and reset formatting
+        os << std::endl;
+        
+        return os;
+    }
 
 } // namespace bcsv

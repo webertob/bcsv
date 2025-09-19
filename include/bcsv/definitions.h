@@ -176,8 +176,13 @@ namespace bcsv {
             case ColumnType::FLOAT:  return "float";
             case ColumnType::DOUBLE: return "double";
             case ColumnType::STRING: return "string";
-            default: return "undefined";
+            default: return "UNKNOWN";
         }
+    }
+
+    // Stream operator for ColumnType
+    inline std::ostream& operator<<(std::ostream& os, ColumnType type) {
+        return os << toString(type);
     }
 
     /**

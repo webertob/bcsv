@@ -266,35 +266,7 @@ int main(int argc, char* argv[]) {
         if (config.verbose) {
             std::cout << "Opened BCSV file successfully" << std::endl;
             std::cout << "Layout contains " << layout.columnCount() << " columns:" << std::endl;
-            
-            for (size_t i = 0; i < layout.columnCount(); ++i) {
-                std::cout << "  " << layout.columnName(i) << " (";
-                switch (layout.columnType(i)) {
-                    case bcsv::ColumnType::BOOL: std::cout << "BOOL"; break;
-                    case bcsv::ColumnType::INT8: std::cout << "INT8"; break;
-                    case bcsv::ColumnType::INT16: std::cout << "INT16"; break;
-                    case bcsv::ColumnType::INT32: std::cout << "INT32"; break;
-                    case bcsv::ColumnType::INT64: std::cout << "INT64"; break;
-                    case bcsv::ColumnType::UINT8: std::cout << "UINT8"; break;
-                    case bcsv::ColumnType::UINT16: std::cout << "UINT16"; break;
-                    case bcsv::ColumnType::UINT32: std::cout << "UINT32"; break;
-                    case bcsv::ColumnType::UINT64: std::cout << "UINT64"; break;
-#if BCSV_HAS_FLOAT16
-                    case bcsv::ColumnDataType::FLOAT16: std::cout << "FLOAT16"; break;
-#endif
-#if BCSV_HAS_BFLOAT16
-                    case bcsv::ColumnDataType::BFLOAT16: std::cout << "BFLOAT16"; break;
-#endif
-                    case bcsv::ColumnType::FLOAT: std::cout << "FLOAT"; break;
-                    case bcsv::ColumnType::DOUBLE: std::cout << "DOUBLE"; break;
-#if BCSV_HAS_FLOAT128
-                    case bcsv::ColumnDataType::FLOAT128: std::cout << "FLOAT128"; break;
-#endif
-                    case bcsv::ColumnType::STRING: std::cout << "STRING"; break;
-                    default: std::cout << "UNKNOWN"; break;
-                }
-                std::cout << ")" << std::endl;
-            }
+            std::cout << layout << std::endl;
         }
         
         // Open output CSV file

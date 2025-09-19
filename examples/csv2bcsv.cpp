@@ -13,6 +13,8 @@
 #include <sstream>
 #include <filesystem>
 #include <regex>
+#include <chrono>
+#include <iomanip>
 #include <bcsv/bcsv.h>
 
 struct Config {
@@ -25,6 +27,7 @@ struct Config {
     bool verbose = false;
     bool help = false;
     bool force_delimiter = false;  // True if user explicitly set delimiter
+    bool use_zoh = true;  // Use Zero-Order Hold compression by default
 };
 
 // Enhanced data type detection with range analysis
@@ -109,28 +112,50 @@ bcsv::ColumnType detectOptimalType(const ColumnStats& stats) {
 
 // Analyze the precision requirements from the original string
 std::pair<uint32_t, bool> analyzeStringPrecision(const std::string& value, char decimal_separator = '.') {
-    // Find decimal point
-    size_t decimal_pos = value.find(decimal_separator);
+    // Handle scientific notation (e.g., "1.0233453e+23")
+    std::string mantissa_part = value;
+    size_t exp_pos = value.find_first_of("eE");
+    if (exp_pos != std::string::npos) {
+        mantissa_part = value.substr(0, exp_pos);
+    }
+    
+    // Find decimal point in mantissa
+    size_t decimal_pos = mantissa_part.find(decimal_separator);
     if (decimal_pos == std::string::npos) {
-        return {0, false}; // No decimal places, not high precision
+        // No decimal point - check if this is an integer or scientific notation without decimal
+        if (exp_pos != std::string::npos) {
+            // Scientific notation without decimal (e.g., "123e+5")
+            // Count digits in the integer part as significant digits
+            uint32_t significant_digits = 0;
+            bool found_first_nonzero = false;
+            
+            for (char c : mantissa_part) {
+                if (std::isdigit(c)) {
+                    if (c != '0' || found_first_nonzero) {
+                        significant_digits++;
+                        if (c != '0') found_first_nonzero = true;
+                    }
+                }
+            }
+            
+            // No decimal places, but check if total significant digits require high precision
+            bool high_precision = significant_digits > 7;
+            return {0, high_precision};
+        }
+        return {0, false}; // Plain integer, no decimal places, not high precision
     }
     
-    // Count meaningful decimal places (excluding trailing zeros)
-    std::string decimal_part = value.substr(decimal_pos + 1);
-    
-    // Remove trailing zeros
-    while (!decimal_part.empty() && decimal_part.back() == '0') {
-        decimal_part.pop_back();
-    }
-    
+    // Count decimal places - RESPECT USER INTENT by keeping trailing zeros
+    // The user explicitly wrote those trailing zeros, indicating desired precision
+    std::string decimal_part = mantissa_part.substr(decimal_pos + 1);
     uint32_t decimal_places = static_cast<uint32_t>(decimal_part.length());
     
-    // Count total significant digits
+    // Count total significant digits in the mantissa
     std::string digits_only;
     bool found_first_nonzero = false;
     bool after_decimal = false;
     
-    for (char c : value) {
+    for (char c : mantissa_part) {
         if (c == decimal_separator) {
             after_decimal = true;
         } else if (std::isdigit(c)) {
@@ -141,9 +166,13 @@ std::pair<uint32_t, bool> analyzeStringPrecision(const std::string& value, char 
         }
     }
     
+    // For scientific notation, the meaningful precision is determined by the mantissa
+    // Example: "1.0233453e+23" has 8 meaningful digits (1 + 7 after decimal)
+    uint32_t total_significant_digits = static_cast<uint32_t>(digits_only.length());
+    
     // Determine if high precision is required
     // Use >6 decimal places or >7 total significant digits as threshold
-    bool high_precision = (decimal_places > 6) || (digits_only.length() > 7);
+    bool high_precision = (decimal_places > 6) || (total_significant_digits > 7);
     
     return {decimal_places, high_precision};
 }
@@ -451,6 +480,7 @@ void printUsage(const char* program_name) {
     std::cout << "  -q, --quote CHAR        Quote character (default: '\"')\n";
     std::cout << "  --no-header             CSV file has no header row\n";
     std::cout << "  --decimal-separator CHAR  Decimal separator: '.' or ',' (default: '.')\n";
+    std::cout << "  --no-zoh               Disable Zero-Order Hold compression (default: enabled)\n";
     std::cout << "  -v, --verbose           Enable verbose output\n";
     std::cout << "  -h, --help              Show this help message\n\n";
     std::cout << "Examples:\n";
@@ -458,6 +488,7 @@ void printUsage(const char* program_name) {
     std::cout << "  " << program_name << " -d ';' data.csv output.bcsv\n";
     std::cout << "  " << program_name << " --no-header -v data.csv\n";
     std::cout << "  " << program_name << " --decimal-separator ',' german_data.csv\n";
+    std::cout << "  " << program_name << " --no-zoh data.csv  # Disable ZoH compression\n";
 }
 
 Config parseArgs(int argc, char* argv[]) {
@@ -484,6 +515,8 @@ Config parseArgs(int argc, char* argv[]) {
             }
         } else if (arg == "--no-header") {
             config.has_header = false;
+        } else if (arg == "--no-zoh") {
+            config.use_zoh = false;
         } else if (arg == "-v" || arg == "--verbose") {
             config.verbose = true;
         } else if (arg == "--decimal-separator") {
@@ -554,12 +587,19 @@ int main(int argc, char* argv[]) {
             std::cout << "Delimiter: '" << config.delimiter << "', Quote: '" << config.quote_char << "'" << std::endl;
             std::cout << "Header: " << (config.has_header ? "yes" : "no") << std::endl;
             std::cout << "Decimal separator: '" << config.decimal_separator << "'" << std::endl;
+            std::cout << "ZoH compression: " << (config.use_zoh ? "enabled" : "disabled") << std::endl;
         }
         
         // Check if input file exists
         if (!std::filesystem::exists(config.input_file)) {
             throw std::runtime_error("Input file does not exist: " + config.input_file);
         }
+        
+        // Get input file size for compression statistics
+        auto input_file_size = std::filesystem::file_size(config.input_file);
+        
+        // Start timing the conversion process
+        auto start_time = std::chrono::high_resolution_clock::now();
         
         std::ifstream input(config.input_file);
         if (!input.is_open()) {
@@ -574,6 +614,11 @@ int main(int argc, char* argv[]) {
         // Read first line for auto-detection
         if (!std::getline(input, line)) {
             throw std::runtime_error("Input file is empty");
+        }
+        
+        // Trim carriage return (Windows line endings)
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
         }
         
         // Auto-detect delimiter if not specified
@@ -613,6 +658,11 @@ int main(int argc, char* argv[]) {
         // Read sample data to analyze types (up to 1000 rows for better detection)
         size_t sample_count = 0;
         while (std::getline(input, line) && sample_count < 1000) {
+            // Trim carriage return (Windows line endings)
+            if (!line.empty() && line.back() == '\r') {
+                line.pop_back();
+            }
+            
             auto row_data = parseCSVLine(line, config.delimiter, config.quote_char);
             
             // Trim trailing empty fields to match header count
@@ -663,23 +713,7 @@ int main(int argc, char* argv[]) {
         if (config.verbose) {
             std::cout << "Detected " << headers.size() << " columns:" << std::endl;
             for (size_t i = 0; i < headers.size(); ++i) {
-                std::cout << "  " << headers[i] << " -> ";
-                switch (column_types[i]) {
-                    case bcsv::ColumnType::BOOL: std::cout << "BOOL"; break;
-                    case bcsv::ColumnType::INT8: std::cout << "INT8"; break;
-                    case bcsv::ColumnType::UINT8: std::cout << "UINT8"; break;
-                    case bcsv::ColumnType::INT16: std::cout << "INT16"; break;
-                    case bcsv::ColumnType::UINT16: std::cout << "UINT16"; break;
-                    case bcsv::ColumnType::INT32: std::cout << "INT32"; break;
-                    case bcsv::ColumnType::UINT32: std::cout << "UINT32"; break;
-                    case bcsv::ColumnType::INT64: std::cout << "INT64"; break;
-                    case bcsv::ColumnType::UINT64: std::cout << "UINT64"; break;
-                    case bcsv::ColumnType::FLOAT: std::cout << "FLOAT"; break;
-                    case bcsv::ColumnType::DOUBLE: std::cout << "DOUBLE"; break;
-                    case bcsv::ColumnType::STRING: std::cout << "STRING"; break;
-                    default: std::cout << "UNKNOWN"; break;
-                }
-                std::cout << std::endl;
+                std::cout << "  " << headers[i] << " -> " << column_types[i] << std::endl;
             }
         }
         
@@ -695,19 +729,30 @@ int main(int argc, char* argv[]) {
         input.seekg(0, std::ios::beg);
         if (config.has_header) {
             std::getline(input, line); // Skip header
+            // Trim carriage return (Windows line endings)
+            if (!line.empty() && line.back() == '\r') {
+                line.pop_back();
+            }
         }
         
         // Create BCSV writer and convert data
         {
             bcsv::Writer<bcsv::Layout> writer(layout);
             // Use compression level 1 for better performance vs file size
-            writer.open(config.output_file, true, 1);
+            // Enable ZoH compression by default for optimal compression of time-series data
+            bcsv::FileFlags flags = config.use_zoh ? bcsv::FileFlags::ZERO_ORDER_HOLD : bcsv::FileFlags::NONE;
+            writer.open(config.output_file, true, 1, flags);
             size_t row_count = 0;
             
             // Pre-calculate frequently used values outside the loop
             const size_t num_columns = headers.size();
             
             while (std::getline(input, line)) {
+                // Trim carriage return (Windows line endings)
+                if (!line.empty() && line.back() == '\r') {
+                    line.pop_back();
+                }
+                
                 auto row_data = parseCSVLine(line, config.delimiter, config.quote_char);
                 
                 // Apply same flexible row handling as during sampling
@@ -746,12 +791,44 @@ int main(int argc, char* argv[]) {
             }
             
             writer.close();
+            
+            // Calculate conversion timing and statistics
+            auto end_time = std::chrono::high_resolution_clock::now();
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+            auto output_file_size = std::filesystem::file_size(config.output_file);
+            
+            // Ensure minimum duration for throughput calculation
+            long long duration_ms = duration.count();
+            if (duration_ms == 0) duration_ms = 1;  // Minimum 1ms for calculation
+            double duration_seconds = duration_ms / 1000.0;
+            
+            // Calculate compression ratio and throughput
+            double compression_ratio = (static_cast<double>(input_file_size - output_file_size) / input_file_size) * 100.0;
+            double throughput_mb_s = (static_cast<double>(input_file_size) / (1024.0 * 1024.0)) / duration_seconds;
+            double rows_per_sec = static_cast<double>(row_count) / duration_seconds;
+            
+            // Display comprehensive conversion statistics
+            std::cout << "\n=== Conversion Complete ==="<< std::endl;
             std::cout << "Successfully converted " << row_count << " rows to " << config.output_file << std::endl;
-        }
-        
-        if (config.verbose) {
-            auto file_size = std::filesystem::file_size(config.output_file);
-            std::cout << "Output file size: " << file_size << " bytes" << std::endl;
+            std::cout << "Columns detected: " << headers.size() << std::endl;
+            std::cout << layout << std::endl;
+            std::cout << "Performance Statistics:" << std::endl;
+            std::cout << "  Conversion time: " << duration.count() << " ms" << std::endl;
+            std::cout << "  Throughput: " << std::fixed << std::setprecision(2) << throughput_mb_s << " MB/s" << std::endl;
+            std::cout << "  Rows/second: " << std::fixed << std::setprecision(0) << rows_per_sec << " rows/s" << std::endl;
+            std::cout << "\nCompression Statistics:" << std::endl;
+            std::cout << "  Input CSV size: " << input_file_size << " bytes (" << std::fixed << std::setprecision(2) << (input_file_size / 1024.0) << " KB)" << std::endl;
+            std::cout << "  Output BCSV size: " << output_file_size << " bytes (" << std::fixed << std::setprecision(2) << (output_file_size / 1024.0) << " KB)" << std::endl;
+            
+            if (output_file_size <= input_file_size) {
+                std::cout << "  Compression ratio: " << std::fixed << std::setprecision(1) << compression_ratio << "%" << std::endl;
+                std::cout << "  Space saved: " << (input_file_size - output_file_size) << " bytes" << std::endl;
+            } else {
+                double size_increase_ratio = (static_cast<double>(output_file_size - input_file_size) / input_file_size) * 100.0;
+                std::cout << "  File size increase: " << std::fixed << std::setprecision(1) << size_increase_ratio << "% (overhead from binary format and metadata)" << std::endl;
+                std::cout << "  Additional space used: " << (output_file_size - input_file_size) << " bytes" << std::endl;
+            }
+            std::cout << "  Compression mode: " << (config.use_zoh ? "ZoH enabled" : "Standard") << std::endl;
         }
         
     } catch (const std::exception& e) {
