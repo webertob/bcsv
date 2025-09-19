@@ -1,19 +1,13 @@
-1. Introduce ZeroOrderHold (ZoH), to reduce file size:
-    - Row to hold a vector<std::bool> that has one bit per column
-    - RowStatic to hold a std::bitset<COLUMN_COUNT>
-    - Implement a ZoH-access pattern for writer (track if changes are made to a row and update the bits accordingly)
-    - When serilize, only write those columns to file that need to be written (have changed):
-        - special handling for bool (never write a bool, the bit itself is enough)
-        - first row in a packet is always written completly
-        - ensure the ZoH overhead is stored correctly in the file (8bit / 1 byte alignment)
-        - if ZoH is disabled avoid the overhead (ZoH)
-    - first row per paket always is fully populated (keyframe)
-    - ZeroOrderHold infromation is stored in a bitmask/bitmap, most left in each row, 0 indicates a change, 1 indicates same as before,
-    - bitmask for ZoH and bool parameter to be united into one big mask, apply padding for byte alignment, i.e. 33columns with 3 bools would result in a bitmask of 33bits -> 5bytes = 40bits 
-2. Create and test Python wrapper
-3. Create and test C# wrapper
-4. add copyright and publish
-5. Create randomAccess methods:
+1. Change row indexing to row length to make better use of the 16bit available per row (increase the number of bits supported in a package)
+2. add copyright and publish
+3. Create and test Python wrapper
+4. Create and test C# wrapper
+5. Implement dictionary compression
+6. Implement ZigZag compression
+7. Implement CHIMP/GORILA compression
+8. Implement delta encoding
+9. Implement 1st and 2nd order hold schema
+10. create randomAccess methods:
     Row row(size_t index) {
         if(index == current_index+1) {
             //fall back to sequential
@@ -25,6 +19,9 @@
         // use specific heuristics for ZoH, i.e. traverse several rows back and for to avoid complex reads
     }
     const auto& cell(size_t rowIndex, size_t colIndex) to directly access a cell, use RowView as a lightweight abstraction to avoid full deserilization
-6. Add other datatypes (float8_t, float16_t, float_123_t, uint128_t, int128_t, BLOB)
-7. Create versions that allow for certain mememory alignments (32bit, 64bit)
+11. Add other datatypes (float8_t, float16_t, float_123_t, uint128_t, int128_t, BLOB)
+-1. Drop/Never: Create versions that allow for certain mememory alignments (32bit, 64bit)
+12. Add concurent compression and writing using double buffering to not block, when packet needs to be written or read
+9. create stream write vs. current packet writing (to avoid utilization spikes)
+
 8. Read and write to arbritatry streams (i.e. network, pipes) 

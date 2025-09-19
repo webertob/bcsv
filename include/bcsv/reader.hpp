@@ -25,7 +25,7 @@ namespace bcsv {
         buffer_zip_.reserve(LZ4_COMPRESSBOUND(LZ4_BLOCK_SIZE_KB * 1024));
         row_index_file_ = 0;
         row_index_packet_ = 0;
-        row_offsets_.clear();
+        row_lengths_.clear();
     }
 
     template<LayoutConcept LayoutType>
@@ -44,7 +44,7 @@ namespace bcsv {
             return;
         }
         fileHeader_ = FileHeader();
-        row_ = typename LayoutType::RowType(LayoutType()); // reset layout and row
+        //row_ = typename LayoutType::RowType(LayoutType()); // lets keep the layout and row data available
         stream_.close();
         filePath_.clear();
         buffer_raw_.clear();
@@ -52,6 +52,7 @@ namespace bcsv {
         row_index_file_ = 0;
         row_index_packet_ = 0;
         packet_row_count_ = 0;
+        row_lengths_.clear();
         row_offsets_.clear();
     }
 
@@ -120,7 +121,9 @@ namespace bcsv {
         row_index_file_ = 0;
         row_index_packet_ = 0;
         packet_row_count_ = 0;
+        row_lengths_.clear();
         row_offsets_.clear();
+
         if (!stream_) {
             return false;
         }
@@ -133,11 +136,7 @@ namespace bcsv {
             return false;
         } else {
             row_ = typename LayoutType::RowType(layout);
-            if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
-                row_.trackChanges(true);
-            } else {
-                row_.trackChanges(false);
-            }
+            row_.trackChanges( fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD) );
         }
         return true;
     }
@@ -180,11 +179,11 @@ namespace bcsv {
                     throw std::runtime_error("Error: Invalid payload sizes in packet header");
                 }
 
-                //read row offsets (by definition 1st offset is always 0)
-                row_offsets_.resize(header.rowCount-1);
-                stream_.read(reinterpret_cast<char*>(row_offsets_.data()), row_offsets_.size() * sizeof(uint16_t));
-                if (stream_.gcount() != static_cast<std::streamsize>(row_offsets_.size() * sizeof(uint16_t))) {
-                    throw std::runtime_error("Error: Failed to read row offsets");
+                //read row lengths (by definition 1st offset is always 0)
+                row_lengths_.resize(header.rowCount-1);
+                stream_.read(reinterpret_cast<char*>(row_lengths_.data()), row_lengths_.size() * sizeof(uint16_t));
+                if (stream_.gcount() != static_cast<std::streamsize>(row_lengths_.size() * sizeof(uint16_t))) {
+                    throw std::runtime_error("Error: Failed to read row lengths");
                 }
 
                 // Read the compressed packet data
@@ -195,7 +194,7 @@ namespace bcsv {
                 }
 
                 // validate CRC
-                if(!header.validateCRC32(row_offsets_, buffer_zip_)) {
+                if(!header.validateCRC32(row_lengths_, buffer_zip_)) {
                     throw std::runtime_error("Error: Packet CRC32 validation failed");
                 }
 
@@ -220,11 +219,31 @@ namespace bcsv {
                     }
                 }
 
+                // rebuild row offsets
+                row_offsets_.resize(header.rowCount);
+                row_offsets_[0] = 0;
+                for (size_t i = 1; i < row_offsets_.size(); ++i) {
+                    row_offsets_[i] = row_offsets_[i - 1] + row_lengths_[i - 1];
+                }
+
+                // rebuild last row length based on total size
+                if(row_offsets_.back() > buffer_raw_.size()) {
+                    throw std::runtime_error("Error: Row lengths exceed packet data size");
+                } 
+                // last row length is implicit from total size
+                auto last_length = buffer_raw_.size() - row_offsets_.back();
+                if(last_length > std::numeric_limits<uint16_t>::max()) {
+                    throw std::runtime_error("Error: Last row length exceeds uint16_t maximum");
+                }
+                row_lengths_.push_back(static_cast<uint16_t>(last_length));
+
                 if(!normal) { 
                     std::cerr << "Info: Recovered from error, resynchronized at row index " << header.rowFirst << std::endl;
                     std::cerr << "Info: We have lost range [" << row_index_file_ + 1 << " to " << header.rowFirst-1 << "]" << std::endl;
                     normal = true; // back to normal mode
                 }
+
+
 
                 // Update row count
                 row_index_file_ = header.rowFirst;
@@ -244,6 +263,7 @@ namespace bcsv {
         }
         buffer_raw_.clear();
         buffer_zip_.clear();
+        row_lengths_.clear();
         row_offsets_.clear();
         row_index_packet_ = 0;
         packet_row_count_ = 0;
@@ -266,22 +286,16 @@ namespace bcsv {
             }
         }
 
-        size_t row_offset = row_index_packet_ == 0 ? 
-            0 : 
-            row_offsets_[row_index_packet_ - 1];
-        size_t row_length = row_index_packet_ < row_offsets_.size() ? 
-            row_offsets_[row_index_packet_] - row_offset : 
-            buffer_raw_.size() - row_offset;
-
+        size_t row_offset = row_offsets_[row_index_packet_];
+        size_t row_length = row_lengths_[row_index_packet_];
         if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
             if(!row_length) {
-                // special case: empty row in ZoH means "repeat previous row"
+                // special case: empty row in ZoH means "repeat/keep previous row"
                 // if this is the first row in the file, we cannot repeat anything
                 if(row_index_file_ == 0) {
                     std::cerr << "Error: First row in file cannot be empty in Zero-Order Hold mode" << std::endl;
                     return false;
                 }
-                // otherwise do nothing, just keep previous row as-is
             } else {
                 if (!row_.deserializeFromZoH({buffer_raw_.data() + row_offset, row_length})) {
                     return false;

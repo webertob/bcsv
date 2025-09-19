@@ -211,6 +211,12 @@ namespace bcsv {
  * rows use a completely different encoding optimized for time-series data
  * where values remain constant for extended periods.
  * 
+ * IMPORTANT: Boolean columns have special encoding in ZoH format:
+ * - Boolean values are encoded directly in the change bitset bits
+ * - Bit value 0 = false, Bit value 1 = true
+ * - Boolean columns never contribute data to the data section
+ * - Boolean encoding is independent of whether the value changed
+ * 
  * =============================================================================
  * ZoH BINARY FORMAT LAYOUT
  * =============================================================================
@@ -224,20 +230,25 @@ namespace bcsv {
  * CHANGE BITSET FORMAT
  * =============================================================================
  * 
- * The change bitset is a compact bitfield indicating which columns have changed:
+ * The change bitset is a compact bitfield with different semantics per column type:
  * 
  * Bit Layout (for N columns):
  * ┌─────────────────────────────────────────────────────────────────┐
- * │ N+1 │  N  │ N-1 │ ... │  2  │  1  │  0  │ Padding (if needed) │
- * ├─────┼─────┼─────┼─────┼─────┼─────┼─────┼─────────────────────┤
- * │ ANY │ ColN│Col-1│ ... │Col2 │Col1 │Col0 │     Zero-filled     │
- * │CHNG │     │     │     │     │     │     │                     │
- * └─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────────────────────┘
+ * │Padding (if needed)       │ N-1│ N-2 │ ... │  2  │  1  │  0  │   │
+ * ├─────────────────────────┼─────┼─────┼─────┼─────┼─────┼─────┤   │
+ * │      Zero-filled        │ColN-1│Col-2│ ... │Col2 │Col1 │Col0 │   │
+ * │                         │     │     │     │     │     │     │   │
+ * └─────────────────────────┴─────┴─────┴─────┴─────┴─────┴─────┘   │
  * 
  * Bit Meanings:
- * - Bit 0 to N-1: Column change flags (1 = changed, 0 = unchanged)
- * - Bit N: Overall change indicator (1 = any column changed)
- * - For BOOL columns: The bit value IS the boolean value (not just a change flag)
+ * - For NON-BOOL columns: Bit = 1 means changed, 0 means unchanged
+ * - For BOOL columns: Bit directly encodes the boolean value (0=false, 1=true)
+ *   IMPORTANT: Boolean values are ALWAYS encoded in the bitset, regardless of
+ *   whether they changed from the previous row. The bit represents the actual
+ *   boolean value, not a change indicator.
+ * 
+ * Bit Ordering: Bit 0 (column 0) is the least significant bit (rightmost),
+ * padding bits are added to the left (most significant bits) to reach byte boundary.
  * 
  * Bitset Size: Rounded up to nearest byte boundary for efficient storage
  * 
@@ -251,7 +262,8 @@ namespace bcsv {
  * For BOOLEAN columns:
  * - No data in data section (value stored directly in change bitset)
  * - Bit 0 = false, Bit 1 = true
- * - Always considered "changed" for bitset purposes
+ * - Boolean bits represent the actual value, not change status
+ * - Booleans are always included in serialization regardless of changes
  * 
  * For STRING columns (if changed):
  * ┌─────────────────┬─────────────────────────────────────────┐
@@ -277,26 +289,35 @@ namespace bcsv {
  * Layout: [STRING, INT32, STRING, DOUBLE, BOOL]
  * Scenario: Only INT32 and BOOL columns changed from previous row
  * 
- * Change Bitset (1 byte for 5 columns + 1 any-change bit):
+ * Change Bitset (1 byte for 5 columns):
  * ┌─────┬─────┬─────┬─────┬─────┬─────┬─────┬─────┐
  * │  7  │  6  │  5  │  4  │  3  │  2  │  1  │  0  │
  * ├─────┼─────┼─────┼─────┼─────┼─────┼─────┼─────┤
- * │  0  │ ANY │BOOL │DOUB │STR2 │INT32│STR1 │ PAD │
- * │     │  1  │  1  │  0  │  0  │  1  │  0  │  0  │
+ * │ PAD │ PAD │ PAD │BOOL │DOUB │STR2 │INT32│STR1 │
+ * │  0  │  0  │  0  │  1  │  0  │  0  │  1  │  0  │
  * └─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────┘
  * 
- * Bitset Value: 0b01100100 = 0x64
+ * Bitset Value: 0b00010010 = 0x12
+ * - Bit 0 (STR1): 0 = unchanged (no data in section)
+ * - Bit 1 (INT32): 1 = changed (4 bytes in data section)  
+ * - Bit 2 (STR2): 0 = unchanged (no data in section)
+ * - Bit 3 (DOUBLE): 0 = unchanged (no data in section)
+ * - Bit 4 (BOOL): 1 = boolean value is true (no data in section)
+ * - Bits 5-7: Padding bits (always 0)
  * 
- * Data Section (6 bytes):
- * ┌────────────────────┬────────────────────┐
- * │       INT32        │    (BOOL in        │
- * │     (4 bytes)      │     bitset)        │
- * │      30            │                    │
- * └────────────────────┴────────────────────┘
+ * Data Section (4 bytes):
+ * ┌────────────────────┐
+ * │       INT32        │
+ * │     (4 bytes)      │
+ * │      30            │
+ * └────────────────────┘
  * 
- * Total ZoH Row Size: 5 bytes (1 + 4)
+ * Total ZoH Row Size: 5 bytes (1 bitset + 4 data)
  * vs. Standard Row Size: 45 bytes (33 fixed + 12 variable)
  * Compression Ratio: 89% space savings!
+ * 
+ * Note: The bitset shows correct bit ordering with column 0 at bit position 0
+ * (least significant bit) and padding at the most significant bits (left side).
  * 
  * =============================================================================
  * ZoH SERIALIZATION ALGORITHM
@@ -306,15 +327,15 @@ namespace bcsv {
  *    if (!hasAnyChanges()) return; // Skip serialization entirely
  * 
  * 2. Reserve space for change bitset:
- *    bitset_size = (column_count + 1 + 7) / 8; // Round up to bytes
+ *    bitset_size = (column_count + 7) / 8; // Round up to bytes
  *    reserve_space(buffer, bitset_size);
  * 
  * 3. Process each column in layout order:
  *    for each column i:
  *        if column_type == BOOL:
- *            bitset[i] = boolean_value; // Store value directly
+ *            bitset[i] = boolean_value; // Store value directly in bitset
  *        else if changed[i]:
- *            bitset[i] = 1;
+ *            bitset[i] = 1; // Mark as changed
  *            if column_type == STRING:
  *                append(buffer, string_length_uint16);
  *                append(buffer, string_data);
@@ -329,7 +350,7 @@ namespace bcsv {
  * =============================================================================
  * 
  * 1. Read change bitset:
- *    bitset_size = (column_count + 1 + 7) / 8;
+ *    bitset_size = (column_count + 7) / 8;
  *    read_bitset(buffer, bitset_size);
  *    data_start = buffer + bitset_size;
  * 
@@ -337,7 +358,7 @@ namespace bcsv {
  *    current_pos = data_start;
  *    for each column i:
  *        if column_type == BOOL:
- *            column_value[i] = bitset[i]; // Read directly from bitset
+ *            column_value[i] = bitset[i]; // Read boolean value directly from bitset
  *        else if bitset[i] == 1: // Column changed
  *            if column_type == STRING:
  *                length = read_uint16(current_pos);

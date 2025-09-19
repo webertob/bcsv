@@ -24,12 +24,12 @@ namespace bcsv {
     |                                                               |
     |                    First Row Number (uint64)                  |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |                      Number of Rows (uint32)                  |
+    |                      Row Count (uint32)                       |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     |                    CRC32 Checksum (uint32)                    |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |              Row Index - offset to the start of each          |
-    |              row, except for the first (uint16 * Rows - 1)    |
+    |              Row Lengths - length of each row in bytes        |
+    |          for rows 0 to n-1 (uint16 * (Number of Rows - 1))    |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     |                                                               |
     |                    Payload Data (LZ4 compressed)              |
@@ -40,6 +40,12 @@ namespace bcsv {
     that are always present in every packet, providing data integrity and
     random access capabilities.
 
+    Row Length Format:
+    - Stores the length (in bytes) of each row from 0 to n-1
+    - The last row's length is implicit (calculated from total payload size)
+    - Row offset for row n is calculated by accumulating lengths 0 to n-1
+    - Example: Row 0 offset = 0, Row 1 offset = length[0], Row 2 offset = length[0] + length[1], etc.
+
 */
     #pragma pack(push, 1)
     struct PacketHeader {
@@ -49,11 +55,11 @@ namespace bcsv {
         uint32_t rowCount;       // Number of rows in the packet
         uint32_t crc32;          // CRC32 checksum of the entire packet (with this field zeroed)
 
-        bool read(std::istream& stream);
-        bool findAndRead(std::istream& stream);
-        void updateCRC32(const std::vector<uint16_t>& rowOffsets, const ByteBuffer& zipBuffer);
-        bool validateCRC32(const std::vector<uint16_t>& rowOffsets, const ByteBuffer& zipBuffer);
-        bool validate() const {
+        bool read               (std::istream& stream);
+        bool findAndRead        (std::istream& stream);
+        void updateCRC32        (const std::vector<uint16_t>& rowLengths, const ByteBuffer& zipBuffer);
+        bool validateCRC32      (const std::vector<uint16_t>& rowLengths, const ByteBuffer& zipBuffer);
+        bool validate           () const {
             if(magic != PCKT_MAGIC) {
                 return false;
             }

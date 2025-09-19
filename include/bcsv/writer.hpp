@@ -184,29 +184,29 @@ namespace bcsv {
         if (RANGE_CHECKING && buffer_zip_.size() >= std::numeric_limits<uint32_t>::max()) {
             throw std::runtime_error("Compressed buffer size exceeds uint32_t maximum");
         }
-        if (RANGE_CHECKING && row_offsets_.size() >= std::numeric_limits<uint16_t>::max()) {
+        if (RANGE_CHECKING && row_lengths_.size() >= std::numeric_limits<uint16_t>::max()) {
             throw std::runtime_error("Row count difference exceeds uint16_t maximum");
         }
         
         PacketHeader packetHeader;
         packetHeader.payloadSizeZip = static_cast<uint32_t>(buffer_zip_.size());
         packetHeader.rowFirst = row_cnt_; 
-        packetHeader.rowCount = static_cast<uint32_t>(row_offsets_.size()); // number of rows
-        row_offsets_.pop_back(); // last offset is end of data, not a row start
-        packetHeader.updateCRC32(row_offsets_, buffer_zip_);
+        packetHeader.rowCount = static_cast<uint32_t>(row_lengths_.size()); // number of rows
+        row_lengths_.pop_back(); // based on file format last offset is implicitly defined by end of packet payload and does not need to be stored
+        packetHeader.updateCRC32(row_lengths_, buffer_zip_);
 
         // Write the packet (header + row offsets + compressed data)
         stream_.write(reinterpret_cast<const char*>(&packetHeader), sizeof(packetHeader));
         
         // Safe conversion for row offsets size
-        size_t row_offsets_bytes = row_offsets_.size() * sizeof(uint16_t);
-        stream_.write(reinterpret_cast<const char*>(row_offsets_.data()), static_cast<std::streamsize>(row_offsets_bytes));
+        size_t row_offsets_bytes = row_lengths_.size() * sizeof(uint16_t);
+        stream_.write(reinterpret_cast<const char*>(row_lengths_.data()), static_cast<std::streamsize>(row_offsets_bytes));
         stream_.write(reinterpret_cast<const char*>(buffer_zip_.data()), static_cast<std::streamsize>(buffer_zip_.size()));
 
         // Clear buffers for next packet
         buffer_raw_.clear();
         buffer_zip_.clear();
-        row_offsets_.clear();
+        row_lengths_.clear();
         row_cnt_ += packetHeader.rowCount; // Update total row count
     }
 
@@ -218,7 +218,7 @@ namespace bcsv {
         }
 
         // serialize the row into the raw buffer
-        size_t row_offset = buffer_raw_.size();
+        size_t old_size = buffer_raw_.size();
         if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
             row_.trackChanges(true);            // ensure tracking is enabled for ZoH
             row_.serializeToZoH(buffer_raw_);   // specialized ZoH serialization
@@ -226,14 +226,15 @@ namespace bcsv {
         } else {
             row_.serializeTo(buffer_raw_);
         }
-        size_t row_length = buffer_raw_.size() - row_offset;
-        
-        // store the offset of the next row (for indexing)
-        row_offsets_.push_back(static_cast<uint16_t>(buffer_raw_.size()));
 
-        if(     buffer_raw_.size() + row_length >= LZ4_BLOCK_SIZE_KB*1000   // Rough estimate to avoid exceeding block size
-             || buffer_raw_.size() >= std::numeric_limits<uint16_t>::max()) // Ensure we don't exceed 16-bit offset limit
-        {
+        size_t row_length = buffer_raw_.size() - old_size;
+        if (row_length > std::numeric_limits<uint16_t>::max()) {
+            throw std::runtime_error("Error: Single row size exceeds uint16_t maximum");
+            // ToDo: implement a fallback mechanism for very large rows e.g. resize variable-length fields (as strings) to match maximum size
+        } 
+        row_lengths_.push_back(static_cast<uint16_t>(row_length));
+
+        if(buffer_raw_.size() + row_length >= LZ4_BLOCK_SIZE_KB*1000) {  // Rough estimate to avoid exceeding block size
             // if packed gets too large, write current packet and start a new one
             writePacket();
             if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {

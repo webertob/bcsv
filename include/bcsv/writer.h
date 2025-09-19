@@ -33,7 +33,7 @@ namespace bcsv {
 
         ByteBuffer              buffer_raw_;
         ByteBuffer              buffer_zip_;
-        std::vector<uint16_t>   row_offsets_;               // Row offsets for indexing
+        std::vector<uint16_t>   row_lengths_;               // row lengths for indexing
         size_t                  row_cnt_ = 0;
         RowType                 row_;
  
