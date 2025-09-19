@@ -2,12 +2,14 @@
 # =============
 # This directory contains examples demonstrating different aspects of BCSV:
 #
-# 1. example.cpp - Basic flexible interface usage (runtime-defined schemas)
+# 1. example.cpp - Flexible interface usage (runtime-defined schemas)
 # 2. example_static.cpp - Static interface usage (compile-time schemas)  
-# 3. performance_benchmark.cpp - Performance comparison between interfaces
-# 4. large_scale_benchmark.cpp - Large-scale performance test (500K rows, 72 columns)
-# 5. csv2bcsv.cpp - CLI tool to convert CSV files to BCSV format
-# 6. bcsv2csv.cpp - CLI tool to convert BCSV files to CSV format
+# 3. example_zoh.cpp - Flexible interface usage (runtime-defined schemas with Zero-Order Hold compression)  
+# 4. example_zoh_static.cpp - Static interface usage (compile-time schemas with Zero-Order Hold compression)  
+# 5. performance_benchmark.cpp - Performance comparison between interfaces
+# 6. large_scale_benchmark.cpp - Large-scale performance test (500K rows, 72 columns)
+# 7. csv2bcsv.cpp - CLI tool to convert CSV files to BCSV format
+# 8. bcsv2csv.cpp - CLI tool to convert BCSV files to CSV format
 
 # Basic flexible interface example
 add_executable(example example.cpp)
@@ -16,6 +18,14 @@ target_link_libraries(example PRIVATE bcsv)
 # Static interface example
 add_executable(example_static example_static.cpp)
 target_link_libraries(example_static PRIVATE bcsv)
+
+# Zero-copy static interface example
+add_executable(example_zoh example_zoh.cpp)
+target_link_libraries(example_zoh PRIVATE bcsv)
+
+# Zero-copy static interface example
+add_executable(example_zoh_static example_zoh_static.cpp)
+target_link_libraries(example_zoh_static PRIVATE bcsv)
 
 # Performance benchmark
 add_executable(performance_benchmark performance_benchmark.cpp)
@@ -34,6 +44,6 @@ add_executable(bcsv2csv bcsv2csv.cpp)
 target_link_libraries(bcsv2csv PRIVATE bcsv)
 
 # Set output directory
-set_target_properties(example example_static performance_benchmark large_scale_benchmark csv2bcsv bcsv2csv PROPERTIES
+set_target_properties(example example_static example_zoh example_zoh_static performance_benchmark large_scale_benchmark csv2bcsv bcsv2csv PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )

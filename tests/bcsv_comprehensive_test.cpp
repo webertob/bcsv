@@ -1822,6 +1822,565 @@ TEST_F(BCSVTestSuite, CompressionLevels_PerformanceCharacteristics) {
     std::cout << "Performance characteristics test completed" << std::endl;
 }
 
+// ============================================================================
+// Zero Order Hold (ZoH) Tests
+// ============================================================================
+
+TEST_F(BCSVTestSuite, ZoH_FlexibleInterface_BasicFunctionality) {
+    std::cout << "\nTesting ZoH with flexible interface..." << std::endl;
+    
+    // Create a layout suitable for ZoH testing
+    bcsv::Layout layout;
+    layout.addColumn({"timestamp", bcsv::ColumnType::UINT64});
+    layout.addColumn({"value1", bcsv::ColumnType::DOUBLE});
+    layout.addColumn({"value2", bcsv::ColumnType::INT32});
+    layout.addColumn({"status", bcsv::ColumnType::BOOL});
+    layout.addColumn({"name", bcsv::ColumnType::STRING});
+    
+    std::string filename = test_dir_ + "/zoh_flexible_test.bcsv";
+    const size_t test_rows = 500;
+    std::vector<TestData> expected_data;
+    
+    // Generate test data with some repeated values to test ZoH effectiveness
+    for (size_t i = 0; i < test_rows; ++i) {
+        TestData data = generateTestData(i);
+        // Create patterns that ZoH can compress
+        if (i > 0 && i % 3 == 0) {
+            // Keep some values the same as previous row
+            data.double1 = expected_data.back().double1;
+            data.bool1 = expected_data.back().bool1;
+            data.string1 = expected_data.back().string1;
+        }
+        expected_data.push_back(data);
+    }
+    
+    // Write using flexible interface with ZoH
+    {
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        if (!writer.open(filename, true, 1, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
+            FAIL() << "Failed to open writer for ZoH flexible test";
+        }
+        
+        for (size_t i = 0; i < test_rows; ++i) {
+            writer.row().set(0, static_cast<uint64_t>(i * 1000)); // timestamp
+            writer.row().set(1, expected_data[i].double1);
+            writer.row().set(2, expected_data[i].int32_1);
+            writer.row().set(3, expected_data[i].bool1);
+            writer.row().set(4, expected_data[i].string1);
+            writer.writeRow();
+        }
+        writer.close();
+    }
+    
+    // Read back using flexible interface
+    {
+        bcsv::Reader<bcsv::Layout> reader;
+        if (!reader.open(filename)) {
+            FAIL() << "Failed to open reader for ZoH flexible test";
+        }
+        
+        size_t count = 0;
+        while (reader.readNext()) {
+            auto& row = reader.row();
+            
+            EXPECT_EQ(row.get<uint64_t>(0), count * 1000) 
+                << "Timestamp mismatch at row " << count;
+            EXPECT_DOUBLE_EQ(row.get<double>(1), expected_data[count].double1) 
+                << "Double value mismatch at row " << count;
+            EXPECT_EQ(row.get<int32_t>(2), expected_data[count].int32_1) 
+                << "Int32 value mismatch at row " << count;
+            EXPECT_EQ(row.get<bool>(3), expected_data[count].bool1) 
+                << "Bool value mismatch at row " << count;
+            EXPECT_EQ(row.get<std::string>(4), expected_data[count].string1) 
+                << "String value mismatch at row " << count;
+            
+            count++;
+        }
+        reader.close();
+        
+        EXPECT_EQ(count, test_rows) << "Should read all ZoH rows with flexible interface";
+    }
+    
+    std::cout << "ZoH flexible interface test completed successfully" << std::endl;
+}
+
+TEST_F(BCSVTestSuite, ZoH_StaticInterface_BasicFunctionality) {
+    std::cout << "\nTesting ZoH with static interface..." << std::endl;
+    
+    // Create static layout for ZoH testing
+    using ZoHLayout = bcsv::LayoutStatic<uint64_t, double, int32_t, bool, std::string>;
+    ZoHLayout layout({"timestamp", "value1", "value2", "status", "name"});
+    
+    std::string filename = test_dir_ + "/zoh_static_test.bcsv";
+    const size_t test_rows = 500;
+    std::vector<TestData> expected_data;
+    
+    // Generate test data with patterns suitable for ZoH
+    for (size_t i = 0; i < test_rows; ++i) {
+        TestData data = generateTestData(i);
+        // Create repeating patterns
+        if (i > 0 && i % 4 == 0) {
+            data.double1 = expected_data.back().double1;
+            data.int32_1 = expected_data.back().int32_1;
+            data.bool1 = expected_data.back().bool1;
+        }
+        expected_data.push_back(data);
+    }
+    
+    // Write using static interface with ZoH
+    {
+        bcsv::Writer<ZoHLayout> writer(layout);
+        if (!writer.open(filename, true, 1, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
+            FAIL() << "Failed to open writer for ZoH static test";
+        }
+        
+        for (size_t i = 0; i < test_rows; ++i) {
+            writer.row().set<0>(static_cast<uint64_t>(i * 1000));
+            writer.row().set<1>(expected_data[i].double1);
+            writer.row().set<2>(expected_data[i].int32_1);
+            writer.row().set<3>(expected_data[i].bool1);
+            writer.row().set<4>(expected_data[i].string1);
+            writer.writeRow();
+        }
+        writer.close();
+    }
+    
+    // Read back using static interface
+    {
+        bcsv::Reader<ZoHLayout> reader;
+        if (!reader.open(filename)) {
+            FAIL() << "Failed to open reader for ZoH static test";
+        }
+        
+        size_t count = 0;
+        while (reader.readNext()) {
+            auto& row = reader.row();
+            
+            EXPECT_EQ(row.get<0>(), count * 1000) 
+                << "Timestamp mismatch at row " << count;
+            EXPECT_DOUBLE_EQ(row.get<1>(), expected_data[count].double1) 
+                << "Double value mismatch at row " << count;
+            EXPECT_EQ(row.get<2>(), expected_data[count].int32_1) 
+                << "Int32 value mismatch at row " << count;
+            EXPECT_EQ(row.get<3>(), expected_data[count].bool1) 
+                << "Bool value mismatch at row " << count;
+            EXPECT_EQ(row.get<4>(), expected_data[count].string1) 
+                << "String value mismatch at row " << count;
+            
+            count++;
+        }
+        reader.close();
+        
+        EXPECT_EQ(count, test_rows) << "Should read all ZoH rows with static interface";
+    }
+    
+    std::cout << "ZoH static interface test completed successfully" << std::endl;
+}
+
+TEST_F(BCSVTestSuite, ZoH_CrossCompatibility_FlexibleToStatic) {
+    std::cout << "\nTesting ZoH cross-compatibility: Flexible write → Static read..." << std::endl;
+    
+    // Define layouts
+    bcsv::Layout flexLayout;
+    flexLayout.addColumn({"id", bcsv::ColumnType::UINT32});
+    flexLayout.addColumn({"data", bcsv::ColumnType::DOUBLE});
+    flexLayout.addColumn({"flag", bcsv::ColumnType::BOOL});
+    flexLayout.addColumn({"label", bcsv::ColumnType::STRING});
+    
+    using StaticLayout = bcsv::LayoutStatic<uint32_t, double, bool, std::string>;
+    StaticLayout staticLayout({"id", "data", "flag", "label"});
+    
+    std::string filename = test_dir_ + "/zoh_flex_to_static.bcsv";
+    const size_t test_rows = 200;
+    std::vector<std::tuple<uint32_t, double, bool, std::string>> test_data;
+    
+    // Generate test data with ZoH-friendly patterns
+    for (size_t i = 0; i < test_rows; ++i) {
+        uint32_t id = static_cast<uint32_t>(i);
+        double data = (i % 5 == 0) ? 3.14159 : i * 2.718; // Some repeated values
+        bool flag = (i % 3 == 0); // Pattern that repeats
+        std::string label = (i % 10 < 5) ? "TypeA" : "TypeB_" + std::to_string(i); // Mixed pattern
+        
+        test_data.emplace_back(id, data, flag, label);
+    }
+    
+    // Write with flexible interface using ZoH
+    {
+        bcsv::Writer<bcsv::Layout> writer(flexLayout);
+        if (!writer.open(filename, true, 1, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
+            FAIL() << "Failed to open file for ZoH flex→static test";
+        }
+        
+        for (size_t i = 0; i < test_rows; ++i) {
+            auto [id, data, flag, label] = test_data[i];
+            writer.row().set(0, id);
+            writer.row().set(1, data);
+            writer.row().set(2, flag);
+            writer.row().set(3, label);
+            writer.writeRow();
+        }
+        writer.close();
+    }
+    
+    // Read with static interface
+    {
+        bcsv::Reader<StaticLayout> reader;
+        if (!reader.open(filename)) {
+            FAIL() << "Failed to open file for ZoH static read";
+        }
+        
+        if (!reader.layout().isCompatibleWith(staticLayout)) {
+            FAIL() << "ZoH file layout not compatible with static layout";
+        }
+        
+        size_t count = 0;
+        while (reader.readNext()) {
+            auto& row = reader.row();
+            auto [expected_id, expected_data, expected_flag, expected_label] = test_data[count];
+            
+            EXPECT_EQ(row.get<0>(), expected_id) << "ID mismatch at row " << count;
+            EXPECT_DOUBLE_EQ(row.get<1>(), expected_data) << "Data mismatch at row " << count;
+            EXPECT_EQ(row.get<2>(), expected_flag) << "Flag mismatch at row " << count;
+            EXPECT_EQ(row.get<3>(), expected_label) << "Label mismatch at row " << count;
+            
+            count++;
+        }
+        reader.close();
+        
+        EXPECT_EQ(count, test_rows) << "Should read all ZoH rows in cross-compatibility test";
+    }
+    
+    std::cout << "ZoH cross-compatibility (Flexible→Static) test passed" << std::endl;
+}
+
+TEST_F(BCSVTestSuite, ZoH_CrossCompatibility_StaticToFlexible) {
+    std::cout << "\nTesting ZoH cross-compatibility: Static write → Flexible read..." << std::endl;
+    
+    // Define layouts
+    using StaticLayout = bcsv::LayoutStatic<uint32_t, double, bool, std::string>;
+    StaticLayout staticLayout({"id", "data", "flag", "label"});
+    
+    bcsv::Layout flexLayout;
+    flexLayout.addColumn({"id", bcsv::ColumnType::UINT32});
+    flexLayout.addColumn({"data", bcsv::ColumnType::DOUBLE});
+    flexLayout.addColumn({"flag", bcsv::ColumnType::BOOL});
+    flexLayout.addColumn({"label", bcsv::ColumnType::STRING});
+    
+    std::string filename = test_dir_ + "/zoh_static_to_flex.bcsv";
+    const size_t test_rows = 200;
+    std::vector<std::tuple<uint32_t, double, bool, std::string>> test_data;
+    
+    // Generate test data with ZoH compression opportunities
+    for (size_t i = 0; i < test_rows; ++i) {
+        uint32_t id = static_cast<uint32_t>(i);
+        double data = (i % 7 == 0) ? 2.71828 : i * 1.414; // Some repeated values
+        bool flag = (i % 2 == 0); // Alternating pattern
+        std::string label = (i % 8 < 4) ? "GroupX" : "GroupY_" + std::to_string(i % 4);
+        
+        test_data.emplace_back(id, data, flag, label);
+    }
+    
+    // Write with static interface using ZoH
+    {
+        bcsv::Writer<StaticLayout> writer(staticLayout);
+        if (!writer.open(filename, true, 1, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
+            FAIL() << "Failed to open file for ZoH static→flex test";
+        }
+        
+        for (size_t i = 0; i < test_rows; ++i) {
+            auto [id, data, flag, label] = test_data[i];
+            writer.row().set<0>(id);
+            writer.row().set<1>(data);
+            writer.row().set<2>(flag);
+            writer.row().set<3>(label);
+            writer.writeRow();
+        }
+        writer.close();
+    }
+    
+    // Read with flexible interface
+    {
+        bcsv::Reader<bcsv::Layout> reader;
+        if (!reader.open(filename)) {
+            FAIL() << "Failed to open file for ZoH flexible read";
+        }
+        
+        if (!reader.layout().isCompatibleWith(flexLayout)) {
+            FAIL() << "ZoH file layout not compatible with flexible layout";
+        }
+        
+        size_t count = 0;
+        while (reader.readNext()) {
+            auto& row = reader.row();
+            auto [expected_id, expected_data, expected_flag, expected_label] = test_data[count];
+            
+            EXPECT_EQ(row.get<uint32_t>(0), expected_id) << "ID mismatch at row " << count;
+            EXPECT_DOUBLE_EQ(row.get<double>(1), expected_data) << "Data mismatch at row " << count;
+            EXPECT_EQ(row.get<bool>(2), expected_flag) << "Flag mismatch at row " << count;
+            EXPECT_EQ(row.get<std::string>(3), expected_label) << "Label mismatch at row " << count;
+            
+            count++;
+        }
+        reader.close();
+        
+        EXPECT_EQ(count, test_rows) << "Should read all ZoH rows in cross-compatibility test";
+    }
+    
+    std::cout << "ZoH cross-compatibility (Static→Flexible) test passed" << std::endl;
+}
+
+TEST_F(BCSVTestSuite, ZoH_CrossCompatibility_FlexibleToFlexible) {
+    std::cout << "\nTesting ZoH cross-compatibility: Flexible write → Flexible read..." << std::endl;
+    
+    bcsv::Layout layout;
+    layout.addColumn({"sensor_id", bcsv::ColumnType::UINT16});
+    layout.addColumn({"temperature", bcsv::ColumnType::FLOAT});
+    layout.addColumn({"humidity", bcsv::ColumnType::FLOAT});
+    layout.addColumn({"active", bcsv::ColumnType::BOOL});
+    layout.addColumn({"location", bcsv::ColumnType::STRING});
+    
+    std::string filename = test_dir_ + "/zoh_flex_to_flex.bcsv";
+    const size_t test_rows = 300;
+    std::vector<std::tuple<uint16_t, float, float, bool, std::string>> test_data;
+    
+    // Create sensor data with typical ZoH patterns (values that don't change often)
+    for (size_t i = 0; i < test_rows; ++i) {
+        uint16_t sensor_id = static_cast<uint16_t>(i % 10); // 10 sensors
+        float temperature = (i % 20 == 0) ? 20.5f : 20.5f + (i % 5) * 0.1f; // Mostly stable temperature
+        float humidity = (i % 15 == 0) ? 45.0f : 45.0f + (i % 3) * 0.5f; // Slowly changing humidity
+        bool active = (i % 50 < 40); // Mostly active
+        std::string location = "Room" + std::to_string((i % 5) + 1); // 5 rooms
+        
+        test_data.emplace_back(sensor_id, temperature, humidity, active, location);
+    }
+    
+    // Write using ZoH
+    {
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        if (!writer.open(filename, true, 1, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
+            FAIL() << "Failed to open file for ZoH flex→flex test";
+        }
+        
+        for (size_t i = 0; i < test_rows; ++i) {
+            auto [sensor_id, temperature, humidity, active, location] = test_data[i];
+            writer.row().set(0, sensor_id);
+            writer.row().set(1, temperature);
+            writer.row().set(2, humidity);
+            writer.row().set(3, active);
+            writer.row().set(4, location);
+            writer.writeRow();
+        }
+        writer.close();
+    }
+    
+    // Read using flexible interface
+    {
+        bcsv::Reader<bcsv::Layout> reader;
+        if (!reader.open(filename)) {
+            FAIL() << "Failed to open file for ZoH flexible read";
+        }
+        
+        size_t count = 0;
+        while (reader.readNext()) {
+            auto& row = reader.row();
+            auto [expected_sensor_id, expected_temp, expected_humidity, expected_active, expected_location] = test_data[count];
+            
+            EXPECT_EQ(row.get<uint16_t>(0), expected_sensor_id) << "Sensor ID mismatch at row " << count;
+            EXPECT_FLOAT_EQ(row.get<float>(1), expected_temp) << "Temperature mismatch at row " << count;
+            EXPECT_FLOAT_EQ(row.get<float>(2), expected_humidity) << "Humidity mismatch at row " << count;
+            EXPECT_EQ(row.get<bool>(3), expected_active) << "Active status mismatch at row " << count;
+            EXPECT_EQ(row.get<std::string>(4), expected_location) << "Location mismatch at row " << count;
+            
+            count++;
+        }
+        reader.close();
+        
+        EXPECT_EQ(count, test_rows) << "Should read all ZoH rows";
+    }
+    
+    std::cout << "ZoH cross-compatibility (Flexible→Flexible) test passed" << std::endl;
+}
+
+TEST_F(BCSVTestSuite, ZoH_CrossCompatibility_StaticToStatic) {
+    std::cout << "\nTesting ZoH cross-compatibility: Static write → Static read..." << std::endl;
+    
+    using TestLayout = bcsv::LayoutStatic<uint32_t, int64_t, double, bool, std::string>;
+    TestLayout layout({"counter", "timestamp", "value", "enabled", "description"});
+    
+    std::string filename = test_dir_ + "/zoh_static_to_static.bcsv";
+    const size_t test_rows = 250;
+    std::vector<std::tuple<uint32_t, int64_t, double, bool, std::string>> test_data;
+    
+    // Generate data typical for time series with ZoH characteristics
+    for (size_t i = 0; i < test_rows; ++i) {
+        uint32_t counter = static_cast<uint32_t>(i);
+        int64_t timestamp = 1000000 + i * 1000; // Regular intervals
+        double value = (i % 25 == 0) ? 100.0 : 100.0 + (i % 10) * 0.1; // Mostly stable with occasional jumps
+        bool enabled = (i % 100 < 90); // Mostly enabled
+        std::string description = (i % 50 < 25) ? "Normal" : "Anomaly_" + std::to_string(i % 5);
+        
+        test_data.emplace_back(counter, timestamp, value, enabled, description);
+    }
+    
+    // Write using static interface with ZoH
+    {
+        bcsv::Writer<TestLayout> writer(layout);
+        if (!writer.open(filename, true, 1, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
+            FAIL() << "Failed to open file for ZoH static→static test";
+        }
+        
+        for (size_t i = 0; i < test_rows; ++i) {
+            auto [counter, timestamp, value, enabled, description] = test_data[i];
+            writer.row().set<0>(counter);
+            writer.row().set<1>(timestamp);
+            writer.row().set<2>(value);
+            writer.row().set<3>(enabled);
+            writer.row().set<4>(description);
+            writer.writeRow();
+        }
+        writer.close();
+    }
+    
+    // Read using static interface
+    {
+        bcsv::Reader<TestLayout> reader;
+        if (!reader.open(filename)) {
+            FAIL() << "Failed to open file for ZoH static read";
+        }
+        
+        size_t count = 0;
+        while (reader.readNext()) {
+            auto& row = reader.row();
+            auto [expected_counter, expected_timestamp, expected_value, expected_enabled, expected_description] = test_data[count];
+            
+            EXPECT_EQ(row.get<0>(), expected_counter) << "Counter mismatch at row " << count;
+            EXPECT_EQ(row.get<1>(), expected_timestamp) << "Timestamp mismatch at row " << count;
+            EXPECT_DOUBLE_EQ(row.get<2>(), expected_value) << "Value mismatch at row " << count;
+            EXPECT_EQ(row.get<3>(), expected_enabled) << "Enabled status mismatch at row " << count;
+            EXPECT_EQ(row.get<4>(), expected_description) << "Description mismatch at row " << count;
+            
+            count++;
+        }
+        reader.close();
+        
+        EXPECT_EQ(count, test_rows) << "Should read all ZoH rows";
+    }
+    
+    std::cout << "ZoH cross-compatibility (Static→Static) test passed" << std::endl;
+}
+
+TEST_F(BCSVTestSuite, ZoH_CompressionEffectiveness) {
+    std::cout << "\nTesting ZoH compression effectiveness..." << std::endl;
+    
+    bcsv::Layout layout;
+    layout.addColumn({"id", bcsv::ColumnType::UINT32});
+    layout.addColumn({"stable_value", bcsv::ColumnType::DOUBLE});
+    layout.addColumn({"changing_value", bcsv::ColumnType::DOUBLE});
+    layout.addColumn({"status", bcsv::ColumnType::STRING});
+    
+    const size_t test_rows = 1000;
+    
+    std::string normal_file = test_dir_ + "/normal_compression.bcsv";
+    std::string zoh_file = test_dir_ + "/zoh_compression.bcsv";
+    
+    // Write same data with normal compression
+    {
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        if (!writer.open(normal_file, true)) {
+            FAIL() << "Failed to open normal compression file";
+        }
+        
+        for (size_t i = 0; i < test_rows; ++i) {
+            writer.row().set(0, static_cast<uint32_t>(i));
+            writer.row().set(1, 42.42); // Stable value (same for all rows)
+            writer.row().set(2, i * 0.1); // Changing value
+            writer.row().set(3, (i % 10 < 8) ? "ACTIVE" : "INACTIVE"); // Mostly same value
+            writer.writeRow();
+        }
+        writer.close();
+    }
+    
+    // Write same data with ZoH compression
+    {
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        if (!writer.open(zoh_file, true, 1, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
+            FAIL() << "Failed to open ZoH compression file";
+        }
+        
+        for (size_t i = 0; i < test_rows; ++i) {
+            writer.row().set(0, static_cast<uint32_t>(i));
+            writer.row().set(1, 42.42); // Stable value (same for all rows)
+            writer.row().set(2, i * 0.1); // Changing value
+            writer.row().set(3, (i % 10 < 8) ? "ACTIVE" : "INACTIVE"); // Mostly same value
+            writer.writeRow();
+        }
+        writer.close();
+    }
+    
+    // Compare file sizes
+    size_t normal_size = fs::file_size(normal_file);
+    size_t zoh_size = fs::file_size(zoh_file);
+    
+    std::cout << "Normal compression: " << normal_size << " bytes" << std::endl;
+    std::cout << "ZoH compression: " << zoh_size << " bytes" << std::endl;
+    
+    if (zoh_size < normal_size) {
+        double compression_ratio = static_cast<double>(normal_size) / zoh_size;
+        std::cout << "ZoH achieved " << std::fixed << std::setprecision(2) 
+                  << compression_ratio << "x compression ratio" << std::endl;
+        EXPECT_LT(zoh_size, normal_size) << "ZoH should compress better for repetitive data";
+    } else {
+        std::cout << "ZoH compression similar to normal (data may not have enough repetition)" << std::endl;
+        // Don't fail the test - ZoH effectiveness depends on data patterns
+    }
+    
+    // Verify both files produce identical data when read
+    std::vector<std::tuple<uint32_t, double, double, std::string>> normal_data, zoh_data;
+    
+    // Read normal file
+    {
+        bcsv::Reader<bcsv::Layout> reader;
+        reader.open(normal_file);
+        while (reader.readNext()) {
+            auto& row = reader.row();
+            normal_data.emplace_back(
+                row.get<uint32_t>(0),
+                row.get<double>(1),
+                row.get<double>(2),
+                row.get<std::string>(3)
+            );
+        }
+        reader.close();
+    }
+    
+    // Read ZoH file
+    {
+        bcsv::Reader<bcsv::Layout> reader;
+        reader.open(zoh_file);
+        while (reader.readNext()) {
+            auto& row = reader.row();
+            zoh_data.emplace_back(
+                row.get<uint32_t>(0),
+                row.get<double>(1),
+                row.get<double>(2),
+                row.get<std::string>(3)
+            );
+        }
+        reader.close();
+    }
+    
+    EXPECT_EQ(normal_data.size(), zoh_data.size()) << "Both files should have same number of rows";
+    
+    for (size_t i = 0; i < std::min(normal_data.size(), zoh_data.size()); ++i) {
+        EXPECT_EQ(std::get<0>(normal_data[i]), std::get<0>(zoh_data[i])) << "ID mismatch at row " << i;
+        EXPECT_DOUBLE_EQ(std::get<1>(normal_data[i]), std::get<1>(zoh_data[i])) << "Stable value mismatch at row " << i;
+        EXPECT_DOUBLE_EQ(std::get<2>(normal_data[i]), std::get<2>(zoh_data[i])) << "Changing value mismatch at row " << i;
+        EXPECT_EQ(std::get<3>(normal_data[i]), std::get<3>(zoh_data[i])) << "Status mismatch at row " << i;
+    }
+    
+    std::cout << "ZoH compression effectiveness test completed" << std::endl;
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

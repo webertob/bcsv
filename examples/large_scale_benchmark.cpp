@@ -27,6 +27,8 @@ private:
     static constexpr const char* CSV_FILENAME = "large_test.csv";
     static constexpr const char* BCSV_FLEXIBLE_FILENAME = "large_flexible.bcsv";
     static constexpr const char* BCSV_STATIC_FILENAME = "large_static.bcsv";
+    static constexpr const char* BCSV_FLEXIBLE_ZOH_FILENAME = "large_flexible_zoh.bcsv";
+    static constexpr const char* BCSV_STATIC_ZOH_FILENAME = "large_static_zoh.bcsv";
     
     std::random_device rd_;
     std::mt19937 gen_;
@@ -100,10 +102,115 @@ public:
         std::cout << "=====================================\n";
         std::cout << "Test Configuration:\n";
         std::cout << "  Rows: " << NUM_ROWS << "\n";
-        std::cout << "  Columns: " << (COLUMNS_PER_TYPE * 8) << " (6 per data type)\n";
+        std::cout << "  Columns: " << (COLUMNS_PER_TYPE * 12) << " (6 per data type)\n";
         std::cout << "  Data types: BOOL(6), INT8(6), INT16(6), INT32(6), INT64(6), UINT8(6), UINT16(6), UINT32(6), UINT64(6), FLOAT(6), DOUBLE(6), STRING(6)\n";
         std::cout << "  Compression: LZ4 Level 1\n";
         std::cout << "  Platform: " << sizeof(void*) * 8 << "-bit\n\n";
+    }
+
+    // Generate ZoH-friendly data with time-series patterns for large scale testing
+    template<typename RowType>
+    void generateZoHRowData(size_t rowIndex, RowType& row) {
+        // Create time-series patterns with gradual changes suitable for ZoH compression
+        const size_t changeInterval = 100; // Change values every 100 rows for better compression
+        const size_t segment = rowIndex / changeInterval;
+        
+        // Generate data with repetitive patterns
+        // Boolean columns - alternating patterns
+        row.template set<0>((segment + 0) % 3 == 0);
+        row.template set<1>((segment + 1) % 3 == 0);
+        row.template set<2>((segment + 2) % 3 == 0);
+        row.template set<3>((segment + 3) % 3 == 0);
+        row.template set<4>((segment + 4) % 3 == 0);
+        row.template set<5>((segment + 5) % 3 == 0);
+        
+        // int8_t columns - small incremental changes
+        row.template set<6>(static_cast<int8_t>((segment % 50) + 0 * 10));
+        row.template set<7>(static_cast<int8_t>((segment % 50) + 1 * 10));
+        row.template set<8>(static_cast<int8_t>((segment % 50) + 2 * 10));
+        row.template set<9>(static_cast<int8_t>((segment % 50) + 3 * 10));
+        row.template set<10>(static_cast<int8_t>((segment % 50) + 4 * 10));
+        row.template set<11>(static_cast<int8_t>((segment % 50) + 5 * 10));
+        
+        // int16_t columns - moderate incremental changes  
+        row.template set<12>(static_cast<int16_t>((segment % 1000) + 0 * 100));
+        row.template set<13>(static_cast<int16_t>((segment % 1000) + 1 * 100));
+        row.template set<14>(static_cast<int16_t>((segment % 1000) + 2 * 100));
+        row.template set<15>(static_cast<int16_t>((segment % 1000) + 3 * 100));
+        row.template set<16>(static_cast<int16_t>((segment % 1000) + 4 * 100));
+        row.template set<17>(static_cast<int16_t>((segment % 1000) + 5 * 100));
+        
+        // int32_t columns - gradual changes
+        row.template set<18>(static_cast<int32_t>(segment * 10 + 0 * 1000));
+        row.template set<19>(static_cast<int32_t>(segment * 10 + 1 * 1000));
+        row.template set<20>(static_cast<int32_t>(segment * 10 + 2 * 1000));
+        row.template set<21>(static_cast<int32_t>(segment * 10 + 3 * 1000));
+        row.template set<22>(static_cast<int32_t>(segment * 10 + 4 * 1000));
+        row.template set<23>(static_cast<int32_t>(segment * 10 + 5 * 1000));
+        
+        // int64_t columns - timestamp-like increments
+        row.template set<24>(static_cast<int64_t>(1640995200000LL + segment * 60000 + 0 * 1000));
+        row.template set<25>(static_cast<int64_t>(1640995200000LL + segment * 60000 + 1 * 1000));
+        row.template set<26>(static_cast<int64_t>(1640995200000LL + segment * 60000 + 2 * 1000));
+        row.template set<27>(static_cast<int64_t>(1640995200000LL + segment * 60000 + 3 * 1000));
+        row.template set<28>(static_cast<int64_t>(1640995200000LL + segment * 60000 + 4 * 1000));
+        row.template set<29>(static_cast<int64_t>(1640995200000LL + segment * 60000 + 5 * 1000));
+        
+        // uint8_t columns - cyclic patterns
+        row.template set<30>(static_cast<uint8_t>((segment + 0 * 20) % 200));
+        row.template set<31>(static_cast<uint8_t>((segment + 1 * 20) % 200));
+        row.template set<32>(static_cast<uint8_t>((segment + 2 * 20) % 200));
+        row.template set<33>(static_cast<uint8_t>((segment + 3 * 20) % 200));
+        row.template set<34>(static_cast<uint8_t>((segment + 4 * 20) % 200));
+        row.template set<35>(static_cast<uint8_t>((segment + 5 * 20) % 200));
+        
+        // uint16_t columns - slow incrementing
+        row.template set<36>(static_cast<uint16_t>((segment % 10000) + 0 * 5000));
+        row.template set<37>(static_cast<uint16_t>((segment % 10000) + 1 * 5000));
+        row.template set<38>(static_cast<uint16_t>((segment % 10000) + 2 * 5000));
+        row.template set<39>(static_cast<uint16_t>((segment % 10000) + 3 * 5000));
+        row.template set<40>(static_cast<uint16_t>((segment % 10000) + 4 * 5000));
+        row.template set<41>(static_cast<uint16_t>((segment % 10000) + 5 * 5000));
+        
+        // uint32_t columns - counter-like
+        row.template set<42>(static_cast<uint32_t>(segment * 100 + 0 * 10000));
+        row.template set<43>(static_cast<uint32_t>(segment * 100 + 1 * 10000));
+        row.template set<44>(static_cast<uint32_t>(segment * 100 + 2 * 10000));
+        row.template set<45>(static_cast<uint32_t>(segment * 100 + 3 * 10000));
+        row.template set<46>(static_cast<uint32_t>(segment * 100 + 4 * 10000));
+        row.template set<47>(static_cast<uint32_t>(segment * 100 + 5 * 10000));
+        
+        // uint64_t columns - large increments
+        row.template set<48>(static_cast<uint64_t>(segment * 1000000ULL + 0 * 1000000000ULL));
+        row.template set<49>(static_cast<uint64_t>(segment * 1000000ULL + 1 * 1000000000ULL));
+        row.template set<50>(static_cast<uint64_t>(segment * 1000000ULL + 2 * 1000000000ULL));
+        row.template set<51>(static_cast<uint64_t>(segment * 1000000ULL + 3 * 1000000000ULL));
+        row.template set<52>(static_cast<uint64_t>(segment * 1000000ULL + 4 * 1000000000ULL));
+        row.template set<53>(static_cast<uint64_t>(segment * 1000000ULL + 5 * 1000000000ULL));
+        
+        // float columns - smooth gradual changes
+        row.template set<54>(static_cast<float>(50.0f + (segment % 100) * 0.5f + 0 * 10.0f));
+        row.template set<55>(static_cast<float>(50.0f + (segment % 100) * 0.5f + 1 * 10.0f));
+        row.template set<56>(static_cast<float>(50.0f + (segment % 100) * 0.5f + 2 * 10.0f));
+        row.template set<57>(static_cast<float>(50.0f + (segment % 100) * 0.5f + 3 * 10.0f));
+        row.template set<58>(static_cast<float>(50.0f + (segment % 100) * 0.5f + 4 * 10.0f));
+        row.template set<59>(static_cast<float>(50.0f + (segment % 100) * 0.5f + 5 * 10.0f));
+        
+        // double columns - sensor-like readings with drift
+        row.template set<60>(static_cast<double>(100.0 + (segment % 500) * 0.1 + 0 * 25.0));
+        row.template set<61>(static_cast<double>(100.0 + (segment % 500) * 0.1 + 1 * 25.0));
+        row.template set<62>(static_cast<double>(100.0 + (segment % 500) * 0.1 + 2 * 25.0));
+        row.template set<63>(static_cast<double>(100.0 + (segment % 500) * 0.1 + 3 * 25.0));
+        row.template set<64>(static_cast<double>(100.0 + (segment % 500) * 0.1 + 4 * 25.0));
+        row.template set<65>(static_cast<double>(100.0 + (segment % 500) * 0.1 + 5 * 25.0));
+        
+        // string columns - repeated categories
+        row.template set<66>(sampleStrings_[(segment / 5 + 0) % sampleStrings_.size()]);
+        row.template set<67>(sampleStrings_[(segment / 5 + 1) % sampleStrings_.size()]);
+        row.template set<68>(sampleStrings_[(segment / 5 + 2) % sampleStrings_.size()]);
+        row.template set<69>(sampleStrings_[(segment / 5 + 3) % sampleStrings_.size()]);
+        row.template set<70>(sampleStrings_[(segment / 5 + 4) % sampleStrings_.size()]);
+        row.template set<71>(sampleStrings_[(segment / 5 + 5) % sampleStrings_.size()]);
     }
 
     // Generate test data for a single row
@@ -515,9 +622,287 @@ public:
         return {writeTime, readTime};
     }
 
+    // Generate ZoH-friendly data for flexible interface
+    void populateFlexibleZoHRow(bcsv::Writer<bcsv::Layout>& writer, size_t rowIndex) {
+        // Create time-series patterns with gradual changes suitable for ZoH compression
+        const size_t changeInterval = 100; // Change values every 100 rows for better compression
+        const size_t segment = rowIndex / changeInterval;
+        
+        auto& row = writer.row();
+        
+        // Boolean columns - alternating patterns
+        for (size_t i = 0; i < 6; ++i) {
+            row.set(i, (segment + i) % 3 == 0);
+        }
+        
+        // int8_t columns - small incremental changes
+        for (size_t i = 0; i < 6; ++i) {
+            row.set(6 + i, static_cast<int8_t>((segment % 50) + i * 10));
+        }
+        
+        // int16_t columns - moderate incremental changes  
+        for (size_t i = 0; i < 6; ++i) {
+            row.set(12 + i, static_cast<int16_t>((segment % 1000) + i * 100));
+        }
+        
+        // int32_t columns - larger incremental changes
+        for (size_t i = 0; i < 6; ++i) {
+            row.set(18 + i, static_cast<int32_t>((segment % 10000) + i * 1000));
+        }
+        
+        // int64_t columns - very large incremental changes
+        for (size_t i = 0; i < 6; ++i) {
+            row.set(24 + i, static_cast<int64_t>((segment % 100000LL) + i * 10000LL));
+        }
+        
+        // uint8_t columns - small unsigned incremental changes
+        for (size_t i = 0; i < 6; ++i) {
+            row.set(30 + i, static_cast<uint8_t>((segment % 200) + i * 5));
+        }
+        
+        // uint16_t columns - moderate unsigned incremental changes
+        for (size_t i = 0; i < 6; ++i) {
+            row.set(36 + i, static_cast<uint16_t>((segment % 2000) + i * 500));
+        }
+        
+        // uint32_t columns - larger unsigned incremental changes
+        for (size_t i = 0; i < 6; ++i) {
+            row.set(42 + i, static_cast<uint32_t>((segment % 20000) + i * 5000));
+        }
+        
+        // uint64_t columns - very large unsigned incremental changes
+        for (size_t i = 0; i < 6; ++i) {
+            row.set(48 + i, static_cast<uint64_t>((segment % 200000ULL) + i * 50000ULL));
+        }
+        
+        // float columns - floating point with patterns
+        for (size_t i = 0; i < 6; ++i) {
+            row.set(54 + i, static_cast<float>((segment % 1000) + i * 0.5f));
+        }
+        
+        // double columns - double precision with patterns
+        for (size_t i = 0; i < 6; ++i) {
+            row.set(60 + i, static_cast<double>((segment % 1000) + i * 0.25));
+        }
+        
+        // string columns - repetitive patterns optimal for ZoH
+        const std::vector<std::string> zohStrings = {
+            "Pattern0", "Pattern1", "Pattern2", "Pattern3", "Pattern4", "Pattern5"
+        };
+        for (size_t i = 0; i < 6; ++i) {
+            row.set(66 + i, zohStrings[(segment + i) % zohStrings.size()]);
+        }
+    }
+
+    // BCSV Flexible ZoH benchmark
+    std::pair<double, double> benchmarkBCSVFlexibleZoH() {
+        std::cout << "Benchmarking BCSV Flexible interface with ZoH...\n";
+        
+        auto layout = createFlexibleLayout();
+        
+        // Write BCSV Flexible ZoH
+        auto writeStart = std::chrono::high_resolution_clock::now();
+        {
+            bcsv::Writer<bcsv::Layout> writer(layout);
+            writer.open(BCSV_FLEXIBLE_ZOH_FILENAME, true, 1, bcsv::FileFlags::ZERO_ORDER_HOLD);
+            
+            for (size_t row = 0; row < NUM_ROWS; ++row) {
+                populateFlexibleZoHRow(writer, row);
+                writer.writeRow();
+                
+                if (row % 50000 == 0) {
+                    std::cout << "  BCSV Flexible ZoH Progress: " << row << "/" << NUM_ROWS << " rows written\n";
+                }
+            }
+            writer.close();
+        }
+        auto writeEnd = std::chrono::high_resolution_clock::now();
+        double writeTime = std::chrono::duration<double, std::milli>(writeEnd - writeStart).count();
+        
+        // Read BCSV Flexible ZoH
+        auto readStart = std::chrono::high_resolution_clock::now();
+        {
+            bcsv::Reader<bcsv::Layout> reader;
+            reader.open(BCSV_FLEXIBLE_ZOH_FILENAME);
+            
+            size_t readCount = 0;
+            while (reader.readNext()) {
+                const auto& row = reader.row();
+                // Access all columns to ensure fair comparison - match the actual layout pattern
+                for (size_t col = 0; col < 72; ++col) {
+                    if (col < 6) { // bool columns 0-5
+                        volatile auto v = row.get<bool>(col); (void)v;
+                    } else if (col < 12) { // int8 columns 6-11
+                        volatile auto v = row.get<int8_t>(col); (void)v;
+                    } else if (col < 18) { // int16 columns 12-17
+                        volatile auto v = row.get<int16_t>(col); (void)v;
+                    } else if (col < 24) { // int32 columns 18-23
+                        volatile auto v = row.get<int32_t>(col); (void)v;
+                    } else if (col < 30) { // int64 columns 24-29
+                        volatile auto v = row.get<int64_t>(col); (void)v;
+                    } else if (col < 36) { // uint8 columns 30-35
+                        volatile auto v = row.get<uint8_t>(col); (void)v;
+                    } else if (col < 42) { // uint16 columns 36-41
+                        volatile auto v = row.get<uint16_t>(col); (void)v;
+                    } else if (col < 48) { // uint32 columns 42-47
+                        volatile auto v = row.get<uint32_t>(col); (void)v;
+                    } else if (col < 54) { // uint64 columns 48-53
+                        volatile auto v = row.get<uint64_t>(col); (void)v;
+                    } else if (col < 60) { // float columns 54-59
+                        volatile auto v = row.get<float>(col); (void)v;
+                    } else if (col < 66) { // double columns 60-65
+                        volatile auto v = row.get<double>(col); (void)v;
+                    } else { // string columns 66-71
+                        volatile auto v = row.get<std::string>(col); (void)v;
+                    }
+                }
+                ++readCount;
+                
+                if (readCount % 50000 == 0) {
+                    std::cout << "  BCSV Flexible ZoH Progress: " << readCount << "/" << NUM_ROWS << " rows read\n";
+                }
+            }
+            reader.close();
+        }
+        auto readEnd = std::chrono::high_resolution_clock::now();
+        double readTime = std::chrono::duration<double, std::milli>(readEnd - readStart).count();
+        
+        std::cout << "  BCSV Flexible ZoH Write time: " << std::fixed << std::setprecision(2) << writeTime << " ms\n";
+        std::cout << "  BCSV Flexible ZoH Read time:  " << std::fixed << std::setprecision(2) << readTime << " ms\n\n";
+        
+        return {writeTime, readTime};
+    }
+
+    // BCSV Static ZoH benchmark
+    std::pair<double, double> benchmarkBCSVStaticZoH() {
+        std::cout << "Benchmarking BCSV Static interface with ZoH...\n";
+        
+        auto layout = createStaticLayout();
+        
+        // Write BCSV Static ZoH
+        auto writeStart = std::chrono::high_resolution_clock::now();
+        {
+            bcsv::Writer<LargeTestLayoutStatic> writer(layout);
+            writer.open(BCSV_STATIC_ZOH_FILENAME, true, 1, bcsv::FileFlags::ZERO_ORDER_HOLD);
+            
+            for (size_t row = 0; row < NUM_ROWS; ++row) {
+                generateZoHRowData(row, writer.row());
+                writer.writeRow();
+                
+                if (row % 50000 == 0) {
+                    std::cout << "  BCSV Static ZoH Progress: " << row << "/" << NUM_ROWS << " rows written\n";
+                }
+            }
+            writer.close();
+        }
+        auto writeEnd = std::chrono::high_resolution_clock::now();
+        double writeTime = std::chrono::duration<double, std::milli>(writeEnd - writeStart).count();
+        
+        // Read BCSV Static ZoH
+        auto readStart = std::chrono::high_resolution_clock::now();
+        {
+            bcsv::Reader<LargeTestLayoutStatic> reader;
+            reader.open(BCSV_STATIC_ZOH_FILENAME);
+            
+            size_t readCount = 0;
+            while (reader.readNext()) {
+                const auto& row = reader.row();
+                // Access all 72 columns to ensure fair comparison with same overhead as other tests
+                volatile const auto& v0 = row.get<0>();
+                volatile const auto& v1 = row.get<1>();
+                volatile const auto& v2 = row.get<2>();
+                volatile const auto& v3 = row.get<3>();
+                volatile const auto& v4 = row.get<4>();
+                volatile const auto& v5 = row.get<5>();
+                volatile const auto& v6 = row.get<6>();
+                volatile const auto& v7 = row.get<7>();
+                volatile const auto& v8 = row.get<8>();
+                volatile const auto& v9 = row.get<9>();
+                volatile const auto& v10 = row.get<10>();
+                volatile const auto& v11 = row.get<11>();
+                volatile const auto& v12 = row.get<12>();
+                volatile const auto& v13 = row.get<13>();
+                volatile const auto& v14 = row.get<14>();
+                volatile const auto& v15 = row.get<15>();
+                volatile const auto& v16 = row.get<16>();
+                volatile const auto& v17 = row.get<17>();
+                volatile const auto& v18 = row.get<18>();
+                volatile const auto& v19 = row.get<19>();
+                volatile const auto& v20 = row.get<20>();
+                volatile const auto& v21 = row.get<21>();
+                volatile const auto& v22 = row.get<22>();
+                volatile const auto& v23 = row.get<23>();
+                volatile const auto& v24 = row.get<24>();
+                volatile const auto& v25 = row.get<25>();
+                volatile const auto& v26 = row.get<26>();
+                volatile const auto& v27 = row.get<27>();
+                volatile const auto& v28 = row.get<28>();
+                volatile const auto& v29 = row.get<29>();
+                volatile const auto& v30 = row.get<30>();
+                volatile const auto& v31 = row.get<31>();
+                volatile const auto& v32 = row.get<32>();
+                volatile const auto& v33 = row.get<33>();
+                volatile const auto& v34 = row.get<34>();
+                volatile const auto& v35 = row.get<35>();
+                volatile const auto& v36 = row.get<36>();
+                volatile const auto& v37 = row.get<37>();
+                volatile const auto& v38 = row.get<38>();
+                volatile const auto& v39 = row.get<39>();
+                volatile const auto& v40 = row.get<40>();
+                volatile const auto& v41 = row.get<41>();
+                volatile const auto& v42 = row.get<42>();
+                volatile const auto& v43 = row.get<43>();
+                volatile const auto& v44 = row.get<44>();
+                volatile const auto& v45 = row.get<45>();
+                volatile const auto& v46 = row.get<46>();
+                volatile const auto& v47 = row.get<47>();
+                volatile const auto& v48 = row.get<48>();
+                volatile const auto& v49 = row.get<49>();
+                volatile const auto& v50 = row.get<50>();
+                volatile const auto& v51 = row.get<51>();
+                volatile const auto& v52 = row.get<52>();
+                volatile const auto& v53 = row.get<53>();
+                volatile const auto& v54 = row.get<54>();
+                volatile const auto& v55 = row.get<55>();
+                volatile const auto& v56 = row.get<56>();
+                volatile const auto& v57 = row.get<57>();
+                volatile const auto& v58 = row.get<58>();
+                volatile const auto& v59 = row.get<59>();
+                volatile const auto& v60 = row.get<60>();
+                volatile const auto& v61 = row.get<61>();
+                volatile const auto& v62 = row.get<62>();
+                volatile const auto& v63 = row.get<63>();
+                volatile const auto& v64 = row.get<64>();
+                volatile const auto& v65 = row.get<65>();
+                volatile const auto& v66 = row.get<66>();
+                volatile const auto& v67 = row.get<67>();
+                volatile const auto& v68 = row.get<68>();
+                volatile const auto& v69 = row.get<69>();
+                volatile const auto& v70 = row.get<70>();
+                volatile const auto& v71 = row.get<71>();
+                (void)v0; (void)v1; (void)v2; (void)v3; (void)v4; (void)v5; (void)v6; (void)v7; (void)v8; (void)v9; (void)v10; (void)v11; (void)v12; (void)v13; (void)v14; (void)v15; (void)v16; (void)v17; (void)v18; (void)v19; (void)v20; (void)v21; (void)v22; (void)v23; (void)v24; (void)v25; (void)v26; (void)v27; (void)v28; (void)v29; (void)v30; (void)v31; (void)v32; (void)v33; (void)v34; (void)v35; (void)v36; (void)v37; (void)v38; (void)v39; (void)v40; (void)v41; (void)v42; (void)v43; (void)v44; (void)v45; (void)v46; (void)v47; (void)v48; (void)v49; (void)v50; (void)v51; (void)v52; (void)v53; (void)v54; (void)v55; (void)v56; (void)v57; (void)v58; (void)v59; (void)v60; (void)v61; (void)v62; (void)v63; (void)v64; (void)v65; (void)v66; (void)v67; (void)v68; (void)v69; (void)v70; (void)v71;
+                ++readCount;
+                
+                if (readCount % 50000 == 0) {
+                    std::cout << "  BCSV Static ZoH Progress: " << readCount << "/" << NUM_ROWS << " rows read\n";
+                }
+            }
+            reader.close();
+        }
+        auto readEnd = std::chrono::high_resolution_clock::now();
+        double readTime = std::chrono::duration<double, std::milli>(readEnd - readStart).count();
+        
+        std::cout << "  BCSV Static ZoH Write time: " << std::fixed << std::setprecision(2) << writeTime << " ms\n";
+        std::cout << "  BCSV Static ZoH Read time:  " << std::fixed << std::setprecision(2) << readTime << " ms\n\n";
+        
+        return {writeTime, readTime};
+    }
+
     void printComprehensiveResults(const std::pair<double, double>& csvTimes,
                                  const std::pair<double, double>& flexibleTimes,
-                                 const std::pair<double, double>& staticTimes) {
+                                 const std::pair<double, double>& staticTimes,
+                                 const std::pair<double, double>& flexibleZoHTimes,
+                                 const std::pair<double, double>& staticZoHTimes) {
         std::cout << "Comprehensive Large Scale Performance Results\n";
         std::cout << "============================================\n\n";
         
@@ -525,15 +910,21 @@ public:
         auto csvSize = std::filesystem::file_size(CSV_FILENAME);
         auto flexibleSize = std::filesystem::file_size(BCSV_FLEXIBLE_FILENAME);
         auto staticSize = std::filesystem::file_size(BCSV_STATIC_FILENAME);
+        auto flexibleZoHSize = std::filesystem::file_size(BCSV_FLEXIBLE_ZOH_FILENAME);
+        auto staticZoHSize = std::filesystem::file_size(BCSV_STATIC_ZOH_FILENAME);
         
         std::cout << "File Sizes:\n";
         std::cout << "  CSV:             " << csvSize << " bytes (" << std::fixed << std::setprecision(1) << (csvSize / 1024.0 / 1024.0) << " MB)\n";
         std::cout << "  BCSV Flexible:   " << flexibleSize << " bytes (" << std::setprecision(1) << (flexibleSize / 1024.0 / 1024.0) << " MB)\n";
-        std::cout << "  BCSV Static:     " << staticSize << " bytes (" << std::setprecision(1) << (staticSize / 1024.0 / 1024.0) << " MB)\n\n";
+        std::cout << "  BCSV Static:     " << staticSize << " bytes (" << std::setprecision(1) << (staticSize / 1024.0 / 1024.0) << " MB)\n";
+        std::cout << "  BCSV Flex ZoH:   " << flexibleZoHSize << " bytes (" << std::setprecision(1) << (flexibleZoHSize / 1024.0 / 1024.0) << " MB)\n";
+        std::cout << "  BCSV Static ZoH: " << staticZoHSize << " bytes (" << std::setprecision(1) << (staticZoHSize / 1024.0 / 1024.0) << " MB)\n\n";
         
         std::cout << "Compression Ratios:\n";
-        std::cout << "  BCSV vs CSV:     " << std::setprecision(1) << (100.0 - (flexibleSize * 100.0 / csvSize)) << "% smaller\n";
-        std::cout << "  Static vs Flexible: " << std::setprecision(1) << (100.0 - (staticSize * 100.0 / flexibleSize)) << "% difference\n\n";
+        std::cout << "  BCSV vs CSV:        " << std::setprecision(1) << (100.0 - (flexibleSize * 100.0 / csvSize)) << "% smaller\n";
+        std::cout << "  Static vs Flexible: " << std::setprecision(1) << (100.0 - (staticSize * 100.0 / flexibleSize)) << "% difference\n";
+        std::cout << "  ZoH vs Regular:     " << std::setprecision(1) << (100.0 - (flexibleZoHSize * 100.0 / flexibleSize)) << "% smaller (Flexible)\n";
+        std::cout << "  ZoH vs CSV:         " << std::setprecision(1) << (100.0 - (flexibleZoHSize * 100.0 / csvSize)) << "% smaller\n\n";
         
         // Performance comparison table
         std::cout << "Performance Comparison (500,000 rows, 72 columns):\n\n";
@@ -559,6 +950,8 @@ public:
         printRow("CSV", csvTimes.first, csvTimes.second, csvSize);
         printRow("BCSV Flexible", flexibleTimes.first, flexibleTimes.second, flexibleSize);
         printRow("BCSV Static", staticTimes.first, staticTimes.second, staticSize);
+        printRow("BCSV Flex ZoH", flexibleZoHTimes.first, flexibleZoHTimes.second, flexibleZoHSize);
+        printRow("BCSV Static ZoH", staticZoHTimes.first, staticZoHTimes.second, staticZoHSize);
         
         std::cout << "\n";
         
@@ -579,15 +972,29 @@ public:
         std::cout << "    Read speedup:  " << std::setprecision(2) << (flexibleTimes.second / staticTimes.second) << "x\n";
         std::cout << "    Total speedup: " << std::setprecision(2) << ((flexibleTimes.first + flexibleTimes.second) / (staticTimes.first + staticTimes.second)) << "x\n\n";
         
+        std::cout << "  BCSV Flexible ZoH vs Flexible:\n";
+        std::cout << "    Write speedup: " << std::setprecision(2) << (flexibleTimes.first / flexibleZoHTimes.first) << "x\n";
+        std::cout << "    Read speedup:  " << std::setprecision(2) << (flexibleTimes.second / flexibleZoHTimes.second) << "x\n";
+        std::cout << "    Total speedup: " << std::setprecision(2) << ((flexibleTimes.first + flexibleTimes.second) / (flexibleZoHTimes.first + flexibleZoHTimes.second)) << "x\n\n";
+        
+        std::cout << "  BCSV Static ZoH vs CSV:\n";
+        std::cout << "    Write speedup: " << std::setprecision(2) << (csvTimes.first / staticZoHTimes.first) << "x\n";
+        std::cout << "    Read speedup:  " << std::setprecision(2) << (csvTimes.second / staticZoHTimes.second) << "x\n";
+        std::cout << "    Total speedup: " << std::setprecision(2) << ((csvTimes.first + csvTimes.second) / (staticZoHTimes.first + staticZoHTimes.second)) << "x\n\n";
+        
         // Throughput analysis
         double csvThroughput = NUM_ROWS / ((csvTimes.first + csvTimes.second) / 1000.0);
         double flexibleThroughput = NUM_ROWS / ((flexibleTimes.first + flexibleTimes.second) / 1000.0);
         double staticThroughput = NUM_ROWS / ((staticTimes.first + staticTimes.second) / 1000.0);
+        double flexibleZoHThroughput = NUM_ROWS / ((flexibleZoHTimes.first + flexibleZoHTimes.second) / 1000.0);
+        double staticZoHThroughput = NUM_ROWS / ((staticZoHTimes.first + staticZoHTimes.second) / 1000.0);
         
         std::cout << "Throughput (rows/second):\n";
         std::cout << "  CSV:             " << std::fixed << std::setprecision(0) << csvThroughput << "\n";
         std::cout << "  BCSV Flexible:   " << flexibleThroughput << "\n";
-        std::cout << "  BCSV Static:     " << staticThroughput << "\n\n";
+        std::cout << "  BCSV Static:     " << staticThroughput << "\n";
+        std::cout << "  BCSV Flex ZoH:   " << flexibleZoHThroughput << "\n";
+        std::cout << "  BCSV Static ZoH: " << staticZoHThroughput << "\n\n";
         
         std::cout << "Recommendations for Large-Scale Data Processing:\n";
             // Only recommend BCSV over CSV if it is actually faster or smaller
@@ -611,13 +1018,17 @@ public:
         auto csvTimes = benchmarkCSV();
         auto flexibleTimes = benchmarkBCSVFlexible();
         auto staticTimes = benchmarkBCSVStatic();
+        auto flexibleZoHTimes = benchmarkBCSVFlexibleZoH();
+        auto staticZoHTimes = benchmarkBCSVStaticZoH();
         
-        printComprehensiveResults(csvTimes, flexibleTimes, staticTimes);
+        printComprehensiveResults(csvTimes, flexibleTimes, staticTimes, flexibleZoHTimes, staticZoHTimes);
         
         // Cleanup
         std::filesystem::remove(CSV_FILENAME);
         std::filesystem::remove(BCSV_FLEXIBLE_FILENAME);
         std::filesystem::remove(BCSV_STATIC_FILENAME);
+        std::filesystem::remove(BCSV_FLEXIBLE_ZOH_FILENAME);
+        std::filesystem::remove(BCSV_STATIC_ZOH_FILENAME);
         
         std::cout << "\nLarge scale benchmark completed successfully!\n";
     }

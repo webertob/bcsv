@@ -220,16 +220,9 @@ namespace bcsv {
         // serialize the row into the raw buffer
         size_t row_offset = buffer_raw_.size();
         if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
-            // ZoH serialization is only supported by RowStatic, not by Row
-            if constexpr (std::is_same_v<typename LayoutType::RowType, bcsv::Row>) {
-                // Row class doesn't support ZoH - use regular serialization
-                row_.serializeTo(buffer_raw_);
-            } else {
-                // RowStatic supports ZoH serialization
-                row_.trackChanges(true);            // ensure tracking is enabled for ZoH
-                row_.serializeToZoH(buffer_raw_);   // specialized ZoH serialization
-                row_.resetChanges();                // reset all change flags after serialization
-            }
+            row_.trackChanges(true);            // ensure tracking is enabled for ZoH
+            row_.serializeToZoH(buffer_raw_);   // specialized ZoH serialization
+            row_.resetChanges();                // reset all change flags after serialization
         } else {
             row_.serializeTo(buffer_raw_);
         }

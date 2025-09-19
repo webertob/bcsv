@@ -283,17 +283,8 @@ namespace bcsv {
                 }
                 // otherwise do nothing, just keep previous row as-is
             } else {
-                // ZoH deserialization is only supported by RowStatic, not by Row
-                if constexpr (std::is_same_v<typename LayoutType::RowType, bcsv::Row>) {
-                    // Row class doesn't support ZoH - use regular deserialization
-                    if (!row_.deserializeFrom({buffer_raw_.data() + row_offset, row_length})) {
-                        return false;
-                    }
-                } else {
-                    // RowStatic supports ZoH deserialization
-                    if (!row_.deserializeFromZoH({buffer_raw_.data() + row_offset, row_length})) {
-                        return false;
-                    }
+                if (!row_.deserializeFromZoH({buffer_raw_.data() + row_offset, row_length})) {
+                    return false;
                 }
             }
         } else {

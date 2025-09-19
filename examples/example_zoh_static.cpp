@@ -20,33 +20,16 @@ using ExampleLayout = bcsv::LayoutStatic<
     bool            // active
 >;
 
-void writeZoHStaticBCSV() {
-    std::cout << "=== Writing with ZoH Static Interface ===\n\n";
+struct SampleData {
+    int32_t id;
+    std::string name;
+    float score;
+    bool active;
+};
 
-    // Step 1: Create static layout with column names
-    ExampleLayout layout({"id", "name", "score", "active"});
 
-    std::cout << "Created static layout with " << layout.columnCount() << " columns\n";
-
-    // Step 2: Create a writer with ZoH compression enabled
-    const std::string filename = "example_zoh_static.bcsv";
-    bcsv::Writer<ExampleLayout> writer(layout);
-    if(!writer.open(filename, true, 1, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
-        std::cerr << "Failed to open writer for BCSV file\n";
-        return;
-    }
-
-    std::cout << "ZoH compression enabled\n";
-
-    // Step 3: Create test data specifically designed for ZoH compression
-    // This data has repeating values to demonstrate compression benefits
-    struct SampleData {
-        int32_t id;
-        std::string name;
-        float score;
-        bool active;
-    };
-
+auto createSampleData()
+{
     std::vector<SampleData> sampleData = {
         // First row - all fields will be serialized (packet start)
         {1, "Alice Johnson", 95.5f, true},
@@ -72,16 +55,66 @@ void writeZoHStaticBCSV() {
         // Eighth row - back to first values (good for ZoH)
         {8, "Alice Johnson", 95.5f, true}
     };
+    return sampleData;
+}
 
+void writeStaticBCSV() {
+    std::cout << "=== Writing with Static Interface ===\n\n";
+
+    // Step 1: Create static layout with column names
+    ExampleLayout layout({"id", "name", "score", "active"});
+
+    std::cout << "Created static layout with " << layout.columnCount() << " columns\n";
+
+    // Step 2: Create a writer
+    const std::string filename = "example_static.bcsv";
+    bcsv::Writer<ExampleLayout> writer(layout);
+    if(!writer.open(filename, true, 1, bcsv::FileFlags::NONE)) {
+        std::cerr << "Failed to open writer for BCSV file\n";
+        return;
+    }
+
+    // Step 3: Create and write data rows
+    std::vector<SampleData> sampleData = createSampleData();
+    for (const auto& data : sampleData) {
+        auto& row = writer.row();
+        row.set<0>(data.id);
+        row.set<1>(data.name);
+        row.set<2>(data.score);
+        row.set<3>(data.active);
+        writer.writeRow();
+    }
+    writer.close();
+    std::cout << "Successfully wrote " << sampleData.size() << " rows to " << filename << "\n\n";
+}
+
+void writeZoHStaticBCSV() {
+    std::cout << "=== Writing with ZoH Static Interface ===\n\n";
+
+    // Step 1: Create static layout with column names
+    ExampleLayout layout({"id", "name", "score", "active"});
+
+    std::cout << "Created static layout with " << layout.columnCount() << " columns\n";
+
+    // Step 2: Create a writer with ZoH compression enabled
+    const std::string filename = "example_zoh_static.bcsv";
+    bcsv::Writer<ExampleLayout> writer(layout);
+    if(!writer.open(filename, true, 1, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
+        std::cerr << "Failed to open writer for BCSV file\n";
+        return;
+    }
+
+    std::cout << "ZoH compression enabled\n";
+
+    // Step 3: Create test data specifically designed for ZoH compression
+    // This data has repeating values to demonstrate compression benefits
+    std::vector<SampleData> sampleData = createSampleData();
     std::cout << "Writing " << sampleData.size() << " rows with ZoH compression patterns...\n";
 
     for (size_t i = 0; i < sampleData.size(); ++i) {
         const auto& data = sampleData[i];
         auto& row = writer.row();
-        
-        // Enable change tracking for ZoH
-        row.trackChanges(true);
-        
+                
         row.set<0>(data.id);
         row.set<1>(data.name);
         row.set<2>(data.score);
@@ -90,18 +123,67 @@ void writeZoHStaticBCSV() {
         std::cout << "  Row " << (i+1) << ": id=" << data.id 
                   << ", name=\"" << data.name << "\""
                   << ", score=" << data.score
-                  << ", active=" << (data.active ? "true" : "false");
-        
-        if (row.hasAnyChanges()) {
-            std::cout << " [HAS CHANGES]";
-        }
-        std::cout << "\n";
-        
+                  << ", active=" << (data.active ? "true" : "false");        
         writer.writeRow();
     }
 
     writer.close();
     std::cout << "Successfully wrote " << sampleData.size() << " rows to " << filename << "\n\n";
+}
+
+void readStaticBCSV() {
+    std::cout << "=== Reading with Static Interface ===\n\n";
+
+    // Step 1: Create matching layout for reading
+    ExampleLayout layout({"id", "name", "score", "active"});
+    std::cout << "Created static layout with " << layout.columnCount() << " columns\n";
+    
+    // Step 2: Create a reader
+    const std::string filename = "example_static.bcsv";
+    bcsv::Reader<ExampleLayout> reader;
+    if (!reader.open(filename)) {
+        std::cerr << "Failed to open file: " << filename << "\n";
+        return;
+    }
+
+    if (!reader.layout().isCompatibleWith(layout)) {
+        std::cerr << "Incompatible layout for reading BCSV file\n";
+        return;
+    }
+
+    //optional check column names
+    for (size_t i = 0; i < layout.columnCount(); i++) {
+        if (reader.layout().columnName(i) != layout.columnName(i)) {
+            std::cerr << "Warning: Column name mismatch at index " << i 
+                      << ": expected '" << layout.columnName(i) 
+                      << "', got '" << reader.layout().columnName(i) << "'\n";
+        }
+    }
+
+    std::cout << "Reading data:\n\n";  
+    
+    // Table header
+    std::cout << "ID | Name           | Score | Active\n";
+    std::cout << "---|----------------|-------|-------\n";
+    
+    size_t rowIndex = 0;
+    while (reader.readNext()) {
+        // Use template get<N>() method for type-safe access
+        const auto& row = reader.row();
+        auto id = row.get<0>();
+        auto name = row.get<1>();
+        auto score = row.get<2>();
+        auto active = row.get<3>();
+
+        std::cout << std::setw(2) << id << " | "
+                  << std::setw(14) << std::left << name << " | "
+                  << std::setw(5) << std::right << std::fixed << std::setprecision(1) << score << " | "
+                  << (active ? "Yes" : "No") << "\n";
+        rowIndex++;
+    }
+
+    reader.close();
+    std::cout << "\nSuccessfully read " << rowIndex << " rows from " << filename << "\n\n";
 }
 
 void readZoHStaticBCSV() {
@@ -152,12 +234,11 @@ void readZoHStaticBCSV() {
         auto score = row.get<2>();
         auto active = row.get<3>();
 
-        std::cout << std::setw(3) << (rowIndex + 1) << " | "
+        std::cout << std::setw(3) << (reader.rowIndex()) << " | "
                   << std::setw(2) << id << " | "
                   << std::setw(14) << std::left << name << " | "
                   << std::setw(5) << std::right << std::fixed << std::setprecision(1) << score << " | "
                   << (active ? "Yes" : "No") << "\n";
-        rowIndex++;
     }
 
     reader.close();
@@ -198,6 +279,12 @@ int main() {
     std::cout << "using the static LayoutStatic/RowStatic interface for time-series data.\n\n";
     
     try {
+
+        // Write data without ZoH compression for comparison
+        writeStaticBCSV();
+
+        // Read data back without ZoH compression for comparison
+        readStaticBCSV();
         // Write data using ZoH compression
         writeZoHStaticBCSV();
         
