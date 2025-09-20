@@ -5,6 +5,9 @@ project(bcsv VERSION 1.0.0 LANGUAGES CXX C)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# CMake handles parallel compilation automatically with cmake --build . -j
+# No additional configuration needed
+
 # Set optimization flags
 if(MSVC)
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Ob2 /DNDEBUG")

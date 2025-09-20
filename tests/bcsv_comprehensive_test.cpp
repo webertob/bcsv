@@ -387,7 +387,290 @@ protected:
     std::string getTestFilePath(const std::string& filename) {
         return (fs::path(test_dir_) / filename).string();
     }
+    
+    // Helper method to validate layout consistency
+    void validateLayoutConsistency(const bcsv::Layout& layout, const std::string& test_name) {
+        std::cout << "Validating layout consistency for: " << test_name << std::endl;
+        
+        // Validate basic properties
+        size_t column_count = layout.columnCount();
+        EXPECT_GT(column_count, 0) << test_name << ": Layout should have columns";
+        
+        // Validate total fixed size calculation
+        size_t calculated_size = 0;
+        for (size_t i = 0; i < column_count; ++i) {
+            calculated_size += layout.columnLength(i);
+        }
+        EXPECT_EQ(calculated_size, layout.serializedSizeFixed()) << test_name << ": Total fixed size mismatch";
+        
+        // Validate offsets are monotonically increasing and correct
+        if (column_count > 1) {
+            for (size_t i = 1; i < column_count; ++i) {
+                size_t expected_offset = layout.columnOffset(i-1) + layout.columnLength(i-1);
+                EXPECT_EQ(expected_offset, layout.columnOffset(i)) 
+                    << test_name << ": Column " << i << " offset mismatch. Expected: " 
+                    << expected_offset << ", Got: " << layout.columnOffset(i);
+            }
+        }
+        
+        // Validate no duplicate column names
+        std::set<std::string> unique_names;
+        for (size_t i = 0; i < column_count; ++i) {
+            std::string name = layout.columnName(i);
+            EXPECT_FALSE(name.empty()) << test_name << ": Column " << i << " has empty name";
+            EXPECT_TRUE(unique_names.insert(name).second) 
+                << test_name << ": Duplicate column name: " << name;
+        }
+        
+        // Validate column index mapping
+        for (size_t i = 0; i < column_count; ++i) {
+            std::string name = layout.columnName(i);
+            EXPECT_EQ(i, layout.columnIndex(name)) 
+                << test_name << ": Column index mismatch for " << name;
+        }
+        
+        // Validate first column starts at offset 0
+        if (column_count > 0) {
+            EXPECT_EQ(0, layout.columnOffset(0)) << test_name << ": First column should start at offset 0";
+        }
+        
+        std::cout << "✓ Layout consistency validation passed for: " << test_name << std::endl;
+    }
 };
+
+// ========================================================================
+// Layout Consistency Tests
+// ========================================================================
+
+// Test: Add Column at Various Positions
+TEST_F(BCSVTestSuite, Layout_AddColumn_Positions) {
+    bcsv::Layout layout;
+    
+    // Start with a basic layout
+    layout.addColumn({"col1", bcsv::ColumnType::INT32});
+    layout.addColumn({"col2", bcsv::ColumnType::FLOAT});
+    layout.addColumn({"col3", bcsv::ColumnType::STRING});
+    validateLayoutConsistency(layout, "Initial 3-column layout");
+    
+    // Test: Add at the end (position >= size)
+    EXPECT_TRUE(layout.addColumn({"col4_end", bcsv::ColumnType::DOUBLE}, SIZE_MAX));
+    validateLayoutConsistency(layout, "Add at end");
+    EXPECT_EQ(4, layout.columnCount());
+    EXPECT_EQ("col4_end", layout.columnName(3));
+    
+    // Test: Add at the beginning (position 0)
+    EXPECT_TRUE(layout.addColumn({"col0_begin", bcsv::ColumnType::BOOL}, 0));
+    validateLayoutConsistency(layout, "Add at beginning");
+    EXPECT_EQ(5, layout.columnCount());
+    EXPECT_EQ("col0_begin", layout.columnName(0));
+    EXPECT_EQ("col1", layout.columnName(1)); // shifted
+    
+    // Test: Add in the middle (position 2)
+    EXPECT_TRUE(layout.addColumn({"col_middle", bcsv::ColumnType::INT64}, 2));
+    validateLayoutConsistency(layout, "Add in middle");
+    EXPECT_EQ(6, layout.columnCount());
+    EXPECT_EQ("col_middle", layout.columnName(2));
+    EXPECT_EQ("col1", layout.columnName(1));
+    EXPECT_EQ("col2", layout.columnName(3)); // shifted
+    
+    // Test: Duplicate name should fail
+    EXPECT_FALSE(layout.addColumn({"col1", bcsv::ColumnType::UINT32}, 1));
+    validateLayoutConsistency(layout, "After failed duplicate add");
+}
+
+// Test: Change Column Types at Various Positions
+TEST_F(BCSVTestSuite, Layout_ChangeColumnType_Positions) {
+    bcsv::Layout layout;
+    
+    // Create initial layout with different types
+    layout.addColumn({"col1", bcsv::ColumnType::INT8});     // 1 byte
+    layout.addColumn({"col2", bcsv::ColumnType::INT32});    // 4 bytes  
+    layout.addColumn({"col3", bcsv::ColumnType::DOUBLE});   // 8 bytes
+    layout.addColumn({"col4", bcsv::ColumnType::STRING});   // 8 bytes
+    validateLayoutConsistency(layout, "Initial layout for type change");
+    
+    size_t initial_size = layout.serializedSizeFixed();
+    
+    // Test: Change type at beginning (position 0) - smaller to larger
+    layout.setColumnType(0, bcsv::ColumnType::INT64);  // 1 -> 8 bytes
+    validateLayoutConsistency(layout, "Change first column type");
+    EXPECT_EQ(initial_size + 7, layout.serializedSizeFixed()); // +7 bytes
+    
+    // Test: Change type in middle (position 1) - larger to smaller  
+    layout.setColumnType(1, bcsv::ColumnType::INT16);  // 4 -> 2 bytes
+    validateLayoutConsistency(layout, "Change middle column type");
+    EXPECT_EQ(initial_size + 5, layout.serializedSizeFixed()); // +7-2 = +5 bytes
+    
+    // Test: Change type at end (position 3) - same size
+    layout.setColumnType(3, bcsv::ColumnType::INT64);  // 8 -> 8 bytes  
+    validateLayoutConsistency(layout, "Change last column type");
+    EXPECT_EQ(initial_size + 5, layout.serializedSizeFixed()); // no change
+    EXPECT_EQ(bcsv::ColumnType::INT64, layout.columnType(3));
+}
+
+// Test: Change Column Names at Various Positions
+TEST_F(BCSVTestSuite, Layout_ChangeColumnName_Positions) {
+    bcsv::Layout layout;
+    
+    // Create initial layout
+    layout.addColumn({"first", bcsv::ColumnType::INT32});
+    layout.addColumn({"middle", bcsv::ColumnType::FLOAT});
+    layout.addColumn({"last", bcsv::ColumnType::STRING});
+    validateLayoutConsistency(layout, "Initial layout for name change");
+    
+    // Test: Change name at beginning
+    EXPECT_TRUE(layout.setColumnName(0, "new_first"));
+    validateLayoutConsistency(layout, "Change first column name");
+    EXPECT_EQ("new_first", layout.columnName(0));
+    EXPECT_EQ(0, layout.columnIndex("new_first"));
+    
+    // Test: Change name in middle
+    EXPECT_TRUE(layout.setColumnName(1, "new_middle"));
+    validateLayoutConsistency(layout, "Change middle column name");
+    EXPECT_EQ("new_middle", layout.columnName(1));
+    EXPECT_EQ(1, layout.columnIndex("new_middle"));
+    
+    // Test: Change name at end
+    EXPECT_TRUE(layout.setColumnName(2, "new_last"));
+    validateLayoutConsistency(layout, "Change last column name");
+    EXPECT_EQ("new_last", layout.columnName(2));
+    EXPECT_EQ(2, layout.columnIndex("new_last"));
+    
+    // Test: Duplicate name should fail
+    EXPECT_FALSE(layout.setColumnName(1, "new_first"));
+    validateLayoutConsistency(layout, "After failed duplicate name change");
+    EXPECT_EQ("new_middle", layout.columnName(1)); // unchanged
+    
+    // Test: Empty name should fail
+    EXPECT_FALSE(layout.setColumnName(0, ""));
+    validateLayoutConsistency(layout, "After failed empty name change");
+    EXPECT_EQ("new_first", layout.columnName(0)); // unchanged
+}
+
+// Test: Add Duplicate Names
+TEST_F(BCSVTestSuite, Layout_DuplicateNames) {
+    bcsv::Layout layout;
+    
+    // Add initial columns
+    EXPECT_TRUE(layout.addColumn({"col1", bcsv::ColumnType::INT32}));
+    EXPECT_TRUE(layout.addColumn({"col2", bcsv::ColumnType::FLOAT}));
+    validateLayoutConsistency(layout, "Initial layout before duplicate test");
+    
+    // Test: Attempt to add duplicate name
+    EXPECT_FALSE(layout.addColumn({"col1", bcsv::ColumnType::DOUBLE}));
+    validateLayoutConsistency(layout, "After failed duplicate add");
+    EXPECT_EQ(2, layout.columnCount()); // unchanged
+    
+    // Test: Attempt to add another duplicate name
+    EXPECT_FALSE(layout.addColumn({"col2", bcsv::ColumnType::STRING}));
+    validateLayoutConsistency(layout, "After second failed duplicate add");
+    EXPECT_EQ(2, layout.columnCount()); // unchanged
+    
+    // Test: Add valid name should work
+    EXPECT_TRUE(layout.addColumn({"col3", bcsv::ColumnType::BOOL}));
+    validateLayoutConsistency(layout, "After valid add");
+    EXPECT_EQ(3, layout.columnCount());
+}
+
+// Test: Remove Columns at Various Positions  
+TEST_F(BCSVTestSuite, Layout_RemoveColumn_Positions) {
+    bcsv::Layout layout;
+    
+    // Create layout with 5 columns
+    layout.addColumn({"col0", bcsv::ColumnType::BOOL});     // 1 byte
+    layout.addColumn({"col1", bcsv::ColumnType::INT32});    // 4 bytes
+    layout.addColumn({"col2", bcsv::ColumnType::DOUBLE});   // 8 bytes
+    layout.addColumn({"col3", bcsv::ColumnType::FLOAT});    // 4 bytes
+    layout.addColumn({"col4", bcsv::ColumnType::STRING});   // 8 bytes
+    validateLayoutConsistency(layout, "Initial 5-column layout");
+    
+    size_t initial_size = layout.serializedSizeFixed();
+    EXPECT_EQ(5, layout.columnCount());
+    
+    // Test: Remove from middle (position 2) 
+    layout.removeColumn(2); // remove col2 (DOUBLE, 8 bytes)
+    validateLayoutConsistency(layout, "After removing middle column");
+    EXPECT_EQ(4, layout.columnCount());
+    EXPECT_EQ(initial_size - 8, layout.serializedSizeFixed());
+    EXPECT_EQ("col0", layout.columnName(0));
+    EXPECT_EQ("col1", layout.columnName(1));
+    EXPECT_EQ("col3", layout.columnName(2)); // shifted down
+    EXPECT_EQ("col4", layout.columnName(3)); // shifted down
+    
+    // Test: Remove from beginning (position 0)
+    layout.removeColumn(0); // remove col0 (BOOL, 1 byte)
+    validateLayoutConsistency(layout, "After removing first column");
+    EXPECT_EQ(3, layout.columnCount());
+    EXPECT_EQ(initial_size - 9, layout.serializedSizeFixed()); // -8-1 = -9
+    EXPECT_EQ("col1", layout.columnName(0)); // shifted down
+    EXPECT_EQ("col3", layout.columnName(1)); // shifted down
+    EXPECT_EQ("col4", layout.columnName(2)); // shifted down
+    
+    // Test: Remove from end (last position)
+    layout.removeColumn(2); // remove col4 (STRING, 8 bytes)
+    validateLayoutConsistency(layout, "After removing last column");
+    EXPECT_EQ(2, layout.columnCount());
+    EXPECT_EQ(initial_size - 17, layout.serializedSizeFixed()); // -8-1-8 = -17
+    EXPECT_EQ("col1", layout.columnName(0));
+    EXPECT_EQ("col3", layout.columnName(1));
+    
+    // Test: Remove invalid index should not crash
+    layout.removeColumn(10); // out of range
+    validateLayoutConsistency(layout, "After invalid remove");
+    EXPECT_EQ(2, layout.columnCount()); // unchanged
+}
+
+// Test: Complex Layout Operations Sequence
+TEST_F(BCSVTestSuite, Layout_ComplexOperationsSequence) {
+    bcsv::Layout layout;
+    
+    // Build initial layout
+    layout.addColumn({"id", bcsv::ColumnType::INT64});
+    layout.addColumn({"name", bcsv::ColumnType::STRING});
+    layout.addColumn({"value", bcsv::ColumnType::DOUBLE});
+    validateLayoutConsistency(layout, "Initial complex layout");
+    
+    // Add in middle
+    EXPECT_TRUE(layout.addColumn({"flag", bcsv::ColumnType::BOOL}, 1));
+    validateLayoutConsistency(layout, "After add in middle");
+    EXPECT_EQ("id", layout.columnName(0));
+    EXPECT_EQ("flag", layout.columnName(1));
+    EXPECT_EQ("name", layout.columnName(2));
+    EXPECT_EQ("value", layout.columnName(3));
+    
+    // Change type in middle
+    layout.setColumnType(2, bcsv::ColumnType::INT32); // name: STRING -> INT32
+    validateLayoutConsistency(layout, "After type change");
+    EXPECT_EQ(bcsv::ColumnType::INT32, layout.columnType(2));
+    
+    // Rename column
+    EXPECT_TRUE(layout.setColumnName(2, "code"));
+    validateLayoutConsistency(layout, "After rename");
+    EXPECT_EQ("code", layout.columnName(2));
+    EXPECT_EQ(2, layout.columnIndex("code"));
+    
+    // Add at beginning  
+    EXPECT_TRUE(layout.addColumn({"timestamp", bcsv::ColumnType::INT64}, 0));
+    validateLayoutConsistency(layout, "After add at beginning");
+    EXPECT_EQ("timestamp", layout.columnName(0));
+    EXPECT_EQ("id", layout.columnName(1));
+    
+    // Remove from middle
+    layout.removeColumn(2); // remove flag
+    validateLayoutConsistency(layout, "After remove from middle");
+    EXPECT_EQ("timestamp", layout.columnName(0));
+    EXPECT_EQ("id", layout.columnName(1));
+    EXPECT_EQ("code", layout.columnName(2));
+    EXPECT_EQ("value", layout.columnName(3));
+    
+    // Final validation
+    EXPECT_EQ(4, layout.columnCount());
+    validateLayoutConsistency(layout, "Final complex layout");
+}
+
+// ========================================================================
+// Original Tests Continue Below
+// ========================================================================
 
 // Test 1: Sequential Write with Flexible Interface - All Types (2 columns each)
 TEST_F(BCSVTestSuite, FlexibleInterface_SequentialWrite_AllTypes) {
@@ -2381,7 +2664,483 @@ TEST_F(BCSVTestSuite, ZoH_CompressionEffectiveness) {
     std::cout << "ZoH compression effectiveness test completed" << std::endl;
 }
 
+// ============================================================================
+// BOUNDARY CONDITION TESTS (Integrated from bcsv_boundary_test.cpp)
+// ============================================================================
+
+// Global verbose flag for boundary tests
+static bool g_boundary_verbose = false;
+
+// Helper function for verbose output in boundary tests
+template<typename... Args>
+void boundary_verbose_output(Args&&... args) {
+    if (g_boundary_verbose) {
+        (std::cout << ... << args) << std::endl;
+    }
+}
+
+class BCSVBoundaryTests : public BCSVTestSuite {
+protected:
+    // Helper to create a string of specified size
+    std::string createString(size_t size, char fill_char = 'x') {
+        return std::string(size, fill_char);
+    }
+    
+    // Helper to create layout with many boolean columns
+    bcsv::Layout createManyBoolLayout(size_t count) {
+        bcsv::Layout layout;
+        for (size_t i = 0; i < count; ++i) {
+            layout.addColumn({"bool_" + std::to_string(i), bcsv::ColumnType::BOOL});
+        }
+        return layout;
+    }
+    
+    // Helper to create layout with specified string column count
+    bcsv::Layout createStringLayout(size_t string_columns) {
+        bcsv::Layout layout;
+        for (size_t i = 0; i < string_columns; ++i) {
+            layout.addColumn({"str_" + std::to_string(i), bcsv::ColumnType::STRING});
+        }
+        return layout;
+    }
+};
+
+// ============================================================================
+// MAXIMUM COLUMN COUNT TESTS
+// ============================================================================
+
+TEST_F(BCSVBoundaryTests, MaximumColumnCount_AtLimit) {
+    // Test exactly at the maximum column count limit
+    const size_t max_columns = bcsv::MAX_COLUMN_COUNT;
+    
+    ASSERT_NO_THROW({
+        auto layout = createManyBoolLayout(max_columns);
+        EXPECT_EQ(layout.columnCount(), max_columns);
+    });
+}
+
+TEST_F(BCSVBoundaryTests, MaximumColumnCount_BoundaryValidation) {
+    // Fast test to validate maximum column count boundary without I/O overhead
+    const size_t max_columns = bcsv::MAX_COLUMN_COUNT;
+    
+    // Test that we can create a layout with MAX_COLUMN_COUNT columns
+    ASSERT_NO_THROW({
+        auto layout = createManyBoolLayout(max_columns);
+        EXPECT_EQ(layout.columnCount(), max_columns);
+        
+        // Quick write test with minimal data - just test the boundary logic
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        ASSERT_TRUE(writer.open(getTestFilePath("boundary_validation"), true));
+        
+        auto& row = writer.row();
+        // Set only a few representative columns
+        row.set(0, true);
+        row.set(max_columns/2, false);  
+        row.set(max_columns-1, true);
+        
+        ASSERT_TRUE(writer.writeRow());
+        writer.close();
+    });
+}
+
+TEST_F(BCSVBoundaryTests, MaximumColumnCount_WriteRead1000BoolColumns) {
+    // Test writing and reading many boolean columns (reduced for performance)
+    // This tests the functionality without the full 65K which takes 35+ minutes
+    const size_t test_columns = 1000;  // Reduced from MAX_COLUMN_COUNT for performance
+    const std::string filepath = getTestFilePath("many_bool_columns");
+    
+    // Create layout with many boolean columns
+    auto layout = createManyBoolLayout(test_columns);
+    
+    // Test data - alternating true/false pattern
+    std::vector<bool> test_data(test_columns);
+    for (size_t i = 0; i < test_columns; ++i) {
+        test_data[i] = (i % 2 == 0);
+    }
+    
+    // Write test
+    ASSERT_NO_THROW({
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        ASSERT_TRUE(writer.open(filepath));
+        
+        auto& row = writer.row();
+        for (size_t i = 0; i < test_columns; ++i) {
+            row.set(i, test_data[i]);
+        }
+        ASSERT_TRUE(writer.writeRow());
+        writer.close();
+    });
+    
+    // Read test - sample verification for performance
+    ASSERT_NO_THROW({
+        bcsv::Reader<bcsv::Layout> reader;
+        ASSERT_TRUE(reader.open(filepath));
+        
+        ASSERT_TRUE(reader.readNext());
+        const auto& row = reader.row();
+        
+        // Verify sample of boolean values (every 50th column)
+        for (size_t i = 0; i < test_columns; i += 50) {
+            EXPECT_EQ(row.get<bool>(i), test_data[i]) 
+                << "Mismatch at column " << i;
+        }
+        
+        reader.close();
+    });
+}
+
+TEST_F(BCSVBoundaryTests, ExceedMaximumColumnCount_ShouldFail) {
+    // Test that exceeding maximum column count fails gracefully
+    const size_t over_limit = bcsv::MAX_COLUMN_COUNT + 1;
+    
+    // This should either fail during layout creation or provide clear error
+    // The exact failure point depends on implementation, but it should not crash
+    EXPECT_NO_FATAL_FAILURE({
+        try {
+            auto layout = createManyBoolLayout(over_limit);
+            // If layout creation succeeds, it should fail later during file operations
+            EXPECT_LE(layout.columnCount(), bcsv::MAX_COLUMN_COUNT);
+        } catch (const std::exception& e) {
+            // Expected exception for column count limit
+            EXPECT_TRUE(std::string(e.what()).find("column") != std::string::npos ||
+                       std::string(e.what()).find("limit") != std::string::npos ||
+                       std::string(e.what()).find("maximum") != std::string::npos);
+        }
+    });
+}
+
+// ============================================================================
+// MAXIMUM STRING LENGTH TESTS
+// ============================================================================
+
+TEST_F(BCSVBoundaryTests, MaximumStringLength_AtLimit_ShouldThrow) {
+    // Test string that approaches MAX_STRING_LENGTH and would exceed row size limit
+    const std::string filepath = getTestFilePath("max_string_at_limit");
+    
+    bcsv::Layout layout;
+    layout.addColumn({"large_string", bcsv::ColumnType::STRING});
+    
+    // Use a practical size that demonstrates the row limit issue
+    // String + overhead that exceeds uint16_t max (65535 bytes)
+    const size_t test_string_length = 65535 - 8 + 10; // 65537 bytes total, exceeds limit
+    
+    // Since this would exceed row size, let's test a large but safe string first
+    std::string large_string = createString(test_string_length - 100, 'A'); // Slightly under limit
+    
+    bcsv::Writer<bcsv::Layout> writer(layout);
+    ASSERT_TRUE(writer.open(filepath, true)); // Enable overwrite
+    
+    auto& row = writer.row();
+    // This should pass
+    EXPECT_NO_THROW(row.set(0, large_string));
+    EXPECT_TRUE(writer.writeRow());
+    
+    // Now test a string that would cause row size to exceed limit
+    std::string oversized_row_string = createString(65535 - 8 + 1, 'B'); // Just over row limit
+    EXPECT_NO_THROW(row.set(0, oversized_row_string)); // Should pass string validation
+    
+    // Should throw on writeRow() due to row size exceeding uint16_t max
+    EXPECT_THROW(writer.writeRow(), std::runtime_error);
+    
+    // Writer should remain in defined state - can continue with smaller row
+    std::string small_string = createString(1000, 'C');
+    EXPECT_NO_THROW(row.set(0, small_string));
+    EXPECT_TRUE(writer.writeRow()); // Should succeed
+    
+    writer.close();
+    
+    // Verify the small string was written correctly
+    bcsv::Reader<bcsv::Layout> reader;
+    ASSERT_TRUE(reader.open(filepath));
+    ASSERT_TRUE(reader.readNext()); // Read first row (large string)
+    boundary_verbose_output("First row size: ", reader.row().get<std::string>(0).size(), ", first char: '", reader.row().get<std::string>(0)[0], "'");
+    
+    bool has_second_row = reader.readNext(); // Read second row (small string after failed write)
+    boundary_verbose_output("Second readNext() result: ", has_second_row);
+    
+    if (has_second_row) {
+        boundary_verbose_output("Second row size: ", reader.row().get<std::string>(0).size(), ", first char: '", reader.row().get<std::string>(0)[0], "'");
+        EXPECT_EQ(reader.row().get<std::string>(0), small_string);
+    } else {
+        FAIL() << "Expected a second row but didn't find one";
+    }
+    reader.close();
+}
+
+TEST_F(BCSVBoundaryTests, ExcessiveStringLength_ShouldThrow) {
+    // Test string exceeding MAX_STRING_LENGTH - should fail in set() method
+    const std::string filepath = getTestFilePath("oversized_string");
+    
+    bcsv::Layout layout;
+    layout.addColumn({"string_col", bcsv::ColumnType::STRING});
+    
+    // String exceeding MAX_STRING_LENGTH (65534 + 1 = 65535 bytes)
+    std::string oversized_string = createString(bcsv::MAX_STRING_LENGTH + 1, 'C');
+    
+    bcsv::Writer<bcsv::Layout> writer(layout);
+    ASSERT_TRUE(writer.open(filepath, true)); // Enable overwrite
+    
+    auto& row = writer.row();
+    // Should throw immediately in set() method due to string length validation
+    EXPECT_THROW(row.set(0, oversized_string), std::length_error);
+    
+    // Writer should remain in defined state - can continue with valid string
+    std::string valid_string = createString(1000, 'V');
+    EXPECT_NO_THROW(row.set(0, valid_string));
+    EXPECT_TRUE(writer.writeRow());
+    
+    writer.close();
+    
+    // Verify the valid string was written correctly
+    bcsv::Reader<bcsv::Layout> reader;
+    ASSERT_TRUE(reader.open(filepath));
+    ASSERT_TRUE(reader.readNext());
+    EXPECT_EQ(reader.row().get<std::string>(0), valid_string);
+    reader.close();
+}
+
+TEST_F(BCSVBoundaryTests, MaximumPracticalRowSize_SingleString) {
+    // Test maximum practical string size that fits within row size limit
+    // Row size = StringAddress (8 bytes) + string_data <= 65535 bytes
+    // Therefore maximum practical string = 65535 - 8 = 65527 bytes
+    const std::string filepath = getTestFilePath("max_practical_string");
+    
+    bcsv::Layout layout;
+    layout.addColumn({"max_practical_string", bcsv::ColumnType::STRING});
+    
+    const size_t max_practical_length = 65535 - 8; // 65527 bytes
+    std::string max_practical_string = createString(max_practical_length, 'P');
+    
+    bcsv::Writer<bcsv::Layout> writer(layout);
+    ASSERT_TRUE(writer.open(filepath));
+    
+    auto& row = writer.row();
+    // Should pass both string validation and row size validation
+    EXPECT_NO_THROW(row.set(0, max_practical_string));
+    EXPECT_TRUE(writer.writeRow());
+    
+    writer.close();
+    
+    // Verify the data was written correctly
+    bcsv::Reader<bcsv::Layout> reader;
+    ASSERT_TRUE(reader.open(filepath));
+    ASSERT_TRUE(reader.readNext());
+    
+    const auto& read_row = reader.row();
+    std::string read_string = read_row.get<std::string>(0);
+    EXPECT_EQ(read_string.length(), max_practical_length);
+    EXPECT_EQ(read_string, max_practical_string);
+    
+    reader.close();
+}
+
+// ============================================================================
+// ROW SIZE LIMIT TESTS
+// ============================================================================
+
+TEST_F(BCSVBoundaryTests, RowSizeLimit_SingleStringMaximumSafe) {
+    // Test single string that fits within row size limit
+    const std::string filepath = getTestFilePath("single_string_safe");
+    
+    bcsv::Layout layout;
+    layout.addColumn({"safe_string", bcsv::ColumnType::STRING});
+    
+    // Row size = string_data + string_address(8 bytes) + potential overhead
+    // Safe size = 65535 - 8 - some_margin = approximately 65500
+    const size_t safe_string_size = 65500;
+    std::string safe_string = createString(safe_string_size, 'D');
+    
+    ASSERT_NO_THROW({
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        ASSERT_TRUE(writer.open(filepath));
+        
+        auto& row = writer.row();
+        row.set(0, safe_string);
+        ASSERT_TRUE(writer.writeRow());
+        writer.close();
+        
+        // Verify read
+        bcsv::Reader<bcsv::Layout> reader;
+        ASSERT_TRUE(reader.open(filepath));
+        ASSERT_TRUE(reader.readNext());
+        
+        const auto& read_row = reader.row();
+        std::string read_string = read_row.get<std::string>(0);
+        EXPECT_EQ(read_string.length(), safe_string_size);
+        EXPECT_EQ(read_string, safe_string);
+        
+        reader.close();
+    });
+}
+
+// ============================================================================
+// ERROR RECOVERY TESTS
+// ============================================================================
+
+TEST_F(BCSVBoundaryTests, ErrorRecovery_CanContinueAfterRowSizeError) {
+    // Test that we can continue operations after a row size error
+    const std::string filepath = getTestFilePath("error_recovery");
+    
+    bcsv::Layout layout;
+    layout.addColumn({"test_string", bcsv::ColumnType::STRING});
+    
+    EXPECT_NO_FATAL_FAILURE({
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        ASSERT_TRUE(writer.open(filepath));
+        
+        // First, try to write an oversized string (should fail)
+        auto& row = writer.row();
+        std::string oversized_string = createString(bcsv::MAX_STRING_LENGTH + 1, 'G'); // Over string limit
+        
+        bool first_write_success = true;
+        try {
+            row.set(0, oversized_string);
+            first_write_success = writer.writeRow();
+        } catch (const std::exception&) {
+            first_write_success = false;
+        }
+        
+        EXPECT_FALSE(first_write_success);
+        
+        // Now try to write a normal-sized row (should succeed)
+        std::string normal_string = createString(1000, 'H');
+        ASSERT_NO_THROW({
+            row.set(0, normal_string);
+            EXPECT_TRUE(writer.writeRow());
+        });
+        
+        writer.close();
+        
+        // Verify we can read the valid row
+        bcsv::Reader<bcsv::Layout> reader;
+        ASSERT_TRUE(reader.open(filepath));
+        ASSERT_TRUE(reader.readNext());
+        
+        const auto& read_row = reader.row();
+        std::string read_string = read_row.get<std::string>(0);
+        EXPECT_EQ(read_string, normal_string);
+        
+        reader.close();
+    });
+}
+
+// ============================================================================
+// EDGE CASE TESTS  
+// ============================================================================
+
+TEST_F(BCSVBoundaryTests, EdgeCase_EmptyStrings) {
+    // Test that empty strings work correctly
+    const std::string filepath = getTestFilePath("empty_strings");
+    
+    bcsv::Layout layout;
+    layout.addColumn({"empty_string", bcsv::ColumnType::STRING});
+    
+    ASSERT_NO_THROW({
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        ASSERT_TRUE(writer.open(filepath));
+        
+        auto& row = writer.row();
+        row.set(0, std::string(""));
+        ASSERT_TRUE(writer.writeRow());
+        writer.close();
+        
+        bcsv::Reader<bcsv::Layout> reader;
+        ASSERT_TRUE(reader.open(filepath));
+        ASSERT_TRUE(reader.readNext());
+        
+        const auto& read_row = reader.row();
+        EXPECT_EQ(read_row.get<std::string>(0), "");
+        reader.close();
+    });
+}
+
+TEST_F(BCSVBoundaryTests, EdgeCase_SingleByteString) {
+    // Test single byte string
+    const std::string filepath = getTestFilePath("single_byte_string");
+    
+    bcsv::Layout layout;
+    layout.addColumn({"single_byte", bcsv::ColumnType::STRING});
+    
+    std::string single_char = "X";
+    
+    ASSERT_NO_THROW({
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        ASSERT_TRUE(writer.open(filepath));
+        
+        auto& row = writer.row();
+        row.set(0, single_char);
+        ASSERT_TRUE(writer.writeRow());
+        writer.close();
+        
+        bcsv::Reader<bcsv::Layout> reader;
+        ASSERT_TRUE(reader.open(filepath));
+        ASSERT_TRUE(reader.readNext());
+        
+        const auto& read_row = reader.row();
+        EXPECT_EQ(read_row.get<std::string>(0), single_char);
+        reader.close();
+    });
+}
+
+// ============================================================================
+// MINIMAL BOUNDARY TESTS (Integrated from bcsv_minimal_boundary_test.cpp)
+// ============================================================================
+
+TEST_F(BCSVBoundaryTests, ProgressiveSizes) {
+    bcsv::Layout layout;
+    layout.addColumn({"test_string", bcsv::ColumnType::STRING});
+    
+    // Test progressively larger strings to find the breaking point
+    std::vector<size_t> test_sizes = {100, 1000, 10000, 32768, 50000, 65534};
+    
+    for (size_t size : test_sizes) {
+        std::cout << "Testing string size: " << size << " bytes..." << std::endl;
+        
+        const std::string filepath = getTestFilePath("progressive_" + std::to_string(size));
+        
+        try {
+            std::string test_string(size, 'x');
+            
+            bcsv::Writer<bcsv::Layout> writer(layout);
+            ASSERT_TRUE(writer.open(filepath, true)); // Enable overwrite
+            
+            auto& row = writer.row();
+            row.set(0, test_string);
+            
+            bool write_success = writer.writeRow();
+            std::cout << "Write result: " << (write_success ? "SUCCESS" : "FAILED") << std::endl;
+            
+            if (write_success) {
+                writer.close();
+                
+                bcsv::Reader<bcsv::Layout> reader;
+                ASSERT_TRUE(reader.open(filepath));
+                ASSERT_TRUE(reader.readNext());
+                
+                const auto& read_row = reader.row();
+                std::string read_string = read_row.get<std::string>(0);
+                std::cout << "Read string length: " << read_string.length() << std::endl;
+                
+                reader.close();
+            }
+            
+        } catch (const std::exception& e) {
+            std::cout << "Exception at size " << size << ": " << e.what() << std::endl;
+            break;
+        }
+    }
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
+    
+    // Check for verbose option for boundary tests
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "-verbose" || std::string(argv[i]) == "--verbose") {
+            g_boundary_verbose = true;
+            break;
+        }
+    }
+    
     return RUN_ALL_TESTS();
 }

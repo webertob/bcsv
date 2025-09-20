@@ -24,6 +24,7 @@ namespace bcsv {
         column_index_ = other.column_index_;
         column_lengths_ = other.column_lengths_;
         column_offsets_ = other.column_offsets_;
+        total_fixed_size_ = other.total_fixed_size_;
     }
 
     inline Layout& Layout::operator=(const Layout& other) {
@@ -33,6 +34,7 @@ namespace bcsv {
             column_index_ = other.column_index_;
             column_lengths_ = other.column_lengths_;
             column_offsets_ = other.column_offsets_;
+            total_fixed_size_ = other.total_fixed_size_;
         }
         return *this;
     }
@@ -55,8 +57,19 @@ namespace bcsv {
             std::cerr << "Column name cannot be empty" << std::endl;
             return false;
         }
+        if (column.name.length() > MAX_STRING_LENGTH) {
+            std::cerr << "Column name too long: " + column.name << std::endl;
+            return false;
+        }
         if (column_index_.find(column.name) != column_index_.end()) {
             std::cerr << "Duplicate column name: " + column.name << std::endl;
+            return false;
+        }
+        if (total_fixed_size_ + binaryFieldLength(column.type) > MAX_ROW_LENGTH) {
+            std::cerr << "Adding column exceeds maximum row width! \n(sum of all column lengths must stay below: " 
+                      << MAX_ROW_LENGTH << ", current: " 
+                      << total_fixed_size_ + binaryFieldLength(column.type) << ")" 
+                      << std::endl;
             return false;
         }
 
@@ -70,11 +83,13 @@ namespace bcsv {
                 column_offsets_.push_back(column_offsets_.back() + column_lengths_.back());
             }
             column_lengths_.push_back(binaryFieldLength(column.type));
+            column_index_[column.name] = column_names_.size() - 1; // update index mapping
         } else {
             // Insert at the specified position
             column_names_.insert(column_names_.begin() + position, column.name);
             column_types_.insert(column_types_.begin() + position, column.type);
             column_lengths_.insert(column_lengths_.begin() + position, binaryFieldLength(column.type));
+            column_index_[column.name] = position; // update index mapping
             if (position == 0) {
                 column_offsets_.insert(column_offsets_.begin(), 0);
             } else {
@@ -83,9 +98,10 @@ namespace bcsv {
             //update all offsets past position
             for (size_t i = position + 1; i < column_offsets_.size(); ++i) {
                 column_offsets_[i] += column_lengths_[position];
+                column_index_[column_names_[i]] = i; // update index mapping
             }
         }
-        updateIndex();
+        total_fixed_size_ += binaryFieldLength(column.type);
         return true;
     }
     
@@ -95,6 +111,7 @@ namespace bcsv {
         column_lengths_.clear();
         column_offsets_.clear();
         column_index_.clear();
+        total_fixed_size_ = 0;
     }
     
     inline void Layout::setColumns(const std::vector<ColumnDefinition>& columns) {
@@ -103,6 +120,7 @@ namespace bcsv {
         column_types_.resize(columns.size());
         column_lengths_.resize(columns.size());
         column_offsets_.resize(columns.size());
+        total_fixed_size_ = 0;
 
         for(size_t i = 0; i < columns.size(); ++i) {
             if(columns[i].name.empty()) {
@@ -117,6 +135,7 @@ namespace bcsv {
             column_index_[columns[i].name] = i;
             column_lengths_[i] = binaryFieldLength(columns[i].type);
             column_offsets_[i] = (i == 0) ? 0 : column_offsets_[i - 1] + column_lengths_[i - 1];
+            total_fixed_size_ += column_lengths_[i];
         }
     }
 
@@ -146,12 +165,21 @@ namespace bcsv {
 
 
     inline void Layout::setColumnType(size_t index, ColumnType type) {
+        if (RANGE_CHECKING && index >= column_types_.size()) {
+            throw std::out_of_range("Column index out of range");
+        }
+
         if(column_types_[index] == type) {
             return; //no change
         }
 
+        if(total_fixed_size_ + binaryFieldLength(type) - column_lengths_[index] > MAX_ROW_LENGTH) {
+            throw std::runtime_error("Changing column type exceeds maximum row width! \n(sum of all column lengths must stay below: " + std::to_string(MAX_ROW_LENGTH) + ", current: " + std::to_string(total_fixed_size_) + ")");
+        }
+
         column_types_[index] = type;
         //need to update lengths and offsets
+        total_fixed_size_ += binaryFieldLength(type) - column_lengths_[index];
         column_lengths_[index] = binaryFieldLength(type);
         for (size_t i = index + 1; i < column_offsets_.size(); ++i) {
             column_offsets_[i] = column_offsets_[i - 1] + column_lengths_[i - 1];
@@ -171,12 +199,13 @@ namespace bcsv {
         column_types_.erase(column_types_.begin() + index);
         column_offsets_.erase(column_offsets_.begin() + index);
         column_lengths_.erase(column_lengths_.begin() + index);
+        total_fixed_size_ -= col_length;
 
-        // update subsequent offsets
-        for (size_t i = index + 1; i < column_offsets_.size(); ++i) {
+        // update subsequent offsets and indices
+        for (size_t i = index; i < column_offsets_.size(); ++i) {
             column_offsets_[i] -= col_length;
+            column_index_[column_names_[i]] = i; // update index mapping
         }
-        updateIndex();
     }
 
     /**
@@ -377,4 +406,49 @@ namespace bcsv {
         }
     }
 
+    // Stream operator for Layout - provides human-readable column information
+    template<LayoutConcept LayoutType>
+    std::ostream& operator<<(std::ostream& os, const LayoutType& layout) {
+        const size_t column_count = layout.columnCount();
+        
+        if (column_count == 0) {
+            return os << "Empty layout (no columns)";
+        }
+        
+        // Calculate column widths for aligned output
+        const size_t num_width = std::max(std::to_string(column_count).length(), (size_t)3); // minimum width for "Col" header
+        
+        // Find the longest column name for alignment
+        size_t name_width = 4; // minimum width for "Name" header
+        size_t type_width = 4; // minimum width for "Type" header
+        for (size_t i = 0; i < column_count; ++i) {
+            name_width = std::max(name_width, layout.columnName(i).length());
+            type_width = std::max(type_width, toString(layout.columnType(i)).length());
+        }
+        
+        // Header
+        os << std::left << std::setw(num_width) << "Col"
+           << " | " << std::setw(name_width) << "Name"
+           << " | " << "Type" << std::endl;
+        
+        // Separator line
+        os << std::string( num_width, '-') << "-+-"
+           << std::string(name_width, '-') << "-+-"
+           << std::string(type_width, '-') << std::endl; // "STRING" is 6 chars, longest type name
+        
+        // Column information
+        for (size_t i = 0; i < column_count; ++i) {
+            os << std::right << std::setw(num_width) << i
+               << " | " << std::left << std::setw(name_width) << layout.columnName(i)
+               << " | " << std::left << std::setw(type_width) << toString(layout.columnType(i));
+            
+            if (i < column_count - 1) {
+                os << std::endl;
+            }
+        }
+        
+        // Always end with a newline and reset formatting
+        os << std::endl;
+        return os;
+    }
 } // namespace bcsv

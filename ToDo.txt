@@ -1,4 +1,8 @@
-1. Change row indexing to row length to make better use of the 16bit available per row (increase the number of bits supported in a package)
+1. 
+   d. intergate boundary tests to gtest
+   e. extend boundary tests to python (if possible utilize checking within bcsv (don't dupplicate checking in python if it save)), 
+   f. rename pythonmodule to bcsv
+   g. add corner case checking (zero length rows, single length rows, zero rows, single row, zero columns, single colum)
 2. add copyright and publish
 3. Create and test Python wrapper
 4. Create and test C# wrapper

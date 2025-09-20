@@ -249,8 +249,8 @@ All BCSV v1.0 files include:
 # Configure with Release optimization (recommended)
 cmake -B build -S . --preset=default
 
-# Build everything
-cmake --build build --config Release
+# Build everything (fast parallel build)
+cmake --build build -j
 
 # Run comprehensive test suite
 .\build\bin\Release\bcsv_gtest.exe
@@ -284,7 +284,7 @@ For **production use**, always build with Release configuration:
 ```bash
 # 13x performance improvement with O3 optimization
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release
+cmake --build build -j
 
 # Performance results:
 # Debug:   ~10K rows/second  

@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <variant>
 #include <algorithm>
+#include <limits>
 
 namespace bcsv {
     
@@ -31,9 +32,10 @@ namespace bcsv {
     constexpr uint32_t BCSV_MAGIC = 0x56534342;   // "BCSV" in little-endian
     constexpr uint32_t PCKT_MAGIC = 0x54434B50;   // "PCKT" in little-endian
     constexpr size_t LZ4_BLOCK_SIZE_KB = 64;      // Average uncompressed payload of a packet
-    constexpr size_t MAX_STRING_LENGTH = 65535-1; // Maximum length of string data
-    constexpr size_t MAX_COLUMN_WIDTH  = 65535-1; // Maximum width of column content
-    constexpr size_t MAX_COLUMN_COUNT  = 65535-1;
+    constexpr size_t MAX_COLUMN_COUNT  = std::numeric_limits<uint16_t>::max();  // Maximum number of columns
+    constexpr size_t MAX_COLUMN_LENGTH = std::numeric_limits<uint16_t>::max();  // Maximum width of column content
+    constexpr size_t MAX_STRING_LENGTH = MAX_COLUMN_LENGTH;                     // Maximum length of string data
+    constexpr size_t MAX_ROW_LENGTH    = std::numeric_limits<uint16_t>::max();  // Maximum size of a single row in bytes
 
     /**
      * @brief Feature flag bit positions (Reserved for future optional features)

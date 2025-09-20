@@ -439,7 +439,6 @@ namespace bcsv {
         const T&                get(size_t index) const;
         void                    set(size_t index, const auto& value);
 
-        void                    serializedSize(size_t& fixedSize, size_t& totalSize) const;
         void                    serializeTo(ByteBuffer& buffer) const;
         void                    serializeToZoH(ByteBuffer& buffer) const;
         bool                    deserializeFrom(const std::span<const std::byte> buffer);
@@ -525,7 +524,6 @@ namespace bcsv {
                                     template<size_t Index>
         void                        set(const auto& value);
 
-        void                        serializedSize(size_t& fixedSize, size_t& totalSize) const;
         void                        serializeTo(ByteBuffer& buffer) const;
         void                        serializeToZoH(ByteBuffer& buffer) const;
         bool                        deserializeFrom(const std::span<const std::byte> buffer);
@@ -539,7 +537,7 @@ namespace bcsv {
         void                        markChangedAndSet(const T& value);
 
                                     template<size_t Index>
-        void                        serializeElements(std::span<std::byte> &dstBuffer, size_t& strOffset) const;
+        void                        serializeElements(ByteBuffer& buffer, const size_t& offRow, size_t& offVar) const;
 
                                     template<size_t Index>
         void                        serializeElementsZoH(ByteBuffer& buffer) const;

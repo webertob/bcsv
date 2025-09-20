@@ -227,11 +227,11 @@ namespace bcsv {
             row_.serializeTo(buffer_raw_);
         }
 
-        size_t row_length = buffer_raw_.size() - old_size;
-        if (row_length > std::numeric_limits<uint16_t>::max()) {
+        size_t row_length = buffer_raw_.size() - old_size; 
+        if (row_length > MAX_ROW_LENGTH) {
+            buffer_raw_.resize(old_size); // revert to previous state
             throw std::runtime_error("Error: Single row size exceeds uint16_t maximum");
-            // ToDo: implement a fallback mechanism for very large rows e.g. resize variable-length fields (as strings) to match maximum size
-        } 
+        }
         row_lengths_.push_back(static_cast<uint16_t>(row_length));
 
         if(buffer_raw_.size() + row_length >= LZ4_BLOCK_SIZE_KB*1000) {  // Rough estimate to avoid exceeding block size

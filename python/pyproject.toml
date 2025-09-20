@@ -1,0 +1,59 @@
+[build-system]
+requires = [
+    "setuptools>=45",
+    "wheel",
+    "pybind11>=2.10.0",
+    "numpy>=1.19.0",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pybcsv"
+authors = [
+    {name = "BCSV Development Team", email = "dev@bcsv.org"},
+]
+description = "Python bindings for the BCSV (Binary CSV) library"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11", 
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Archiving :: Compression",
+]
+keywords = ["csv", "binary", "data-science", "compression", "performance"]
+dependencies = [
+    "numpy>=1.19.0",
+]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+pandas = ["pandas>=1.0.0"]
+test = ["pytest>=6.0.0", "pytest-cov"]
+dev = ["pytest>=6.0.0", "pytest-cov", "black", "flake8"]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/bcsv"
+Documentation = "https://github.com/yourusername/bcsv/docs"
+Repository = "https://github.com/yourusername/bcsv"
+"Bug Tracker" = "https://github.com/yourusername/bcsv/issues"
+
+[tool.setuptools.dynamic]
+version = {attr = "pybcsv.__version__"}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pybcsv*"]
+exclude = ["tests*"]

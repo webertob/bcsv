@@ -68,13 +68,13 @@ All examples are built automatically when building the project:
 # Configure CMake
 cmake -B build -S .
 
-# Build all examples
-cmake --build build --target example
-cmake --build build --target example_static  
-cmake --build build --target performance_benchmark
+# Build all examples (fast parallel build)
+cmake --build build -j --target example
+cmake --build build -j --target example_static  
+cmake --build build -j --target performance_benchmark
 
 # Or build all at once
-cmake --build build
+cmake --build build -j
 ```
 
 ## Example Data Structure

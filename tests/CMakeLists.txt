@@ -12,7 +12,7 @@ if(NOT GTest_FOUND)
     FetchContent_MakeAvailable(googletest)
 endif()
 
-# Google Test comprehensive test suite
+# Google Test comprehensive test suite (includes boundary tests)
 add_executable(bcsv_gtest 
     bcsv_comprehensive_test.cpp
 )

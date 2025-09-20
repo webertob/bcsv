@@ -64,6 +64,7 @@ namespace bcsv {
         std::vector<ColumnType>                 column_types_;
         std::vector<size_t>                     column_lengths_; // Lengths of each column in [bytes] --> serialized data
         std::vector<size_t>                     column_offsets_; // Offsets of each column in [bytes] --> serialized data
+        size_t                                  total_fixed_size_ = 0; // Total fixed size of a row in bytes (excluding variable-length strings)
         void updateIndex();
 
     public:
@@ -84,6 +85,7 @@ namespace bcsv {
         const std::string& columnName(size_t index) const           { if constexpr (RANGE_CHECKING) {return column_names_.at(index);}   else { return column_names_[index]; } }
         size_t columnOffset(size_t index) const                     { if constexpr (RANGE_CHECKING) {return column_offsets_.at(index);} else { return column_offsets_[index]; } }
         ColumnType columnType(size_t index) const                   { if constexpr (RANGE_CHECKING) {return column_types_.at(index);}   else { return column_types_[index]; } }
+        size_t serializedSizeFixed() const                          { return total_fixed_size_; } // Total fixed size of a row in bytes (excluding variable-length strings), based on defined column types (no compression)
         bool setColumnName(size_t index, const std::string& name);
         void setColumnType(size_t index, ColumnType type);
         void setColumns(const std::vector<ColumnDefinition>& columns);
@@ -104,7 +106,6 @@ namespace bcsv {
         Layout& operator=(const OtherLayout& other);
         Layout& operator=(const Layout& other);
     };
-
 
 
 
@@ -168,9 +169,6 @@ namespace bcsv {
         
         bool                        setColumnName(size_t index, const std::string& name);
 
-
-
-
         // Compatibility checking
         template<typename OtherLayout>
         requires requires(const OtherLayout& other) {
@@ -190,49 +188,6 @@ namespace bcsv {
 
     // Stream operator for Layout - provides human-readable column information
     template<LayoutConcept LayoutType>
-    std::ostream& operator<<(std::ostream& os, const LayoutType& layout) {
-        const size_t column_count = layout.columnCount();
-        
-        if (column_count == 0) {
-            return os << "Empty layout (no columns)";
-        }
-        
-        // Calculate column widths for aligned output
-        const size_t num_width = std::max(std::to_string(column_count).length(), (size_t)3); // minimum width for "Col" header
-        
-        // Find the longest column name for alignment
-        size_t name_width = 4; // minimum width for "Name" header
-        size_t type_width = 4; // minimum width for "Type" header
-        for (size_t i = 0; i < column_count; ++i) {
-            name_width = std::max(name_width, layout.columnName(i).length());
-            type_width = std::max(type_width, toString(layout.columnType(i)).length());
-        }
-        
-        // Header
-        os << std::left << std::setw(num_width) << "Col"
-           << " | " << std::setw(name_width) << "Name"
-           << " | " << "Type" << std::endl;
-        
-        // Separator line
-        os << std::string( num_width, '-') << "-+-"
-           << std::string(name_width, '-') << "-+-"
-           << std::string(type_width, '-') << std::endl; // "STRING" is 6 chars, longest type name
-        
-        // Column information
-        for (size_t i = 0; i < column_count; ++i) {
-            os << std::right << std::setw(num_width) << i
-               << " | " << std::left << std::setw(name_width) << layout.columnName(i)
-               << " | " << std::left << std::setw(type_width) << toString(layout.columnType(i));
-            
-            if (i < column_count - 1) {
-                os << std::endl;
-            }
-        }
-        
-        // Always end with a newline and reset formatting
-        os << std::endl;
-        
-        return os;
-    }
+    std::ostream& operator<<(std::ostream& os, const LayoutType& layout);
 
 } // namespace bcsv

@@ -44,6 +44,20 @@ private:
     std::uniform_real_distribution<double> double_dist_;
     std::uniform_int_distribution<int> bool_dist_;
     std::vector<std::string> sampleStrings_;
+    
+    // Optimization prevention helper
+    template<typename T>
+    void prevent_optimization(const volatile T& value) {
+        volatile T temp;
+        temp = const_cast<const T&>(value);
+        (void)temp;
+    }
+    
+    // Specialization for string types that can't handle volatile assignment
+    void prevent_optimization(const volatile std::string& value) {
+        volatile const void* ptr = &value;
+        (void)ptr;
+    }
 
 public:
     // Static layout with 6 columns per type (48 columns total)
@@ -604,7 +618,8 @@ public:
                 volatile const auto& v70 = row.get<70>();
                 volatile const auto& v71 = row.get<71>();
                 // Continue pattern for performance but simplified for brevity
-                (void)v0; (void)v1; (void)v2; (void)v3; (void)v4; (void)v5; (void)v6; (void)v7; (void)v8; (void)v9; (void)v10; (void)v11; (void)v12; (void)v13; (void)v14; (void)v15; (void)v16; (void)v17; (void)v18; (void)v19; (void)v20; (void)v21; (void)v22; (void)v23; (void)v24; (void)v25; (void)v26; (void)v27; (void)v28; (void)v29; (void)v30; (void)v31; (void)v32; (void)v33; (void)v34; (void)v35; (void)v36; (void)v37; (void)v38; (void)v39; (void)v40; (void)v41; (void)v42; (void)v43; (void)v44; (void)v45; (void)v46; (void)v47; (void)v48; (void)v49; (void)v50; (void)v51; (void)v52; (void)v53; (void)v54; (void)v55; (void)v56; (void)v57; (void)v58; (void)v59; (void)v60; (void)v61; (void)v62; (void)v63; (void)v64; (void)v65; (void)v66; (void)v67; (void)v68; (void)v69; (void)v70; (void)v71;
+                // Prevent optimization by accessing volatile variables
+                prevent_optimization(v0); prevent_optimization(v1); prevent_optimization(v2); prevent_optimization(v3); prevent_optimization(v4); prevent_optimization(v5); prevent_optimization(v6); prevent_optimization(v7); prevent_optimization(v8); prevent_optimization(v9); prevent_optimization(v10); prevent_optimization(v11); prevent_optimization(v12); prevent_optimization(v13); prevent_optimization(v14); prevent_optimization(v15); prevent_optimization(v16); prevent_optimization(v17); prevent_optimization(v18); prevent_optimization(v19); prevent_optimization(v20); prevent_optimization(v21); prevent_optimization(v22); prevent_optimization(v23); prevent_optimization(v24); prevent_optimization(v25); prevent_optimization(v26); prevent_optimization(v27); prevent_optimization(v28); prevent_optimization(v29); prevent_optimization(v30); prevent_optimization(v31); prevent_optimization(v32); prevent_optimization(v33); prevent_optimization(v34); prevent_optimization(v35); prevent_optimization(v36); prevent_optimization(v37); prevent_optimization(v38); prevent_optimization(v39); prevent_optimization(v40); prevent_optimization(v41); prevent_optimization(v42); prevent_optimization(v43); prevent_optimization(v44); prevent_optimization(v45); prevent_optimization(v46); prevent_optimization(v47); prevent_optimization(v48); prevent_optimization(v49); prevent_optimization(v50); prevent_optimization(v51); prevent_optimization(v52); prevent_optimization(v53); prevent_optimization(v54); prevent_optimization(v55); prevent_optimization(v56); prevent_optimization(v57); prevent_optimization(v58); prevent_optimization(v59); prevent_optimization(v60); prevent_optimization(v61); prevent_optimization(v62); prevent_optimization(v63); prevent_optimization(v64); prevent_optimization(v65); prevent_optimization(v66); prevent_optimization(v67); prevent_optimization(v68); prevent_optimization(v69); prevent_optimization(v70); prevent_optimization(v71);
                 ++rowCount;
                 
                 if (rowCount % 50000 == 0) {
@@ -880,7 +895,8 @@ public:
                 volatile const auto& v69 = row.get<69>();
                 volatile const auto& v70 = row.get<70>();
                 volatile const auto& v71 = row.get<71>();
-                (void)v0; (void)v1; (void)v2; (void)v3; (void)v4; (void)v5; (void)v6; (void)v7; (void)v8; (void)v9; (void)v10; (void)v11; (void)v12; (void)v13; (void)v14; (void)v15; (void)v16; (void)v17; (void)v18; (void)v19; (void)v20; (void)v21; (void)v22; (void)v23; (void)v24; (void)v25; (void)v26; (void)v27; (void)v28; (void)v29; (void)v30; (void)v31; (void)v32; (void)v33; (void)v34; (void)v35; (void)v36; (void)v37; (void)v38; (void)v39; (void)v40; (void)v41; (void)v42; (void)v43; (void)v44; (void)v45; (void)v46; (void)v47; (void)v48; (void)v49; (void)v50; (void)v51; (void)v52; (void)v53; (void)v54; (void)v55; (void)v56; (void)v57; (void)v58; (void)v59; (void)v60; (void)v61; (void)v62; (void)v63; (void)v64; (void)v65; (void)v66; (void)v67; (void)v68; (void)v69; (void)v70; (void)v71;
+                // Prevent optimization by accessing volatile variables
+                prevent_optimization(v0); prevent_optimization(v1); prevent_optimization(v2); prevent_optimization(v3); prevent_optimization(v4); prevent_optimization(v5); prevent_optimization(v6); prevent_optimization(v7); prevent_optimization(v8); prevent_optimization(v9); prevent_optimization(v10); prevent_optimization(v11); prevent_optimization(v12); prevent_optimization(v13); prevent_optimization(v14); prevent_optimization(v15); prevent_optimization(v16); prevent_optimization(v17); prevent_optimization(v18); prevent_optimization(v19); prevent_optimization(v20); prevent_optimization(v21); prevent_optimization(v22); prevent_optimization(v23); prevent_optimization(v24); prevent_optimization(v25); prevent_optimization(v26); prevent_optimization(v27); prevent_optimization(v28); prevent_optimization(v29); prevent_optimization(v30); prevent_optimization(v31); prevent_optimization(v32); prevent_optimization(v33); prevent_optimization(v34); prevent_optimization(v35); prevent_optimization(v36); prevent_optimization(v37); prevent_optimization(v38); prevent_optimization(v39); prevent_optimization(v40); prevent_optimization(v41); prevent_optimization(v42); prevent_optimization(v43); prevent_optimization(v44); prevent_optimization(v45); prevent_optimization(v46); prevent_optimization(v47); prevent_optimization(v48); prevent_optimization(v49); prevent_optimization(v50); prevent_optimization(v51); prevent_optimization(v52); prevent_optimization(v53); prevent_optimization(v54); prevent_optimization(v55); prevent_optimization(v56); prevent_optimization(v57); prevent_optimization(v58); prevent_optimization(v59); prevent_optimization(v60); prevent_optimization(v61); prevent_optimization(v62); prevent_optimization(v63); prevent_optimization(v64); prevent_optimization(v65); prevent_optimization(v66); prevent_optimization(v67); prevent_optimization(v68); prevent_optimization(v69); prevent_optimization(v70); prevent_optimization(v71);
                 ++readCount;
                 
                 if (readCount % 50000 == 0) {

@@ -43,6 +43,7 @@ target_link_libraries(csv2bcsv PRIVATE bcsv)
 add_executable(bcsv2csv bcsv2csv.cpp)
 target_link_libraries(bcsv2csv PRIVATE bcsv)
 
+
 # Set output directory
 set_target_properties(example example_static example_zoh example_zoh_static performance_benchmark large_scale_benchmark csv2bcsv bcsv2csv PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin

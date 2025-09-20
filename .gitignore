@@ -48,3 +48,19 @@ vcpkg_installed/
 docs/_build/
 docs/html/
 docs/latex/
+
+# Ignore Python cache files
+__pycache__/
+python/pybcsv/__pycache__/
+python/pybcsv/*.pyc
+python/pybcsv/tests/__pycache__/
+
+#ignore egg-info
+python/pybcsv.egg-info/
+python/pybcsv.egg-info/*
+
+# Ignore virtual environments
+python/venv/
+python/.venv/
+.venv/
+python/pybcsv.egg-info/not-zip-safe
