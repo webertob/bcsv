@@ -1,0 +1,14 @@
+include README.md
+include LICENSE
+include pybcsv/py.typed
+recursive-include include *.h
+recursive-include include *.hpp
+recursive-include include *.c
+recursive-include pybcsv *.h
+recursive-include pybcsv *.hpp
+recursive-include pybcsv *.cpp
+recursive-exclude tests *
+recursive-exclude examples *
+global-exclude *.pyc
+global-exclude __pycache__
+global-exclude .DS_Store

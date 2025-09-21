@@ -1,0 +1,5 @@
+# pybcsv - High-performance Python bindings for BCSV
+
+This package provides Python bindings for the BCSV (Binary CSV) library.
+
+For detailed documentation, please see the README.md file.

@@ -1,5 +1,5 @@
 Decisions: The file format only supports 8bit/1byt memory alignment. We are not going to change that!
-1. Publish on GITHUB & PyPi
+1. Update Documentation (bcsv general, format, cli tools, pybcsv)
 2. Build a project using bcsv using cpp and python interfaces
 3. Create and test C# wrapper
 5. Improve compression:

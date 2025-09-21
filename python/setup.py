@@ -13,8 +13,9 @@ Setup script for pybcsv - Python bindings for the BCSV library
 
 import os
 import sys
+import shutil
 from pathlib import Path
-from distutils.core import setup, Extension
+from setuptools import setup, Extension
 
 # Add current directory to path for imports
 current_dir = Path(__file__).parent.absolute()
@@ -28,7 +29,16 @@ try:
     PYBIND11_AVAILABLE = True
 except ImportError:
     # Fallback Extension class when pybind11 is not available during setup
+    print("Warning: pybind11 not found, using fallback Extension class")
     class Pybind11Extension(Extension):
+        def __init__(self, name, sources, *args, **kwargs):
+            # Remove pybind11-specific arguments
+            kwargs.pop('language', None)
+            kwargs.pop('cxx_std', None)
+            super().__init__(name, sources, *args, **kwargs)
+    
+    class build_ext:
+        pass
         def __init__(self, name, sources, *args, **kwargs):
             # Remove pybind11-specific arguments
             kwargs.pop('language', None)
@@ -36,7 +46,27 @@ except ImportError:
             super().__init__(name, sources, *args, **kwargs)
 
 class CustomBuildExt(build_ext if PYBIND11_AVAILABLE else object):
-    """Custom build extension to handle C and C++ files separately."""
+    """Custom build extension to handle C and C++ files separately and sync headers."""
+    
+    def run(self):
+        """Override run to sync headers before building."""
+        # Try to sync headers from the main project
+        try:
+            import subprocess
+            sync_script = current_dir / "sync_headers.py"
+            if sync_script.exists():
+                result = subprocess.run([
+                    sys.executable, str(sync_script), "--verbose"
+                ], capture_output=True, text=True, cwd=current_dir)
+                if result.returncode == 0:
+                    print("Headers synchronized successfully")
+                else:
+                    print(f"Warning: Header sync failed: {result.stderr}")
+        except Exception as e:
+            print(f"Warning: Could not sync headers: {e}")
+        
+        # Continue with normal build
+        super().run()
     
     def build_extensions(self):
         # Set specific compiler flags for different file types
@@ -92,11 +122,24 @@ def get_version():
                     return line.split('=')[1].strip().strip('"').strip("'")
     return "0.1.0"
 
-# Define include paths
-include_dirs = [
-    str(project_root / "include"),  # BCSV headers
-    str(project_root / "include" / "lz4-1.10.0"),  # LZ4 headers
-]
+# Define include paths - both for development and distribution
+include_dirs = []
+
+# For development build (when BCSV headers are in parent directory)
+dev_include_dir = project_root / "include"
+if dev_include_dir.exists():
+    include_dirs.extend([
+        str(dev_include_dir),  # BCSV headers
+        str(dev_include_dir / "lz4-1.10.0"),  # LZ4 headers
+    ])
+
+# For distribution build (when headers might be bundled)
+local_include_dir = current_dir / "include"
+if local_include_dir.exists():
+    include_dirs.extend([
+        str(local_include_dir),
+        str(local_include_dir / "lz4-1.10.0"),
+    ])
 
 # Add pybind11 include if available
 if PYBIND11_AVAILABLE:
@@ -107,24 +150,17 @@ source_files = [
     str((current_dir / "pybcsv" / "bindings.cpp").relative_to(current_dir)),
 ]
 
-# Copy LZ4 source files to local directory to avoid absolute paths
-lz4_dir = current_dir / "lz4_src"
-lz4_dir.mkdir(exist_ok=True)
-
-# Copy LZ4 files if they don't exist
-lz4_source_dir = project_root / "include" / "lz4-1.10.0"
+# Add LZ4 source files from local include directory
 lz4_files = ["lz4.c", "lz4hc.c"]
+local_lz4_dir = local_include_dir / "lz4-1.10.0"
 
-for lz4_file in lz4_files:
-    local_file = lz4_dir / lz4_file
-    if not local_file.exists():
-        original_file = lz4_source_dir / lz4_file
-        if original_file.exists():
-            import shutil
-            shutil.copy2(original_file, local_file)
-    
-    if local_file.exists():
-        source_files.append(str(local_file.relative_to(current_dir)))
+if local_lz4_dir.exists():
+    for lz4_file in lz4_files:
+        lz4_source_path = local_lz4_dir / lz4_file
+        if lz4_source_path.exists():
+            # Use relative path for setuptools
+            relative_path = lz4_source_path.relative_to(current_dir)
+            source_files.append(str(relative_path))
 
 # Define compile arguments
 compile_args = [
