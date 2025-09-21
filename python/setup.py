@@ -125,13 +125,14 @@ def get_version():
 # Define include paths - both for development and distribution
 include_dirs = []
 
-# For development build (when BCSV headers are in parent directory)
+# For development and distribution builds (when BCSV headers are in parent directory)
 dev_include_dir = project_root / "include"
-if dev_include_dir.exists():
-    include_dirs.extend([
-        str(dev_include_dir),  # BCSV headers
-        str(dev_include_dir / "lz4-1.10.0"),  # LZ4 headers
-    ])
+include_dirs.extend([
+    str(dev_include_dir),  # BCSV headers
+    str(dev_include_dir / "lz4-1.10.0"),  # LZ4 headers
+    str(dev_include_dir / "boost-1.89.0"),  # Always add Boost headers
+    str(dev_include_dir / "boost-1.89.0" / "boost"),  # Add boost subdir for direct access
+])
 
 # For distribution build (when headers might be bundled)
 local_include_dir = current_dir / "include"
@@ -197,6 +198,15 @@ else:
     cmdclass = {"build_ext": CustomBuildExt}
 
 if __name__ == "__main__":
+    print("[pybcsv setup] include_dirs:")
+    for d in include_dirs:
+        print("  ", d)
+    # Debug: List files in include/boost-1.89.0/boost
+    import glob
+    boost_files = glob.glob(str(current_dir / "include" / "boost-1.89.0" / "boost" / "*.hpp"))
+    print("[pybcsv setup] Files in include/boost-1.89.0/boost:")
+    for f in boost_files:
+        print("  ", f)
     setup(
         name="pybcsv",
         version=get_version(),

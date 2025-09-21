@@ -7,7 +7,7 @@
 
 """Version information for pybcsv."""
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 __author__ = "Tobias Weber"
 __email__ = "weber.tobias.md@gmail.com"
 __license__ = "MIT"

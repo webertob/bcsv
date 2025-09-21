@@ -24,3 +24,7 @@ Decisions: The file format only supports 8bit/1byt memory alignment. We are not 
 8. Add other datatypes (float8_t, float16_t, float_123_t, uint128_t, int128_t, BLOB)
 9. Add concurent compression and writing using double buffering to not block row interface, when a packet needs to be written or read
 10. Investigate stream write/stream read to avoid utilization spikes, that comes with packet based format
+11. Create 3 different bcsv file formats:
+    - packet based format, good compromise on size, sequential and random access speeds, building packets may come with some jitter/spike in utilization, which my be an issue for hard real-tiem system. compaible with all compression and encoding schemas
+    - indexed file format,
+    - stream file format, for hard real-time systems, not compatible with LZ4 compression, aimed on sequential write & read with limited compute requirments
