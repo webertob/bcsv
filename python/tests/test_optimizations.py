@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """Quick test to verify the optimized BCSV Python wrapper works correctly."""
 
-import pybcsv
+# Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+# 
+# This file is part of the BCSV library.
+# 
+# Licensed under the MIT License. See LICENSE file in the project root 
+# for full license information.
+
+import pytest
 import numpy as np
 import pandas as pd
 import time
@@ -26,7 +33,7 @@ def test_optimized_operations():
     # Test optimized write
     print("✅ Testing optimized DataFrame write...")
     start_time = time.time()
-    pybcsv.write_dataframe(df, str(test_file), compression=True)
+    pybcsv.write_dataframe(df, str(test_file), compression_level=1)
     write_time = time.time() - start_time
     print(f"   📊 Write time: {write_time:.4f}s ({len(df)} rows)")
     

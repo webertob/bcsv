@@ -3,7 +3,14 @@
 Test script for pybcsv pandas integration
 """
 
-import pybcsv
+# Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+# 
+# This file is part of the BCSV library.
+# 
+# Licensed under the MIT License. See LICENSE file in the project root 
+# for full license information.
+
+import pytest
 import pandas as pd
 import tempfile
 import os

@@ -12,7 +12,14 @@ if(NOT GTest_FOUND)
     FetchContent_MakeAvailable(googletest)
 endif()
 
-# Google Test comprehensive test suite (includes boundary tests)
+# Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+# 
+# This file is part of the BCSV library.
+# 
+# Licensed under the MIT License. See LICENSE file in the project root 
+# for full license information.
+
+# Tests CMakeLists.txt
 add_executable(bcsv_gtest 
     bcsv_comprehensive_test.cpp
 )

@@ -1,3 +1,10 @@
+# Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+# 
+# This file is part of the BCSV library.
+# 
+# Licensed under the MIT License. See LICENSE file in the project root 
+# for full license information.
+
 import unittest
 import os
 import tempfile
@@ -37,11 +44,13 @@ class TestDataTypes(unittest.TestCase):
             [0, 0, 0, 0, 128, 32768, 2147483648, 9223372036854775808]
         ]
         
-        with pybcsv.Writer(self.test_file, layout) as writer:
+        with pybcsv.Writer(layout) as writer:
+            writer.open(self.test_file, compression_level=0)
             for row in test_data:
                 writer.write_row(row)
         
-        with pybcsv.Reader(self.test_file) as reader:
+        with pybcsv.Reader() as reader:
+            reader.open(self.test_file)
             read_data = reader.read_all()
         
         self.assertEqual(len(read_data), len(test_data))
@@ -62,11 +71,13 @@ class TestDataTypes(unittest.TestCase):
             [float('-inf'), float('-inf')],
         ]
         
-        with pybcsv.Writer(self.test_file, layout) as writer:
+        with pybcsv.Writer(layout) as writer:
+            writer.open(self.test_file, compression_level=0)
             for row in test_data:
                 writer.write_row(row)
         
-        with pybcsv.Reader(self.test_file) as reader:
+        with pybcsv.Reader() as reader:
+            reader.open(self.test_file)
             read_data = reader.read_all()
         
         self.assertEqual(len(read_data), len(test_data))
@@ -92,11 +103,13 @@ class TestDataTypes(unittest.TestCase):
             [False]
         ]
         
-        with pybcsv.Writer(self.test_file, layout) as writer:
+        with pybcsv.Writer(layout) as writer:
+            writer.open(self.test_file, compression_level=0)
             for row in test_data:
                 writer.write_row(row)
         
-        with pybcsv.Reader(self.test_file) as reader:
+        with pybcsv.Reader() as reader:
+            reader.open(self.test_file)
             read_data = reader.read_all()
         
         self.assertEqual(len(read_data), len(test_data))
@@ -118,11 +131,13 @@ class TestDataTypes(unittest.TestCase):
             ["Very long string " * 100],  # Long string
         ]
         
-        with pybcsv.Writer(self.test_file, layout) as writer:
+        with pybcsv.Writer(layout) as writer:
+            writer.open(self.test_file, compression_level=0)
             for row in test_data:
                 writer.write_row(row)
         
-        with pybcsv.Reader(self.test_file) as reader:
+        with pybcsv.Reader() as reader:
+            reader.open(self.test_file)
             read_data = reader.read_all()
         
         self.assertEqual(len(read_data), len(test_data))
@@ -148,11 +163,13 @@ class TestDataTypes(unittest.TestCase):
              999999.999999, True, 65535, 5.0],  # Max values
         ]
         
-        with pybcsv.Writer(self.test_file, layout) as writer:
+        with pybcsv.Writer(layout) as writer:
+            writer.open(self.test_file, compression_level=0)
             for row in test_data:
                 writer.write_row(row)
         
-        with pybcsv.Reader(self.test_file) as reader:
+        with pybcsv.Reader() as reader:
+            reader.open(self.test_file)
             read_data = reader.read_all()
         
         self.assertEqual(len(read_data), len(test_data))
@@ -169,18 +186,18 @@ class TestDataTypes(unittest.TestCase):
     def test_type_to_string(self):
         """Test the type_to_string utility function."""
         type_mappings = {
-            pybcsv.ColumnType.FLOAT: "FLOAT",
-            pybcsv.ColumnType.DOUBLE: "DOUBLE",
-            pybcsv.ColumnType.INT8: "INT8",
-            pybcsv.ColumnType.INT16: "INT16",
-            pybcsv.ColumnType.INT32: "INT32",
-            pybcsv.ColumnType.INT64: "INT64",
-            pybcsv.ColumnType.UINT8: "UINT8",
-            pybcsv.ColumnType.UINT16: "UINT16",
-            pybcsv.ColumnType.UINT32: "UINT32",
-            pybcsv.ColumnType.UINT64: "UINT64",
-            pybcsv.ColumnType.BOOL: "BOOL",
-            pybcsv.ColumnType.STRING: "STRING",
+            pybcsv.ColumnType.FLOAT: "float",
+            pybcsv.ColumnType.DOUBLE: "double",
+            pybcsv.ColumnType.INT8: "int8",
+            pybcsv.ColumnType.INT16: "int16",
+            pybcsv.ColumnType.INT32: "int32",
+            pybcsv.ColumnType.INT64: "int64",
+            pybcsv.ColumnType.UINT8: "uint8",
+            pybcsv.ColumnType.UINT16: "uint16",
+            pybcsv.ColumnType.UINT32: "uint32",
+            pybcsv.ColumnType.UINT64: "uint64",
+            pybcsv.ColumnType.BOOL: "bool",
+            pybcsv.ColumnType.STRING: "string",
         }
         
         for col_type, expected_string in type_mappings.items():

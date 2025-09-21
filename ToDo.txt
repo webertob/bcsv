@@ -1,33 +1,26 @@
-0. Change String storage to only use 32bit wide address/length fields
-1. Create Python Wrapper:
-    a. rename project to bcsv (check if this name is still free)
-    b. extend boundary tests to python 
-            (if possible utilize checking within bcsv (don't dupplicate checking in python if it save), 
-    c. add corner case checking (zero length rows, single length rows, zero rows, single row, zero columns, single colum)
-2. add copyright and publish (GITHUB)
-3. Create and test Python wrapper
-4. build project using bcsv
-4. Create and test C# wrapper
-5. Implement dictionary compression
-6. Implement ZigZag compression
-7. Implement CHIMP/GORILA compression
-8. Implement delta encoding
-9. Implement 1st and 2nd order hold schema
-10. create randomAccess methods:
+Decisions: The file format only supports 8bit/1byt memory alignment. We are not going to change that!
+1. Publish on GITHUB & PyPi
+2. Build a project using bcsv using cpp and python interfaces
+3. Create and test C# wrapper
+5. Improve compression:
+    - implement dictionary compression for strings
+    - implement ZigZag and variable length integer encoding, (also apply to string addresses and rowlength and length)
+    - implement CHIMP/GORILA compression for floats
+    - implement 1st and 2nd order hold schema (mark candidates in layout/header)
+6. Create randomAccess / random/read methods:
     Row row(size_t index) {
         if(index == current_index+1) {
             //fall back to sequential
             readNext();
             return row_;
         }
-        
         //check if row is in current packet, if not read packet required, build an file wide index if needed
         // use specific heuristics for ZoH, i.e. traverse several rows back and for to avoid complex reads
     }
     const auto& cell(size_t rowIndex, size_t colIndex) to directly access a cell, use RowView as a lightweight abstraction to avoid full deserilization
-11. Add other datatypes (float8_t, float16_t, float_123_t, uint128_t, int128_t, BLOB)
--1. Drop/Never: Create versions that allow for certain mememory alignments (32bit, 64bit)
-12. Add concurent compression and writing using double buffering to not block, when packet needs to be written or read
-9. create stream write vs. current packet writing (to avoid utilization spikes)
-
-8. Read and write to arbritatry streams (i.e. network, pipes) 
+7. Create sampler (select data based on certain conditions)
+    - support c++ interface (iterate over individual rows)
+    - support python interface (iterate over individual rows, and block reads (pandas/numpy))
+8. Add other datatypes (float8_t, float16_t, float_123_t, uint128_t, int128_t, BLOB)
+9. Add concurent compression and writing using double buffering to not block row interface, when a packet needs to be written or read
+10. Investigate stream write/stream read to avoid utilization spikes, that comes with packet based format

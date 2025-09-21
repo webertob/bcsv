@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """Simple test to verify basic functionality works."""
 
-import pybcsv
+# Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+# 
+# This file is part of the BCSV library.
+# 
+# Licensed under the MIT License. See LICENSE file in the project root 
+# for full license information.
+
+import pytest
 import pandas as pd
 from pathlib import Path
 

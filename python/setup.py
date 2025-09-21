@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
 
+# Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+# 
+# This file is part of the BCSV library.
+# 
+# Licensed under the MIT License. See LICENSE file in the project root 
+# for full license information.
+
 """
 Setup script for pybcsv - Python bindings for the BCSV library
 """
@@ -27,6 +34,52 @@ except ImportError:
             kwargs.pop('language', None)
             kwargs.pop('cxx_std', None)
             super().__init__(name, sources, *args, **kwargs)
+
+class CustomBuildExt(build_ext if PYBIND11_AVAILABLE else object):
+    """Custom build extension to handle C and C++ files separately."""
+    
+    def build_extensions(self):
+        # Set specific compiler flags for different file types
+        for ext in self.extensions:
+            # Get the default compiler flags
+            original_compile_args = ext.extra_compile_args[:]
+            
+            # Create a new list of args without C++ specific flags for C files
+            c_only_args = [arg for arg in original_compile_args if not arg.startswith('-std=c++')]
+            
+            # Override compile method to apply different flags per file
+            original_compile = self.compiler.compile
+            
+            def custom_compile(sources, output_dir=None, macros=None, include_dirs=None, 
+                             debug=0, extra_preargs=None, extra_postargs=None, depends=None):
+                
+                # Separate C and C++ files
+                c_sources = [s for s in sources if s.endswith('.c')]
+                cpp_sources = [s for s in sources if s.endswith('.cpp') or s.endswith('.cxx') or s.endswith('.cc')]
+                
+                objects = []
+                
+                # Compile C files with C-only flags
+                if c_sources:
+                    objects.extend(original_compile(
+                        c_sources, output_dir, macros, include_dirs, debug,
+                        extra_preargs, c_only_args, depends
+                    ))
+                
+                # Compile C++ files with full flags
+                if cpp_sources:
+                    objects.extend(original_compile(
+                        cpp_sources, output_dir, macros, include_dirs, debug,
+                        extra_preargs, extra_postargs, depends
+                    ))
+                
+                return objects
+            
+            # Temporarily replace the compile method
+            self.compiler.compile = custom_compile
+            
+        # Call the parent build method
+        super().build_extensions()
 
 def get_version():
     """Get version from __version__.py file"""
@@ -94,6 +147,7 @@ if PYBIND11_AVAILABLE:
             extra_compile_args=compile_args,
         )
     ]
+    cmdclass = {"build_ext": CustomBuildExt}
 else:
     ext_modules = [
         Extension(
@@ -104,18 +158,20 @@ else:
             language="c++",
         )
     ]
+    cmdclass = {"build_ext": CustomBuildExt}
 
 if __name__ == "__main__":
     setup(
         name="pybcsv",
         version=get_version(),
-        author="Tobias",
-        author_email="",
+        author="Tobias Weber",
+        author_email="weber.tobias.md@gmail.com",
         description="Python bindings for the high-performance BCSV (Binary CSV) library",
         long_description="Python bindings for the BCSV binary CSV library with pandas integration",
         long_description_content_type="text/plain",
         packages=["pybcsv"],
         ext_modules=ext_modules,
+        cmdclass=cmdclass,
         zip_safe=False,
         python_requires=">=3.7",
         classifiers=[

@@ -1,4 +1,11 @@
-"""Optimized pandas integration utilities for pybcsv with vectorized operations."""
+# Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+# 
+# This file is part of the BCSV library.
+# 
+# Licensed under the MIT License. See LICENSE file in the project root 
+# for full license information.
+
+"""Pandas integration utilities for pybcsv."""
 
 import numpy as np
 from typing import Optional, Union, Dict, Any
@@ -72,7 +79,7 @@ def _get_pandas_dtype_from_bcsv_type(col_type: ColumnType) -> Union[str, np.dtyp
 
 def write_dataframe_optimized(df, 
                             filename: str, 
-                            compression: bool = True,
+                            compression_level: int = 1,
                             type_hints: Optional[Dict[str, ColumnType]] = None,
                             batch_size: int = 10000) -> None:
     """
@@ -81,7 +88,7 @@ def write_dataframe_optimized(df,
     Args:
         df: The pandas DataFrame to write
         filename: Output BCSV filename
-        compression: Whether to use compression (default: True)
+        compression_level: Compression level (0=no compression, 1-9=LZ4 compression level, default: 1)
         type_hints: Optional dictionary mapping column names to specific BCSV types
         batch_size: Number of rows to process in each batch (default: 10000)
     """
@@ -101,13 +108,13 @@ def write_dataframe_optimized(df,
         layout.add_column(str(col_name), col_type)
         column_types.append(col_type)
     
-    # Set compression flag
-    flags = FileFlags.COMPRESSED if compression else FileFlags.NONE
+    # Set flags based on compression level
+    flags = FileFlags.COMPRESSED if compression_level > 0 else FileFlags.NONE
     
     # Write data
     writer = Writer(layout)
     try:
-        if not writer.open(filename):
+        if not writer.open(filename, True, compression_level, flags):
             raise RuntimeError(f"Failed to open file for writing: {filename}")
         
         # Process data in batches for memory efficiency
@@ -162,7 +169,7 @@ def write_dataframe_optimized(df,
 
 def write_dataframe_ultra_optimized(df, 
                                    filename: str, 
-                                   compression: bool = True,
+                                   compression_level: int = 1,
                                    type_hints: Optional[Dict[str, ColumnType]] = None) -> None:
     """
     Write a pandas DataFrame to a BCSV file using ultra-optimized operations.
@@ -173,7 +180,7 @@ def write_dataframe_ultra_optimized(df,
     Args:
         df: The pandas DataFrame to write
         filename: Output BCSV filename
-        compression: Whether to use compression (default: True)
+        compression_level: Compression level (0=no compression, 1-9=LZ4 compression level, default: 1)
         type_hints: Optional dictionary mapping column names to specific BCSV types
     """
     if not PANDAS_AVAILABLE:
@@ -245,8 +252,8 @@ def write_dataframe_ultra_optimized(df,
     # Write data using C++ optimized batch writer
     writer = Writer(layout)
     try:
-        flags = FileFlags.COMPRESSED if compression else FileFlags.NONE
-        if not writer.open(filename, True, 1, flags):
+        flags = FileFlags.COMPRESSED if compression_level > 0 else FileFlags.NONE
+        if not writer.open(filename, True, compression_level, flags):
             raise RuntimeError(f"Failed to open file for writing: {filename}")
         
         # Convert to list of lists for batch writing (eliminates row-by-row overhead)
@@ -403,7 +410,7 @@ def to_csv(bcsv_filename: str, csv_filename: str, **csv_kwargs) -> None:
 
 def from_csv(csv_filename: str, 
             bcsv_filename: str,
-            compression: bool = True,
+            compression_level: int = 1,
             type_hints: Optional[Dict[str, ColumnType]] = None,
             **csv_kwargs) -> None:
     """
@@ -412,7 +419,7 @@ def from_csv(csv_filename: str,
     Args:
         csv_filename: Input CSV file
         bcsv_filename: Output BCSV file
-        compression: Whether to use compression (default: True)
+        compression_level: Compression level (0=no compression, 1-9=LZ4 compression level, default: 1)
         type_hints: Optional dictionary mapping column names to specific BCSV types
         **csv_kwargs: Additional arguments passed to pandas.read_csv()
     """
@@ -426,4 +433,4 @@ def from_csv(csv_filename: str,
     csv_params.update(csv_kwargs)
     
     df = pd.read_csv(csv_filename, **csv_params)
-    write_dataframe(df, bcsv_filename, compression=compression, type_hints=type_hints)
+    write_dataframe(df, bcsv_filename, compression_level=compression_level, type_hints=type_hints)

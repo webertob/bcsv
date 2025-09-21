@@ -1,4 +1,11 @@
-# BCSV Examples
+# Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+# 
+# This file is part of the BCSV library.
+# 
+# Licensed under the MIT License. See LICENSE file in the project root 
+# for full license information.
+
+# Examples CMakeLists.txt
 # =============
 # This directory contains examples demonstrating different aspects of BCSV:
 #

@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+
+# Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+# 
+# This file is part of the BCSV library.
+# 
+# Licensed under the MIT License. See LICENSE file in the project root 
+# for full license information.
+
 """
 Pandas Integration Example
 
@@ -39,13 +47,13 @@ def benchmark_write_performance(df):
     
     # BCSV write (compressed)
     start_time = time.time()
-    pybcsv.write_dataframe(df, "test_compressed.bcsv", compression=True)
+    pybcsv.write_dataframe(df, "test_compressed.bcsv", compression_level=1)
     bcsv_compressed_time = time.time() - start_time
     bcsv_compressed_size = os.path.getsize("test_compressed.bcsv")
     
     # BCSV write (uncompressed)
     start_time = time.time()
-    pybcsv.write_dataframe(df, "test_uncompressed.bcsv", compression=False)
+    pybcsv.write_dataframe(df, "test_uncompressed.bcsv", compression_level=0)
     bcsv_uncompressed_time = time.time() - start_time
     bcsv_uncompressed_size = os.path.getsize("test_uncompressed.bcsv")
     
@@ -137,7 +145,7 @@ def demonstrate_csv_conversion():
     
     # Convert CSV to BCSV
     print("Converting CSV to BCSV...")
-    pybcsv.from_csv("sample.csv", "converted.bcsv", compression=True)
+    pybcsv.from_csv("sample.csv", "converted.bcsv", compression_level=1)
     
     # Convert BCSV back to CSV
     print("Converting BCSV back to CSV...")

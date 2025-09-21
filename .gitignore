@@ -64,3 +64,5 @@ python/venv/
 python/.venv/
 .venv/
 python/pybcsv.egg-info/not-zip-safe
+venv/lib64
+venv/pyvenv.cfg

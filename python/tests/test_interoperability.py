@@ -21,7 +21,7 @@ class TestInteroperability(unittest.TestCase):
         self.temp_files = []
         
         # Check if C++ examples are built
-        self.cpp_examples_dir = os.path.join(os.path.dirname(__file__), '../../build/examples')
+        self.cpp_examples_dir = os.path.join(os.path.dirname(__file__), '../../build/bin')
         self.bcsv2csv_exe = os.path.join(self.cpp_examples_dir, 'bcsv2csv')
         self.csv2bcsv_exe = os.path.join(self.cpp_examples_dir, 'csv2bcsv')
         

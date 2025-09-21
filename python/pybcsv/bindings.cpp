@@ -1,7 +1,18 @@
+/*
+ * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * 
+ * This file is part of the BCSV library.
+ * 
+ * Licensed under the MIT License. See LICENSE file in the project root 
+ * for full license information.
+ */
+
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/numpy.h>
 #include <pybind11/iostream.h>
+#include <algorithm>
+#include <cctype>
 
 #include "bcsv/bcsv.h"
 
@@ -13,7 +24,7 @@ namespace {
     // Efficiently convert a single column value from BCSV row to Python object
     // Template approach eliminates virtual function calls and allows inlining
     template<typename RowType>
-    [[nodiscard]] inline py::object extract_column_value_unchecked(const RowType& row, size_t column_index, bcsv::ColumnType col_type) noexcept {
+    [[nodiscard]] inline py::object extract_column_value_unchecked(const RowType& row, size_t column_index, bcsv::ColumnType col_type) {
         // No bounds checking - caller guarantees valid index
         switch (col_type) {
             case bcsv::ColumnType::BOOL:
@@ -72,62 +83,105 @@ namespace {
     }
 
     // Efficiently set column value from Python object to BCSV row
+    // Helper function to convert numeric types flexibly
+    template<typename T>
+    T convert_numeric(const py::object& value, const std::string& target_type) {
+        // Try direct conversion first
+        try {
+            return value.cast<T>();
+        } catch (const py::cast_error&) {
+            // Try numeric conversion for compatible types
+            if (py::isinstance<py::int_>(value)) {
+                return static_cast<T>(value.cast<int64_t>());
+            } else if (py::isinstance<py::float_>(value)) {
+                double d = value.cast<double>();
+                return static_cast<T>(d);
+            } else if (py::isinstance<py::str>(value)) {
+                std::string str_val = value.cast<std::string>();
+                if constexpr (std::is_same_v<T, bool>) {
+                    // Special handling for boolean strings
+                    std::transform(str_val.begin(), str_val.end(), str_val.begin(), ::tolower);
+                    if (str_val == "true" || str_val == "1") return true;
+                    if (str_val == "false" || str_val == "0") return false;
+                    throw std::runtime_error("Invalid boolean string: " + str_val);
+                } else if constexpr (std::is_integral_v<T>) {
+                    return static_cast<T>(std::stoll(str_val));
+                } else {
+                    return static_cast<T>(std::stod(str_val));
+                }
+            } else {
+                throw std::runtime_error("Cannot convert to " + target_type);
+            }
+        }
+    }
+
     // Template approach allows compile-time optimization, unchecked access
     template<typename RowType>
     inline void set_column_value_unchecked(RowType& row, size_t column_index, 
-                                          bcsv::ColumnType col_type, const py::object& value) noexcept {
+                                          bcsv::ColumnType col_type, const py::object& value) {
         // No bounds checking - caller guarantees valid index
-        switch (col_type) {
-            case bcsv::ColumnType::BOOL:
-                row.set(column_index, value.cast<bool>());
-                break;
-            case bcsv::ColumnType::INT8:
-                row.set(column_index, value.cast<int8_t>());
-                break;
-            case bcsv::ColumnType::INT16:
-                row.set(column_index, value.cast<int16_t>());
-                break;
-            case bcsv::ColumnType::INT32:
-                row.set(column_index, value.cast<int32_t>());
-                break;
-            case bcsv::ColumnType::INT64:
-                row.set(column_index, value.cast<int64_t>());
-                break;
-            case bcsv::ColumnType::UINT8:
-                row.set(column_index, value.cast<uint8_t>());
-                break;
-            case bcsv::ColumnType::UINT16:
-                row.set(column_index, value.cast<uint16_t>());
-                break;
-            case bcsv::ColumnType::UINT32:
-                row.set(column_index, value.cast<uint32_t>());
-                break;
-            case bcsv::ColumnType::UINT64:
-                row.set(column_index, value.cast<uint64_t>());
-                break;
-            case bcsv::ColumnType::FLOAT:
-                row.set(column_index, value.cast<float>());
-                break;
-            case bcsv::ColumnType::DOUBLE:
-                row.set(column_index, value.cast<double>());
-                break;
-            case bcsv::ColumnType::STRING: {
-                // Safe string handling for large strings
-                if (py::isinstance<py::str>(value)) {
-                    std::string str_value = py::cast<std::string>(value);
-                    // Ensure the string doesn't exceed BCSV format limits (already validated above)
-                    if (str_value.size() > 65534) {
-                        str_value.resize(65534); // Truncate to max allowed
+        try {
+            switch (col_type) {
+                case bcsv::ColumnType::BOOL:
+                    row.set(column_index, convert_numeric<bool>(value, "bool"));
+                    break;
+                case bcsv::ColumnType::INT8:
+                    row.set(column_index, convert_numeric<int8_t>(value, "int8"));
+                    break;
+                case bcsv::ColumnType::INT16:
+                    row.set(column_index, convert_numeric<int16_t>(value, "int16"));
+                    break;
+                case bcsv::ColumnType::INT32:
+                    row.set(column_index, convert_numeric<int32_t>(value, "int32"));
+                    break;
+                case bcsv::ColumnType::INT64:
+                    row.set(column_index, convert_numeric<int64_t>(value, "int64"));
+                    break;
+                case bcsv::ColumnType::UINT8:
+                    row.set(column_index, convert_numeric<uint8_t>(value, "uint8"));
+                    break;
+                case bcsv::ColumnType::UINT16:
+                    row.set(column_index, convert_numeric<uint16_t>(value, "uint16"));
+                    break;
+                case bcsv::ColumnType::UINT32:
+                    row.set(column_index, convert_numeric<uint32_t>(value, "uint32"));
+                    break;
+                case bcsv::ColumnType::UINT64:
+                    row.set(column_index, convert_numeric<uint64_t>(value, "uint64"));
+                    break;
+                case bcsv::ColumnType::FLOAT:
+                    row.set(column_index, convert_numeric<float>(value, "float"));
+                    break;
+                case bcsv::ColumnType::DOUBLE:
+                    row.set(column_index, convert_numeric<double>(value, "double"));
+                    break;
+                case bcsv::ColumnType::STRING: {
+                    if (py::isinstance<py::str>(value)) {
+                        std::string str_value = py::cast<std::string>(value);
+                        // Ensure the string doesn't exceed BCSV format limits
+                        if (str_value.size() > 65534) {
+                            str_value.resize(65534); // Truncate to max allowed
+                        }
+                        row.set(column_index, std::move(str_value));
+                    } else {
+                        // Convert any type to string
+                        py::str str_val = py::str(value);
+                        std::string str_value = str_val.cast<std::string>();
+                        if (str_value.size() > 65534) {
+                            str_value.resize(65534);
+                        }
+                        row.set(column_index, std::move(str_value));
                     }
-                    row.set(column_index, std::move(str_value));
-                } else {
-                    throw std::runtime_error("String column requires string value");
+                    break;
                 }
-                break;
+                default:
+                    [[unlikely]]
+                    throw std::runtime_error("Unsupported column type");
             }
-            default:
-                [[unlikely]]
-                throw std::runtime_error("Unsupported column type");
+        } catch (const py::cast_error& e) {
+            // Convert pybind11 cast errors to more informative runtime errors
+            throw std::runtime_error("Type conversion error for column " + std::to_string(column_index) + 
+                                    ": " + std::string(e.what()));
         }
     }
     
@@ -147,7 +201,7 @@ namespace {
         }
         
         template<typename RowType>
-        inline void write_row_fast(RowType& row, const py::list& values) const noexcept {
+        inline void write_row_fast(RowType& row, const py::list& values) const {
             // Pre-validated: values.size() == column_count_
             for (size_t i = 0; i < column_count_; ++i) {
                 set_column_value_unchecked(row, i, column_types_[i], values[i]);
@@ -243,7 +297,11 @@ PYBIND11_MODULE(_bcsv, m) {
         .def(py::init<const bcsv::Layout&>(), py::arg("layout"))
         .def("open", [](bcsv::Writer<bcsv::Layout>& writer, const std::string& filename, 
                        bool overwrite = true, size_t compression_level = 1, bcsv::FileFlags flags = bcsv::FileFlags::NONE) {
-            return writer.open(filename, overwrite, compression_level, flags);
+            bool success = writer.open(filename, overwrite, compression_level, flags);
+            if (!success) {
+                throw std::runtime_error("Failed to open file for writing: " + filename);
+            }
+            return success;
         }, py::arg("filename"), py::arg("overwrite") = true, py::arg("compression_level") = 1, py::arg("flags") = bcsv::FileFlags::NONE)
         .def("write_row", [](bcsv::Writer<bcsv::Layout>& writer, const py::list& values) {
             auto& row = writer.row();
@@ -338,7 +396,11 @@ PYBIND11_MODULE(_bcsv, m) {
     py::class_<bcsv::Reader<bcsv::Layout>>(m, "Reader")
         .def(py::init<>())
         .def("open", [](bcsv::Reader<bcsv::Layout>& reader, const std::string& filename) {
-            return reader.open(filename);
+            bool success = reader.open(filename);
+            if (!success) {
+                throw std::runtime_error("Failed to open file for reading: " + filename);
+            }
+            return success;
         }, py::arg("filename"))
         .def("layout", &bcsv::Reader<bcsv::Layout>::layout, py::return_value_policy::reference_internal)
         .def("get_layout", &bcsv::Reader<bcsv::Layout>::layout, py::return_value_policy::reference_internal)  // Alias

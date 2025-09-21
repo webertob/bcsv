@@ -4,6 +4,13 @@ Basic functionality unit tests for PyBCSV.
 Tests core read/write operations, layout creation, and data integrity.
 """
 
+# Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+# 
+# This file is part of the BCSV library.
+# 
+# Licensed under the MIT License. See LICENSE file in the project root 
+# for full license information.
+
 import unittest
 import tempfile
 import os
