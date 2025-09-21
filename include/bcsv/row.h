@@ -399,19 +399,6 @@ namespace bcsv {
  * =============================================================================
  */
 
-    /* StringAddress , helps with string column addressing, packing and unpacking
-     * Currently we are supporting strings with a maximum length of 16bits (65535 chars)
-    */
-    struct StringAddress {
-        static constexpr uint64_t   OFFSET_MASK  = 0xFFFFFFFFFFFFULL;  // 48 bits (position of first char relative to row start)
-        static constexpr uint64_t   LENGTH_MASK  = 0xFFFFULL;          // 16 bits (length of string in chars)
-        static constexpr int        OFFSET_SHIFT = 16;
-        
-        static uint64_t pack(size_t offset, size_t length);
-        static void unpack(uint64_t packed, size_t& offset, size_t& length);
-    };
-
-
     /* Dynamic row with flexible layout (runtime-defined)*/
     class Row {
         Layout                    layout_;  // layout defining column types and order

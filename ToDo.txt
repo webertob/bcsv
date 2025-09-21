@@ -1,10 +1,12 @@
-1. 
-   d. intergate boundary tests to gtest
-   e. extend boundary tests to python (if possible utilize checking within bcsv (don't dupplicate checking in python if it save)), 
-   f. rename pythonmodule to bcsv
-   g. add corner case checking (zero length rows, single length rows, zero rows, single row, zero columns, single colum)
-2. add copyright and publish
+0. Change String storage to only use 32bit wide address/length fields
+1. Create Python Wrapper:
+    a. rename project to bcsv (check if this name is still free)
+    b. extend boundary tests to python 
+            (if possible utilize checking within bcsv (don't dupplicate checking in python if it save), 
+    c. add corner case checking (zero length rows, single length rows, zero rows, single row, zero columns, single colum)
+2. add copyright and publish (GITHUB)
 3. Create and test Python wrapper
+4. build project using bcsv
 4. Create and test C# wrapper
 5. Implement dictionary compression
 6. Implement ZigZag compression

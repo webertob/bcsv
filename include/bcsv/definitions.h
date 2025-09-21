@@ -7,6 +7,7 @@
 #include <variant>
 #include <algorithm>
 #include <limits>
+#include "string_addr.h"
 
 namespace bcsv {
     
@@ -101,7 +102,6 @@ namespace bcsv {
     inline bool isType(const ValueType& value, const ColumnType& type) {
         return value.index() == static_cast<size_t>(type);
     }
-    
 
     // Convert C++ type to ColumnType enum
     template<typename T>
@@ -241,6 +241,8 @@ namespace bcsv {
         }
     }
 
+    using StringAddress = StringAddr<uint32_t>; // Default to 32bit version for now
+
     template<typename T>
     constexpr size_t binaryFieldLength() {
              if constexpr (std::is_same_v<T, bool>    ) return sizeof(bool);
@@ -254,7 +256,7 @@ namespace bcsv {
         else if constexpr (std::is_same_v<T, int64_t> ) return sizeof(int64_t);
         else if constexpr (std::is_same_v<T, float>   ) return sizeof(float);
         else if constexpr (std::is_same_v<T, double>  ) return sizeof(double);
-        else if constexpr (std::is_same_v<T, string>  ) return sizeof(uint64_t); // StringAddress
+        else if constexpr (std::is_same_v<T, string>  ) return sizeof(StringAddress); // StringAddress
         else static_assert(always_false<T>, "Unsupported type");
     }
 
@@ -272,7 +274,7 @@ namespace bcsv {
             case ColumnType::INT64:  return sizeof(int64_t);
             case ColumnType::FLOAT:  return sizeof(float);
             case ColumnType::DOUBLE: return sizeof(double);
-            case ColumnType::STRING: return sizeof(uint64_t); // StringAddress
+            case ColumnType::STRING: return sizeof(StringAddress); // StringAddress
             default: throw std::runtime_error("Unknown column type");
         }
     }
@@ -284,8 +286,8 @@ namespace bcsv {
     constexpr size_t serializedSize(const T& val) {
         using DecayT = std::decay_t<T>;
         if constexpr (std::is_same_v<DecayT, std::string>) {
-            // offset and length of string + string itself, limited to 16bit
-            return sizeof(uint64_t) + std::min(val.size(), MAX_STRING_LENGTH);
+            // StringAddress + string itself, limited to 16bit
+            return sizeof(StringAddress) + std::min(val.size(), MAX_STRING_LENGTH);
         } else {
             return sizeof(T);
         }
