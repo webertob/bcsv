@@ -11,6 +11,8 @@ permissions:
 
 env:
   PYPROJECT_DIR: .
+  # Skip PyPy in cibuildwheel to avoid PyPy/pybind11 ABI incompatibilities
+  CIBW_SKIP: "pp*"
 
 jobs:
   build-linux:

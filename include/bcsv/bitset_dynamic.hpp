@@ -11,6 +11,7 @@
 
 #include <vector>
 #include <memory>
+#include <cstdlib>
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
@@ -19,6 +20,9 @@
 #include <bit>
 #include <cstring>
 #include <limits>
+#if defined(_MSC_VER)
+#include <malloc.h>
+#endif
 #include "bitset.hpp"
 
 namespace bcsv {
@@ -55,17 +59,27 @@ public:
         
         // Ensure allocation is aligned to byte boundaries
         size_type bytes_needed = n * sizeof(T);
-        void* ptr = std::aligned_alloc(alignof(std::byte), bytes_needed);
-        
+#if defined(_MSC_VER)
+        void* ptr = _aligned_malloc(bytes_needed, alignof(T));
         if (!ptr) {
             throw std::bad_alloc();
         }
-        
         return static_cast<pointer>(ptr);
+#else
+        void* ptr = std::aligned_alloc(alignof(T), bytes_needed);
+        if (!ptr) {
+            throw std::bad_alloc();
+        }
+        return static_cast<pointer>(ptr);
+#endif
     }
     
     void deallocate(pointer p, size_type) noexcept {
-        std::free(p);
+#if defined(_MSC_VER)
+    _aligned_free(p);
+#else
+    std::free(p);
+#endif
     }
     
     size_type max_size() const noexcept {
