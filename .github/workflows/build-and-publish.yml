@@ -90,12 +90,15 @@ jobs:
           python -m twine upload --repository-url https://test.pypi.org/legacy/ wheel-artifacts/*.whl || true
 
       - name: Publish to PyPI (if token set)
-        if: ${{ secrets.PYPI_API_TOKEN != '' }}
         env:
           TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
         run: |
-          python -m twine upload wheel-artifacts/*.whl
+          if [ -n "${PYPI_API_TOKEN}" ]; then
+            python -m twine upload wheel-artifacts/*.whl
+          else
+            echo "PYPI_API_TOKEN not set; skipping upload to PyPI"
+          fi
 
   smoke-test:
     name: Smoke test installed wheel
