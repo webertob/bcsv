@@ -1,6 +1,6 @@
 name: Build and publish wheels (manylinux & Windows)
 
-on:
+"on":
   push:
     branches: [ main, master, release ]
   workflow_dispatch:
