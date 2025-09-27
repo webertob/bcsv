@@ -188,7 +188,9 @@ public:
     
     // Size operations
     constexpr size_t size() const noexcept { return bit_count_; }
-    constexpr size_t sizeBytes() const noexcept { return storage_.size(); }
+    // Do not mark as constexpr because std::vector::size() is not constexpr
+    // on all standard library implementations used in build environments.
+    size_t sizeBytes() const noexcept { return storage_.size(); }
     bool empty() const noexcept { return bit_count_ == 0; }
     
     void resize(size_t new_bit_count, bool value = false) {

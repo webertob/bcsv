@@ -162,6 +162,8 @@ if local_lz4_dir.exists():
             relative_path = lz4_source_path.relative_to(current_dir)
             source_files.append(str(relative_path))
 
+import sysconfig
+
 # Define compile arguments
 compile_args = [
     "-std=c++20",
@@ -170,6 +172,37 @@ compile_args = [
     "-Wextra",
     "-fPIC"
 ]
+
+# If building with MSVC, translate or remove GCC/Clang-only flags
+from distutils import ccompiler
+try:
+    compiler_type = ccompiler.get_default_compiler()
+except Exception:
+    compiler_type = None
+
+if compiler_type and 'msvc' in compiler_type.lower():
+    msvc_args = []
+    for arg in compile_args:
+        # Remove warning flags not supported by MSVC
+        if arg.startswith('-W'):
+            continue
+        # Remove fPIC - not applicable to MSVC
+        if arg == '-fPIC':
+            continue
+        # Translate -std=c++20 to MSVC equivalent
+        if arg.startswith('-std='):
+            msvc_args.append('/std:c++20')
+            continue
+        # Keep optimization flags as-is
+        if arg.startswith('-O'):
+            # MSVC uses /O2 for optimization; map -O3 -> /O2
+            if arg == '-O3':
+                msvc_args.append('/O2')
+            else:
+                msvc_args.append(arg)
+            continue
+        # Otherwise ignore unknown flags
+    compile_args = msvc_args
 
 # Create extension module
 if PYBIND11_AVAILABLE:
