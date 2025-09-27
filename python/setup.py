@@ -131,7 +131,6 @@ include_dirs.extend([
     str(dev_include_dir),  # BCSV headers
     str(dev_include_dir / "lz4-1.10.0"),  # LZ4 headers
     str(dev_include_dir / "boost-1.89.0"),  # Always add Boost headers
-    str(dev_include_dir / "boost-1.89.0" / "boost"),  # Add boost subdir for direct access
 ])
 
 # For distribution build (when headers might be bundled)
@@ -226,12 +225,6 @@ if __name__ == "__main__":
             "Programming Language :: Python :: 3",
             "Programming Language :: C++",
         ],
-        install_requires=[
-            "numpy>=1.19.0",
-        ],
-        extras_require={
-            "pandas": ["pandas>=1.3.0"],
-            "test": ["pytest>=6.0"],
-            "dev": ["pytest>=6.0", "pandas>=1.3.0"],
-        },
+        # Dependencies are declared in pyproject.toml (PEP 621). Avoid
+        # duplicating them here to prevent Setuptools warnings during build.
     )

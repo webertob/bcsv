@@ -229,3 +229,36 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 See the [LICENSE](LICENSE) file for full details.
+
+## Publishing
+
+To publish built wheels to TestPyPI and PyPI you'll need to create API tokens and add them as GitHub repository secrets.
+
+1. Create API tokens:
+
+  - TestPyPI: Go to the TestPyPI account page and create an API token. Copy the token: [TestPyPI account page](https://test.pypi.org/manage/account/).
+
+  - PyPI: Go to the PyPI account page and create an API token for the project (or your account). Copy the token: [PyPI account page](https://pypi.org/manage/account/).
+
+2. Add GitHub secrets:
+
+  - In your repository on GitHub, go to Settings → Secrets → Actions.
+
+  - Add a new secret named `TEST_PYPI_API_TOKEN` and paste the TestPyPI token.
+
+  - Optionally add `PYPI_API_TOKEN` with the PyPI token when you're ready to publish to the main index.
+
+3. Trigger the publish workflow:
+
+  - The workflow triggers on pushes to the `release` branch or via manual `workflow_dispatch`.
+
+4. Install from TestPyPI for verification:
+
+```bash
+# in a fresh virtualenv
+python -m venv venv && source venv/bin/activate
+pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple pybcsv
+python -c "import pybcsv; print(pybcsv.__version__)"
+```
+
+If the import and version check succeed the wheel is good for release.

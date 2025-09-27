@@ -1,13 +1,18 @@
 include README.md
 include LICENSE
 include pybcsv/py.typed
+
+# Include top-level headers bundled for distribution
 recursive-include include *.h
 recursive-include include *.hpp
 recursive-include include *.c
 recursive-include include/boost-1.89.0 *
-recursive-include pybcsv *.h
-recursive-include pybcsv *.hpp
-recursive-include pybcsv *.cpp
+
+# Only include C/C++ sources from the python package that are intentionally
+# shipped (bindings.cpp) - avoid globbing for headers under pybcsv which
+# previously produced warnings.
+include pybcsv/bindings.cpp
+
 recursive-exclude tests *
 recursive-exclude examples *
 global-exclude *.pyc
