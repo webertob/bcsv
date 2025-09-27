@@ -29,7 +29,7 @@ jobs:
 
       - name: Build manylinux wheels with cibuildwheel (local)
         run: |
-          python -m cibuildwheel --project-dir python --output-dir dist
+          python -m cibuildwheel python --output-dir dist
 
       - name: Upload Linux wheels
         uses: actions/upload-artifact@v4
@@ -53,7 +53,7 @@ jobs:
 
       - name: Build windows wheels with cibuildwheel (local)
         run: |
-          python -m cibuildwheel --project-dir python --output-dir dist
+          python -m cibuildwheel python --output-dir dist
 
       - name: Upload Windows wheels
         uses: actions/upload-artifact@v4
