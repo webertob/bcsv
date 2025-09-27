@@ -11,7 +11,7 @@
 
 #include "packet_header.h"
 
-#include <boost/crc.hpp>
+#include "boost/crc.hpp"
 
 namespace bcsv {
 
