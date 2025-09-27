@@ -111,17 +111,9 @@ jobs:
           name: built-wheels-linux
           path: wheel-artifacts
         continue-on-error: true
-
-      - name: Smoke test wheel in clean venv
-        run: |
-          python -m venv /tmp/venv
-          source /tmp/venv/bin/activate
-          python -m pip install --upgrade pip
-          pip install wheel-artifacts/*.whl || true
-          python -c "import pybcsv; print('pybcsv ok', pybcsv.__version__)"
 name: Build and publish wheels (manylinux & Windows)
 
-"on":
+on:
   push:
     branches: [ main, master, release ]
   workflow_dispatch:
@@ -216,25 +208,31 @@ jobs:
           PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
         run: |
           if [ -n "${PYPI_API_TOKEN}" ]; then
-            name: Build and publish wheels (manylinux & Windows)
+            python -m twine upload wheel-artifacts/*.whl || true
+          else
+            echo "PYPI_API_TOKEN not set; skipping upload to PyPI"
+          fi
 
-            "on":
-              push:
-                branches: [ main, master, release ]
-              workflow_dispatch:
+  smoke-test:
+    name: Smoke test installed wheel
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download published wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: built-wheels-linux
+          path: wheel-artifacts
+        continue-on-error: true
 
-            permissions:
-              contents: read
-              packages: write
+      - name: Smoke test wheel in clean venv
+        run: |
+          python -m venv /tmp/venv
+          source /tmp/venv/bin/activate
+          python -m pip install --upgrade pip
+          pip install wheel-artifacts/*.whl || true
+          python -c "import pybcsv; print('pybcsv ok', pybcsv.__version__)"
 
-            env:
-              PYPROJECT_DIR: .
-
-            jobs:
-              build-linux:
-                name: Build Linux (manylinux)
-                runs-on: ubuntu-latest
-                steps:
                   - uses: actions/checkout@v4
 
                   - name: Set up Python 3.10
