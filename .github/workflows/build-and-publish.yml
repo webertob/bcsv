@@ -29,62 +29,6 @@ on:
               python-version: '3.10'
 
           - name: Build manylinux wheels with cibuildwheel
-            uses: pypa/cibuildwheel@v2
-            with:
-              output-dir: dist
-
-          - name: Upload Linux wheels
-            uses: actions/upoload-artifact@v4
-            with:
-              name: built-wheels-linux
-              path: dist/*.whl
-
-      build-windows:
-        name: Build Windows wheels
-        runs-on: windows-latest
-        steps:
-          - uses: actions/checkout@v4
-
-          - name: Set up Python 3.10
-            uses: actions/setup-python@v4
-            with:
-              python-version: '3.10'
-
-          - name: Build windows wheels with cibuildwheel
-            uses: pypa/cibuildwheel@v2
-              with:
-                output-dir: dist
-
-          - name: Upload Windows wheels
-            uses: actions/upload-artifact@vd4
-            with:
-              name: built-wheels-windows
-              path: dist/*.whl
-
-      publish:
-        name: Publish to TestPyPI (and PyPI when token present)
-        needs: [build-linux, build-windows]
-        runs-on: ubuntu-latest
-        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/release')
-        steps:
-          - uses: actions/checkout@v4
-
-          - name: Download build wheels (Linux)
-            uses: actions/download-artifact@v4
-            with:
-              name: built-wheels-linux
-              path: wheel-artifacts
-            continue-on-error: true
-
-          - name: Download build wheels (Windows)
-            uses: actions/download-artifact@v4
-            with:
-              name: built-wheels-windows
-              path: wheel-artifacts
-            continue-on-error: true
-
-          - name: Install twine
-            run: python -m pip install --upgrade pip twine
             name: Build and publish wheels (manylinux & Windows)
 
             on:
@@ -153,6 +97,58 @@ on:
                   - uses: actions/checkout@v4
 
                   - name: Download built wheels (Linux)
+                    uses: actions/download-artifact@v4
+                    with:
+                      name: built-wheels-linux
+                      path: wheel-artifacts
+                    continue-on-error: true
+
+                  - name: Download built wheels (Windows)
+                    uses: actions/download-artifact@v4
+                    with:
+                      name: built-wheels-windows
+                      path: wheel-artifacts
+                    continue-on-error: true
+
+                  - name: Install twine
+                    run: python -m pip install --upgrade pip twine
+
+                  - name: Publish to TestPyPI
+                    env:
+                      TWINE_USERNAME: __token__
+                      TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
+                    run: python -m twine upload --repository-url https://test.pypi.org/legacy/ wheel-artifacts/*.whl || true
+
+                  - name: Publish to PyPI (if token set)
+                    env:
+                      TWINE_USERNAME: __token__
+                      PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+                    run: |
+                      if [ -n "${PYPI_API_TOKEN}" ]; then
+                        python -m twine upload wheel-artifacts/*.whl || true
+                      else
+                        echo "PYPI_API_TOKEN not set; skipping upload to PyPI"
+                      fi
+
+              smoke-test:
+                name: Smoke test installed wheel
+                needs: publish
+                runs-on: ubuntu-latest
+                steps:
+                  - name: Download published wheels
+                    uses: actions/download-artifact@v4
+                    with:
+                      name: built-wheels-linux
+                      path: wheel-artifacts
+                    continue-on-error: true
+
+                  - name: Smoke test wheel in clean venv
+                    run: |
+                      python -m venv /tmp/venv
+                      source /tmp/venv/bin/activate
+                      python -m pip install --upgrade pip
+                      pip install wheel-artifacts/*.whl || true
+                      python -c "import pybcsv; print('pybcsv ok', pybcsv.__version__)"
                     uses: actions/download-artifact@v4
                     with:
                       name: built-wheels-linux
