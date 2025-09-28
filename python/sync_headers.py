@@ -8,8 +8,10 @@
 # for full license information.
 
 """
-Script to synchronize BCSV headers from the main project to avoid duplication.
-This ensures the Python package always has the latest headers.
+Script to synchronize BCSV and dependency headers and sources
+from the main project into the Python package.
+Ensures both header (.h) and source (.c/.cpp) files are copied
+as needed for compilation.
 """
 
 import os
@@ -79,23 +81,19 @@ def sync_headers(project_root=None, force=False, verbose=False):
                 print("Copying BCSV headers...")
             shutil.copytree(source_bcsv_dir, target_bcsv_dir, dirs_exist_ok=True)
     
-    # Sync LZ4 headers (but don't duplicate source files - just headers)
+    # Sync LZ4 headers AND sources (needed for compilation)
     source_lz4_dir = source_include_dir / "lz4-1.10.0"
     target_lz4_dir = target_include_dir / "lz4-1.10.0"
-    
     if source_lz4_dir.exists():
         if verbose:
             print("Syncing LZ4 headers and sources...")
-        
         target_lz4_dir.mkdir(exist_ok=True)
-        
-        # Copy all LZ4 files (headers and sources needed for compilation)
+        # Copy all .h and .c files
         for item in source_lz4_dir.glob("*"):
-            if item.is_file():
+            if item.is_file() and item.suffix in (".h", ".c"):
                 target_file = target_lz4_dir / item.name
                 if not target_file.exists() or force or item.stat().st_mtime > target_file.stat().st_mtime:
-                    if verbose:
-                        print(f"  Copying {item.name}")
+                    if verbose: print(f"  Copying {item.name}")
                     shutil.copy2(item, target_file)
     
     # Sync boost headers if they exist

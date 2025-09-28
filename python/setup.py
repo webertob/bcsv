@@ -151,7 +151,7 @@ source_files = [
 ]
 
 # Add LZ4 source files from local include directory
-lz4_files = ["lz4.c", "lz4hc.c"]
+lz4_files = ["lz4.c", "lz4hc.c", "lz4frame.c", "lz4frame_static.c", "xxhash.c"]
 local_lz4_dir = local_include_dir / "lz4-1.10.0"
 
 if local_lz4_dir.exists():
@@ -233,12 +233,6 @@ if __name__ == "__main__":
     print("[pybcsv setup] include_dirs:")
     for d in include_dirs:
         print("  ", d)
-    # Debug: List files in include/boost-1.89.0/boost
-    import glob
-    boost_files = glob.glob(str(current_dir / "include" / "boost-1.89.0" / "boost" / "*.hpp"))
-    print("[pybcsv setup] Files in include/boost-1.89.0/boost:")
-    for f in boost_files:
-        print("  ", f)
     setup(
         name="pybcsv",
         version=get_version(),
