@@ -146,22 +146,15 @@ if PYBIND11_AVAILABLE:
     include_dirs.append(pybind11.get_include())
 
 # Define source files (use relative paths)
+lz4_dir = local_include_dir / "lz4-1.10.0"
 source_files = [
     str((current_dir / "pybcsv" / "bindings.cpp").relative_to(current_dir)),
+    str((lz4_dir / "lz4.c").relative_to(current_dir)),
+    str((lz4_dir / "lz4hc.c").relative_to(current_dir)),
+    str((lz4_dir / "lz4frame.c").relative_to(current_dir)),
+    str((lz4_dir / "lz4frame_static.c").relative_to(current_dir)),
+    str((lz4_dir / "xxhash.c").relative_to(current_dir)),
 ]
-
-# Always include LZ4 sources from both local and dev include dirs if present
-lz4_files = ["lz4.c", "lz4hc.c", "lz4frame.c", "lz4frame_static.c", "xxhash.c"]
-
-for lz4_dir in [local_include_dir / "lz4-1.10.0", dev_include_dir / "lz4-1.10.0"]:
-    if lz4_dir.exists():
-        for lz4_file in lz4_files:
-            lz4_source_path = lz4_dir / lz4_file
-            if lz4_source_path.exists():
-                source_files.append(str(lz4_source_path))
-
-if not any("lz4" in src for src in source_files):
-    print("WARNING: No LZ4 sources found! LZ4 symbols will not be resolved. Please run sync_headers.py or ensure LZ4 sources are present.")
 
 import sysconfig
 
