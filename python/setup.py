@@ -158,13 +158,11 @@ for lz4_dir in [local_include_dir / "lz4-1.10.0", dev_include_dir / "lz4-1.10.0"
         for lz4_file in lz4_files:
             lz4_source_path = lz4_dir / lz4_file
             if lz4_source_path.exists():
-                relative_path = lz4_source_path.relative_to(current_dir)
-                if str(relative_path) not in source_files:
-                    source_files.append(str(relative_path))
+                source_files.append(str(lz4_source_path))
 
 if not any("lz4" in src for src in source_files):
     print("WARNING: No LZ4 sources found! LZ4 symbols will not be resolved. Please run sync_headers.py or ensure LZ4 sources are present.")
-    
+
 import sysconfig
 
 # Define compile arguments
