@@ -150,18 +150,21 @@ source_files = [
     str((current_dir / "pybcsv" / "bindings.cpp").relative_to(current_dir)),
 ]
 
-# Add LZ4 source files from local include directory
+# Always include LZ4 sources from both local and dev include dirs if present
 lz4_files = ["lz4.c", "lz4hc.c", "lz4frame.c", "lz4frame_static.c", "xxhash.c"]
-local_lz4_dir = local_include_dir / "lz4-1.10.0"
 
-if local_lz4_dir.exists():
-    for lz4_file in lz4_files:
-        lz4_source_path = local_lz4_dir / lz4_file
-        if lz4_source_path.exists():
-            # Use relative path for setuptools
-            relative_path = lz4_source_path.relative_to(current_dir)
-            source_files.append(str(relative_path))
+for lz4_dir in [local_include_dir / "lz4-1.10.0", dev_include_dir / "lz4-1.10.0"]:
+    if lz4_dir.exists():
+        for lz4_file in lz4_files:
+            lz4_source_path = lz4_dir / lz4_file
+            if lz4_source_path.exists():
+                relative_path = lz4_source_path.relative_to(current_dir)
+                if str(relative_path) not in source_files:
+                    source_files.append(str(relative_path))
 
+if not any("lz4" in src for src in source_files):
+    print("WARNING: No LZ4 sources found! LZ4 symbols will not be resolved. Please run sync_headers.py or ensure LZ4 sources are present.")
+    
 import sysconfig
 
 # Define compile arguments
