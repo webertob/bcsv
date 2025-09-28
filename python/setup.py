@@ -150,9 +150,9 @@ lz4_dir = local_include_dir / "lz4-1.10.0"
 source_files = [
     str((current_dir / "pybcsv" / "bindings.cpp").relative_to(current_dir)),
     str((lz4_dir / "lz4.c").relative_to(current_dir)),
-    str((lz4_dir / "lz4hc.c").relative_to(current_dir)),
+    str((lz4_dir / "lz4file.c").relative_to(current_dir)),
     str((lz4_dir / "lz4frame.c").relative_to(current_dir)),
-    str((lz4_dir / "lz4frame_static.c").relative_to(current_dir)),
+    str((lz4_dir / "lz4hc.c").relative_to(current_dir)),
     str((lz4_dir / "xxhash.c").relative_to(current_dir)),
 ]
 
