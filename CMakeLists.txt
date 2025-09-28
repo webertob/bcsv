@@ -160,3 +160,47 @@ endif()
 
 install(TARGETS ${INSTALL_TARGETS} EXPORT bcsvConfig)
 install(EXPORT bcsvConfig DESTINATION lib/cmake/bcsv)
+
+# Build the bcsv C API as a shared library (.dll/.so/.dylib)
+add_library(bcsv_c_api SHARED
+    include/bcsv/c_api.cpp
+    # Add any additional C API source files here
+)
+
+target_include_directories(bcsv_c_api
+    PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+        $<INSTALL_INTERFACE:include>
+)
+
+target_link_libraries(bcsv_c_api
+    PRIVATE
+        ${BOOST_TARGET}
+        ${LZ4_TARGET}
+)
+
+# Platform-specific properties
+if(WIN32)
+    set_target_properties(bcsv_c_api PROPERTIES
+        WINDOWS_EXPORT_ALL_SYMBOLS ON
+        OUTPUT_NAME "bcsv_c_api"
+    )
+elseif(APPLE)
+    set_target_properties(bcsv_c_api PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        OUTPUT_NAME "bcsv_c_api"
+    )
+elseif(UNIX)
+    set_target_properties(bcsv_c_api PROPERTIES
+        POSITION_INDEPENDENT_CODE ON
+        OUTPUT_NAME "bcsv_c_api"
+    )
+endif()
+
+# Install the shared library
+install(TARGETS bcsv_c_api
+    EXPORT bcsvConfig
+    RUNTIME DESTINATION bin
+    LIBRARY DESTINATION lib
+    ARCHIVE DESTINATION lib
+)

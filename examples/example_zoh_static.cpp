@@ -155,7 +155,7 @@ void readStaticBCSV() {
         return;
     }
 
-    if (!reader.layout().isCompatibleWith(layout)) {
+    if (!reader.layout().isCompatible(layout)) {
         std::cerr << "Incompatible layout for reading BCSV file\n";
         return;
     }
@@ -214,7 +214,7 @@ void readZoHStaticBCSV() {
     // Note: FileHeader access is private, so we'll assume ZoH if the file was written with it
     std::cout << "File should use Zero Order Hold compression (as written)\n";
 
-    if (!reader.layout().isCompatibleWith(layout)) {
+    if (!reader.layout().isCompatible(layout)) {
         std::cerr << "Incompatible layout for reading BCSV file\n";
         return;
     }

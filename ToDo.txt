@@ -1,13 +1,14 @@
-Decisions: The file format only supports 8bit/1byt memory alignment. We are not going to change that!
-1. Update Documentation (bcsv general, format, cli tools, pybcsv)
-2. Build a project using bcsv using cpp and python interfaces
+Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment is not considered, as we favor small file size. For temporary data and algorithms, higher-order alignment should be used.
+
+1. Update documentation (bcsv general, format, CLI tools, pybcsv)
+2. Build a project using bcsv with C++ and Python interfaces
 3. Create and test C# wrapper
-5. Improve compression:
-    - implement dictionary compression for strings
-    - implement ZigZag and variable length integer encoding, (also apply to string addresses and rowlength and length)
-    - implement CHIMP/GORILA compression for floats
-    - implement 1st and 2nd order hold schema (mark candidates in layout/header)
-6. Create randomAccess / random/read methods:
+4. Improve compression:
+    - Implement dictionary compression for strings
+    - Implement ZigZag and variable-length integer encoding (also apply to string addresses, row length, and length)
+    - Implement CHIMP/GORILLA compression for floats
+    - Implement first and second order hold schemes (mark candidates in layout/header)
+5. Create random access / random read methods:
     Row row(size_t index) {
         if(index == current_index+1) {
             //fall back to sequential
@@ -17,14 +18,19 @@ Decisions: The file format only supports 8bit/1byt memory alignment. We are not 
         //check if row is in current packet, if not read packet required, build an file wide index if needed
         // use specific heuristics for ZoH, i.e. traverse several rows back and for to avoid complex reads
     }
-    const auto& cell(size_t rowIndex, size_t colIndex) to directly access a cell, use RowView as a lightweight abstraction to avoid full deserilization
-7. Create sampler (select data based on certain conditions)
-    - support c++ interface (iterate over individual rows)
-    - support python interface (iterate over individual rows, and block reads (pandas/numpy))
-8. Add other datatypes (float8_t, float16_t, float_123_t, uint128_t, int128_t, BLOB)
-9. Add concurent compression and writing using double buffering to not block row interface, when a packet needs to be written or read
-10. Investigate stream write/stream read to avoid utilization spikes, that comes with packet based format
-11. Create 3 different bcsv file formats:
-    - packet based format, good compromise on size, sequential and random access speeds, building packets may come with some jitter/spike in utilization, which my be an issue for hard real-tiem system. compaible with all compression and encoding schemas
-    - indexed file format,
-    - stream file format, for hard real-time systems, not compatible with LZ4 compression, aimed on sequential write & read with limited compute requirments
+    const auto& cell(size_t rowIndex, size_t colIndex) // To directly access a cell, use RowView as a lightweight abstraction to avoid full deserialization
+6. Create sampler (select data based on certain conditions)
+    - Support C++ interface (iterate over individual rows)
+    - Support Python interface (iterate over individual rows and block reads (pandas/numpy))
+7. Add other data types (float8_t, float16_t, float_123_t, uint128_t, int128_t, BLOB)
+8. Add concurrent compression and writing using double buffering to avoid blocking the row interface when a packet needs to be written or read
+9. Investigate stream write/stream read to avoid utilization spikes that come with packet-based format
+10. Create three different bcsv file formats:
+    - Packet-based format: good compromise on size, sequential and random access speeds. Building packets may cause some jitter/spikes in utilization, which may be an issue for hard real-time systems. Compatible with all compression and encoding schemes.
+    - Indexed file format: for maximum random access speeds and highest compression levels.
+    - Stream file format: for hard real-time systems, not compatible with LZ4 compression. Aimed at sequential write & read with limited compute requirements.
+11. Add SIMD / vectorized interfaces:
+    Motivation: Reduce the number of calls and limit bound/type checks to a few corner cases
+    - Python: implement get/set functions for numpy
+    - C++: implement std::array, std::vector, std::tuple interfaces
+    - C++: implement Eigen3 types

@@ -152,7 +152,7 @@ void readBCSV() {
         return;
     }
     // Validate layout compatibility (column count, types)
-    if (!reader.layout().isCompatibleWith(layoutExpected)) {
+    if (!reader.layout().isCompatible(layoutExpected)) {
         std::cerr << "Error: File layout is not compatible with expected layout\n";
         reader.close();
         return;
@@ -222,7 +222,7 @@ void readZoHBCSV() {
         return;
     }
     // Validate layout compatibility (column count, types)
-    if (!reader.layout().isCompatibleWith(layoutExpected)) {
+    if (!reader.layout().isCompatible(layoutExpected)) {
         std::cerr << "Error: File layout is not compatible with expected layout\n";
         reader.close();
         return;

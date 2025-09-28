@@ -19,10 +19,8 @@
 #include "reader.h"
 #include "file_header.h"
 #include "layout.h"
-#include "row.h"
+#include "packet_header.h"
 #include <fstream>
-#include <type_traits>
-#include <utility>
 
 namespace bcsv {
 

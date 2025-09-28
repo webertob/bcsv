@@ -89,7 +89,7 @@ void readStaticBCSV() {
         return;
     }
 
-    if (!reader.layout().isCompatibleWith(layout)) {
+    if (!reader.layout().isCompatible(layout)) {
         std::cerr << "Incompatible layout for reading BCSV file\n";
         return;
     }

@@ -55,7 +55,7 @@ namespace bcsv {
         { const_layout.columnOffset(index)              } -> std::convertible_to<size_t>;
         { const_layout.columnType(index)                } -> std::convertible_to<ColumnType>;
         { layout.setColumnName(index, name)             } -> std::same_as<bool>;
-        { const_layout.isCompatibleWith(const_layout)   } -> std::convertible_to<bool>;
+        { const_layout.isCompatible(const_layout)       } -> std::convertible_to<bool>;
         
         // Type information (for static layouts)
         typename T::RowType;  // Each layout must define its row type
@@ -100,7 +100,7 @@ namespace bcsv {
         void setColumns(const std::vector<ColumnDefinition>& columns);
 
         // Compatibility checking
-        bool isCompatibleWith(const Layout& other) const;
+        bool isCompatible(const Layout& other) const;
 
         void clear();
         bool addColumn(const ColumnDefinition& column, size_t position = SIZE_MAX);
@@ -184,7 +184,7 @@ namespace bcsv {
             { other.columnCount() } -> std::convertible_to<size_t>;
             { other.columnType(size_t{}) } -> std::convertible_to<ColumnType>;
         }
-        bool isCompatibleWith(const OtherLayout& other) const;
+        bool isCompatible(const OtherLayout& other) const;
 
         template<typename OtherLayout>
         requires requires(const OtherLayout& other) {

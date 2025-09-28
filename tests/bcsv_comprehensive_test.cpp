@@ -792,7 +792,7 @@ TEST_F(BCSVTestSuite, FlexibleInterface_SequentialRead_DataIntegrity) {
         }
         
         // Validate layout compatibility
-        if (!reader.layout().isCompatibleWith(layout)) {
+        if (!reader.layout().isCompatible(layout)) {
             FAIL() << "File layout is not compatible with expected layout";
         }
         
@@ -863,7 +863,7 @@ TEST_F(BCSVTestSuite, StaticInterface_SequentialRead_DataIntegrity) {
         }
         
         // Validate layout compatibility  
-        if (!reader.layout().isCompatibleWith(layout)) {
+        if (!reader.layout().isCompatible(layout)) {
             FAIL() << "File layout is not compatible with expected layout";
         }
         
@@ -933,7 +933,7 @@ TEST_F(BCSVTestSuite, CrossCompatibility_FlexibleWrite_StaticRead) {
         }
         
         // Validate layout compatibility
-        if (!reader.layout().isCompatibleWith(layout)) {
+        if (!reader.layout().isCompatible(layout)) {
             FAIL() << "File layout is not compatible with expected layout";
         }
         
@@ -988,7 +988,7 @@ TEST_F(BCSVTestSuite, CrossCompatibility_StaticWrite_FlexibleRead) {
         }
         
         // Validate layout compatibility
-        if (!reader.layout().isCompatibleWith(layout)) {
+        if (!reader.layout().isCompatible(layout)) {
             FAIL() << "File layout is not compatible with expected layout";
         }
         
@@ -1112,7 +1112,7 @@ TEST_F(BCSVTestSuite, CRC32_CorruptionDetection) {
         }
         
         // Validate layout compatibility
-        if (!reader.layout().isCompatibleWith(layout)) {
+        if (!reader.layout().isCompatible(layout)) {
             FAIL() << "File layout is not compatible with expected layout";
         }
         
@@ -2318,7 +2318,7 @@ TEST_F(BCSVTestSuite, ZoH_CrossCompatibility_FlexibleToStatic) {
             FAIL() << "Failed to open file for ZoH static read";
         }
         
-        if (!reader.layout().isCompatibleWith(staticLayout)) {
+        if (!reader.layout().isCompatible(staticLayout)) {
             FAIL() << "ZoH file layout not compatible with static layout";
         }
         
@@ -2394,7 +2394,7 @@ TEST_F(BCSVTestSuite, ZoH_CrossCompatibility_StaticToFlexible) {
             FAIL() << "Failed to open file for ZoH flexible read";
         }
         
-        if (!reader.layout().isCompatibleWith(flexLayout)) {
+        if (!reader.layout().isCompatible(flexLayout)) {
             FAIL() << "ZoH file layout not compatible with flexible layout";
         }
         

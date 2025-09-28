@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -60,6 +61,7 @@ namespace bcsv {
         bool                    open(const FilePath& filepath, bool overwrite = false, size_t compressionLevel = 1, FileFlags flags = FileFlags::NONE);
         RowType&                row()                           { return row_; }
         const RowType&          row() const                     { return row_; }
+        size_t                  rowIndex() const                { return row_cnt_; }
         bool                    writeRow();
 
     private:

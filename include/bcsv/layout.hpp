@@ -222,7 +222,7 @@ namespace bcsv {
      * @param other The other layout to check compatibility with
      * @return true if data can be safely transferred between layouts
      */
-    inline bool Layout::isCompatibleWith(const Layout& other) const {
+    inline bool Layout::isCompatible(const Layout& other) const {
         // different column counts means not equivalent
         if (columnCount() != other.columnCount()) {
             return false;
@@ -349,7 +349,7 @@ namespace bcsv {
         { other.columnCount() } -> std::convertible_to<size_t>;
         { other.columnType(size_t{}) } -> std::convertible_to<ColumnType>;
     }
-    inline bool LayoutStatic<ColumnTypes...>::isCompatibleWith(const OtherLayout& other) const {
+    inline bool LayoutStatic<ColumnTypes...>::isCompatible(const OtherLayout& other) const {
         // Check if the number of columns is the same
         if (sizeof...(ColumnTypes) != other.columnCount()) {
             return false;
@@ -372,7 +372,7 @@ namespace bcsv {
         { other.columnType(size_t{}) } -> std::convertible_to<ColumnType>;
     }
     inline LayoutStatic<ColumnTypes...>& LayoutStatic<ColumnTypes...>::operator=(const OtherLayout& other) {
-        if (!this->isCompatibleWith(other)) {
+        if (!this->isCompatible(other)) {
             throw std::runtime_error("Incompatible layout");
         }
         if (this != &other) {
