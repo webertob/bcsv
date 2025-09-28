@@ -2,19 +2,37 @@
     "version": 3,
     "configurePresets": [
         {
-            "name": "default",
-            "displayName": "Default Config",
-            "description": "Default build configuration",
-            "binaryDir": "${sourceDir}/build",
+            "name": "msvc-debug",
+            "displayName": "MSVC Debug (Visual Studio 17 2022)",
+            "generator": "Visual Studio 17 2022",
+            "binaryDir": "${sourceDir}/build/msvc-debug",
+            "cacheVariables": {
+                "CMAKE_GENERATOR_PLATFORM": "x64"
+            }
+        },
+        {
+            "name": "msvc-release",
+            "displayName": "MSVC Release (Visual Studio 17 2022)",
+            "generator": "Visual Studio 17 2022",
+            "binaryDir": "${sourceDir}/build/msvc-release",
+            "cacheVariables": {
+                "CMAKE_GENERATOR_PLATFORM": "x64"
+            }
+        },
+        {
+            "name": "ninja-debug",
+            "displayName": "Ninja Debug",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/ninja-debug",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug"
             }
         },
         {
-            "name": "release",
-            "displayName": "Release Config", 
-            "description": "Release build configuration",
-            "binaryDir": "${sourceDir}/build-release",
+            "name": "ninja-release",
+            "displayName": "Ninja Release",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/ninja-release",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
             }
@@ -22,12 +40,22 @@
     ],
     "buildPresets": [
         {
-            "name": "default",
-            "configurePreset": "default"
+            "name": "msvc-debug-build",
+            "configurePreset": "msvc-debug",
+            "configuration": "Debug"
         },
         {
-            "name": "release",
-            "configurePreset": "release"
+            "name": "msvc-release-build",
+            "configurePreset": "msvc-release",
+            "configuration": "Release"
+        },
+        {
+            "name": "ninja-debug-build",
+            "configurePreset": "ninja-debug"
+        },
+        {
+            "name": "ninja-release-build",
+            "configurePreset": "ninja-release"
         }
     ]
 }

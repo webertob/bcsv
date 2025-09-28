@@ -90,45 +90,55 @@ namespace bcsv {
     }
 
     void Row::set(size_t index, const auto& value) {
+        // Handle the case where ValueType is passed in directly - use recursion to handle ValueType case
+        using ProvidedType = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<ProvidedType, ValueType>) {
+            std::visit([this, index](auto&& v) {
+                using ActualType = std::decay_t<decltype(v)>;
+                this->setExplicit<ActualType>(index, v); // recurse with actual type
+            }, value);
+            return;
+        } else {
+            // fall through to templated version below
+            this->setExplicit<ProvidedType>(index, value);
+            return;
+        }
+    }
 
-        // Range check
+    template<typename T>
+    void Row::setExplicit(size_t index, const T& value) {
+        static_assert(!std::is_same_v<T, ValueType>, "Use non-templated set() when passing ValueType");
         if (RANGE_CHECKING && index >= data_.size()) {
             throw std::out_of_range("Index out of range");
         }
 
-        using ProvidedType = std::decay_t<decltype(value)>;
-
-        // Visitor to handle assignment with type checking and conversion
+        // use visitor pattern to handle assignment with type checking and conversion
         std::visit([this, index, &value](auto&& currentValue) {
             using CurrentType = std::decay_t<decltype(currentValue)>;
-            
-            // Ensure current variant matches layout (should always be true)
-            if (RANGE_CHECKING && toColumnType<CurrentType>() != layout_.columnType(index)) {
-                throw std::runtime_error("Internal error: variant type doesn't match layout");
-            }
-            
-            if constexpr (std::is_same_v<ProvidedType, CurrentType>) {
-                if constexpr (RANGE_CHECKING && std::is_same_v<CurrentType, std::string>) {
-                    if(value.size() > MAX_STRING_LENGTH) {
-                        auto str_view = std::string_view(value).substr(0, MAX_STRING_LENGTH);
-                        if(tracksChanges() && (std::get<CurrentType>(data_[index]) != str_view)) {
-                            changes_[index] = true; // mark this column as changed
-                        }
-                        std::get<std::string>(data_[index]) = str_view;  // Store truncated string
-                        return;
+            assert(toColumnType<CurrentType>() == layout_.columnType(index)); // sanity check
+
+            if constexpr (std::is_same_v<T, CurrentType>) {
+                if constexpr (std::is_same_v<T, std::string>) {
+                    // Special handling for strings: truncate if necessary
+                    std::string_view str_view(value.c_str(), std::min(value.size(), MAX_STRING_LENGTH));
+                    if(tracksChanges() && (currentValue != str_view)) {
+                        changes_[index] = true; // mark this column as changed
                     }
+                    currentValue = str_view;  // Store truncated string
+                } else {
+                    // Direct assignment for other types
+                    if(tracksChanges() && (currentValue != value)) {
+                        changes_[index] = true; // mark this column as changed
+                    }
+                    currentValue = value;  // Direct assignment
                 }
-                if(tracksChanges() && (std::get<CurrentType>(data_[index]) != value)) {
-                    changes_[index] = true; // mark this column as changed
-                }
-                std::get<CurrentType>(data_[index]) = value;  // Direct assignment
-            } else if constexpr (std::is_convertible_v<ProvidedType, CurrentType>) {
+            } else if constexpr (std::is_convertible_v<T, CurrentType>) {
                 if(tracksChanges() && (std::get<CurrentType>(data_[index]) != static_cast<CurrentType>(value))) {
                     changes_[index] = true; // mark this column as changed
                 }
-                std::get<CurrentType>(data_[index]) = static_cast<CurrentType>(value);  // Safe conversion
+                currentValue = static_cast<CurrentType>(value);  // Safe conversion
             } else {
-                throw std::runtime_error("Cannot convert " + std::string(typeid(ProvidedType).name()) + 
+                throw std::runtime_error("Cannot convert " + std::string(typeid(T).name()) + 
                                         " to " + std::string(typeid(CurrentType).name()));
             }
         }, data_[index]);

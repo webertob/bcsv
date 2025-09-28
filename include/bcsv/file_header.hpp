@@ -17,20 +17,19 @@
  * Methods requiring full ColumnLayout definition are in bcsv.hpp.
  */
 
+#include <algorithm>
+
 #include "file_header.h"
 #include "layout.hpp"
-#include <string>
-#include <iostream>
-#include <vector>
-   
+
 namespace bcsv {
 
-    inline FileHeader::FileHeader(size_t columnCount, uint8_t compressionLevel, uint8_t major, uint8_t minor, uint8_t patch) {
+    inline FileHeader::FileHeader(size_t columnCount, size_t compressionLevel, uint8_t major, uint8_t minor, uint8_t patch) {
         header_.magic = BCSV_MAGIC;
         header_.versionMajor = major;
         header_.versionMinor = minor;
         header_.versionPatch = patch;
-        header_.compressionLevel = std::min(compressionLevel, uint8_t(9));
+        header_.compressionLevel = static_cast<uint8_t>( std::min(compressionLevel, size_t(9)) ); // Clamp to 0-9
         header_.flags = 0;             // All flags reserved for future use
         header_.columnCount = static_cast<uint16_t>( std::min(columnCount, MAX_COLUMN_COUNT));
         if (header_.columnCount == MAX_COLUMN_COUNT) {
