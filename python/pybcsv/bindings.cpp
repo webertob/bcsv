@@ -13,8 +13,9 @@
 #include <pybind11/iostream.h>
 #include <algorithm>
 #include <cctype>
-
-#include "bcsv/bcsv.h"
+#include <vector>
+#include <string>
+#include <bcsv/bcsv.h>
 
 namespace py = pybind11;
 

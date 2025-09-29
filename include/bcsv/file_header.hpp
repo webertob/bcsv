@@ -18,9 +18,7 @@
  */
 
 #include <algorithm>
-
 #include "file_header.h"
-#include "layout.hpp"
 
 namespace bcsv {
 

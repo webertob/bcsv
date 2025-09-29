@@ -115,7 +115,7 @@ namespace bcsv {
     // Convert C++ type to ColumnType enum
     template<typename T>
     static constexpr ColumnType toColumnType() {
-             if constexpr (std::is_same_v<T, bool>)     return ColumnType::BOOL;
+        if      constexpr (std::is_same_v<T, bool>)     return ColumnType::BOOL;
         else if constexpr (std::is_same_v<T, int8_t>)   return ColumnType::INT8;
         else if constexpr (std::is_same_v<T, int16_t>)  return ColumnType::INT16;
         else if constexpr (std::is_same_v<T, int32_t>)  return ColumnType::INT32;
@@ -150,7 +150,7 @@ namespace bcsv {
     template<> struct getTypeT< ColumnType::DOUBLE > { using type = double;   };
     template<> struct getTypeT< ColumnType::STRING > { using type = string;   };  
 
-    ColumnType toColumnType(const ValueType& value) {
+    inline ColumnType toColumnType(const ValueType& value) {
         return std::visit([](auto&& arg) -> ColumnType {
             using T = std::decay_t<decltype(arg)>;
             return toColumnType<T>();
@@ -254,7 +254,7 @@ namespace bcsv {
 
     template<typename T>
     constexpr size_t binaryFieldLength() {
-             if constexpr (std::is_same_v<T, bool>    ) return sizeof(bool);
+        if      constexpr (std::is_same_v<T, bool>    ) return sizeof(bool);
         else if constexpr (std::is_same_v<T, uint8_t> ) return sizeof(uint8_t);
         else if constexpr (std::is_same_v<T, uint16_t>) return sizeof(uint16_t);
         else if constexpr (std::is_same_v<T, uint32_t>) return sizeof(uint32_t);
@@ -333,7 +333,7 @@ namespace bcsv {
         }
     } 
 
-    ValueType convertValueType(const ValueType &value, ColumnType targetType) {
+    inline ValueType convertValueType(const ValueType &value, ColumnType targetType) {
         return std::visit([targetType](const auto& v) -> ValueType {
             using SrcType = std::decay_t<decltype(v)>;
             switch (targetType)

@@ -8,10 +8,9 @@
  */
 
 #include <iostream>
-#include <memory>
 #include <iomanip>
 #include <sys/stat.h>
-#include "bcsv/bcsv.h"
+#include <bcsv/bcsv.h>
 
 /**
  * BCSV Zero Order Hold (ZoH) Static Interface Example

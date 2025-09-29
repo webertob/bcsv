@@ -31,7 +31,7 @@ namespace bcsv {
     // Row Implementation
     // ========================================================================
 
-    Row::Row(const Layout &layout)
+    inline Row::Row(const Layout &layout)
         : layout_(layout), data_(layout.columnCount()) 
     {
         for(size_t i = 0; i < layout.columnCount(); ++i) {
@@ -40,7 +40,7 @@ namespace bcsv {
     }
 
     /** Clear the row to its default state (default values) */
-    void Row::clear()
+    inline void Row::clear()
     {
         for(size_t i = 0; i < layout_.columnCount(); ++i) {
             data_[i] = defaultValue(layout_.columnType(i));
@@ -51,8 +51,7 @@ namespace bcsv {
     }
 
     /** Enable or disable change tracking (i.e. used for Zero-Order-Hold compression)*/
-    inline
-    void Row::trackChanges(bool enable)
+    inline void Row::trackChanges(bool enable)
     {
         if(enable == tracksChanges()) {
             return; // no-op if already in desired state
@@ -65,8 +64,7 @@ namespace bcsv {
     }
 
     /** Check if change tracking is enabled */ 
-    inline
-    bool Row::tracksChanges() const
+    inline bool Row::tracksChanges() const
     {
         return !changes_.empty();
     }
@@ -89,7 +87,7 @@ namespace bcsv {
         return data_[index];
     }
 
-    void Row::set(size_t index, const auto& value) {
+    inline void Row::set(size_t index, const auto& value) {
         // Handle the case where ValueType is passed in directly - use recursion to handle ValueType case
         using ProvidedType = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<ProvidedType, ValueType>) {
@@ -144,7 +142,7 @@ namespace bcsv {
         }, data_[index]);
     }
 
-    void Row::serializeTo(ByteBuffer& buffer) const  {
+    inline void Row::serializeTo(ByteBuffer& buffer) const  {
         size_t  offRow = buffer.size(); // offset to the begin of this row (both fixed and variable data)
         size_t  offFix = offRow; // offset to the begin of fixed-size data section (we don't use pointers as they may become invalid after resize)
         size_t  offVar = offRow + layout_.serializedSizeFixed(); //offset to the begin of variable-size data section
@@ -169,7 +167,7 @@ namespace bcsv {
         }
     }
 
-    bool Row::deserializeFrom(const std::span<const std::byte> buffer)
+    inline bool Row::deserializeFrom(const std::span<const std::byte> buffer)
     {
         if (layout_.serializedSizeFixed() > buffer.size()) {
             std::cerr << "Row::deserializeFrom failed as buffer is too short." << std::endl;
@@ -241,7 +239,7 @@ namespace bcsv {
         return true;
     }
 
-    void Row::serializeToZoH(ByteBuffer& buffer) const {
+    inline void Row::serializeToZoH(ByteBuffer& buffer) const {
         assert(tracksChanges() && "Change tracking must be enabled for ZoH serialization");
         if(!hasAnyChanges()) {
             return; // nothing to serialize
@@ -306,7 +304,7 @@ namespace bcsv {
         std::memcpy(buffer.data() + ptrChanges, changes_.data(), changes_.sizeBytes());
     }
 
-    bool Row::deserializeFromZoH(const std::span<const std::byte> buffer) {
+    inline bool Row::deserializeFromZoH(const std::span<const std::byte> buffer) {
         trackChanges(true); // ensure change tracking is enabled
         // We expect the buffer to start with the change bitset, followed by the actual row data
         if (buffer.size() < changes_.sizeBytes()) {
@@ -445,7 +443,7 @@ namespace bcsv {
         }
     }
     
-    void RowView::set(size_t index, const auto& value) 
+    inline void RowView::set(size_t index, const auto& value) 
     {
         //handle valuetype
         if constexpr (std::is_same_v<decltype(value), ValueType>) {
@@ -503,7 +501,7 @@ namespace bcsv {
         }
     }
 
-    Row RowView::toRow() const
+    inline Row RowView::toRow() const
     {
         Row row(layout_);
         for(size_t i = 0; i < layout_.columnCount(); ++i) {
@@ -513,7 +511,7 @@ namespace bcsv {
         return row;
     }
 
-    bool RowView::validate() const 
+    inline bool RowView::validate() const 
     {
         if (layout_.columnCount() == 0) {
             return true; // Nothing to validate

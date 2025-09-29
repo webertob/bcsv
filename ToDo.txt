@@ -1,14 +1,20 @@
 Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment is not considered, as we favor small file size. For temporary data and algorithms, higher-order alignment should be used.
-
-1. Update documentation (bcsv general, format, CLI tools, pybcsv)
+0. Add Apple versions (python packges)
+1. Update documentation (bcsv general, format, CLI tools, pybcsv, fullfill GIT hib community baselines)
 2. Build a project using bcsv with C++ and Python interfaces
 3. Create and test C# wrapper
-4. Improve compression:
+4. Add SIMD / vectorized interfaces:
+    Motivation: Reduce the number of calls and limit bound/type checks to a few corner cases
+    - Python: implement get/set functions for numpy
+    - C++: implement std::array, std::vector, std::tuple interfaces
+    - C++: implement Eigen3 types
+    - C#/Unity: compatibility with componet/job system
+5. Improve compression:
     - Implement dictionary compression for strings
     - Implement ZigZag and variable-length integer encoding (also apply to string addresses, row length, and length)
     - Implement CHIMP/GORILLA compression for floats
     - Implement first and second order hold schemes (mark candidates in layout/header)
-5. Create random access / random read methods:
+6. Create random access / random read methods:
     Row row(size_t index) {
         if(index == current_index+1) {
             //fall back to sequential
@@ -19,18 +25,20 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
         // use specific heuristics for ZoH, i.e. traverse several rows back and for to avoid complex reads
     }
     const auto& cell(size_t rowIndex, size_t colIndex) // To directly access a cell, use RowView as a lightweight abstraction to avoid full deserialization
-6. Create sampler (select data based on certain conditions)
+7. Create sampler (select data based on certain conditions)
     - Support C++ interface (iterate over individual rows)
     - Support Python interface (iterate over individual rows and block reads (pandas/numpy))
-7. Add other data types (float8_t, float16_t, float_123_t, uint128_t, int128_t, BLOB)
-8. Add concurrent compression and writing using double buffering to avoid blocking the row interface when a packet needs to be written or read
-9. Investigate stream write/stream read to avoid utilization spikes that come with packet-based format
-10. Create three different bcsv file formats:
+8. Add other data types (float8_t, float16_t, float_123_t, uint128_t, int128_t, BLOB)
+9. Add concurrent compression and writing using double buffering to avoid blocking the row interface when a packet needs to be written or read
+10. Investigate stream write/stream read to avoid utilization spikes that come with packet-based format
+11. Create three different bcsv file formats:
     - Packet-based format: good compromise on size, sequential and random access speeds. Building packets may cause some jitter/spikes in utilization, which may be an issue for hard real-time systems. Compatible with all compression and encoding schemes.
     - Indexed file format: for maximum random access speeds and highest compression levels.
     - Stream file format: for hard real-time systems, not compatible with LZ4 compression. Aimed at sequential write & read with limited compute requirements.
-11. Add SIMD / vectorized interfaces:
-    Motivation: Reduce the number of calls and limit bound/type checks to a few corner cases
-    - Python: implement get/set functions for numpy
-    - C++: implement std::array, std::vector, std::tuple interfaces
-    - C++: implement Eigen3 types
+12. CLI tools:
+    - bcsv2Parquet
+    - parquet2bcsv
+    - bcsvIndex (creates an indexed file for faster random access)
+    - bcsvSampler (creates an down sampled version, using specific rules provided)
+13. ROS integration (subscribe ROS topics and store to bcsv and reverse)
+14. MQTT integration (read MQTT topics and store to bcsv and reverse)

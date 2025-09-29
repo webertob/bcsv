@@ -9,15 +9,15 @@
 
 #pragma once
 
+#include <type_traits>
+#include <fstream>
+
 /**
  * @file bcsv.hpp
  * @brief Binary CSV (BCSV) Library - Shared implementations and utilities
  * 
  * This file contains implementations that require multiple headers to be included first.
  */
-
-#include "file_header.h"
-#include "layout.h"
 
 namespace bcsv {
     // Type traits to check if StreamType supports file operations
