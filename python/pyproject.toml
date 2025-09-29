@@ -15,7 +15,6 @@ authors = [
 description = "High-performance Python bindings for the BCSV (Binary CSV) library with pandas integration"
 readme = "README.md"
 license = { text = "MIT" }
-license-files = { globs = ["LICENSE"] }
 requires-python = ">=3.8"
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -47,11 +46,11 @@ test = ["pytest>=6.0.0", "pytest-cov"]
 dev = ["pytest>=6.0.0", "pytest-cov", "black", "flake8"]
 
 [project.urls]
-Homepage = "https://github.com/weber-tobias/bcsv"
-Documentation = "https://github.com/weber-tobias/bcsv#readme"
-Repository = "https://github.com/weber-tobias/bcsv"
-"Bug Tracker" = "https://github.com/weber-tobias/bcsv/issues"
-"Source Code" = "https://github.com/weber-tobias/bcsv"
+Homepage = "https://github.com/webertob/bcsv"
+Documentation = "https://github.com/webertob/bcsv#readme"
+Repository = "https://github.com/webertob/bcsv"
+"Bug Tracker" = "https://github.com/webertob/bcsv/issues"
+"Source Code" = "https://github.com/webertob/bcsv"
 
 [tool.setuptools.dynamic]
 version = {attr = "pybcsv.__version__"}
@@ -65,5 +64,6 @@ exclude = ["tests*", "examples*"]
 pybcsv = ["py.typed"]
 
 [tool.setuptools]
+license-files = ["LICENSE"]
 include-package-data = true
 zip-safe = false
