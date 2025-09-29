@@ -26,6 +26,9 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Upgrade setuptools
+        run: python -m pip install --upgrade pip setuptools wheel
+
       - name: Install cibuildwheel
         run: python -m pip install --upgrade pip cibuildwheel==2.23.3
 
@@ -49,6 +52,9 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+
+      - name: Upgrade setuptools
+        run: python -m pip install --upgrade pip setuptools wheel
 
       - name: Install cibuildwheel
         run: python -m pip install --upgrade pip cibuildwheel==2.23.3
