@@ -15,6 +15,7 @@ authors = [
 description = "High-performance Python bindings for the BCSV (Binary CSV) library with pandas integration"
 readme = "README.md"
 license = { text = "MIT" }
+license-files = { globs = ["LICENSE"] }
 requires-python = ">=3.8"
 classifiers = [
     "Development Status :: 4 - Beta",
