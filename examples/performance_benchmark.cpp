@@ -8,13 +8,12 @@
  */
 
 #include <iostream>
-#include <memory>
 #include <vector>
 #include <chrono>
 #include <random>
 #include <iomanip>
 #include <filesystem>
-#include "bcsv/bcsv.h"
+#include <bcsv/bcsv.h>
 
 /**
  * BCSV Performance Benchmark
@@ -154,7 +153,6 @@ public:
         {
             bcsv::Reader<bcsv::Layout> reader;
             reader.open(FLEXIBLE_FILENAME);
-            size_t rowCount = 0;
             
             // Pre-declare variables to avoid repeated construction
             int32_t id;
@@ -183,7 +181,6 @@ public:
                 // Prevent optimization by using the values
                 (void)id; (void)name; (void)score1; (void)score2; 
                 (void)active; (void)timestamp; (void)count; (void)category;
-                ++rowCount;  // Pre-increment is slightly faster
             }
             reader.close();
         }
@@ -250,7 +247,6 @@ public:
         {
             bcsv::Reader<bcsv::Layout> reader;
             reader.open(FLEXIBLE_ZOH_FILENAME);
-            size_t rowCount = 0;
             
             // Pre-declare variables
             int32_t id;
@@ -277,7 +273,6 @@ public:
                 // Prevent optimization
                 (void)id; (void)name; (void)score1; (void)score2; 
                 (void)active; (void)timestamp; (void)count; (void)category;
-                ++rowCount;
             }
             reader.close();
         }
@@ -335,7 +330,6 @@ public:
         {
             bcsv::Reader<BenchmarkLayoutStatic> reader;
             reader.open(STATIC_FILENAME);
-            size_t rowCount = 0;
             
             // Pre-declare variables to avoid repeated construction
             int32_t id;
@@ -364,7 +358,6 @@ public:
                 // Prevent optimization by using the values
                 (void)id; (void)name; (void)score1; (void)score2; 
                 (void)active; (void)timestamp; (void)count; (void)category;
-                ++rowCount;  // Pre-increment is slightly faster
             }
             reader.close();
         }
@@ -426,7 +419,6 @@ public:
         {
             bcsv::Reader<BenchmarkLayoutStatic> reader;
             reader.open(STATIC_ZOH_FILENAME);
-            size_t rowCount = 0;
             
             // Pre-declare variables
             int32_t id;
@@ -453,7 +445,6 @@ public:
                 // Prevent optimization
                 (void)id; (void)name; (void)score1; (void)score2; 
                 (void)active; (void)timestamp; (void)count; (void)category;
-                ++rowCount;
             }
             reader.close();
         }
@@ -695,7 +686,6 @@ public:
             std::string line;
             std::getline(csv, line); // Skip header
             
-            size_t rowCount = 0;
             while (std::getline(csv, line)) {
                 // Simple parsing to simulate data access
                 size_t pos = 0;
@@ -714,7 +704,6 @@ public:
                         volatile double dummy = std::stod(value); (void)dummy;
                     }
                 }
-                ++rowCount;
             }
         }
         auto csvReadEnd = std::chrono::high_resolution_clock::now();
@@ -760,7 +749,6 @@ public:
             bcsv::Reader<bcsv::Layout> reader;
             reader.open(bcsvFilename);
             
-            size_t rowCount = 0;
             while (reader.readNext()) {
                 // Access all fields for fair comparison
                 const auto& row = reader.row();
@@ -775,7 +763,6 @@ public:
                 
                 (void)id; (void)name; (void)score1; (void)score2;
                 (void)active; (void)timestamp; (void)count; (void)category;
-                ++rowCount;
             }
             reader.close();
         }

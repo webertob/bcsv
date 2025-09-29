@@ -10,12 +10,11 @@
 #pragma once
 
 #include "packet_header.h"
-
 #include <boost/crc.hpp>
 
 namespace bcsv {
 
-    bool PacketHeader::read(std::istream& stream)
+    inline bool PacketHeader::read(std::istream& stream)
     {
         if(!stream) {
             return false;
@@ -26,7 +25,7 @@ namespace bcsv {
         return size_ok && valid;
     }
 
-    bool PacketHeader::findAndRead(std::istream& stream)
+    inline bool PacketHeader::findAndRead(std::istream& stream)
     {
         // Search for the magic number in the stream
         char buffer[4];
@@ -58,7 +57,7 @@ namespace bcsv {
         return false; // Magic number not found
     }
 
-    void PacketHeader::updateCRC32(const std::vector<uint16_t>& rowLengths, const ByteBuffer& zipBuffer) {
+    inline void PacketHeader::updateCRC32(const std::vector<uint16_t>& rowLengths, const ByteBuffer& zipBuffer) {
         this->crc32 = 0; // Ensure CRC32 field is zeroed before calculation
 
         // Calculate CRC32 including row offsets and compressed data
@@ -71,7 +70,7 @@ namespace bcsv {
         this->crc32 = crcCalculator.checksum();
     }
 
-    bool PacketHeader::validateCRC32(const std::vector<uint16_t>& rowLengths, const ByteBuffer& zipBuffer) {
+    inline bool PacketHeader::validateCRC32(const std::vector<uint16_t>& rowLengths, const ByteBuffer& zipBuffer) {
         uint32_t originalCRC32 = this->crc32;
         this->crc32 = 0; // Zero out the CRC32 field before calculating
 

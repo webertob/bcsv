@@ -5,6 +5,10 @@
       "-Wall",
       "-Wextra",
       "-Wpedantic",
+      "-I${workspaceFolder}/include",
+      "-I${workspaceFolder}/include/boost-1.89.0",
+      "-I${workspaceFolder}/include/lz4-1.10.0",
+      "-I/usr/include"
     ]
   },
   "Index": {

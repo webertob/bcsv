@@ -12,8 +12,8 @@
 #include <cstdint>
 #include <istream>
 
-#include "definitions.h"
 #include "byte_buffer.h"
+#include "definitions.h"
 
 namespace bcsv {
 
@@ -57,7 +57,8 @@ namespace bcsv {
 
 */
     #pragma pack(push, 1)
-    struct PacketHeader {
+    class PacketHeader {
+    public:
         const uint32_t magic = PCKT_MAGIC; 
         uint32_t payloadSizeZip; // Size of the compressed payload data
         uint64_t rowFirst;       // Index of the first row in the packet

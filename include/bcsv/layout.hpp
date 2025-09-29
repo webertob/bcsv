@@ -17,10 +17,11 @@
  */
 
 #include "layout.h"
-#include "row.h"
 #include <algorithm>
+#include <map>
 #include <stdexcept>
-
+#include <string>
+    
 namespace bcsv {
 
     // ========================================================================

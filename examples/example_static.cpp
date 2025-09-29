@@ -8,9 +8,8 @@
  */
 
 #include <iostream>
-#include <memory>
 #include <iomanip>
-#include "bcsv/bcsv.h"
+#include <bcsv/bcsv.h>
 
 /**
  * BCSV Static Interface Example
