@@ -57,7 +57,7 @@ jobs:
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.2.0
         with:
-          package-dir: ${{ env.PYPROJECT_DIR }}
+          package-dir: ./python
         env:
           CIBW_PLATFORM: ${{ matrix.platform || 'auto' }}
           CIBW_ARCHS: ${{ matrix.archs || 'auto' }}

@@ -29,7 +29,7 @@ jobs:
         run: python -m pip install --upgrade pip
 
       - name: Upgrade setuptools
-        run: python -m pip install --upgrade setuptools=77.0.0 wheel cibuildwheel==3.2.0
+        run: python -m pip install --upgrade setuptools==77.0.0 wheel cibuildwheel==3.2.0
 
       - name: Build manylinux wheels with cibuildwheel (local)
         run: |
@@ -56,7 +56,7 @@ jobs:
         run: python -m pip install --upgrade pip
 
       - name: Upgrade setuptools
-        run: python -m pip install --upgrade setuptools=77.0.0 wheel cibuildwheel==3.2.0
+        run: python -m pip install --upgrade setuptools==77.0.0 wheel cibuildwheel==3.2.0
 
       - name: Build windows wheels with cibuildwheel (local)
         run: |
