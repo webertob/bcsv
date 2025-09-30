@@ -20,16 +20,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up Python 3.12
+      - name: Set up Python 3.13
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: '3.13'
 
       - name: Upgrade pip
         run: python -m pip install --upgrade pip
 
       - name: Upgrade setuptools
-        run: python -m pip install --upgrade setuptools wheel cibuildwheel==3.2.0
+        run: python -m pip install --upgrade setuptools=77.0.0 wheel cibuildwheel==3.2.0
 
       - name: Build manylinux wheels with cibuildwheel (local)
         run: |
@@ -47,16 +47,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Set up Python 3.12
+      - name: Set up Python 3.13
         uses: actions/setup-python@v6
         with:
-          python-version: '3.12'
+          python-version: '3.13'
 
       - name: Upgrade pip
         run: python -m pip install --upgrade pip
 
       - name: Upgrade setuptools
-        run: python -m pip install --upgrade setuptools wheel cibuildwheel==3.2.0
+        run: python -m pip install --upgrade setuptools=77.0.0 wheel cibuildwheel==3.2.0
 
       - name: Build windows wheels with cibuildwheel (local)
         run: |
