@@ -11,7 +11,6 @@ permissions:
 
 env:
   PYPROJECT_DIR: .
-  # Skip PyPy in cibuildwheel to avoid PyPy/pybind11 ABI incompatibilities
   CIBW_SKIP: "pp*"
 
 jobs:
@@ -81,32 +80,39 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: built-wheels-linux
-          path: wheel-artifacts
-        continue-on-error: true
+          path: wheel-artifacts/linux
 
       - name: Download built wheels (Windows)
         uses: actions/download-artifact@v4
         with:
           name: built-wheels-windows
-          path: wheel-artifacts
-        continue-on-error: true
+          path: wheel-artifacts/windows
+
+      - name: Prepare wheels for upload
+        run: |
+          mkdir -p wheel-artifacts/all
+          cp wheel-artifacts/linux/*.whl wheel-artifacts/all/ || true
+          cp wheel-artifacts/windows/*.whl wheel-artifacts/all/ || true
 
       - name: Install twine
         run: python -m pip install --upgrade pip twine
+
+      - name: Verify wheels
+        run: ls -l wheel-artifacts/all
 
       - name: Publish to TestPyPI
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
-        run: python -m twine upload --repository-url https://test.pypi.org/legacy/ wheel-artifacts/*.whl || true
+        run: python -m twine upload --repository-url https://test.pypi.org/legacy/ wheel-artifacts/all/*.whl
 
       - name: Publish to PyPI (if token set)
         env:
           TWINE_USERNAME: __token__
-          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: |
-          if [ -n "${PYPI_API_TOKEN}" ]; then
-            python -m twine upload wheel-artifacts/*.whl || true
+          if [ -n "${TWINE_PASSWORD}" ]; then
+            python -m twine upload wheel-artifacts/all/*.whl
           else
             echo "PYPI_API_TOKEN not set; skipping upload to PyPI"
           fi
@@ -116,17 +122,30 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     steps:
-      - name: Download published wheels
+      - name: Download published wheels (Linux)
         uses: actions/download-artifact@v4
         with:
           name: built-wheels-linux
-          path: wheel-artifacts
+          path: wheel-artifacts/linux
         continue-on-error: true
+
+      - name: Download published wheels (Windows)
+        uses: actions/download-artifact@v4
+        with:
+          name: built-wheels-windows
+          path: wheel-artifacts/windows
+        continue-on-error: true
+
+      - name: Prepare wheels for test
+        run: |
+          mkdir -p wheel-artifacts/all
+          cp wheel-artifacts/linux/*.whl wheel-artifacts/all/ || true
+          cp wheel-artifacts/windows/*.whl wheel-artifacts/all/ || true
 
       - name: Smoke test wheel in clean venv
         run: |
           python -m venv /tmp/venv
           source /tmp/venv/bin/activate
           python -m pip install --upgrade pip
-          pip install wheel-artifacts/*.whl || true
+          pip install wheel-artifacts/all/*.whl
           python -c "import pybcsv; print('pybcsv ok', pybcsv.__version__)"
