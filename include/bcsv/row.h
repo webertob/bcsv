@@ -442,8 +442,6 @@ namespace bcsv {
         bool                    deserializeFromZoH(const std::span<const std::byte> buffer);
     };
 
-
-
     /* Direct view into a buffer. Supports Row interface */
     class RowView {
         Layout                          layout_;
@@ -516,10 +514,14 @@ namespace bcsv {
         const auto&                 get() const;
                                     template<size_t Index = 0>
         ValueType                   get(size_t index) const;
-                                    template<size_t Index = 0>
-        void                        set(size_t index, const auto& value);
+                                    template<size_t Index = 0, typename T>
+        void                        set(size_t index, const T& value);
+                                    template<size_t Index, typename T>
+        void                        set(const T& value);
                                     template<size_t Index>
-        void                        set(const auto& value);
+        void                        set(const ValueType& value);
+                                    template<size_t Index>
+        void                        set(const std::string& value);
 
         void                        serializeTo(ByteBuffer& buffer) const;
         void                        serializeToZoH(ByteBuffer& buffer) const;
@@ -529,9 +531,6 @@ namespace bcsv {
     private:
                                     template<size_t Index>
         void                        clearHelper();
-
-                                    template<size_t Index, typename T>
-        void                        markChangedAndSet(const T& value);
 
                                     template<size_t Index>
         void                        serializeElements(ByteBuffer& buffer, const size_t& offRow, size_t& offVar) const;

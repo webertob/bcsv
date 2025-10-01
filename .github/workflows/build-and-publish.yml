@@ -123,6 +123,7 @@ jobs:
       - name: Build macOS wheels
         env:
           CIBW_ARCHS_MACOS: ${{ matrix.arch }}
+          MACOSX_DEPLOYMENT_TARGET: "10.15"
         run: |
           python -m cibuildwheel python --output-dir dist
 
