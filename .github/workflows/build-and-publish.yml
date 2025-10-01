@@ -1,4 +1,4 @@
-name: Build and publish wheels (manylinux & Windows)
+name: Build and publish wheels (Linux, Windows, macOS)
 
 on:
   push:
@@ -11,14 +11,23 @@ permissions:
 
 env:
   PYPROJECT_DIR: "python"
-  CIBW_SKIP: "pp*"
+  CIBW_SKIP: "pp*"  # Skip PyPy builds
 
 jobs:
   build-linux:
-    name: Build Linux (manylinux)
+    name: Build Linux wheels (${{ matrix.arch }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v5
+
+      - name: Set up QEMU for multi-arch builds
+        if: matrix.arch == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Set up Python 3.13
         uses: actions/setup-python@v6
@@ -35,19 +44,24 @@ jobs:
         run: |
           rm -rf python/dist python/build python/*.egg-info python/pybcsv.egg-info
 
-      - name: Build manylinux wheels with cibuildwheel (local)
+      - name: Build manylinux and musllinux wheels
+        env:
+          CIBW_ARCHS_LINUX: ${{ matrix.arch }}
         run: |
           python -m cibuildwheel python --output-dir dist
 
       - name: Upload Linux wheels
         uses: actions/upload-artifact@v4
         with:
-          name: built-wheels-linux
+          name: built-wheels-linux-${{ matrix.arch }}
           path: dist/*.whl
 
   build-windows:
-    name: Build Windows wheels
+    name: Build Windows wheels (${{ matrix.arch }})
     runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [AMD64, x86, ARM64]
     steps:
       - uses: actions/checkout@v5
 
@@ -66,41 +80,77 @@ jobs:
         run: |
           Remove-Item -Path python/dist,python/build,python/*.egg-info,python/pybcsv.egg-info -Recurse -Force -ErrorAction SilentlyContinue
 
-      - name: Build windows wheels with cibuildwheel (local)
+      - name: Build Windows wheels
+        env:
+          CIBW_ARCHS_WINDOWS: ${{ matrix.arch }}
         run: |
           python -m cibuildwheel python --output-dir dist
 
       - name: Upload Windows wheels
         uses: actions/upload-artifact@v4
         with:
-          name: built-wheels-windows
+          name: built-wheels-windows-${{ matrix.arch }}
+          path: dist/*.whl
+
+  build-macos:
+    name: Build macOS wheels (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-13      # Intel x86_64
+            arch: x86_64
+          - os: macos-14      # Apple Silicon arm64
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Upgrade setuptools
+        run: python -m pip install --upgrade setuptools==77.0.3 wheel cibuildwheel==3.2.0
+
+      - name: Clean build artifacts
+        run: |
+          rm -rf python/dist python/build python/*.egg-info python/pybcsv.egg-info
+
+      - name: Build macOS wheels
+        env:
+          CIBW_ARCHS_MACOS: ${{ matrix.arch }}
+        run: |
+          python -m cibuildwheel python --output-dir dist
+
+      - name: Upload macOS wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: built-wheels-macos-${{ matrix.arch }}
           path: dist/*.whl
 
   publish:
     name: Publish to TestPyPI (and PyPI when token present)
-    needs: [build-linux, build-windows]
+    needs: [build-linux, build-windows, build-macos]
     runs-on: ubuntu-latest
     # if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/release/master')
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download built wheels (Linux)
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          name: built-wheels-linux
-          path: wheel-artifacts/linux
-
-      - name: Download built wheels (Windows)
-        uses: actions/download-artifact@v4
-        with:
-          name: built-wheels-windows
-          path: wheel-artifacts/windows
+          path: wheel-artifacts
+          pattern: built-wheels-*
+          merge-multiple: false
 
       - name: Prepare wheels for upload
         run: |
           mkdir -p wheel-artifacts/all
-          cp wheel-artifacts/linux/*.whl wheel-artifacts/all/ || true
-          cp wheel-artifacts/windows/*.whl wheel-artifacts/all/ || true
+          find wheel-artifacts -name "*.whl" -exec cp {} wheel-artifacts/all/ \;
 
       - name: Install twine
         run: python -m pip install --upgrade pip twine
@@ -130,30 +180,23 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     steps:
-      - name: Download published wheels (Linux)
+      - name: Download all built wheels
         uses: actions/download-artifact@v4
         with:
-          name: built-wheels-linux
-          path: wheel-artifacts/linux
-        continue-on-error: true
-
-      - name: Download published wheels (Windows)
-        uses: actions/download-artifact@v4
-        with:
-          name: built-wheels-windows
-          path: wheel-artifacts/windows
+          path: wheel-artifacts
+          pattern: built-wheels-*
+          merge-multiple: false
         continue-on-error: true
 
       - name: Prepare wheels for test
         run: |
           mkdir -p wheel-artifacts/all
-          cp wheel-artifacts/linux/*.whl wheel-artifacts/all/ || true
-          cp wheel-artifacts/windows/*.whl wheel-artifacts/all/ || true
+          find wheel-artifacts -name "*.whl" -exec cp {} wheel-artifacts/all/ \;
 
       - name: Smoke test wheel in clean venv
         run: |
           python -m venv /tmp/venv
           source /tmp/venv/bin/activate
           python -m pip install --upgrade pip
-          pip install wheel-artifacts/all/*.whl
+          pip install pybcsv --find-links=wheel-artifacts/all --no-index
           python -c "import pybcsv; print('pybcsv ok', pybcsv.__version__)"

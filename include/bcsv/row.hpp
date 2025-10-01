@@ -20,6 +20,7 @@
 #include "layout.h"
 #include "byte_buffer.h"
 #include <cstring>
+#include <string>
 #include <cassert>
 #include <variant>
 #include <iostream>
@@ -87,60 +88,52 @@ namespace bcsv {
         return data_[index];
     }
 
-    inline void Row::set(size_t index, const auto& value) {
-        // Handle the case where ValueType is passed in directly - use recursion to handle ValueType case
-        using ProvidedType = std::decay_t<decltype(value)>;
-        if constexpr (std::is_same_v<ProvidedType, ValueType>) {
-            std::visit([this, index](auto&& v) {
-                using ActualType = std::decay_t<decltype(v)>;
-                this->setExplicit<ActualType>(index, v); // recurse with actual type
-            }, value);
-            return;
-        } else {
-            // fall through to templated version below
-            this->setExplicit<ProvidedType>(index, value);
-            return;
-        }
-    }
-
     template<typename T>
-    void Row::setExplicit(size_t index, const T& value) {
-        static_assert(!std::is_same_v<T, ValueType>, "Use non-templated set() when passing ValueType");
-        if (RANGE_CHECKING && index >= data_.size()) {
+    void Row::set(size_t index, const T& value) {
+        // we know have a concrete type T here
+        if (RANGE_CHECKING && index >= layout_.columnCount()) {
             throw std::out_of_range("Index out of range");
         }
-
         // use visitor pattern to handle assignment with type checking and conversion
-        std::visit([this, index, &value](auto&& currentValue) {
-            using CurrentType = std::decay_t<decltype(currentValue)>;
-            assert(toColumnType<CurrentType>() == layout_.columnType(index)); // sanity check
-
-            if constexpr (std::is_same_v<T, CurrentType>) {
-                if constexpr (std::is_same_v<T, std::string>) {
-                    // Special handling for strings: truncate if necessary
-                    std::string_view str_view(value.c_str(), std::min(value.size(), MAX_STRING_LENGTH));
-                    if(tracksChanges() && (currentValue != str_view)) {
-                        changes_[index] = true; // mark this column as changed
-                    }
-                    currentValue = str_view;  // Store truncated string
-                } else {
-                    // Direct assignment for other types
-                    if(tracksChanges() && (currentValue != value)) {
-                        changes_[index] = true; // mark this column as changed
-                    }
-                    currentValue = value;  // Direct assignment
-                }
-            } else if constexpr (std::is_convertible_v<T, CurrentType>) {
-                if(tracksChanges() && (std::get<CurrentType>(data_[index]) != static_cast<CurrentType>(value))) {
+        std::visit([this, index, &value](auto&& data) {
+            using DataType = std::decay_t<decltype(data)>;
+            assert(toColumnType<DataType>() == layout_.columnType(index)); // sanity check
+            if constexpr (std::is_same_v<T, DataType> || std::is_convertible_v<T, DataType>) {
+                if(tracksChanges() && (data != static_cast<DataType>(value))) {
                     changes_[index] = true; // mark this column as changed
                 }
-                currentValue = static_cast<CurrentType>(value);  // Safe conversion
+                data = static_cast<DataType>(value);  // Safe conversion
             } else {
                 throw std::runtime_error("Cannot convert " + std::string(typeid(T).name()) + 
-                                        " to " + std::string(typeid(CurrentType).name()));
+                                        " to " + std::string(typeid(DataType).name()));
             }
         }, data_[index]);
     }
+
+    template<>
+    void Row::set<ValueType>(size_t index, const ValueType& value) {
+        // Determine actual type and use that type in a recursive call
+        std::visit([this, index](auto&& v) {
+            using ActualType = std::decay_t<decltype(v)>;
+            this->set<ActualType>(index, v); 
+        }, value);
+    }
+
+    template<>
+    void Row::set<std::string>(size_t index, const std::string& value) {
+        if (RANGE_CHECKING && index >= layout_.columnCount()) {
+            throw std::out_of_range("Index out of range");
+        }
+
+        // sanity checks
+        assert(layout_.columnType(index) == ColumnType::STRING);
+        if(tracksChanges() && (std::get<std::string>(data_[index]) != value)) {
+            changes_.set(index);
+        }
+        std::get<std::string>(data_[index]).assign(value.c_str(), std::min(value.size(), MAX_STRING_LENGTH));
+    }
+
+
 
     inline void Row::serializeTo(ByteBuffer& buffer) const  {
         size_t  offRow = buffer.size(); // offset to the begin of this row (both fixed and variable data)
