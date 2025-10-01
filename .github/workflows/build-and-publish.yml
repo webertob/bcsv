@@ -12,11 +12,14 @@ permissions:
 env:
   PYPROJECT_DIR: "python"
   CIBW_SKIP: "pp*"  # Skip PyPy builds
+  # Note: ARM (aarch64) builds are slow via QEMU emulation (~45-60 min per build)
+  # To skip ARM builds temporarily, change matrix.arch to: [x86_64]
 
 jobs:
   build-linux:
     name: Build Linux wheels (${{ matrix.arch }})
     runs-on: ubuntu-latest
+    timeout-minutes: 120  # ARM builds via QEMU are slow, allow 2 hours
     strategy:
       matrix:
         arch: [x86_64, aarch64]
