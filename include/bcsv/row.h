@@ -433,6 +433,7 @@ namespace bcsv {
 
                                 template<typename T = ValueType>
         const T&                get(size_t index) const;
+        
         void                    set(size_t index, const auto& value);
                                 template<typename T>
         void                    setExplicit(size_t index, const T& value);
