@@ -1,6 +1,7 @@
 [build-system]
 requires = [
     "setuptools>=77.0.3",
+    "setuptools-scm>=8.0",
     "wheel",
     "pybind11>=2.10.0",
     "numpy>=1.19.0",
@@ -39,6 +40,11 @@ dependencies = [
 ]
 dynamic = ["version"]
 
+[tool.setuptools_scm]
+root = ".."
+version_file = "pybcsv/_version.py"
+tag_regex = "^v(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+)$"
+
 [project.optional-dependencies]
 pandas = ["pandas>=1.0.0"]
 test = ["pytest>=6.0.0", "pytest-cov"]
@@ -50,9 +56,6 @@ Documentation = "https://github.com/weber-tobias/bcsv#readme"
 Repository = "https://github.com/weber-tobias/bcsv"
 "Bug Tracker" = "https://github.com/weber-tobias/bcsv/issues"
 "Source Code" = "https://github.com/weber-tobias/bcsv"
-
-[tool.setuptools.dynamic]
-version = {attr = "pybcsv.__version__"}
 
 [tool.setuptools.packages.find]
 where = ["."]

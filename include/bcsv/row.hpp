@@ -79,6 +79,7 @@ namespace bcsv {
         }
         return std::get<T>(data_[index]);
     }
+   
 
     /** Get the value at the specified column index */
     template<>
@@ -87,6 +88,21 @@ namespace bcsv {
             return data_.at(index); // Will throw
         }
         return data_[index];
+    }
+
+    /** Vectorized access to multiple columns of same type */
+    template<typename T>
+    void Row::get(size_t index, T* dst, size_t length) const
+    {
+        if (RANGE_CHECKING) {
+            if (index + length > layout_.columnCount()) {
+                throw std::out_of_range("Index out of range");
+            }
+        }
+
+        for (size_t i = 0; i < length; ++i) {
+            dst[i] = std::get<T>(data_[index + i]);
+        }
     }
 
     template<>
@@ -128,10 +144,36 @@ namespace bcsv {
                 }
                 data = static_cast<DataType>(value);  // Safe conversion
             } else {
-                throw std::runtime_error("Cannot convert " + std::string(typeid(T).name()) + 
-                                        " to " + std::string(typeid(DataType).name()));
+                throw std::runtime_error("Cannot convert " + std::string(typeid(T).name()) + " to " + std::string(typeid(DataType).name()));
             }
         }, data_[index]);
+    }
+
+    /** Vectorized set of multiple columns of same type */
+    template<typename T>
+    void Row::set(size_t index, const T* src, size_t length)
+    {
+        if (RANGE_CHECKING) {
+            if (index + length > layout_.columnCount()) {
+                throw std::out_of_range("Index out of range");
+            }
+        }
+
+        for (size_t i = 0; i < length; ++i) {
+            size_t idx = index + i;
+            std::visit([this, i, idx, src](auto&& data) {
+                using DataType = std::decay_t<decltype(data)>;
+                assert(toColumnType<DataType>() == layout_.columnType(idx)); // sanity check
+                if constexpr (std::is_same_v<T, DataType> || std::is_convertible_v<T, DataType>) {
+                    if(tracksChanges() && (data != static_cast<DataType>(src[i]))) {
+                        changes_[idx] = true; // mark this column as changed
+                    }
+                    data = static_cast<DataType>(src[i]);  // Safe conversion
+                } else {
+                    throw std::runtime_error("Cannot convert " + std::string(typeid(T).name()) + " to " + std::string(typeid(DataType).name()));
+                }
+            }, data_[idx]);
+        }
     }
 
     inline void Row::serializeTo(ByteBuffer& buffer) const  {

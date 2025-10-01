@@ -18,6 +18,9 @@
 #include <limits>
 #include "string_addr.h"
 
+// Include auto-generated version information
+#include "version_generated.h"
+
 namespace bcsv {
     
     // Configuration
@@ -27,15 +30,13 @@ namespace bcsv {
     template<typename T>
     constexpr bool always_false = false;
 
-    // Version information
-    constexpr int VERSION_MAJOR = 1;
-    constexpr int VERSION_MINOR = 0;
-    constexpr int VERSION_PATCH = 0;
+    // Version information (from auto-generated header)
+    constexpr int VERSION_MAJOR = version::MAJOR;
+    constexpr int VERSION_MINOR = version::MINOR;
+    constexpr int VERSION_PATCH = version::PATCH;
     
     inline std::string getVersion() {
-        return std::to_string(VERSION_MAJOR) + "." + 
-               std::to_string(VERSION_MINOR) + "." + 
-               std::to_string(VERSION_PATCH);
+        return version::STRING;
     }
 
     // Constants for the binary file format

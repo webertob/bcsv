@@ -434,7 +434,11 @@ namespace bcsv {
                                 template<typename T = ValueType>
         const T&                get(size_t index) const;
                                 template<typename T>
+        void                    get(size_t index, T* dst, size_t length) const;
+                                template<typename T>
         void                    set(size_t index, const T& value);
+                                template<typename T>
+        void                    set(size_t index, const T* src, size_t length); // for array types 
 
         void                    serializeTo(ByteBuffer& buffer) const;
         void                    serializeToZoH(ByteBuffer& buffer) const;
@@ -442,7 +446,10 @@ namespace bcsv {
         bool                    deserializeFromZoH(const std::span<const std::byte> buffer);
     };
 
-    /* Direct view into a buffer. Supports Row interface */
+    /* Provides a direct view into a buffer, to allow access with partial serialization/deserialization efforts to accelerate sparse data access. Supports Row interface */
+    // Note: Does not support change tracking, yet.
+    // Note: set and get functions should be modified to follow Row interface semantics (avoid auto types, use templates & template specializations)
+    // Note: not fully implemented nor tested! 
     class RowView {
         Layout                          layout_;
         std::span<std::byte>            buffer_;
@@ -549,7 +556,10 @@ namespace bcsv {
     };
 
 
-    /* View into a buffer. Supports RowStatic interface */
+    /* Provides a direct view into a buffer, to allow access with partial serialization/deserialization efforts to accelerate sparse data access. Supports RowStatic interface */
+    // Note: Does not support change tracking, yet.
+    // Note: set and get functions should be modified to follow Row interface semantics (avoid auto types, use templates & template specializations)
+    // Note: not fully implemented nor tested! 
     template<typename... ColumnTypes>
     class RowViewStatic {
     public:

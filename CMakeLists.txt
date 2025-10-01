@@ -6,7 +6,12 @@
 # for full license information.
 
 cmake_minimum_required(VERSION 3.28)
-project(bcsv VERSION 1.0.0 LANGUAGES CXX C)
+
+# Extract version from Git tags before project() call
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(GetGitVersion)
+
+project(bcsv VERSION ${VERSION_STRING} LANGUAGES CXX C)
 
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 20)

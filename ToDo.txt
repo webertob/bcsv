@@ -1,13 +1,13 @@
 Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment is not considered, as we favor small file size. For temporary data and algorithms, higher-order alignment should be used.
-0. Add Apple versions (python packages), Refactor RowStatic set functions to use template and template specialization instead of auto. Avoid setExplicit functions on Row* classes
 1. Update documentation (bcsv general, format, CLI tools, pybcsv, fullfill GIT hib community baselines)
 2. Build a project using bcsv with C++ and Python interfaces
 3. Create and test C# wrapper
 4. Add SIMD / vectorized interfaces:
     Motivation: Reduce the number of calls and limit bound/type checks to a few corner cases
+    Constrain: Limit to same type scalar data, to avoid "bloat" 
+    - C++: implement std::array, std::vector, std::tuple interfaces and Eigen3 types, try to define general/fleixble interface i.e. set(size_t index, const T* values, size_t len)
     - Python: implement get/set functions for numpy
-    - C++: implement std::array, std::vector, std::tuple interfaces
-    - C++: implement Eigen3 types
+    
     - C#/Unity: compatibility with componet/job system
 5. Improve compression:
     - Implement dictionary compression for strings

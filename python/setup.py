@@ -229,7 +229,8 @@ if __name__ == "__main__":
         print("  ", d)
     setup(
         name="pybcsv",
-        version=get_version(),
+        # Version is now automatically managed by setuptools-scm from Git tags
+        # See [tool.setuptools_scm] in pyproject.toml
         author="Tobias Weber",
         author_email="weber.tobias.md@gmail.com",
         description="Python bindings for the high-performance BCSV (Binary CSV) library",
