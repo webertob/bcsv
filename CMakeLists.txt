@@ -13,6 +13,13 @@ include(GetGitVersion)
 
 project(bcsv VERSION ${VERSION_STRING} LANGUAGES CXX C)
 
+# Generate version header from template
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.h.in"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/bcsv/version_generated.h"
+    @ONLY
+)
+
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
