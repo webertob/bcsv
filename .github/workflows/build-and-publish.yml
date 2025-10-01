@@ -22,6 +22,8 @@ jobs:
         arch: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # Fetch all history and tags for setuptools-scm
 
       - name: Set up QEMU for multi-arch builds
         if: matrix.arch == 'aarch64'
@@ -64,6 +66,8 @@ jobs:
         arch: [AMD64, x86, ARM64]
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # Fetch all history and tags for setuptools-scm
 
       - name: Set up Python 3.13
         uses: actions/setup-python@v6
@@ -104,6 +108,8 @@ jobs:
             arch: arm64
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0  # Fetch all history and tags for setuptools-scm
 
       - name: Set up Python 3.13
         uses: actions/setup-python@v6
