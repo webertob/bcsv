@@ -211,5 +211,5 @@ jobs:
           python -m venv /tmp/venv
           source /tmp/venv/bin/activate
           python -m pip install --upgrade pip
-          pip install pybcsv --find-links=wheel-artifacts/all --no-index
+          pip install pybcsv --find-links=wheel-artifacts/all
           python -c "import pybcsv; print('pybcsv ok', pybcsv.__version__)"
