@@ -3,6 +3,8 @@ name: Build and publish wheels (Linux, Windows, macOS)
 on:
   push:
     branches: [ main, master, release ]
+    tags:
+      - 'v*'  # Trigger on version tags (v1.0.0, v1.0.1, etc.)
   workflow_dispatch:
 
 permissions:
