@@ -94,7 +94,7 @@ bool bcsv_reader_is_open(const_bcsv_reader_t reader) {
 }
 
 const char* bcsv_reader_filename(const_bcsv_reader_t reader) {
-    return static_cast<const bcsv::Reader<bcsv::Layout>*>(reader)->filePath().c_str();
+    return static_cast<const bcsv::Reader<bcsv::Layout>*>(reader)->filePath().string().c_str();
 }
 
 const_bcsv_layout_t bcsv_reader_layout(const_bcsv_reader_t reader) {
@@ -142,7 +142,7 @@ bool bcsv_writer_is_open(const_bcsv_writer_t writer) {
 }
 
 const char* bcsv_writer_filename(const_bcsv_writer_t writer) {
-    return static_cast<const bcsv::Writer<bcsv::Layout>*>(writer)->filePath().c_str();
+    return static_cast<const bcsv::Writer<bcsv::Layout>*>(writer)->filePath().string().c_str();
 }
 
 const_bcsv_layout_t bcsv_writer_layout(const_bcsv_writer_t writer) {
