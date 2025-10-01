@@ -31,6 +31,10 @@ jobs:
       - name: Upgrade setuptools
         run: python -m pip install --upgrade setuptools==77.0.3 wheel cibuildwheel==3.2.0
 
+      - name: Clean build artifacts
+        run: |
+          rm -rf python/dist python/build python/*.egg-info python/pybcsv.egg-info
+
       - name: Build manylinux wheels with cibuildwheel (local)
         run: |
           python -m cibuildwheel python --output-dir dist
@@ -57,6 +61,10 @@ jobs:
 
       - name: Upgrade setuptools
         run: python -m pip install --upgrade setuptools==77.0.3 wheel cibuildwheel==3.2.0
+
+      - name: Clean build artifacts
+        run: |
+          Remove-Item -Path python/dist,python/build,python/*.egg-info,python/pybcsv.egg-info -Recurse -Force -ErrorAction SilentlyContinue
 
       - name: Build windows wheels with cibuildwheel (local)
         run: |
