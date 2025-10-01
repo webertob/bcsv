@@ -1,7 +1,6 @@
 #ifndef BCSV_C_API_H
 #define BCSV_C_API_H
 
-#include <cstdint>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h> // for size_t
@@ -112,6 +111,8 @@ size_t              bcsv_writer_index   (const_bcsv_writer_t writer);      // re
 
 // Row API - Start
 // These operate on the row reference, no deep copy
+
+// Single value access
 const_bcsv_layout_t bcsv_row_layout     (const_bcsv_row_t row);                // returns layout of the row
 bool                bcsv_row_get_bool   (const_bcsv_row_t row, int col);
 uint8_t             bcsv_row_get_uint8  (const_bcsv_row_t row, int col);
@@ -137,6 +138,34 @@ void                bcsv_row_set_int64  (bcsv_row_t row, int col, int64_t     va
 void                bcsv_row_set_float  (bcsv_row_t row, int col, float       value);
 void                bcsv_row_set_double (bcsv_row_t row, int col, double      value);
 void                bcsv_row_set_string (bcsv_row_t row, int col, const char* value);
+
+// Vectorized access - bulk get/set multiple consecutive columns
+// These functions provide efficient bulk access to multiple consecutive columns of the same type
+// dst/src: pointer to array buffer
+// start_col: starting column index (0-based)
+// count: number of consecutive columns to read/write
+void                bcsv_row_get_bool_array   (const_bcsv_row_t row, int start_col, bool*     dst, size_t count);
+void                bcsv_row_get_uint8_array  (const_bcsv_row_t row, int start_col, uint8_t*  dst, size_t count);
+void                bcsv_row_get_uint16_array (const_bcsv_row_t row, int start_col, uint16_t* dst, size_t count);
+void                bcsv_row_get_uint32_array (const_bcsv_row_t row, int start_col, uint32_t* dst, size_t count);
+void                bcsv_row_get_uint64_array (const_bcsv_row_t row, int start_col, uint64_t* dst, size_t count);
+void                bcsv_row_get_int8_array   (const_bcsv_row_t row, int start_col, int8_t*   dst, size_t count);
+void                bcsv_row_get_int16_array  (const_bcsv_row_t row, int start_col, int16_t*  dst, size_t count);
+void                bcsv_row_get_int32_array  (const_bcsv_row_t row, int start_col, int32_t*  dst, size_t count);
+void                bcsv_row_get_int64_array  (const_bcsv_row_t row, int start_col, int64_t*  dst, size_t count);
+void                bcsv_row_get_float_array  (const_bcsv_row_t row, int start_col, float*    dst, size_t count);
+void                bcsv_row_get_double_array (const_bcsv_row_t row, int start_col, double*   dst, size_t count);
+void                bcsv_row_set_bool_array   (bcsv_row_t row, int start_col, const bool*     src, size_t count);
+void                bcsv_row_set_uint8_array  (bcsv_row_t row, int start_col, const uint8_t*  src, size_t count);
+void                bcsv_row_set_uint16_array (bcsv_row_t row, int start_col, const uint16_t* src, size_t count);
+void                bcsv_row_set_uint32_array (bcsv_row_t row, int start_col, const uint32_t* src, size_t count);
+void                bcsv_row_set_uint64_array (bcsv_row_t row, int start_col, const uint64_t* src, size_t count);
+void                bcsv_row_set_int8_array   (bcsv_row_t row, int start_col, const int8_t*   src, size_t count);
+void                bcsv_row_set_int16_array  (bcsv_row_t row, int start_col, const int16_t*  src, size_t count);
+void                bcsv_row_set_int32_array  (bcsv_row_t row, int start_col, const int32_t*  src, size_t count);
+void                bcsv_row_set_int64_array  (bcsv_row_t row, int start_col, const int64_t*  src, size_t count);
+void                bcsv_row_set_float_array  (bcsv_row_t row, int start_col, const float*    src, size_t count);
+void                bcsv_row_set_double_array (bcsv_row_t row, int start_col, const double*   src, size_t count);
 // Row API - End
 
 const char*         bcsv_last_error();

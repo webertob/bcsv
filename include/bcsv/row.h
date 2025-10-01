@@ -424,18 +424,21 @@ namespace bcsv {
         ~Row() = default;
 
         void                    clear(); 
-        const Layout&           layout() const                  { return layout_; }
-        bool                    hasAnyChanges() const           { return tracksChanges() && changes_.any(); }
+        const Layout&           layout() const                                  { return layout_; }
+        bool                    hasAnyChanges() const                           { return tracksChanges() && changes_.any(); }
         void                    trackChanges(bool enable);      
         bool                    tracksChanges() const;
-        void                    setChanges()                    { changes_.set(); } // mark everything as changed
-        void                    resetChanges()                  { changes_.reset(); } // mark everything as unchanged
+        void                    setChanges()                                    { changes_.set(); } // mark everything as changed
+        void                    resetChanges()                                  { changes_.reset(); } // mark everything as unchanged
 
                                 template<typename T = ValueType>
         const T&                get(size_t index) const;
-        void                    set(size_t index, const auto& value);
                                 template<typename T>
-        void                    setExplicit(size_t index, const T& value);
+        void                    get(size_t index, std::span<T> dst) const;
+                                template<typename T>
+        void                    set(size_t index, const T& value);
+                                template<typename T>
+        void                    set(size_t index, std::span<const T> src);
 
         void                    serializeTo(ByteBuffer& buffer) const;
         void                    serializeToZoH(ByteBuffer& buffer) const;
@@ -443,9 +446,10 @@ namespace bcsv {
         bool                    deserializeFromZoH(const std::span<const std::byte> buffer);
     };
 
-
-
-    /* Direct view into a buffer. Supports Row interface */
+    /* Provides a direct view into a buffer, to allow access with partial serialization/deserialization efforts to accelerate sparse data access. Supports Row interface */
+    // Note: Does not support change tracking, yet.
+    // Note: set and get functions should be modified to follow Row interface semantics (avoid auto types, use templates & template specializations)
+    // Note: not fully implemented nor tested! 
     class RowView {
         Layout                          layout_;
         std::span<std::byte>            buffer_;
@@ -517,10 +521,26 @@ namespace bcsv {
         const auto&                 get() const;
                                     template<size_t Index = 0>
         ValueType                   get(size_t index) const;
-                                    template<size_t Index = 0>
-        void                        set(size_t index, const auto& value);
+                                    template<size_t Index = 0, typename T>
+        void                        set(size_t index, const T& value);
+                                    template<size_t Index, typename T>
+        void                        set(const T& value);
                                     template<size_t Index>
-        void                        set(const auto& value);
+        void                        set(const ValueType& value);
+                                    template<size_t Index>
+        void                        set(const std::string& value);
+
+        // Vectorized access - compile-time indexed
+                                    template<size_t Index, typename T, size_t Count, size_t Recursion = 0>
+        void                        get(std::span<T, Count> dst) const;
+                                    template<size_t Index, typename T, size_t Count, size_t Recursion = 0>
+        void                        set(std::span<const T, Count> src);
+
+        // Vectorized access - runtime indexed
+                                    template<typename T, size_t Index = 0>
+        void                        get(size_t index, std::span<T> dst) const;
+                                    template<typename T, size_t Index = 0>
+        void                        set(size_t index, std::span<const T> src);
 
         void                        serializeTo(ByteBuffer& buffer) const;
         void                        serializeToZoH(ByteBuffer& buffer) const;
@@ -530,9 +550,6 @@ namespace bcsv {
     private:
                                     template<size_t Index>
         void                        clearHelper();
-
-                                    template<size_t Index, typename T>
-        void                        markChangedAndSet(const T& value);
 
                                     template<size_t Index>
         void                        serializeElements(ByteBuffer& buffer, const size_t& offRow, size_t& offVar) const;
@@ -551,7 +568,10 @@ namespace bcsv {
     };
 
 
-    /* View into a buffer. Supports RowStatic interface */
+    /* Provides a direct view into a buffer, to allow access with partial serialization/deserialization efforts to accelerate sparse data access. Supports RowStatic interface */
+    // Note: Does not support change tracking, yet.
+    // Note: set and get functions should be modified to follow Row interface semantics (avoid auto types, use templates & template specializations)
+    // Note: not fully implemented nor tested! 
     template<typename... ColumnTypes>
     class RowViewStatic {
     public:

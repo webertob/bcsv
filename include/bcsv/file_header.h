@@ -149,7 +149,7 @@ namespace bcsv {
         static constexpr size_t COLUMN_LENGTH_SIZE = sizeof(uint16_t);          ///< Size per name length: 2 bytes
         
         // Constructors
-        FileHeader(size_t columnCount = 0, size_t compressionLevel = 9, uint8_t major = VERSION_MAJOR, uint8_t minor = VERSION_MAJOR, uint8_t patch = VERSION_PATCH);
+        FileHeader(size_t columnCount = 0, size_t compressionLevel = 9, uint8_t major = VERSION_MAJOR, uint8_t minor = VERSION_MINOR, uint8_t patch = VERSION_PATCH);
         ~FileHeader() = default;
 
         // Version management

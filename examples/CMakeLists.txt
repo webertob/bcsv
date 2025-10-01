@@ -50,8 +50,11 @@ target_link_libraries(csv2bcsv PRIVATE bcsv)
 add_executable(bcsv2csv bcsv2csv.cpp)
 target_link_libraries(bcsv2csv PRIVATE bcsv)
 
+# C API vectorized example
+add_executable(c_api_vectorized_example c_api_vectorized_example.c)
+target_link_libraries(c_api_vectorized_example PRIVATE bcsv_c_api bcsv)
 
 # Set output directory
-set_target_properties(example example_static example_zoh example_zoh_static performance_benchmark large_scale_benchmark csv2bcsv bcsv2csv PROPERTIES
+set_target_properties(example example_static example_zoh example_zoh_static performance_benchmark large_scale_benchmark csv2bcsv bcsv2csv c_api_vectorized_example PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
