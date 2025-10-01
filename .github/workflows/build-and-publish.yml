@@ -72,7 +72,7 @@ jobs:
     name: Publish to TestPyPI (and PyPI when token present)
     needs: [build-linux, build-windows]
     runs-on: ubuntu-latest
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/release/master')
+    # if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/release/master')
     steps:
       - uses: actions/checkout@v4
 

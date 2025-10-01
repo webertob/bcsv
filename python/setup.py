@@ -235,6 +235,7 @@ if __name__ == "__main__":
         description="Python bindings for the high-performance BCSV (Binary CSV) library",
         long_description="Python bindings for the BCSV binary CSV library with pandas integration",
         long_description_content_type="text/plain",
+        license="MIT",
         packages=["pybcsv"],
         ext_modules=ext_modules,
         cmdclass=cmdclass,
@@ -245,6 +246,7 @@ if __name__ == "__main__":
             "Intended Audience :: Developers",
             "Programming Language :: Python :: 3",
             "Programming Language :: C++",
+            "License :: OSI Approved :: MIT License",
         ],
         # Dependencies are declared in pyproject.toml (PEP 621). Avoid
         # duplicating them here to prevent Setuptools warnings during build.
