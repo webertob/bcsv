@@ -92,15 +92,16 @@ namespace bcsv {
 
     /** Vectorized access to multiple columns of same type */
     template<typename T>
-    void Row::get(size_t index, T* dst, size_t length) const
+    void Row::get(size_t index, std::span<T> dst) const
     {
         if (RANGE_CHECKING) {
-            if (index + length > layout_.columnCount()) {
+            // Only check highest index (implicitly checks for all others)
+            if (index + dst.size() > layout_.columnCount()) {
                 throw std::out_of_range("Index out of range");
             }
         }
 
-        for (size_t i = 0; i < length; ++i) {
+        for (size_t i = 0; i < dst.size(); ++i) {
             dst[i] = std::get<T>(data_[index + i]);
         }
     }
@@ -138,7 +139,7 @@ namespace bcsv {
         std::visit([this, index, &value](auto&& data) {
             using DataType = std::decay_t<decltype(data)>;
             assert(toColumnType<DataType>() == layout_.columnType(index)); // sanity check
-            if constexpr (std::is_same_v<T, DataType> || std::is_convertible_v<T, DataType>) {
+            if constexpr (std::is_convertible_v<T, DataType>) {
                 if(tracksChanges() && (data != static_cast<DataType>(value))) {
                     changes_[index] = true; // mark this column as changed
                 }
@@ -151,21 +152,23 @@ namespace bcsv {
 
     /** Vectorized set of multiple columns of same type */
     template<typename T>
-    void Row::set(size_t index, const T* src, size_t length)
+    void Row::set(size_t index, std::span<const T> src)
     {
         if (RANGE_CHECKING) {
-            if (index + length > layout_.columnCount()) {
+            // Only check highest index (implicitly checks for all others)
+            if (index + src.size() > layout_.columnCount()) {
                 throw std::out_of_range("Index out of range");
             }
         }
 
-        for (size_t i = 0; i < length; ++i) {
+        bool tracked = tracksChanges();
+        for (size_t i = 0; i < src.size(); ++i) {
             size_t idx = index + i;
-            std::visit([this, i, idx, src](auto&& data) {
+            std::visit([this, i, idx, src, tracked](auto&& data) {
                 using DataType = std::decay_t<decltype(data)>;
                 assert(toColumnType<DataType>() == layout_.columnType(idx)); // sanity check
-                if constexpr (std::is_same_v<T, DataType> || std::is_convertible_v<T, DataType>) {
-                    if(tracksChanges() && (data != static_cast<DataType>(src[i]))) {
+                if constexpr (std::is_convertible_v<T, DataType>) {
+                    if (tracked && (data != static_cast<DataType>(src[i]))) {
                         changes_[idx] = true; // mark this column as changed
                     }
                     data = static_cast<DataType>(src[i]);  // Safe conversion
@@ -650,7 +653,7 @@ namespace bcsv {
     template<size_t Index, typename T>
     void RowStatic<ColumnTypes...>::set(const T& value) {
         static_assert(Index < column_count, "Index out of bounds");
-        static_assert(!std::is_same_v<T, column_type<Index>> || std::is_constructible_v<T, column_type<Index>> || std::is_convertible_v<T, column_type<Index>>, "ValueType cannot be converted to column type");
+        static_assert(std::is_convertible_v<T, column_type<Index>>, "ValueType cannot be converted to column type");
         
         if(trackChanges() && (std::get<Index>(data_) != value)) {
             changes_.set(Index);
@@ -683,6 +686,99 @@ namespace bcsv {
             }
         } else {
             throw std::out_of_range("Index out of range");
+        }
+    }
+
+    // ========================================================================
+    // RowStatic Vectorized Access - Compile-Time Indexed
+    // ========================================================================
+
+    /** Compile-time vectorized get with span */
+    template<typename... ColumnTypes>
+    template<size_t Index, typename T, size_t Count, size_t Recursion>
+    void RowStatic<ColumnTypes...>::get(std::span<T, Count> dst) const {
+        if constexpr (Recursion < Count) {
+            static_assert(Index + Recursion < column_count, "Span exceeds column count");
+            static_assert(std::is_convertible_v<T, column_type<Index + Recursion>>, "Column type is not convertible to T");
+            dst[Recursion] = std::get<Index + Recursion>(data_);
+            get<Index, T, Count, Recursion + 1>(dst);
+        }
+    }
+
+
+    /** Compile-time vectorized set with span */
+    template<typename... ColumnTypes>
+    template<size_t Index, typename T, size_t Count, size_t Recursion>
+    void RowStatic<ColumnTypes...>::set(std::span<const T, Count> src) {
+        if constexpr (Recursion < Count) {
+            static_assert(Index + Recursion < column_count, "Span exceeds column count");
+            static_assert(std::is_convertible_v<T, column_type<Index + Recursion>>, "Column type is not convertible to T");
+            if constexpr (std::is_same_v<column_type<Index + Recursion>, std::string>) {
+                // Special handling for strings (truncate to MAX_STRING_LENGTH)
+                if (trackChanges() && (std::get<Index + Recursion>(data_) != src[Recursion])) {
+                    changes_.set(Index + Recursion);
+                }
+                std::get<Index + Recursion>(data_).assign(src[Recursion].c_str(), std::min(src[Recursion].size(), MAX_STRING_LENGTH));
+            } else {
+                // Primitive types
+                if (trackChanges() && (std::get<Index + Recursion>(data_) != src[Recursion])) {
+                    changes_.set(Index + Recursion);
+                }
+                std::get<Index + Recursion>(data_) = src[Recursion];
+            }
+            set<Index, T, Count, Recursion + 1>(src);
+        }
+    }
+
+    // ========================================================================
+    // RowStatic Vectorized Access - Runtime Indexed
+    // ========================================================================
+
+    /** Runtime vectorized get with span */
+    template<typename... ColumnTypes>
+    template<typename T, size_t Index>
+    void RowStatic<ColumnTypes...>::get(size_t index, std::span<T> dst) const {
+        if constexpr (Index == 0 && RANGE_CHECKING) {
+            // Only check highest index (implicit check for all others)
+            if (index + dst.size() > column_count) {
+                throw std::out_of_range("Span exceeds column count");
+            }
+        }
+        // If current index is within requested range, copy value
+        if(Index >= index && Index < index + dst.size()) {
+            dst[Index - index] = std::get<Index>(data_);
+        }         
+        // Recurse to next index
+        if constexpr (Index + 1 < column_count) {
+            get<T, Index + 1>(index, dst);
+        }
+    }
+
+    /** Runtime vectorized set with span */
+    template<typename... ColumnTypes>
+    template<typename T, size_t Index>
+    void RowStatic<ColumnTypes...>::set(size_t index, std::span<const T> src) {
+        if constexpr (Index == 0 && RANGE_CHECKING) {
+            // Only check highest index (implicit check for all others)
+            if (index + src.size() > column_count) {
+                throw std::out_of_range("Span exceeds column count");
+            }
+        }
+        // If current index is within requested range, copy value
+        if(Index >= index && Index < index + src.size()) {
+            if(trackChanges() && (std::get<Index>(data_) != src[Index - index])) {
+                changes_.set(Index);
+            }
+            if constexpr (std::is_same_v<column_type<Index>, std::string>) {
+                // Special handling for strings (truncate to MAX_STRING_LENGTH)
+                std::get<Index>(data_).assign(src[Index - index].c_str(), std::min(src[Index - index].size(), MAX_STRING_LENGTH));
+            } else {
+                std::get<Index>(data_) = src[Index - index];
+            }
+        }         
+        // Recurse to next index
+        if constexpr (Index + 1 < column_count) {
+            set<T, Index + 1>(index, src);
         }
     }
 
@@ -893,6 +989,7 @@ namespace bcsv {
             return true; // All elements processed successfully
         }
     }
+
 
 
     // ========================================================================

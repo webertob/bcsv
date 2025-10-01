@@ -22,6 +22,7 @@ endif()
 # Tests CMakeLists.txt
 add_executable(bcsv_gtest 
     bcsv_comprehensive_test.cpp
+    vectorized_access_test.cpp
 )
 
 # Link the bcsv library and Google Test

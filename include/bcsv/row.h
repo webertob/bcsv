@@ -424,21 +424,21 @@ namespace bcsv {
         ~Row() = default;
 
         void                    clear(); 
-        const Layout&           layout() const                  { return layout_; }
-        bool                    hasAnyChanges() const           { return tracksChanges() && changes_.any(); }
+        const Layout&           layout() const                                  { return layout_; }
+        bool                    hasAnyChanges() const                           { return tracksChanges() && changes_.any(); }
         void                    trackChanges(bool enable);      
         bool                    tracksChanges() const;
-        void                    setChanges()                    { changes_.set(); } // mark everything as changed
-        void                    resetChanges()                  { changes_.reset(); } // mark everything as unchanged
+        void                    setChanges()                                    { changes_.set(); } // mark everything as changed
+        void                    resetChanges()                                  { changes_.reset(); } // mark everything as unchanged
 
                                 template<typename T = ValueType>
         const T&                get(size_t index) const;
                                 template<typename T>
-        void                    get(size_t index, T* dst, size_t length) const;
+        void                    get(size_t index, std::span<T> dst) const;
                                 template<typename T>
         void                    set(size_t index, const T& value);
                                 template<typename T>
-        void                    set(size_t index, const T* src, size_t length); // for array types 
+        void                    set(size_t index, std::span<const T> src);
 
         void                    serializeTo(ByteBuffer& buffer) const;
         void                    serializeToZoH(ByteBuffer& buffer) const;
@@ -529,6 +529,18 @@ namespace bcsv {
         void                        set(const ValueType& value);
                                     template<size_t Index>
         void                        set(const std::string& value);
+
+        // Vectorized access - compile-time indexed
+                                    template<size_t Index, typename T, size_t Count, size_t Recursion = 0>
+        void                        get(std::span<T, Count> dst) const;
+                                    template<size_t Index, typename T, size_t Count, size_t Recursion = 0>
+        void                        set(std::span<const T, Count> src);
+
+        // Vectorized access - runtime indexed
+                                    template<typename T, size_t Index = 0>
+        void                        get(size_t index, std::span<T> dst) const;
+                                    template<typename T, size_t Index = 0>
+        void                        set(size_t index, std::span<const T> src);
 
         void                        serializeTo(ByteBuffer& buffer) const;
         void                        serializeToZoH(ByteBuffer& buffer) const;
