@@ -1,10 +1,8 @@
 #include "c_api.h"
 #include <string>
 
-#include "layout.h"
-#include "reader.h"
-#include "row.h"
-#include "writer.h"
+// Include full implementations (headers + .hpp files)
+#include "bcsv.h"  // This includes all implementations
 
 extern "C" {
 
@@ -244,6 +242,76 @@ void bcsv_row_set_double(bcsv_row_t row, int col, double value) {
 }
 void bcsv_row_set_string(bcsv_row_t row, int col, const char* value) {
     static_cast<bcsv::Row*>(row)->set(col, std::string(value));
+}
+
+// Vectorized get functions
+void bcsv_row_get_bool_array(const_bcsv_row_t row, int start_col, bool* dst, size_t count) {
+    static_cast<const bcsv::Row*>(row)->get<bool>(start_col, std::span<bool>(dst, count));
+}
+void bcsv_row_get_uint8_array(const_bcsv_row_t row, int start_col, uint8_t* dst, size_t count) {
+    static_cast<const bcsv::Row*>(row)->get<uint8_t>(start_col, std::span<uint8_t>(dst, count));
+}
+void bcsv_row_get_uint16_array(const_bcsv_row_t row, int start_col, uint16_t* dst, size_t count) {
+    static_cast<const bcsv::Row*>(row)->get<uint16_t>(start_col, std::span<uint16_t>(dst, count));
+}
+void bcsv_row_get_uint32_array(const_bcsv_row_t row, int start_col, uint32_t* dst, size_t count) {
+    static_cast<const bcsv::Row*>(row)->get<uint32_t>(start_col, std::span<uint32_t>(dst, count));
+}
+void bcsv_row_get_uint64_array(const_bcsv_row_t row, int start_col, uint64_t* dst, size_t count) {
+    static_cast<const bcsv::Row*>(row)->get<uint64_t>(start_col, std::span<uint64_t>(dst, count));
+}
+void bcsv_row_get_int8_array(const_bcsv_row_t row, int start_col, int8_t* dst, size_t count) {
+    static_cast<const bcsv::Row*>(row)->get<int8_t>(start_col, std::span<int8_t>(dst, count));
+}
+void bcsv_row_get_int16_array(const_bcsv_row_t row, int start_col, int16_t* dst, size_t count) {
+    static_cast<const bcsv::Row*>(row)->get<int16_t>(start_col, std::span<int16_t>(dst, count));
+}
+void bcsv_row_get_int32_array(const_bcsv_row_t row, int start_col, int32_t* dst, size_t count) {
+    static_cast<const bcsv::Row*>(row)->get<int32_t>(start_col, std::span<int32_t>(dst, count));
+}
+void bcsv_row_get_int64_array(const_bcsv_row_t row, int start_col, int64_t* dst, size_t count) {
+    static_cast<const bcsv::Row*>(row)->get<int64_t>(start_col, std::span<int64_t>(dst, count));
+}
+void bcsv_row_get_float_array(const_bcsv_row_t row, int start_col, float* dst, size_t count) {
+    static_cast<const bcsv::Row*>(row)->get<float>(start_col, std::span<float>(dst, count));
+}
+void bcsv_row_get_double_array(const_bcsv_row_t row, int start_col, double* dst, size_t count) {
+    static_cast<const bcsv::Row*>(row)->get<double>(start_col, std::span<double>(dst, count));
+}
+
+// Vectorized set functions
+void bcsv_row_set_bool_array(bcsv_row_t row, int start_col, const bool* src, size_t count) {
+    static_cast<bcsv::Row*>(row)->set<bool>(start_col, std::span<const bool>(src, count));
+}
+void bcsv_row_set_uint8_array(bcsv_row_t row, int start_col, const uint8_t* src, size_t count) {
+    static_cast<bcsv::Row*>(row)->set<uint8_t>(start_col, std::span<const uint8_t>(src, count));
+}
+void bcsv_row_set_uint16_array(bcsv_row_t row, int start_col, const uint16_t* src, size_t count) {
+    static_cast<bcsv::Row*>(row)->set<uint16_t>(start_col, std::span<const uint16_t>(src, count));
+}
+void bcsv_row_set_uint32_array(bcsv_row_t row, int start_col, const uint32_t* src, size_t count) {
+    static_cast<bcsv::Row*>(row)->set<uint32_t>(start_col, std::span<const uint32_t>(src, count));
+}
+void bcsv_row_set_uint64_array(bcsv_row_t row, int start_col, const uint64_t* src, size_t count) {
+    static_cast<bcsv::Row*>(row)->set<uint64_t>(start_col, std::span<const uint64_t>(src, count));
+}
+void bcsv_row_set_int8_array(bcsv_row_t row, int start_col, const int8_t* src, size_t count) {
+    static_cast<bcsv::Row*>(row)->set<int8_t>(start_col, std::span<const int8_t>(src, count));
+}
+void bcsv_row_set_int16_array(bcsv_row_t row, int start_col, const int16_t* src, size_t count) {
+    static_cast<bcsv::Row*>(row)->set<int16_t>(start_col, std::span<const int16_t>(src, count));
+}
+void bcsv_row_set_int32_array(bcsv_row_t row, int start_col, const int32_t* src, size_t count) {
+    static_cast<bcsv::Row*>(row)->set<int32_t>(start_col, std::span<const int32_t>(src, count));
+}
+void bcsv_row_set_int64_array(bcsv_row_t row, int start_col, const int64_t* src, size_t count) {
+    static_cast<bcsv::Row*>(row)->set<int64_t>(start_col, std::span<const int64_t>(src, count));
+}
+void bcsv_row_set_float_array(bcsv_row_t row, int start_col, const float* src, size_t count) {
+    static_cast<bcsv::Row*>(row)->set<float>(start_col, std::span<const float>(src, count));
+}
+void bcsv_row_set_double_array(bcsv_row_t row, int start_col, const double* src, size_t count) {
+    static_cast<bcsv::Row*>(row)->set<double>(start_col, std::span<const double>(src, count));
 }
 
 } // extern "C"

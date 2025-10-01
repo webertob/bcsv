@@ -179,6 +179,8 @@ target_include_directories(bcsv_c_api
 )
 
 target_link_libraries(bcsv_c_api
+    PUBLIC
+        bcsv
     PRIVATE
         ${BOOST_TARGET}
         ${LZ4_TARGET}
