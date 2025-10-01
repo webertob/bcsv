@@ -49,7 +49,10 @@ class CustomBuildExt(build_ext if PYBIND11_AVAILABLE else object):
     """Custom build extension to handle C and C++ files separately and sync headers."""
     
     def run(self):
-        """Override run to sync headers before building."""
+        """Override run to sync headers and generate version header before building."""
+        # Generate version_generated.h
+        self.generate_version_header()
+        
         # Try to sync headers from the main project
         try:
             import subprocess
@@ -67,6 +70,70 @@ class CustomBuildExt(build_ext if PYBIND11_AVAILABLE else object):
         
         # Continue with normal build
         super().run()
+    
+    def generate_version_header(self):
+        """Generate version_generated.h from Git tags."""
+        import subprocess
+        import re
+        
+        version_major = 0
+        version_minor = 0
+        version_patch = 0
+        version_string = "0.0.0.dev0"
+        
+        try:
+            # Try to get version from Git tags
+            result = subprocess.run(
+                ["git", "describe", "--tags", "--match", "v[0-9]*.[0-9]*.[0-9]*", "--abbrev=0"],
+                capture_output=True,
+                text=True,
+                cwd=project_root,
+                timeout=5
+            )
+            
+            if result.returncode == 0:
+                tag = result.stdout.strip()
+                # Parse version from tag (format: v1.0.2)
+                match = re.match(r'v?(\d+)\.(\d+)\.(\d+)', tag)
+                if match:
+                    version_major = int(match.group(1))
+                    version_minor = int(match.group(2))
+                    version_patch = int(match.group(3))
+                    version_string = f"{version_major}.{version_minor}.{version_patch}"
+                    print(f"[pybcsv setup] Extracted version {version_string} from Git tag {tag}")
+        except Exception as e:
+            print(f"[pybcsv setup] Warning: Could not get version from Git: {e}")
+            print("[pybcsv setup] Using fallback version 0.0.0.dev0")
+        
+        # Generate the version header
+        version_header_content = f"""// Auto-generated version file - DO NOT EDIT
+// Generated during Python package build
+
+#ifndef BCSV_VERSION_GENERATED_H
+#define BCSV_VERSION_GENERATED_H
+
+namespace bcsv {{
+namespace version {{
+
+constexpr int MAJOR = {version_major};
+constexpr int MINOR = {version_minor};
+constexpr int PATCH = {version_patch};
+constexpr const char* STRING = "{version_string}";
+
+}} // namespace version
+}} // namespace bcsv
+
+#endif // BCSV_VERSION_GENERATED_H
+"""
+        
+        # Write to include/bcsv/version_generated.h
+        version_header_path = project_root / "include" / "bcsv" / "version_generated.h"
+        version_header_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(version_header_path, "w") as f:
+            f.write(version_header_content)
+        
+        print(f"[pybcsv setup] Generated {version_header_path} with version {version_string}")
     
     def build_extensions(self):
         # Set specific compiler flags for different file types
