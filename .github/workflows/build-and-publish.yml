@@ -137,7 +137,7 @@ jobs:
     name: Publish to TestPyPI (and PyPI when token present)
     needs: [build-linux, build-windows, build-macos]
     runs-on: ubuntu-latest
-    # if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/release/master')
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/heads/release')
     steps:
       - uses: actions/checkout@v4
 
@@ -160,10 +160,11 @@ jobs:
         run: ls -l wheel-artifacts/all
 
       - name: Publish to TestPyPI
+        continue-on-error: true
         env:
           TWINE_USERNAME: __token__
           TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
-        run: python -m twine upload --repository-url https://test.pypi.org/legacy/ wheel-artifacts/all/*.whl
+        run: python -m twine upload --skip-existing --repository-url https://test.pypi.org/legacy/ wheel-artifacts/all/*.whl
 
       - name: Publish to PyPI (if token set)
         env:
@@ -171,7 +172,7 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: |
           if [ -n "${TWINE_PASSWORD}" ]; then
-            python -m twine upload wheel-artifacts/all/*.whl
+            python -m twine upload --skip-existing wheel-artifacts/all/*.whl
           else
             echo "PYPI_API_TOKEN not set; skipping upload to PyPI"
           fi
