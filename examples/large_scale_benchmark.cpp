@@ -440,7 +440,7 @@ public:
                 
                 while (std::getline(ss, cell, ',') && colCount < 72) {
                     // Simulate type conversion overhead
-                    volatile int dummy = cell.length(); (void)dummy;
+                    volatile int dummy = static_cast<int>(cell.length()); (void)dummy;
                     ++colCount;
                 }
                 ++rowCount;

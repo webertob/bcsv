@@ -13,13 +13,6 @@ include(GetGitVersion)
 
 project(bcsv VERSION ${VERSION_STRING} LANGUAGES CXX C)
 
-# Generate version header from template
-configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.h.in"
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/bcsv/version_generated.h"
-    @ONLY
-)
-
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -175,7 +168,7 @@ install(EXPORT bcsvConfig DESTINATION lib/cmake/bcsv)
 
 # Build the bcsv C API as a shared library (.dll/.so/.dylib)
 add_library(bcsv_c_api SHARED
-    include/bcsv/c_api.cpp
+    include/bcsv/bcsv_c_api.cpp
     # Add any additional C API source files here
 )
 

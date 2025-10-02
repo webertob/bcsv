@@ -746,7 +746,7 @@ namespace bcsv {
         }
         // If current index is within requested range, copy value
         if(Index >= index && Index < index + dst.size()) {
-            dst[Index - index] = std::get<Index>(data_);
+            dst[Index - index] = static_cast<T>(std::get<Index>(data_));
         }         
         // Recurse to next index
         if constexpr (Index + 1 < column_count) {

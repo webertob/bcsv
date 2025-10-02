@@ -7,7 +7,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include "../include/bcsv/c_api.h"
+#include "../include/bcsv/bcsv_c_api.h"
 
 int main() {
     // Create a layout with 10 consecutive int32 columns

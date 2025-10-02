@@ -1,13 +1,24 @@
+Goal: 
+Concentrate on time series data
+Allow for small memory overhead, write/read
+Allow quick sparse/random reading
+Allow quick sequential reading
+Allow quick sequential writting
+Allow for small fiel sizes
+Easy, schema changes within programming languag
+support multiple languages:
+- c/c++, python, c#
+
 Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment is not considered, as we favor small file size. For temporary data and algorithms, higher-order alignment should be used.
-0. try to avoid helper functions, refactor to use std::holds alternative, benchmark vectorized functions
+
+Feature to prove and publish:
+    - clock/recovery --> further performance gain (compression) as underlying (hidden) clock is considered
+
+
 1. Update documentation (bcsv general, format, CLI tools, pybcsv, fullfill GIT hib community baselines)
 2. Build a project using bcsv with C++ and Python interfaces
 3. Create and test C# wrapper
 4. Add SIMD / vectorized interfaces:
-    Motivation: Reduce the number of calls and limit bound/type checks to a few corner cases
-    Constrain: Limit to same type scalar data, to avoid "bloat" 
-    - C++: implement std::array, std::vector, std::tuple interfaces and Eigen3 types, try to define general/fleixble interface i.e. set(size_t index, const T* values, size_t len)
-    - update C API
     - Python: implement get/set functions for numpy
     - C#/Unity: compatibility with componet/job system
 5. Improve compression:
@@ -43,3 +54,4 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     - bcsvSampler (creates an down sampled version, using specific rules provided)
 13. ROS integration (subscribe ROS topics and store to bcsv and reverse)
 14. MQTT integration (read MQTT topics and store to bcsv and reverse)
+15. Dynamic BitSet, ensure wide types (uin64/32/16 are used if possible), also consider SIMD/AVX
