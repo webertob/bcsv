@@ -213,7 +213,7 @@ public:
         {
             bcsv::Writer<bcsv::Layout> writer(layout);
             // Enable ZoH compression
-            writer.open(FLEXIBLE_ZOH_FILENAME, true, 1, bcsv::FileFlags::ZERO_ORDER_HOLD);
+            writer.open(FLEXIBLE_ZOH_FILENAME, true, 1 /*compressionLevel*/, 64 /*blockSizeKB*/, bcsv::FileFlags::ZERO_ORDER_HOLD);
             
             for (size_t i = 0; i < numRows_; ++i) {
                 int32_t id;
@@ -385,7 +385,7 @@ public:
         {
             bcsv::Writer<BenchmarkLayoutStatic> writer(layout);
             // Enable ZoH compression
-            writer.open(STATIC_ZOH_FILENAME, true, 1, bcsv::FileFlags::ZERO_ORDER_HOLD);
+            writer.open(STATIC_ZOH_FILENAME, true, 1 /*compressionLevel*/, 64 /*blockSizeKB*/, bcsv::FileFlags::ZERO_ORDER_HOLD);
             
             for (size_t i = 0; i < numRows_; ++i) {
                 int32_t id;

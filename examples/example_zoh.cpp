@@ -112,7 +112,7 @@ void writeZoHBCSV() {
     // Step 2: Create a writer
     const std::string filename = "example_flexible_zoh.bcsv";
     bcsv::Writer<bcsv::Layout> writer(layout);
-    if(!writer.open(filename, true, 1 /*compressionLevel*/, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
+    if(!writer.open(filename, true, 1 /*compressionLevel*/, 64 /*blockSizeKB*/, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
         std::cerr << "Failed to open file for writing: " << filename << "\n";
         return;
     }

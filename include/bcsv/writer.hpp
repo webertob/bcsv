@@ -31,8 +31,6 @@ namespace bcsv {
     Writer<LayoutType>::Writer(const LayoutType& layout) 
     : fileHeader_(layout.columnCount(), 1), row_(layout)
     {
-        buffer_raw_.reserve(LZ4_BLOCK_SIZE_KB * 1024);
-        buffer_zip_.reserve(LZ4_COMPRESSBOUND(LZ4_BLOCK_SIZE_KB * 1024));
     }
 
     template<LayoutConcept LayoutType>
@@ -52,7 +50,11 @@ namespace bcsv {
         }
         flush();
         stream_.close();
-        filePath_.clear();        
+        filePath_.clear();
+        buffer_raw_.clear();
+        buffer_zip_.clear();
+        buffer_raw_.shrink_to_fit();
+        buffer_zip_.shrink_to_fit();        
     }
 
     template<LayoutConcept LayoutType>
@@ -75,7 +77,7 @@ namespace bcsv {
      * @return true if file was successfully opened, false otherwise
      */
     template<LayoutConcept LayoutType>
-    bool Writer<LayoutType>::open(const FilePath& filepath, bool overwrite, size_t compressionLevel, FileFlags flags) {
+    bool Writer<LayoutType>::open(const FilePath& filepath, bool overwrite, size_t compressionLevel, size_t blockSizeKB, FileFlags flags) {
         if(is_open()) {
             std::cerr << "Warning: File is already open: " << filePath_ << std::endl;
             return false;
@@ -121,6 +123,7 @@ namespace bcsv {
             filePath_ = absolutePath;
             fileHeader_ = FileHeader(layout().columnCount(), compressionLevel);
             fileHeader_.setFlags(flags);
+            fileHeader_.setBlockSize(std::clamp(blockSizeKB, size_t(1), size_t(4096)) * 1024);  // limit block size to 1-4096 KB
             fileHeader_.writeToBinary(stream_, layout());
             row_cnt_ = 0;
             row_.clear();
@@ -129,6 +132,8 @@ namespace bcsv {
             } else {
                 row_.trackChanges(false);
             }
+            buffer_raw_.reserve(fileHeader_.blockSize());
+            buffer_zip_.reserve(LZ4_COMPRESSBOUND(fileHeader_.blockSize()));
             return true;
 
         } catch (const std::filesystem::filesystem_error& ex) {
@@ -243,7 +248,7 @@ namespace bcsv {
         }
         row_lengths_.push_back(static_cast<uint16_t>(row_length));
 
-        if(buffer_raw_.size() + row_length >= LZ4_BLOCK_SIZE_KB*1000) {  // Rough estimate to avoid exceeding block size
+        if(buffer_raw_.size() + row_length >= fileHeader_.blockSize()) {  // Rough estimate to avoid exceeding block size
             // if packed gets too large, write current packet and start a new one
             writePacket();
             if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {

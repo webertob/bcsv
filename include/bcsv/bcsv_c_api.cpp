@@ -118,7 +118,16 @@ size_t bcsv_reader_index(const_bcsv_reader_t reader) {
 
 // Writer API
 bcsv_writer_t bcsv_writer_create(bcsv_layout_t layout) {
-    return new bcsv::Writer(*static_cast<bcsv::Layout*>(layout));
+    bcsv::Writer<bcsv::Layout>* writer = nullptr;
+    if (layout) {
+        writer = new bcsv::Writer<bcsv::Layout>(*static_cast<bcsv::Layout*>(layout));
+    } else {
+        // Create empty layout if null to allow empty writers
+        layout = bcsv_layout_create();
+        writer = new bcsv::Writer<bcsv::Layout>(*static_cast<bcsv::Layout*>(layout));
+        bcsv_layout_destroy(layout);
+    }
+    return reinterpret_cast<bcsv_writer_t>(writer);
 }
 
 void bcsv_writer_destroy(bcsv_writer_t writer) {
@@ -133,8 +142,12 @@ void bcsv_writer_flush(bcsv_writer_t writer) {
     static_cast<bcsv::Writer<bcsv::Layout>*>(writer)->flush();
 }
 
-bool bcsv_writer_open(bcsv_writer_t writer, const char* filename) {
-    return static_cast<bcsv::Writer<bcsv::Layout>*>(writer)->open(filename);
+bool bcsv_writer_open(bcsv_writer_t writer, const char* filename, bool overwrite, int compress, int block_size_kb, bcsv_file_flags_t flags) {
+    return static_cast<bcsv::Writer<bcsv::Layout>*>(writer)->open(  std::string_view(filename), 
+                                                                    static_cast<bool>(overwrite),
+                                                                    static_cast<size_t>(compress),
+                                                                    static_cast<size_t>(block_size_kb), 
+                                                                    static_cast<bcsv::FileFlags>(flags));
 }
 
 bool bcsv_writer_is_open(const_bcsv_writer_t writer) {

@@ -30,6 +30,7 @@ namespace bcsv {
         header_.compressionLevel = static_cast<uint8_t>( std::min(compressionLevel, size_t(9)) ); // Clamp to 0-9
         header_.flags = 0;             // All flags reserved for future use
         header_.columnCount = static_cast<uint16_t>( std::min(columnCount, MAX_COLUMN_COUNT));
+        header_.blockSize = 64 * 1024;  // Default 64KB block size
         if (header_.columnCount == MAX_COLUMN_COUNT) {
             std::cerr << "Warning: Maximum column count exceeded. Some columns may be ignored." << std::endl;
         }

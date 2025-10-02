@@ -749,7 +749,7 @@ int main(int argc, char* argv[]) {
             // Use compression level 1 for better performance vs file size
             // Enable ZoH compression by default for optimal compression of time-series data
             bcsv::FileFlags flags = config.use_zoh ? bcsv::FileFlags::ZERO_ORDER_HOLD : bcsv::FileFlags::NONE;
-            writer.open(config.output_file, true, 1, flags);
+            writer.open(config.output_file, true, 1, 64, flags);
             size_t row_count = 0;
             
             // Pre-calculate frequently used values outside the loop

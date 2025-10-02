@@ -136,15 +136,16 @@ namespace bcsv {
             uint8_t  compressionLevel; ///< Compression level (0=none, 1-9=LZ4 levels)
             uint16_t flags;            ///< Feature flags bitfield
             uint16_t columnCount;      ///< Number of columns in the file
+            uint32_t blockSize;        ///< Block size in bytes used for compression
         };
         #pragma pack(pop)
 
-        static_assert(sizeof(FileHeaderStruct) == 12, "BinaryHeader must be exactly 12 bytes");
+        static_assert(sizeof(FileHeaderStruct) == 16, "BinaryHeader must be exactly 16 bytes");
 
         /**
          * @brief File format constants and limits
          */
-        static constexpr size_t FIXED_HEADER_SIZE  = sizeof(FileHeaderStruct);  ///< Size of fixed header: 12 bytes
+        static constexpr size_t FIXED_HEADER_SIZE  = sizeof(FileHeaderStruct);  ///< Size of fixed header: 16 bytes
         static constexpr size_t COLUMN_TYPE_SIZE   = sizeof(uint16_t);          ///< Size per column type: 2 bytes  
         static constexpr size_t COLUMN_LENGTH_SIZE = sizeof(uint16_t);          ///< Size per name length: 2 bytes
         
@@ -167,6 +168,10 @@ namespace bcsv {
         // Compression management
         void        setCompressionLevel(size_t level)   { header_.compressionLevel = (level > 9) ? 9 : static_cast<uint8_t>(level); }
         uint8_t     compressionLevel() const            { return header_.compressionLevel; }
+
+        // Block size management
+        void        setBlockSize(size_t blockSize)      { header_.blockSize = static_cast<uint32_t>(blockSize); }
+        uint32_t    blockSize() const                   { return header_.blockSize; }
 
         // Flags management
         void        clearFlag(FileFlags flag)           { setFlag(flag, false); }

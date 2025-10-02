@@ -727,7 +727,7 @@ public:
         auto writeStart = std::chrono::high_resolution_clock::now();
         {
             bcsv::Writer<bcsv::Layout> writer(layout);
-            writer.open(BCSV_FLEXIBLE_ZOH_FILENAME, true, 1, bcsv::FileFlags::ZERO_ORDER_HOLD);
+            writer.open(BCSV_FLEXIBLE_ZOH_FILENAME, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD);
             
             for (size_t row = 0; row < NUM_ROWS; ++row) {
                 populateFlexibleZoHRow(writer, row);
@@ -806,7 +806,7 @@ public:
         auto writeStart = std::chrono::high_resolution_clock::now();
         {
             bcsv::Writer<LargeTestLayoutStatic> writer(layout);
-            writer.open(BCSV_STATIC_ZOH_FILENAME, true, 1, bcsv::FileFlags::ZERO_ORDER_HOLD);
+            writer.open(BCSV_STATIC_ZOH_FILENAME, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD);
             
             for (size_t row = 0; row < NUM_ROWS; ++row) {
                 generateZoHRowData(row, writer.row());

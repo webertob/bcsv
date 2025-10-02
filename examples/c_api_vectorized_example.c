@@ -20,7 +20,7 @@ int main() {
     
     // Create writer and open file
     bcsv_writer_t writer = bcsv_writer_create(layout);
-    if (!bcsv_writer_open(writer, "vectorized_test.bcsv")) {
+    if (!bcsv_writer_open(writer, "vectorized_test.bcsv", true, 1, 64, BCSV_FLAG_NONE)) {
         fprintf(stderr, "Failed to open writer\n");
         return 1;
     }

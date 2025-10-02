@@ -77,7 +77,7 @@ void writeStaticBCSV() {
     // Step 2: Create a writer
     const std::string filename = "example_static.bcsv";
     bcsv::Writer<ExampleLayout> writer(layout);
-    if(!writer.open(filename, true, 1, bcsv::FileFlags::NONE)) {
+    if(!writer.open(filename, true, 1, 64, bcsv::FileFlags::NONE)) {
         std::cerr << "Failed to open writer for BCSV file\n";
         return;
     }
@@ -107,7 +107,7 @@ void writeZoHStaticBCSV() {
     // Step 2: Create a writer with ZoH compression enabled
     const std::string filename = "example_zoh_static.bcsv";
     bcsv::Writer<ExampleLayout> writer(layout);
-    if(!writer.open(filename, true, 1, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
+    if(!writer.open(filename, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
         std::cerr << "Failed to open writer for BCSV file\n";
         return;
     }

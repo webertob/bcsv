@@ -28,8 +28,6 @@ namespace bcsv {
     Reader<LayoutType>::Reader(ReaderMode mode) 
     : mode_(mode), fileHeader_(), row_(LayoutType())
     {
-        buffer_raw_.reserve(LZ4_BLOCK_SIZE_KB * 1024);
-        buffer_zip_.reserve(LZ4_COMPRESSBOUND(LZ4_BLOCK_SIZE_KB * 1024));
         row_index_file_ = 0;
         row_index_packet_ = 0;
         row_lengths_.clear();
@@ -56,6 +54,8 @@ namespace bcsv {
         filePath_.clear();
         buffer_raw_.clear();
         buffer_zip_.clear();
+        buffer_raw_.shrink_to_fit();
+        buffer_zip_.shrink_to_fit();
         row_index_file_ = 0;
         row_index_packet_ = 0;
         packet_row_count_ = 0;
@@ -154,6 +154,8 @@ namespace bcsv {
             row_ = typename LayoutType::RowType(layout);
             row_.trackChanges(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD));
         }
+        buffer_raw_.reserve(fileHeader_.blockSize());
+        buffer_zip_.reserve(LZ4_COMPRESSBOUND(fileHeader_.blockSize()));
         return true;
     }
 
@@ -221,7 +223,6 @@ namespace bcsv {
                 } else {
                     // Decompress the packet data using LZ4
                     buffer_raw_.resize(buffer_raw_.capacity());
-                    
                     int decompressedSize = LZ4_decompress_safe(
                         reinterpret_cast<const char*>(buffer_zip_.data()), 
                         reinterpret_cast<char*>(buffer_raw_.data()), 

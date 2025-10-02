@@ -35,7 +35,10 @@ typedef enum {
     BCSV_TYPE_STRING = 11
 } bcsv_type_t;
 
-
+typedef enum {
+    BCSV_FLAG_NONE   = 0,
+    BCSV_FLAG_ZOH    = 1 << 0, // Write in ZoH format
+} bcsv_file_flags_t;
 
 // Layout API - Start
 // These functions operate on layout objects, which define the schema of BCSV files
@@ -98,7 +101,7 @@ void                bcsv_writer_destroy (bcsv_writer_t writer);
 
 void                bcsv_writer_close   (bcsv_writer_t writer);
 void                bcsv_writer_flush   (bcsv_writer_t writer);
-bool                bcsv_writer_open    (bcsv_writer_t writer, const char* filename);
+bool                bcsv_writer_open    (bcsv_writer_t writer, const char* filename, bool overwrite, int compress, int block_size_kb, bcsv_file_flags_t flags); // defaults: overwrite=false, compress=1, block_size_kb=64, flags=0
 bool                bcsv_writer_is_open (const_bcsv_writer_t writer);
 const char*         bcsv_writer_filename(const_bcsv_writer_t writer);
 const_bcsv_layout_t bcsv_writer_layout  (const_bcsv_writer_t writer);      // returns layout
