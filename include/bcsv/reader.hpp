@@ -154,8 +154,8 @@ namespace bcsv {
             row_ = typename LayoutType::RowType(layout);
             row_.trackChanges(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD));
         }
-        buffer_raw_.reserve(fileHeader_.blockSize());
-        buffer_zip_.reserve(LZ4_COMPRESSBOUND(fileHeader_.blockSize()));
+        buffer_raw_.reserve(fileHeader_.blockSize()*2); // reserve double block size for safety
+        buffer_zip_.reserve(fileHeader_.blockSize()*2); // reserve double block size for safety
         return true;
     }
 
