@@ -1388,7 +1388,235 @@ TEST_F(BCSVTestSuite, PacketRecovery_SkipBrokenPackets) {
     std::cout << "Packet recovery test completed" << std::endl;
 }
 
-// Test 10: Edge Case - Zero Columns Layout
+// Test 10: CountRows() Functionality and Performance Test
+TEST_F(BCSVTestSuite, CountRows_FunctionalityAndPerformance) {
+    std::cout << "\n=== CountRows() Comprehensive Test ===" << std::endl;
+    
+    // Test 1: Small file (single packet)
+    {
+        std::string test_file = getTestFilePath("countrows_small.bcsv");
+        const size_t test_rows = 10;
+        
+        // Create test data
+        auto layout = createFullFlexibleLayout();
+        std::vector<TestData> test_data;
+        for (size_t i = 0; i < test_rows; ++i) {
+            test_data.push_back(generateTestData(i));
+        }
+        
+        // Write test file
+        {
+            bcsv::Writer<bcsv::Layout> writer(layout);
+            ASSERT_TRUE(writer.open(test_file, true)) << "Failed to create small test file";
+            
+            for (const auto& data : test_data) {
+                populateFlexibleRow(writer, data);
+                ASSERT_TRUE(writer.writeRow()) << "Failed to write test row";
+            }
+            writer.close();
+        }
+        
+        // Test countRows()
+        {
+            bcsv::Reader<bcsv::Layout> reader;
+            ASSERT_TRUE(reader.open(test_file)) << "Failed to open small test file";
+            
+            size_t counted_rows = reader.countRows();
+            EXPECT_EQ(counted_rows, test_rows) << "countRows() incorrect for small file";
+            
+            // Verify by manual counting
+            size_t manual_count = 0;
+            while (reader.readNext()) {
+                manual_count++;
+            }
+            EXPECT_EQ(manual_count, test_rows) << "Manual count verification failed";
+            EXPECT_EQ(counted_rows, manual_count) << "countRows() doesn't match manual count";
+            
+            reader.close();
+        }
+        
+        std::cout << "✓ Small file test (10 rows): countRows() = " << test_rows << std::endl;
+    }
+    
+    // Test 2: Medium file (single packet, more rows)
+    {
+        std::string test_file = getTestFilePath("countrows_medium.bcsv");
+        const size_t test_rows = 1000;
+        
+        // Create test data
+        auto layout = createFullFlexibleLayout();
+        
+        // Write test file
+        {
+            bcsv::Writer<bcsv::Layout> writer(layout);
+            ASSERT_TRUE(writer.open(test_file, true)) << "Failed to create medium test file";
+            
+            for (size_t i = 0; i < test_rows; ++i) {
+                auto data = generateTestData(i);
+                populateFlexibleRow(writer, data);
+                ASSERT_TRUE(writer.writeRow()) << "Failed to write test row " << i;
+            }
+            writer.close();
+        }
+        
+        // Test countRows() performance vs manual counting
+        {
+            bcsv::Reader<bcsv::Layout> reader;
+            ASSERT_TRUE(reader.open(test_file)) << "Failed to open medium test file";
+            
+            // Time countRows()
+            auto start_count = std::chrono::high_resolution_clock::now();
+            size_t counted_rows = reader.countRows();
+            auto end_count = std::chrono::high_resolution_clock::now();
+            auto count_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_count - start_count);
+            
+            EXPECT_EQ(counted_rows, test_rows) << "countRows() incorrect for medium file";
+            
+            // Time manual counting (reader should be reset)
+            reader.close();
+            ASSERT_TRUE(reader.open(test_file)) << "Failed to reopen for manual count";
+            
+            auto start_manual = std::chrono::high_resolution_clock::now();
+            size_t manual_count = 0;
+            while (reader.readNext()) {
+                manual_count++;
+            }
+            auto end_manual = std::chrono::high_resolution_clock::now();
+            auto manual_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_manual - start_manual);
+            
+            EXPECT_EQ(manual_count, test_rows) << "Manual count verification failed";
+            EXPECT_EQ(counted_rows, manual_count) << "countRows() doesn't match manual count";
+            
+            // countRows() should be significantly faster for large files
+            // For 1000 rows, countRows() should be at least as fast as manual reading
+            std::cout << "✓ Medium file test (1000 rows): countRows() = " << counted_rows 
+                      << ", countRows() time: " << count_duration.count() << "μs"
+                      << ", manual time: " << manual_duration.count() << "μs" << std::endl;
+            
+            reader.close();
+        }
+    }
+    
+    // Test 3: Large file (multiple packets)
+    {
+        std::string test_file = getTestFilePath("countrows_large.bcsv");
+        const size_t test_rows = 10000;  // Should create multiple packets
+        
+        // Create test data with a simple, efficient layout for speed
+        bcsv::Layout simple_layout;
+        simple_layout.addColumn({"id", bcsv::ColumnType::UINT64});
+        simple_layout.addColumn({"value", bcsv::ColumnType::DOUBLE});
+        
+        // Write test file
+        {
+            bcsv::Writer<bcsv::Layout> writer(simple_layout);
+            ASSERT_TRUE(writer.open(test_file, true)) << "Failed to create large test file";
+            
+            for (size_t i = 0; i < test_rows; ++i) {
+                writer.row().set(0, static_cast<uint64_t>(i));
+                writer.row().set(1, static_cast<double>(i) * 3.14159);
+                ASSERT_TRUE(writer.writeRow()) << "Failed to write test row " << i;
+            }
+            writer.close();
+        }
+        
+        // Test countRows() on multi-packet file
+        {
+            bcsv::Reader<bcsv::Layout> reader;
+            ASSERT_TRUE(reader.open(test_file)) << "Failed to open large test file";
+            
+            // Time countRows()
+            auto start_count = std::chrono::high_resolution_clock::now();
+            size_t counted_rows = reader.countRows();
+            auto end_count = std::chrono::high_resolution_clock::now();
+            auto count_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_count - start_count);
+            
+            EXPECT_EQ(counted_rows, test_rows) << "countRows() incorrect for large multi-packet file";
+            
+            std::cout << "✓ Large file test (10000 rows): countRows() = " << counted_rows 
+                      << ", time: " << count_duration.count() << "μs" << std::endl;
+            
+            reader.close();
+        }
+    }
+    
+    // Test 4: Empty file
+    {
+        std::string test_file = getTestFilePath("countrows_empty.bcsv");
+        
+        // Create empty file
+        auto layout = createFullFlexibleLayout();
+        {
+            bcsv::Writer<bcsv::Layout> writer(layout);
+            ASSERT_TRUE(writer.open(test_file, true)) << "Failed to create empty test file";
+            writer.close(); // Close without writing any rows
+        }
+        
+        // Test countRows() on empty file
+        {
+            bcsv::Reader<bcsv::Layout> reader;
+            ASSERT_TRUE(reader.open(test_file)) << "Failed to open empty test file";
+            
+            size_t counted_rows = reader.countRows();
+            EXPECT_EQ(counted_rows, 0) << "countRows() should return 0 for empty file";
+            
+            // Verify by manual counting
+            size_t manual_count = 0;
+            while (reader.readNext()) {
+                manual_count++;
+            }
+            EXPECT_EQ(manual_count, 0) << "Manual count should be 0 for empty file";
+            EXPECT_EQ(counted_rows, manual_count) << "countRows() doesn't match manual count for empty file";
+            
+            reader.close();
+        }
+        
+        std::cout << "✓ Empty file test: countRows() = 0" << std::endl;
+    }
+    
+    // Test 5: File with single row
+    {
+        std::string test_file = getTestFilePath("countrows_single.bcsv");
+        
+        // Create single-row file
+        auto layout = createFullFlexibleLayout();
+        auto test_data = generateTestData(42);
+        
+        {
+            bcsv::Writer<bcsv::Layout> writer(layout);
+            ASSERT_TRUE(writer.open(test_file, true)) << "Failed to create single-row test file";
+            
+            populateFlexibleRow(writer, test_data);
+            ASSERT_TRUE(writer.writeRow()) << "Failed to write single test row";
+            writer.close();
+        }
+        
+        // Test countRows() on single-row file
+        {
+            bcsv::Reader<bcsv::Layout> reader;
+            ASSERT_TRUE(reader.open(test_file)) << "Failed to open single-row test file";
+            
+            size_t counted_rows = reader.countRows();
+            EXPECT_EQ(counted_rows, 1) << "countRows() should return 1 for single-row file";
+            
+            // Verify by manual counting
+            size_t manual_count = 0;
+            while (reader.readNext()) {
+                manual_count++;
+            }
+            EXPECT_EQ(manual_count, 1) << "Manual count should be 1 for single-row file";
+            EXPECT_EQ(counted_rows, manual_count) << "countRows() doesn't match manual count for single-row file";
+            
+            reader.close();
+        }
+        
+        std::cout << "✓ Single row test: countRows() = 1" << std::endl;
+    }
+    
+    std::cout << "CountRows() comprehensive test completed successfully" << std::endl;
+}
+
+// Test 11: Edge Case - Zero Columns Layout
 TEST_F(BCSVTestSuite, EdgeCase_ZeroColumns) {
     std::string test_file = getTestFilePath("zero_columns_test.bcsv");
     

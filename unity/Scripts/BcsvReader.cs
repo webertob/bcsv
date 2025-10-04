@@ -118,6 +118,14 @@ namespace BCSV
         }
 
         /// <summary>
+        /// Get the total number of rows in the file
+        /// </summary>
+        public long CountRows()
+        {
+            return NativeMethods.bcsv_reader_count_rows(Handle);
+        }
+
+        /// <summary>
         /// Read the next row from the file
         /// </summary>
         /// <returns>True if a row was read, false if end of file</returns>

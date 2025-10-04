@@ -101,6 +101,9 @@ namespace BCSV
         internal static extern void bcsv_reader_close(IntPtr reader);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern size_t bcsv_reader_count_rows(const_bcsv_reader_t reader);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern bool bcsv_reader_open(IntPtr reader, string filename);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]

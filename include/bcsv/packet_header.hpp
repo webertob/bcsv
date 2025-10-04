@@ -9,52 +9,88 @@
 
 #pragma once
 
+#include "bcsv/byte_buffer.h"
 #include "packet_header.h"
 #include <boost/crc.hpp>
+#include <cstring>
+#include <algorithm>
+#include <iostream>
 
 namespace bcsv {
-
-    inline bool PacketHeader::read(std::istream& stream)
+    /*
+     * Read a packet header from the stream
+     * Returns true if a valid header was read, false otherwise
+     */
+    inline bool PacketHeader::read(std::istream& stream, std::vector<uint16_t> &rowLengths, ByteBuffer& payloadBuffer, bool resilient)
     {
-        if(!stream) {
-            return false;
-        }
-        stream.read(reinterpret_cast<char*>(this), sizeof(PacketHeader));
-        bool size_ok = stream.gcount() == sizeof(PacketHeader);
-        bool valid = validate();
-        return size_ok && valid;
-    }
-
-    inline bool PacketHeader::findAndRead(std::istream& stream)
-    {
-        // Search for the magic number in the stream
-        char buffer[4];
         while(stream) {
-            // 1st byte read and evaluate
-            stream.read(buffer, 1);
-            if (buffer[0] != ((PCKT_MAGIC >> 24) & 0xFF)) {
-                continue;
+            // Read potential header 
+            stream.read(reinterpret_cast<char*>(this), sizeof(PacketHeader));
+            if(stream.gcount() != sizeof(PacketHeader) || stream.eof()) {
+                break; // Reached end of file without having a valid header
             }
-            // 2nd byte read and evaluate
-            stream.read(buffer + 1, 1);
-            if (buffer[1] != ((PCKT_MAGIC >> 16) & 0xFF)) {
-                continue;
+
+            // Search for magic number that indicates start of a potential header
+            auto search_begin = reinterpret_cast<const char*>(this);
+            auto search_end = search_begin + sizeof(PacketHeader);
+            auto pattern_begin = reinterpret_cast<const char*>(&PCKT_MAGIC);
+            auto pattern_end = pattern_begin + sizeof(PCKT_MAGIC);
+
+            auto found = std::search(search_begin, search_end, pattern_begin, pattern_end);
+            size_t size_pos = (found != search_end) ? (found - search_begin) : std::string_view::npos;
+            if(size_pos == std::string_view::npos) {
+                // Magic number not found, continue trying
+                continue; 
+            } else if(size_pos != 0) {
+                // Magic number found, but we need to move it to the front
+                std::memmove(reinterpret_cast<char*>(this), reinterpret_cast<const char*>(this) + size_pos, sizeof(PacketHeader) - size_pos);
+                // Read rest of header from stream
+                stream.read(reinterpret_cast<char*>(this) + (sizeof(PacketHeader) - size_pos), size_pos);
+                if(stream.gcount() != static_cast<std::streamsize>(size_pos)) {
+                    break; // Reached end of file without having a valid header
+                }
             }
-            // 3rd byte read and evaluate
-            stream.read(buffer + 2, 1);
-            if (buffer[2] != ((PCKT_MAGIC >> 8) & 0xFF)) {
-                continue;
+
+            // At this point we believe we have a valid header
+            // Let's validate it:
+            // In case validation fails we need to continue searching from here:
+            std::streamoff file_pos = stream.tellg() - static_cast<std::streamoff>(sizeof(PacketHeader)-4); //in case validation fails we need to continue searching from here
+            
+            if(rowCount == 0 || payloadSize == 0) {
+                if(!resilient) {
+                    throw std::runtime_error("Error: Invalid packet header (rowCount or payloadSize is zero)");
+                } else {
+                    stream.seekg(file_pos);
+                    continue; // Invalid header, try next position
+                }
             }
-            // 4th byte read and evaluate
-            stream.read(buffer + 3, 1);
-            if (buffer[3] != ((PCKT_MAGIC >> 0) & 0xFF)) {
-                continue;
+
+            // read row lengths
+            rowLengths.resize(this->rowCount-1);
+            stream.read(reinterpret_cast<char*>(rowLengths.data()), (this->rowCount - 1) * sizeof(uint16_t));
+            if(stream.gcount() != static_cast<std::streamsize>((this->rowCount - 1) * sizeof(uint16_t))) {
+                return false; // Failed to read full row lengths
             }
-            // Magic number matched, read the rest of the header
-            stream.read(reinterpret_cast<char*>(this) + 4, sizeof(PacketHeader) - 4);
-            return validate() && stream.good();
+
+            // read payload data
+            payloadBuffer.resize(this->payloadSize);
+            stream.read(reinterpret_cast<char*>(payloadBuffer.data()), this->payloadSize);
+            if(stream.gcount() != static_cast<std::streamsize>(this->payloadSize)) {
+                return false; // Failed to read full payload
+            }
+
+            // validate crc32
+            if (!validateCRC32(rowLengths, payloadBuffer)) {
+                if(!resilient) {
+                    throw std::runtime_error("Error: CRC32 validation failed");
+                } else {
+                    stream.seekg(file_pos);
+                    continue; // Invalid header, try next position
+                }
+            }
+            return true;
         }
-        return false; // Magic number not found
+        return false;
     }
 
     inline void PacketHeader::updateCRC32(const std::vector<uint16_t>& rowLengths, const ByteBuffer& zipBuffer) {

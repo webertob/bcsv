@@ -10,6 +10,7 @@
 #ifndef BCSV_C_API_H
 #define BCSV_C_API_H
 
+#include <cstddef>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stddef.h> // for size_t
@@ -88,6 +89,7 @@ typedef enum {
 bcsv_reader_t       bcsv_reader_create  (bcsv_read_mode_t mode);
 void                bcsv_reader_destroy (bcsv_reader_t reader);
 
+size_t              bcsv_reader_count_rows(const_bcsv_reader_t reader); // counts total rows in file (may be slow)
 void                bcsv_reader_close   (bcsv_reader_t reader);
 bool                bcsv_reader_open    (bcsv_reader_t reader, const char* filename);
 bool                bcsv_reader_is_open (const_bcsv_reader_t reader);
@@ -121,22 +123,20 @@ const wchar_t*      bcsv_writer_filename(const_bcsv_writer_t writer);
 #else
 const char*         bcsv_writer_filename(const_bcsv_writer_t writer);
 #endif
-const_bcsv_layout_t bcsv_writer_layout  (const_bcsv_writer_t writer);      // returns layout
+const_bcsv_layout_t bcsv_writer_layout  (const_bcsv_writer_t writer);             // returns layout
 
-bool                bcsv_writer_next    (bcsv_writer_t writer);            // writes current row, returns false on error
-bcsv_row_t          bcsv_writer_row     (bcsv_writer_t writer);            // returns reference to internal row (no copy)
-size_t              bcsv_writer_index   (const_bcsv_writer_t writer);      // returns current row index (0-based), number of rows written so far
+bool                bcsv_writer_next    (bcsv_writer_t writer);                   // writes current row, returns false on error
+bcsv_row_t          bcsv_writer_row     (bcsv_writer_t writer);                   // returns reference to internal row (no copy)
+size_t              bcsv_writer_index   (const_bcsv_writer_t writer);             // returns current row index (0-based), number of rows written so far
 // Writer API - End
 
 
 // Row API - Start
-// These operate on the row reference, no deep copy
-
 // Row lifecycle
-bcsv_row_t          bcsv_row_create      (const_bcsv_layout_t layout);          // creates a new row with given layout
-bcsv_row_t          bcsv_row_clone       (const_bcsv_row_t row);                // creates a copy of an existing row
-void                bcsv_row_destroy     (bcsv_row_t row);                       // destroys a row created with bcsv_row_create
-void                bcsv_row_clear       (bcsv_row_t row);                       // clears all values in the row
+bcsv_row_t          bcsv_row_create      (const_bcsv_layout_t layout);            // creates a new row with given layout
+bcsv_row_t          bcsv_row_clone       (const_bcsv_row_t row);                  // creates a copy of an existing row
+void                bcsv_row_destroy     (bcsv_row_t row);                        // destroys a row created with bcsv_row_create
+void                bcsv_row_clear       (bcsv_row_t row);                        // clears all values in the row
 void                bcsv_row_assign      (bcsv_row_t dest, const_bcsv_row_t src); // assigns src row data to dest row
 
 // Change tracking
@@ -147,7 +147,7 @@ void                bcsv_row_set_changes      (bcsv_row_t row);                 
 void                bcsv_row_reset_changes    (bcsv_row_t row);                   // mark all columns as unchanged
 
 // Single value access
-const_bcsv_layout_t bcsv_row_layout     (const_bcsv_row_t row);                // returns layout of the row
+const_bcsv_layout_t bcsv_row_layout     (const_bcsv_row_t row);                   // returns layout of the row
 bool                bcsv_row_get_bool   (const_bcsv_row_t row, int col);
 uint8_t             bcsv_row_get_uint8  (const_bcsv_row_t row, int col);
 uint16_t            bcsv_row_get_uint16 (const_bcsv_row_t row, int col);

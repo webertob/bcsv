@@ -6,7 +6,6 @@
  */
 
 #include <stdio.h>
-#include <stdlib.h>
 #include "../include/bcsv/bcsv_c_api.h"
 
 int main() {

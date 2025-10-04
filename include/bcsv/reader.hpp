@@ -16,6 +16,7 @@
  * This file contains the template implementations for the Reader class.
  */
 
+#include "bcsv/byte_buffer.h"
 #include "reader.h"
 #include "file_header.h"
 #include "layout.h"
@@ -61,6 +62,66 @@ namespace bcsv {
         packet_row_count_ = 0;
         row_lengths_.clear();
         row_offsets_.clear();
+    }
+
+        /*
+    * @brief Counts the rows in the file (this might be slow as it scans the end of the file)
+    * @param none
+    * @return returns the number of rows in the file
+    */
+    template<LayoutConcept LayoutType>
+    size_t Reader<LayoutType>::countRows() const
+    {
+        if(!isOpen()) {
+            return 0;
+        }
+
+        // open file again, using a separate stream to not disturb current reading position
+        std::ifstream temp_stream(filePath_, std::ios::binary);
+        if (!temp_stream.is_open()) {
+            return 0;
+        }
+
+        // find end of file
+        temp_stream.seekg(0, std::ios::end);
+        std::streampos file_end = temp_stream.tellg();
+
+        // now jump 1.5 blocks back (we assume the last packet is not larger than 2 blocks)
+        uint32_t blockSize = fileHeader_.blockSize();
+        std::streampos seek_pos = file_end - static_cast<std::streamoff>(blockSize*1.5);
+        if(seek_pos < 0) {
+            seek_pos = 0;
+        }
+        
+        //read from there until we find a valid packet header
+        temp_stream.seekg(seek_pos);
+        std::vector<uint16_t> row_lengths;
+        ByteBuffer buffer_zip;
+        PacketHeader header;
+        
+        // Read packets until we can't fit another PacketHeader
+        size_t lastRowFirst = 0;
+        size_t lastRowCount = 0;
+        bool foundValidPacket = false;
+        
+        while(temp_stream.tellg() + static_cast<std::streamoff>(sizeof(PacketHeader)) <= file_end) {
+            if(!header.read(temp_stream, row_lengths, buffer_zip, true)) {
+                break; // No more valid packets found
+            }
+            lastRowFirst = header.rowFirst; // Store the values from this valid header
+            lastRowCount = header.rowCount;
+            foundValidPacket = true;
+            // Continue reading as long as there's space for another PacketHeader
+        }
+        
+        if (!foundValidPacket) {
+            return 0; // No valid packets found
+        }
+        
+        // At this point we have the very last packet header in the file
+        size_t total_rows = lastRowFirst + lastRowCount;
+        
+        return total_rows;
     }
 
     /**
@@ -162,7 +223,6 @@ namespace bcsv {
     /* Read a packet of rows from the binary file */
     template<LayoutConcept LayoutType>
     bool Reader<LayoutType>::readPacket() {
-        bool normal = true;
         while (stream_)
         {
             try {
@@ -171,49 +231,10 @@ namespace bcsv {
                     break;
                 }
                 
-                // Read packet header (compressed and uncompressed sizes)
+                // Read packet from file (header and compressed data)
                 PacketHeader header;
-                // in normal mode we expect the header to be at the current position
-                // in recovery mode we search for the header magic number
-                if(normal) {
-                    if (!header.read(stream_)) {
-                        throw std::runtime_error("Error: Failed to read packet header in normal mode");
-                    }
-                } else {
-                    if (!header.findAndRead(stream_)) {
-                        throw std::runtime_error("Error: Failed to find and read packet header in recovery mode");
-                    }
-                }
-
-                if(header.rowFirst < row_index_file_) {
-                    throw std::runtime_error("Error: Packet rowFirst index is less than current file row index");
-                }
-
-                if(header.rowCount == 0) {
-                    throw std::runtime_error("Error: Packet rowCount is zero");
-                }
-
-                if(header.payloadSizeZip == 0) {
-                    throw std::runtime_error("Error: Invalid payload sizes in packet header");
-                }
-
-                //read row lengths (by definition 1st offset is always 0)
-                row_lengths_.resize(header.rowCount-1);
-                stream_.read(reinterpret_cast<char*>(row_lengths_.data()), row_lengths_.size() * sizeof(uint16_t));
-                if (stream_.gcount() != static_cast<std::streamsize>(row_lengths_.size() * sizeof(uint16_t))) {
-                    throw std::runtime_error("Error: Failed to read row lengths");
-                }
-
-                // Read the compressed packet data
-                buffer_zip_.resize(header.payloadSizeZip);
-                stream_.read(reinterpret_cast<char*>(buffer_zip_.data()), buffer_zip_.size());
-                if (stream_.gcount() != static_cast<std::streamsize>(buffer_zip_.size())) {
-                    throw std::runtime_error("Error: Failed to read packet data");
-                }
-
-                // validate CRC
-                if(!header.validateCRC32(row_lengths_, buffer_zip_)) {
-                    throw std::runtime_error("Error: Packet CRC32 validation failed");
+                if (!header.read(stream_, row_lengths_, buffer_zip_, mode_ == ReaderMode::RESILIENT)) {
+                    throw std::runtime_error("Error: Failed to find a valid packet");
                 }
 
                 // Handle decompression based on file compression level
@@ -254,17 +275,10 @@ namespace bcsv {
                 }
                 row_lengths_.push_back(static_cast<uint16_t>(last_length));
 
-                if(!normal) { 
-                    std::cerr << "Info: Recovered from error, resynchronized at row index " << header.rowFirst << std::endl;
-                    std::cerr << "Info: We have lost range [" << row_index_file_ + 1 << " to " << header.rowFirst-1 << "]" << std::endl;
-                    normal = true; // back to normal mode
-                }
-
-
-
                 // Update row count
                 row_index_file_ = header.rowFirst;
                 row_index_packet_ = 0;
+                packet_row_first_ = header.rowFirst;
                 packet_row_count_ = header.rowCount;
                 return true;
             } catch (const std::exception& ex) {
@@ -272,10 +286,8 @@ namespace bcsv {
                 if (mode_ == ReaderMode::STRICT) {
                     throw;  // Rethrow the original exception
                 }
-                
                 // In RESILIENT mode, log error and try to recover
-                std::cerr << "Error reading packet: " << ex.what() << std::endl;
-                normal = false; // switch to recovery mode
+                std::cerr << "Warning: " << ex.what() << std::endl;
             }
         }
         buffer_raw_.clear();
@@ -287,10 +299,12 @@ namespace bcsv {
         return false;
     }
 
+
+
     /*
     * @brief Read a single row from the buffer
-    * @param row The row to read into
-    * @return The index of the row read. Note: count starts at 1! Returns 0 if no row could be read
+    * @param none
+    * @return true if a row was read successfully, false otherwise
     */
     template<LayoutConcept LayoutType>
     bool Reader<LayoutType>::readNext() {
@@ -300,6 +314,13 @@ namespace bcsv {
             }
             if(packet_row_count_ == 0) {
                 return false;
+            }
+            if(packet_row_first_ != row_index_file_) {
+                if(mode_ == ReaderMode::STRICT) {
+                    std::cerr << "Error: Index of first row in packet (" << packet_row_first_ << ") does not match expected row index (" << row_index_file_ << ")" << std::endl;
+                    return false;
+                }
+                std::cerr << "Warning: Index of first row in packet (" << packet_row_first_ << ") does not match expected row index (" << row_index_file_ << "). Potential data loss detected." << std::endl;
             }
         }
 

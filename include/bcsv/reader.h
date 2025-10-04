@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -55,6 +56,7 @@ namespace bcsv {
         size_t                  row_index_file_   = 0;       // current row index within the file
         size_t                  row_index_packet_ = 0;       // current row index within the packet
         RowType                 row_;                        // current row
+        size_t                  packet_row_first_ = 0;       // index of the first row in the current packet
         size_t                  packet_row_count_ = 0;       // number of rows in the current packet
 
     public:
@@ -67,6 +69,7 @@ namespace bcsv {
                                 ~Reader();
 
         void                    close();
+        size_t                  countRows() const;
         uint8_t                 compressionLevel() const        { return fileHeader_.compressionLevel(); }
         const FilePath&         filePath() const                { return filePath_; }
         const LayoutType&       layout() const                  { return row_.layout(); }

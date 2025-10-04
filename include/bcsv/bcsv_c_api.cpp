@@ -94,6 +94,10 @@ void bcsv_reader_close(bcsv_reader_t reader) {
     static_cast<bcsv::Reader<bcsv::Layout>*>(reader)->close();
 }
 
+size_t bcsv_reader_count_rows(const_bcsv_reader_t reader) {
+    return static_cast<const bcsv::Reader<bcsv::Layout>*>(reader)->countRows();
+}
+
 bool bcsv_reader_open(bcsv_reader_t reader, const char* filename) {
     return static_cast<bcsv::Reader<bcsv::Layout>*>(reader)->open(filename);
 }

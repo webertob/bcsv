@@ -60,20 +60,19 @@ namespace bcsv {
     class PacketHeader {
     public:
         const uint32_t magic = PCKT_MAGIC; 
-        uint32_t payloadSizeZip; // Size of the compressed payload data
+        uint32_t payloadSize; // Size of the compressed payload data
         uint64_t rowFirst;       // Index of the first row in the packet
         uint32_t rowCount;       // Number of rows in the packet
         uint32_t crc32;          // CRC32 checksum of the entire packet (with this field zeroed)
 
-        bool read               (std::istream& stream);
-        bool findAndRead        (std::istream& stream);
+        bool read               (std::istream& stream, std::vector<uint16_t> &rowLengths, ByteBuffer& payloadBuffer, bool resilient = false);
         void updateCRC32        (const std::vector<uint16_t>& rowLengths, const ByteBuffer& zipBuffer);
         bool validateCRC32      (const std::vector<uint16_t>& rowLengths, const ByteBuffer& zipBuffer);
         bool validate           () const {
             if(magic != PCKT_MAGIC) {
                 return false;
             }
-            if(payloadSizeZip == 0) {
+            if(payloadSize == 0) {
                 return false;
             }
             if(rowCount == 0) {
