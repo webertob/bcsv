@@ -211,3 +211,15 @@ install(TARGETS bcsv_c_api
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
 )
+
+# Test program for Row C API (only build if this is the main project)
+if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
+    add_executable(test_row_api tests/bcsv_c_api_row_test.c)
+    target_link_libraries(test_row_api bcsv_c_api)
+    target_include_directories(test_row_api PRIVATE ${CMAKE_SOURCE_DIR})
+    
+    # Comprehensive C API test suite
+    add_executable(test_c_api tests/bcsv_c_api_test.c)
+    target_link_libraries(test_c_api bcsv_c_api)
+    target_include_directories(test_c_api PRIVATE ${CMAKE_SOURCE_DIR})
+endif()

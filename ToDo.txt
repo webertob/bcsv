@@ -1,32 +1,19 @@
-Goal: 
-Concentrate on time series data
-Allow for small memory overhead, write/read
-Allow quick sparse/random reading
-Allow quick sequential reading
-Allow quick sequential writting
-Allow for small fiel sizes
-Easy, schema changes within programming languag
-support multiple languages:
-- c/c++, python, c#
-
 Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment is not considered, as we favor small file size. For temporary data and algorithms, higher-order alignment should be used.
-
-Feature to prove and publish:
-    - clock/recovery --> further performance gain (compression) as underlying (hidden) clock is considered
-
-
-1. Update documentation (bcsv general, format, CLI tools, pybcsv, fullfill GIT hib community baselines)
-2. Build a project using bcsv with C++ and Python interfaces
-3. Create and test C# wrapper
-4. Add SIMD / vectorized interfaces:
-    - Python: implement get/set functions for numpy
-    - C#/Unity: compatibility with componet/job system
-5. Improve compression:
+0. Change automated versioning (bcsv version encoded in files) to increment during upload. Ensure that the version stored and shared on gihub is valid and can be used without cmake or git, just by downloading the c++ library.
+    We want to make it easy to use bcsv in other project, i.e. just copy the include (include/bcsv, include/boost*/ include/lz4* ) folder to your project.
+0.5 Document Mission Statment, 
+1. Build a project using bcsv with C++ and Python interfaces
+    - demonstrate MatPlotLib
+2. create CLI tools:
+    - bcsv2csv add: --firstRow --lastRow --slice "allows to select a region consder using python slicing syntax"
+    - bcsvHead print a section at the start of the file, using comma seperated values (incl. header)
+    - bcsvTail print a section at the end of the file, using comma separated values (no header)
+    - bcsvHeader: "Prints the header in a human readable version (vertical list format)"
+3. Improve compression:
     - Implement dictionary compression for strings
     - Implement ZigZag and variable-length integer encoding (also apply to string addresses, row length, and length)
     - Implement CHIMP/GORILLA compression for floats
-    - Implement first and second order hold schemes (mark candidates in layout/header)
-6. Create random access / random read methods:
+4. Create random access / random read methods:
     Row row(size_t index) {
         if(index == current_index+1) {
             //fall back to sequential
@@ -37,17 +24,17 @@ Feature to prove and publish:
         // use specific heuristics for ZoH, i.e. traverse several rows back and for to avoid complex reads
     }
     const auto& cell(size_t rowIndex, size_t colIndex) // To directly access a cell, use RowView as a lightweight abstraction to avoid full deserialization
-7. Create sampler (select data based on certain conditions)
+5. Create sampler (select data based on certain conditions)
     - Support C++ interface (iterate over individual rows)
     - Support Python interface (iterate over individual rows and block reads (pandas/numpy))
-8. Add other data types (float8_t, float16_t, float_123_t, uint128_t, int128_t, BLOB)
-9. Add concurrent compression and writing using double buffering to avoid blocking the row interface when a packet needs to be written or read
-10. Investigate stream write/stream read to avoid utilization spikes that come with packet-based format
-11. Create three different bcsv file formats:
+6. Add other data types (float8_t, float16_t, float_123_t, uint128_t, int128_t, BLOB)
+7. Add concurrent compression and writing using double buffering to avoid blocking the row interface when a packet needs to be written or read
+8. Investigate stream write/stream read to avoid utilization spikes that come with packet-based format
+9. Create three different bcsv file formats:
     - Packet-based format: good compromise on size, sequential and random access speeds. Building packets may cause some jitter/spikes in utilization, which may be an issue for hard real-time systems. Compatible with all compression and encoding schemes.
     - Indexed file format: for maximum random access speeds and highest compression levels.
     - Stream file format: for hard real-time systems, not compatible with LZ4 compression. Aimed at sequential write & read with limited compute requirements.
-12. CLI tools:
+10. CLI tools:
     - bcsv2Parquet
     - parquet2bcsv
     - bcsvIndex (creates an indexed file for faster random access)
@@ -55,3 +42,8 @@ Feature to prove and publish:
 13. ROS integration (subscribe ROS topics and store to bcsv and reverse)
 14. MQTT integration (read MQTT topics and store to bcsv and reverse)
 15. Dynamic BitSet, ensure wide types (uin64/32/16 are used if possible), also consider SIMD/AVX
+16. Add SIMD / vectorized interfaces:
+    - Python: implement get/set functions for numpy
+    - C#/Unity: compatibility with componet/job system
+17. Improve compression:
+    - Implement first and second order hold schemes (mark candidates in layout/header)

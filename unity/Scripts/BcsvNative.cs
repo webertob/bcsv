@@ -1,3 +1,12 @@
+/*
+ * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * 
+ * This file is part of the BCSV library.
+ * 
+ * Licensed under the MIT License. See LICENSE file in the project root 
+ * for full license information.
+ */
+
 using System;
 using System.Runtime.InteropServices;
 
@@ -97,8 +106,14 @@ namespace BCSV
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern bool bcsv_reader_is_open(IntPtr reader);
 
+        // Platform-specific filename functions
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_reader_filename(IntPtr reader);
+        internal static extern IntPtr bcsv_reader_filename(IntPtr reader); // Returns wchar_t* on Windows
+#else
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_reader_filename(IntPtr reader); // Returns char* on POSIX
+#endif
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr bcsv_reader_layout(IntPtr reader);
@@ -131,8 +146,14 @@ namespace BCSV
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern bool bcsv_writer_is_open(IntPtr writer);
 
+        // Platform-specific filename functions
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_writer_filename(IntPtr writer);
+        internal static extern IntPtr bcsv_writer_filename(IntPtr writer); // Returns wchar_t* on Windows
+#else
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_writer_filename(IntPtr writer); // Returns char* on POSIX
+#endif
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr bcsv_writer_layout(IntPtr writer);
@@ -145,6 +166,38 @@ namespace BCSV
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern UIntPtr bcsv_writer_index(IntPtr writer);
+
+        // Row API - Lifecycle
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_row_create(IntPtr layout);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_row_clone(IntPtr row);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_destroy(IntPtr row);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_clear(IntPtr row);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_assign(IntPtr dest, IntPtr src);
+
+        // Row API - Change tracking
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern bool bcsv_row_has_any_changes(IntPtr row);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_track_changes(IntPtr row, bool enable);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern bool bcsv_row_tracks_changes(IntPtr row);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_changes(IntPtr row);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_reset_changes(IntPtr row);
 
         // Row API - Single value access
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
@@ -292,5 +345,48 @@ namespace BCSV
         // Error handling
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr bcsv_last_error();
+    }
+
+    /// <summary>
+    /// Helper methods for cross-platform filename handling
+    /// Provides unified string interface while using platform-specific native calls
+    /// </summary>
+    internal static class FilenameHelper
+    {
+        /// <summary>
+        /// Get reader filename as string, handling platform differences
+        /// </summary>
+        internal static string GetReaderFilename(IntPtr reader)
+        {
+            IntPtr filenamePtr = NativeMethods.bcsv_reader_filename(reader);
+            if (filenamePtr == IntPtr.Zero)
+                return null;
+
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+            // On Windows, convert from wchar_t* to string
+            return Marshal.PtrToStringUni(filenamePtr);
+#else
+            // On POSIX, convert from char* to string
+            return Marshal.PtrToStringAnsi(filenamePtr);
+#endif
+        }
+
+        /// <summary>
+        /// Get writer filename as string, handling platform differences
+        /// </summary>
+        internal static string GetWriterFilename(IntPtr writer)
+        {
+            IntPtr filenamePtr = NativeMethods.bcsv_writer_filename(writer);
+            if (filenamePtr == IntPtr.Zero)
+                return null;
+
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+            // On Windows, convert from wchar_t* to string
+            return Marshal.PtrToStringUni(filenamePtr);
+#else
+            // On POSIX, convert from char* to string
+            return Marshal.PtrToStringAnsi(filenamePtr);
+#endif
+        }
     }
 }

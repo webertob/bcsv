@@ -1,3 +1,12 @@
+/*
+ * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * 
+ * This file is part of the BCSV library.
+ * 
+ * Licensed under the MIT License. See LICENSE file in the project root 
+ * for full license information.
+ */
+
 using System;
 using System.Runtime.InteropServices;
 using UnityEngine;
@@ -10,7 +19,6 @@ namespace BCSV
     public class BcsvLayout : IDisposable
     {
         private IntPtr handle;
-        private bool disposed = false;
 
         /// <summary>
         /// Create a new empty layout
@@ -28,7 +36,7 @@ namespace BCSV
         /// <param name="other">Layout to clone</param>
         public BcsvLayout(BcsvLayout other)
         {
-            if (other == null || other.disposed)
+            if (other == null || other.handle == IntPtr.Zero)
                 throw new ArgumentException("Source layout is null or disposed");
             
             handle = NativeMethods.bcsv_layout_clone(other.handle);
@@ -48,7 +56,7 @@ namespace BCSV
         {
             get
             {
-                if (disposed)
+                if (handle == IntPtr.Zero)
                     throw new ObjectDisposedException("BcsvLayout");
                 return handle;
             }
@@ -190,7 +198,7 @@ namespace BCSV
         /// <returns>True if layouts are compatible</returns>
         public bool IsCompatible(BcsvLayout other)
         {
-            if (other == null || other.disposed)
+            if (other == null || other.Handle == IntPtr.Zero)
                 return false;
 
             return NativeMethods.bcsv_layout_isCompatible(Handle, other.Handle);
@@ -202,7 +210,7 @@ namespace BCSV
         /// <param name="source">Source layout</param>
         public void AssignFrom(BcsvLayout source)
         {
-            if (source == null || source.disposed)
+            if (source == null || source.Handle == IntPtr.Zero)
                 throw new ArgumentException("Source layout is null or disposed");
 
             NativeMethods.bcsv_layout_assign(Handle, source.Handle);
@@ -221,24 +229,22 @@ namespace BCSV
         public void Dispose()
         {
             Dispose(true);
-            GC.SuppressFinalize(this);
+            GC.SuppressFinalize(this); // Prevent finalizer from running
         }
 
         protected virtual void Dispose(bool disposing)
         {
-            if (!disposed)
+            if (handle != IntPtr.Zero)
             {
-                if (handle != IntPtr.Zero)
-                {
-                    NativeMethods.bcsv_layout_destroy(handle);
-                    handle = IntPtr.Zero;
-                }
-                disposed = true;
+                // Always clean up native resources regardless of disposing flag
+                NativeMethods.bcsv_layout_destroy(handle);
+                handle = IntPtr.Zero;
             }
         }
 
         ~BcsvLayout()
         {
+            // Finalizer safety net for forgotten Dispose() calls
             Dispose(false);
         }
     }

@@ -1,3 +1,12 @@
+/*
+ * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * 
+ * This file is part of the BCSV library.
+ * 
+ * Licensed under the MIT License. See LICENSE file in the project root 
+ * for full license information.
+ */
+
 #ifndef BCSV_C_API_H
 #define BCSV_C_API_H
 
@@ -82,7 +91,11 @@ void                bcsv_reader_destroy (bcsv_reader_t reader);
 void                bcsv_reader_close   (bcsv_reader_t reader);
 bool                bcsv_reader_open    (bcsv_reader_t reader, const char* filename);
 bool                bcsv_reader_is_open (const_bcsv_reader_t reader);
+#ifdef _WIN32
+const wchar_t*      bcsv_reader_filename(const_bcsv_reader_t reader);
+#else
 const char*         bcsv_reader_filename(const_bcsv_reader_t reader);
+#endif
 const_bcsv_layout_t bcsv_reader_layout  (const_bcsv_reader_t reader);    // returns layout of opened file, or NULL if not open
 
 bool                bcsv_reader_next    (bcsv_reader_t reader);          // returns 1 if row available, 0 if EOF
@@ -103,7 +116,11 @@ void                bcsv_writer_close   (bcsv_writer_t writer);
 void                bcsv_writer_flush   (bcsv_writer_t writer);
 bool                bcsv_writer_open    (bcsv_writer_t writer, const char* filename, bool overwrite, int compress, int block_size_kb, bcsv_file_flags_t flags); // defaults: overwrite=false, compress=1, block_size_kb=64, flags=0
 bool                bcsv_writer_is_open (const_bcsv_writer_t writer);
+#ifdef _WIN32
+const wchar_t*      bcsv_writer_filename(const_bcsv_writer_t writer);
+#else
 const char*         bcsv_writer_filename(const_bcsv_writer_t writer);
+#endif
 const_bcsv_layout_t bcsv_writer_layout  (const_bcsv_writer_t writer);      // returns layout
 
 bool                bcsv_writer_next    (bcsv_writer_t writer);            // writes current row, returns false on error
@@ -114,6 +131,20 @@ size_t              bcsv_writer_index   (const_bcsv_writer_t writer);      // re
 
 // Row API - Start
 // These operate on the row reference, no deep copy
+
+// Row lifecycle
+bcsv_row_t          bcsv_row_create      (const_bcsv_layout_t layout);          // creates a new row with given layout
+bcsv_row_t          bcsv_row_clone       (const_bcsv_row_t row);                // creates a copy of an existing row
+void                bcsv_row_destroy     (bcsv_row_t row);                       // destroys a row created with bcsv_row_create
+void                bcsv_row_clear       (bcsv_row_t row);                       // clears all values in the row
+void                bcsv_row_assign      (bcsv_row_t dest, const_bcsv_row_t src); // assigns src row data to dest row
+
+// Change tracking
+bool                bcsv_row_has_any_changes  (const_bcsv_row_t row);             // returns true if any column has been modified
+void                bcsv_row_track_changes    (bcsv_row_t row, bool enable);      // enable/disable change tracking
+bool                bcsv_row_tracks_changes   (const_bcsv_row_t row);             // returns true if change tracking is enabled
+void                bcsv_row_set_changes      (bcsv_row_t row);                   // mark all columns as changed
+void                bcsv_row_reset_changes    (bcsv_row_t row);                   // mark all columns as unchanged
 
 // Single value access
 const_bcsv_layout_t bcsv_row_layout     (const_bcsv_row_t row);                // returns layout of the row

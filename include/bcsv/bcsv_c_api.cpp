@@ -1,3 +1,12 @@
+/*
+ * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * 
+ * This file is part of the BCSV library.
+ * 
+ * Licensed under the MIT License. See LICENSE file in the project root 
+ * for full license information.
+ */
+
 #include "bcsv_c_api.h"
 #include <string>
 
@@ -93,9 +102,21 @@ bool bcsv_reader_is_open(const_bcsv_reader_t reader) {
     return static_cast<const bcsv::Reader<bcsv::Layout>*>(reader)->isOpen();
 }
 
-const char* bcsv_reader_filename(const_bcsv_reader_t reader) {
-    return static_cast<const bcsv::Reader<bcsv::Layout>*>(reader)->filePath().string().c_str();
+#ifdef _WIN32
+const wchar_t* bcsv_reader_filename(const_bcsv_reader_t reader) {
+    const auto* r = static_cast<const bcsv::Reader<bcsv::Layout>*>(reader);
+    const auto& path = r->filePath();
+    // On Windows, return native wchar_t string directly (no conversion needed)
+    return path.c_str();
 }
+#else
+const char* bcsv_reader_filename(const_bcsv_reader_t reader) {
+    const auto* r = static_cast<const bcsv::Reader<bcsv::Layout>*>(reader);
+    const auto& path = r->filePath();
+    // On POSIX systems, return native char string directly (no conversion needed)
+    return path.c_str();
+}
+#endif
 
 const_bcsv_layout_t bcsv_reader_layout(const_bcsv_reader_t reader) {
     auto r = static_cast<const  bcsv::Reader<bcsv::Layout>*>(reader);
@@ -154,9 +175,21 @@ bool bcsv_writer_is_open(const_bcsv_writer_t writer) {
     return static_cast<const bcsv::Writer<bcsv::Layout>*>(writer)->is_open();
 }
 
-const char* bcsv_writer_filename(const_bcsv_writer_t writer) {
-    return static_cast<const bcsv::Writer<bcsv::Layout>*>(writer)->filePath().string().c_str();
+#ifdef _WIN32
+const wchar_t* bcsv_writer_filename(const_bcsv_writer_t writer) {
+    const auto* w = static_cast<const bcsv::Writer<bcsv::Layout>*>(writer);
+    const auto& path = w->filePath();
+    // On Windows, return native wchar_t string directly (no conversion needed)
+    return path.c_str();
 }
+#else
+const char* bcsv_writer_filename(const_bcsv_writer_t writer) {
+    const auto* w = static_cast<const bcsv::Writer<bcsv::Layout>*>(writer);
+    const auto& path = w->filePath();
+    // On POSIX systems, return native char string directly (no conversion needed)
+    return path.c_str();
+}
+#endif
 
 const_bcsv_layout_t bcsv_writer_layout(const_bcsv_writer_t writer) {
     return static_cast<const_bcsv_layout_t>(&static_cast<const bcsv::Writer<bcsv::Layout>*>(writer)->layout());
@@ -175,6 +208,52 @@ size_t bcsv_writer_index(const_bcsv_writer_t writer) {
 }
 
 // Row API
+
+// Row lifecycle
+bcsv_row_t bcsv_row_create(const_bcsv_layout_t layout) {
+    const auto* l = static_cast<const bcsv::Layout*>(layout);
+    return new bcsv::Row(*l);
+}
+
+bcsv_row_t bcsv_row_clone(const_bcsv_row_t row) {
+    return new bcsv::Row(*static_cast<const bcsv::Row*>(row));
+}
+
+void bcsv_row_destroy(bcsv_row_t row) {
+    delete static_cast<bcsv::Row*>(row);
+}
+
+void bcsv_row_clear(bcsv_row_t row) {
+    static_cast<bcsv::Row*>(row)->clear();
+}
+
+void bcsv_row_assign(bcsv_row_t dest, const_bcsv_row_t src) {
+    auto& d = *static_cast<bcsv::Row*>(dest);
+    auto& s = *static_cast<const bcsv::Row*>(src);
+    d = s;
+}
+
+// Change tracking
+bool bcsv_row_has_any_changes(const_bcsv_row_t row) {
+    return static_cast<const bcsv::Row*>(row)->hasAnyChanges();
+}
+
+void bcsv_row_track_changes(bcsv_row_t row, bool enable) {
+    static_cast<bcsv::Row*>(row)->trackChanges(enable);
+}
+
+bool bcsv_row_tracks_changes(const_bcsv_row_t row) {
+    return static_cast<const bcsv::Row*>(row)->tracksChanges();
+}
+
+void bcsv_row_set_changes(bcsv_row_t row) {
+    static_cast<bcsv::Row*>(row)->setChanges();
+}
+
+void bcsv_row_reset_changes(bcsv_row_t row) {
+    static_cast<bcsv::Row*>(row)->resetChanges();
+}
+
 const_bcsv_layout_t bcsv_row_layout(const_bcsv_row_t row) {
     auto r = static_cast<const bcsv::Row*>(row);
     auto l = &(r->layout());

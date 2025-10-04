@@ -1,3 +1,12 @@
+/*
+ * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * 
+ * This file is part of the BCSV library.
+ * 
+ * Licensed under the MIT License. See LICENSE file in the project root 
+ * for full license information.
+ */
+
 using BCSV;
 using UnityEngine;
 using System.Collections.Generic;
@@ -76,7 +85,7 @@ public class SubscriptionBuilder
 
 public class BcsvRecorder : MonoBehaviour
 {
-    [SerializeField] private string filePath = "c:/ws/test{timestamp}.bcsv";
+    [SerializeField] private string filePath = "c:/ws/test_{timestamp}.bcsv";
     [SerializeField] private float timerInterval = 0.1f;
     [SerializeField] private bool running = true;
     
@@ -85,7 +94,6 @@ public class BcsvRecorder : MonoBehaviour
     
     private BcsvLayout layout;
     private BcsvWriter writer;
-    private BcsvRow row;
 
     void MakeSubscriptions()
     {
@@ -166,7 +174,6 @@ public class BcsvRecorder : MonoBehaviour
         if (writer.Open(finalPath, true, 1, 64, FileFlags.ZOH))
         {
             Debug.Log($"Started recording to: {finalPath}");
-            row = writer.Row;
             timerCounter = timerInterval;
         }
         else
@@ -196,7 +203,7 @@ public class BcsvRecorder : MonoBehaviour
     {
         if (writer == null || !writer.IsOpen) return;
         
-        row = writer.Row;
+        var row = writer.Row;
         if (row == null) return;
         
         int columnIndex = 0;
@@ -225,7 +232,7 @@ public class BcsvRecorder : MonoBehaviour
         writer.Next();
     }
 
-    private void SetRowValue(BcsvRow row, int columnIndex, object value, ColumnType columnType)
+    private void SetRowValue(BcsvRowRef row, int columnIndex, object value, ColumnType columnType)
     {
         try
         {

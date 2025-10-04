@@ -1,3 +1,12 @@
+/*
+ * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * 
+ * This file is part of the BCSV library.
+ * 
+ * Licensed under the MIT License. See LICENSE file in the project root 
+ * for full license information.
+ */
+
 using System;
 using System.Runtime.InteropServices;
 using UnityEngine;
@@ -10,7 +19,6 @@ namespace BCSV
     public class BcsvWriter : IDisposable
     {
         private IntPtr handle;
-        private bool disposed = false;
         private BcsvLayout layout;
 
         /// <summary>
@@ -35,7 +43,7 @@ namespace BCSV
         {
             get
             {
-                if (disposed)
+                if (handle == IntPtr.Zero)
                     throw new ObjectDisposedException("BcsvWriter");
                 return handle;
             }
@@ -56,8 +64,7 @@ namespace BCSV
         {
             get
             {
-                var ptr = NativeMethods.bcsv_writer_filename(Handle);
-                return ptr == IntPtr.Zero ? null : Marshal.PtrToStringAnsi(ptr);
+                return FilenameHelper.GetWriterFilename(Handle);
             }
         }
 
@@ -75,13 +82,14 @@ namespace BCSV
 
         /// <summary>
         /// Get the current row for writing data
+        /// Returns a mutable reference for setting values
         /// </summary>
-        public BcsvRow Row
+        public BcsvRowRef Row
         {
             get
             {
                 var rowHandle = NativeMethods.bcsv_writer_row(Handle);
-                return rowHandle == IntPtr.Zero ? null : new BcsvRow(rowHandle);
+                return rowHandle == IntPtr.Zero ? null : new BcsvRowRef(rowHandle);
             }
         }
 
@@ -236,7 +244,7 @@ namespace BCSV
         /// <param name="rowCount">Number of rows to write</param>
         /// <param name="rowPopulator">Function to populate each row</param>
         /// <returns>Number of rows successfully written</returns>
-        public int WriteRows(int rowCount, Action<BcsvRow, int> rowPopulator)
+        public int WriteRows(int rowCount, Action<BcsvRowRef, int> rowPopulator)
         {
             if (rowPopulator == null)
                 throw new ArgumentNullException(nameof(rowPopulator));
@@ -278,25 +286,27 @@ namespace BCSV
         public void Dispose()
         {
             Dispose(true);
-            GC.SuppressFinalize(this);
+            GC.SuppressFinalize(this); // Prevent finalizer from running
         }
 
         protected virtual void Dispose(bool disposing)
         {
-            if (!disposed)
+            if (handle != IntPtr.Zero)
             {
-                if (handle != IntPtr.Zero)
+                if (disposing)
                 {
+                    // Disposing from user code - safe to call other methods
                     Close(); // Close file if open
-                    NativeMethods.bcsv_writer_destroy(handle);
-                    handle = IntPtr.Zero;
                 }
-                disposed = true;
+                // Always clean up native resources
+                NativeMethods.bcsv_writer_destroy(handle);
+                handle = IntPtr.Zero;
             }
         }
 
         ~BcsvWriter()
         {
+            // Finalizer safety net for forgotten Dispose() calls
             Dispose(false);
         }
     }

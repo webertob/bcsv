@@ -1,3 +1,12 @@
+/*
+ * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * 
+ * This file is part of the BCSV library.
+ * 
+ * Licensed under the MIT License. See LICENSE file in the project root 
+ * for full license information.
+ */
+
 using System;
 using System.Runtime.InteropServices;
 using UnityEngine;
@@ -10,7 +19,6 @@ namespace BCSV
     public class BcsvReader : IDisposable
     {
         private IntPtr handle;
-        private bool disposed = false;
 
         /// <summary>
         /// Create a new BCSV reader
@@ -30,7 +38,7 @@ namespace BCSV
         {
             get
             {
-                if (disposed)
+                if (handle == IntPtr.Zero)
                     throw new ObjectDisposedException("BcsvReader");
                 return handle;
             }
@@ -51,8 +59,7 @@ namespace BCSV
         {
             get
             {
-                var ptr = NativeMethods.bcsv_reader_filename(Handle);
-                return ptr == IntPtr.Zero ? null : Marshal.PtrToStringAnsi(ptr);
+                return FilenameHelper.GetReaderFilename(Handle);
             }
         }
 
@@ -70,13 +77,14 @@ namespace BCSV
 
         /// <summary>
         /// Get the current row (valid after calling Next() successfully)
+        /// Returns an immutable reference to prevent accidental modification
         /// </summary>
-        public BcsvRow Row
+        public BcsvRowRefConst Row
         {
             get
             {
                 var rowHandle = NativeMethods.bcsv_reader_row(Handle);
-                return rowHandle == IntPtr.Zero ? null : new BcsvRow(rowHandle);
+                return rowHandle == IntPtr.Zero ? null : new BcsvRowRefConst(rowHandle);
             }
         }
 
@@ -123,7 +131,7 @@ namespace BCSV
         /// </summary>
         /// <param name="rowCallback">Function to call for each row</param>
         /// <returns>Number of rows processed</returns>
-        public int ReadAll(Action<BcsvRow, int> rowCallback)
+        public int ReadAll(Action<BcsvRowRefConst, int> rowCallback)
         {
             if (rowCallback == null)
                 throw new ArgumentNullException(nameof(rowCallback));
@@ -220,25 +228,27 @@ namespace BCSV
         public void Dispose()
         {
             Dispose(true);
-            GC.SuppressFinalize(this);
+            GC.SuppressFinalize(this); // Prevent finalizer from running
         }
 
         protected virtual void Dispose(bool disposing)
         {
-            if (!disposed)
+            if (handle != IntPtr.Zero)
             {
-                if (handle != IntPtr.Zero)
+                if (disposing)
                 {
+                    // Disposing from user code - safe to call other methods
                     Close(); // Close file if open
-                    NativeMethods.bcsv_reader_destroy(handle);
-                    handle = IntPtr.Zero;
                 }
-                disposed = true;
+                // Always clean up native resources
+                NativeMethods.bcsv_reader_destroy(handle);
+                handle = IntPtr.Zero;
             }
         }
 
         ~BcsvReader()
         {
+            // Finalizer safety net for forgotten Dispose() calls
             Dispose(false);
         }
     }
