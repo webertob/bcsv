@@ -66,6 +66,5 @@ exclude = ["tests*", "examples*"]
 pybcsv = ["py.typed"]
 
 [tool.setuptools]
-license-files = ["LICENSE"]
 include-package-data = true
 zip-safe = false
