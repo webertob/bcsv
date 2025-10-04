@@ -571,8 +571,8 @@ int main(int argc, char* argv[]) {
         std::cout << std::endl;
         
         if (config.verbose) {
-            auto file_size = std::filesystem::file_size(config.output_file);
-            std::cout << "Output file size: " << file_size << " bytes" << std::endl;
+            auto x = std::filesystem::file_size(config.output_file);
+            std::cout << "Output file size: " << x << " bytes" << std::endl;
         }
         
     } catch (const std::exception& e) {

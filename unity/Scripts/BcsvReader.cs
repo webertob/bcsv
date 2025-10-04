@@ -120,7 +120,7 @@ namespace BCSV
         /// <summary>
         /// Get the total number of rows in the file
         /// </summary>
-        public long CountRows()
+        public ulong CountRows()
         {
             return NativeMethods.bcsv_reader_count_rows(Handle);
         }
