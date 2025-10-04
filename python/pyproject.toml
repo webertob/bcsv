@@ -69,4 +69,3 @@ pybcsv = ["py.typed"]
 license-files = ["LICENSE"]
 include-package-data = true
 zip-safe = false
-license-files = []
