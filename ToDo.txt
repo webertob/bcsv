@@ -1,14 +1,12 @@
 Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment is not considered, as we favor small file size. For temporary data and algorithms, higher-order alignment should be used.
-0. Change automated versioning (bcsv version encoded in files) to increment during upload. Ensure that the version stored and shared on gihub is valid and can be used without cmake or git, just by downloading the c++ library.
-    We want to make it easy to use bcsv in other project, i.e. just copy the include (include/bcsv, include/boost*/ include/lz4* ) folder to your project.
 0.5 Document Mission Statment, 
 1. Build a project using bcsv with C++ and Python interfaces
     - demonstrate MatPlotLib
 2. create CLI tools:
-    - bcsv2csv add: --firstRow --lastRow --slice "allows to select a region consder using python slicing syntax"
+    - bcsv2csv add arguments --firstRow --lastRow and --slice to allows the selection of a region for converting data, use python slicing syntax
     - bcsvHead print a section at the start of the file, using comma seperated values (incl. header)
     - bcsvTail print a section at the end of the file, using comma separated values (no header)
-    - bcsvHeader: "Prints the header in a human readable version (vertical list format)"
+    - bcsvHeader: Prints the header in a human readable version (vertical list format), provide column, name and type.
 3. Improve compression:
     - Implement dictionary compression for strings
     - Implement ZigZag and variable-length integer encoding (also apply to string addresses, row length, and length)
