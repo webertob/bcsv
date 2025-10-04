@@ -427,6 +427,7 @@ PYBIND11_MODULE(_bcsv, m) {
         })
         .def("close", &bcsv::Reader<bcsv::Layout>::close)
         .def("is_open", &bcsv::Reader<bcsv::Layout>::isOpen)
+        .def("count_rows", &bcsv::Reader<bcsv::Layout>::countRows, "Count the total number of rows in the file")
         .def("__enter__", [](bcsv::Reader<bcsv::Layout>& reader) -> bcsv::Reader<bcsv::Layout>& {
             return reader;
         })
