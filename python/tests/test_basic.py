@@ -11,6 +11,12 @@
 import pytest
 import pandas as pd
 from pathlib import Path
+import sys
+import os
+
+# Add the parent directory to path so we can import pybcsv
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import pybcsv
 
 def test_basic_operations():
     """Test basic operations first."""

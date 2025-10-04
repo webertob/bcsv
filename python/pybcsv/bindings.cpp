@@ -297,13 +297,13 @@ PYBIND11_MODULE(_bcsv, m) {
     py::class_<bcsv::Writer<bcsv::Layout>>(m, "Writer")
         .def(py::init<const bcsv::Layout&>(), py::arg("layout"))
         .def("open", [](bcsv::Writer<bcsv::Layout>& writer, const std::string& filename, 
-                       bool overwrite = true, size_t compression_level = 1, bcsv::FileFlags flags = bcsv::FileFlags::NONE) {
-            bool success = writer.open(filename, overwrite, compression_level, flags);
+                       bool overwrite = true, size_t compression_level = 1, size_t block_size_kb = 64, bcsv::FileFlags flags = bcsv::FileFlags::NONE) {
+            bool success = writer.open(filename, overwrite, compression_level, block_size_kb, flags);
             if (!success) {
                 throw std::runtime_error("Failed to open file for writing: " + filename);
             }
             return success;
-        }, py::arg("filename"), py::arg("overwrite") = true, py::arg("compression_level") = 1, py::arg("flags") = bcsv::FileFlags::NONE)
+        }, py::arg("filename"), py::arg("overwrite") = true, py::arg("compression_level") = 1, py::arg("block_size_kb") = 64, py::arg("flags") = bcsv::FileFlags::NONE)
         .def("write_row", [](bcsv::Writer<bcsv::Layout>& writer, const py::list& values) {
             auto& row = writer.row();
             const auto& layout = row.layout();
