@@ -10,10 +10,9 @@
 #ifndef BCSV_C_API_H
 #define BCSV_C_API_H
 
-#include <cstddef>
-#include <stdbool.h>
-#include <stdint.h>
-#include <stddef.h> // for size_t
+#include <stddef.h>   // for size_t, NULL
+#include <stdbool.h>  // for bool, true, false
+#include <stdint.h>   // for uint8_t, int32_t, etc.
 
 #ifdef __cplusplus
 extern "C" {

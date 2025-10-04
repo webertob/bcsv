@@ -45,7 +45,7 @@ static int tests_passed = 0;
 } while(0)
 
 #define TEST_START(name) printf("\n--- %s ---\n", name)
-#define TEST_END() printf("")
+#define TEST_END() do { /* Test section complete */ } while(0)
 
 void test_layout_api() {
     TEST_START("Layout API Tests");

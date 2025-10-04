@@ -2,16 +2,7 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
 0.5 Document Mission Statment, 
 1. Build a project using bcsv with C++ and Python interfaces
     - demonstrate MatPlotLib
-2. create CLI tools:
-    - bcsv2csv add arguments --firstRow --lastRow and --slice to allows the selection of a region for converting data, use python slicing syntax
-    - bcsvHead print a section at the start of the file, using comma seperated values (incl. header)
-    - bcsvTail print a section at the end of the file, using comma separated values (no header)
-    - bcsvHeader: Prints the header in a human readable version (vertical list format), provide column, name and type.
-3. Improve compression:
-    - Implement dictionary compression for strings
-    - Implement ZigZag and variable-length integer encoding (also apply to string addresses, row length, and length)
-    - Implement CHIMP/GORILLA compression for floats
-4. Create random access / random read methods:
+2. Create random access / random read methods:
     Row row(size_t index) {
         if(index == current_index+1) {
             //fall back to sequential
@@ -22,6 +13,12 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
         // use specific heuristics for ZoH, i.e. traverse several rows back and for to avoid complex reads
     }
     const auto& cell(size_t rowIndex, size_t colIndex) // To directly access a cell, use RowView as a lightweight abstraction to avoid full deserialization
+3. Modify CLI tools to utilize random read functionality, espacially for bcsvTail and bcsv2csv (in combiniation with slicing), avoid parsing the entire file if poossible
+4. Improve compression:
+    - Implement dictionary compression for strings
+    - Implement ZigZag and variable-length integer encoding (also apply to string addresses, row length, and length)
+    - Implement CHIMP/GORILLA compression for floats
+
 5. Create sampler (select data based on certain conditions)
     - Support C++ interface (iterate over individual rows)
     - Support Python interface (iterate over individual rows and block reads (pandas/numpy))
@@ -39,9 +36,10 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     - bcsvSampler (creates an down sampled version, using specific rules provided)
 13. ROS integration (subscribe ROS topics and store to bcsv and reverse)
 14. MQTT integration (read MQTT topics and store to bcsv and reverse)
-15. Dynamic BitSet, ensure wide types (uin64/32/16 are used if possible), also consider SIMD/AVX
-16. Add SIMD / vectorized interfaces:
+15. Consider performance improvements by enforcing alignment for data types used during read and write, to enable more agressive compiler optimization (alignas())
+16. Dynamic BitSet, ensure wide types (uin64/32/16 are used if possible), also consider SIMD/AVX
+17. Add SIMD / vectorized interfaces:
     - Python: implement get/set functions for numpy
     - C#/Unity: compatibility with componet/job system
-17. Improve compression:
+18. Improve compression:
     - Implement first and second order hold schemes (mark candidates in layout/header)
