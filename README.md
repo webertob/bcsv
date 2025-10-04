@@ -12,35 +12,315 @@ A production-ready header-only C++17 library for reading and writing binary CSV 
 - **International Support**: Decimal separator configuration for European CSV formats
 - **Production Ready**: CRC32 validation, packet-based architecture, robust error handling
 - **Header-only**: Easy integration with CMake and modern C++17 projects
+- **Multi-Language Support**: Python bindings, C# Unity integration, and C API for .dll/.so builds
+- **Cross-Platform**: Works on Windows, Linux, and macOS
+
+## Quick Integration Guide
+
+### Header-Only Library Usage
+
+BCSV can be used as a header-only library by simply copying the required files to your project:
+
+```bash
+# Required files (always copy these)
+cp -r include/bcsv/ your_project/include/
+
+# Optional dependencies (only if not already in your project)
+cp -r include/boost-1.89.0/ your_project/include/   # If you don't have Boost CRC
+cp -r include/lz4-1.10.0/ your_project/include/     # If you don't have LZ4
+```
+
+**Minimal Integration:**
+```cpp
+#include "bcsv/bcsv.h"  // Single header includes everything
+
+int main() {
+    // Your BCSV code here
+    std::cout << "BCSV Version: " << bcsv::getVersion() << std::endl;
+    return 0;
+}
+```
+
+**Compiler Requirements:**
+- C++20 or later
+- Add include path: `-I/path/to/your_project/include`
+- No linking required - it's header-only!
+
+### C API Shared Library (.dll/.so)
+
+For use with other languages or when you need a shared library:
+
+```bash
+# Build the C API shared library
+cmake -B build -S . --preset=default
+cmake --build build --target bcsv_c_api
+
+# Output files:
+# Windows: build/Release/bcsv_c_api.dll
+# Linux:   build/Release/libbcsv_c_api.so
+# macOS:   build/Release/libbcsv_c_api.dylib
+```
+
+**C API Usage:**
+```c
+#include "bcsv/bcsv_c_api.h"
+
+int main() {
+    // C API provides simplified interface for any language
+    BcsvLayout* layout = bcsv_layout_create();
+    bcsv_layout_add_column(layout, "id", BCSV_INT32);
+    bcsv_layout_add_column(layout, "name", BCSV_STRING);
+    
+    BcsvWriter* writer = bcsv_writer_create(layout);
+    bcsv_writer_open(writer, "data.bcsv");
+    // ... write data ...
+    bcsv_writer_close(writer);
+    
+    return 0;
+}
+```
+
+## Language Bindings & Tools
+
+### Python Package (PyBCSV)
+
+Full-featured Python bindings with pandas integration:
+
+```bash
+# Installation
+cd python/
+pip install .
+
+# Basic usage
+import pybcsv
+import pandas as pd
+
+# Direct pandas integration
+df = pd.DataFrame({'id': [1, 2], 'name': ['Alice', 'Bob']})
+pybcsv.write_dataframe(df, "data.bcsv")
+df_read = pybcsv.read_dataframe("data.bcsv")
+
+# Manual layout control
+layout = pybcsv.Layout()
+layout.add_column("score", pybcsv.DOUBLE)
+writer = pybcsv.Writer(layout)
+writer.open("scores.bcsv")
+writer.write_row([95.5])
+writer.close()
+```
+
+**Python Features:**
+- Direct pandas DataFrame read/write
+- All BCSV data types supported
+- Memory-efficient streaming for large datasets
+- Cross-platform wheels (Linux, macOS, Windows)
+- CSV conversion utilities
+
+### Unity Integration (C# Wrapper)
+
+Complete Unity plugin for game development:
+
+**Installation:**
+1. Copy `unity/Scripts/` → `YourProject/Assets/BCSV/Scripts/`
+2. Copy `build/Release/bcsv_c_api.dll` → `YourProject/Assets/Plugins/`
+3. Configure DLL platform settings in Unity Inspector
+
+**Unity Usage:**
+```csharp
+using BCSV;
+
+public class GameDataManager : MonoBehaviour {
+    void SavePlayerData() {
+        var layout = new BcsvLayout();
+        layout.AddColumn("playerId", BcsvColumnType.INT32);
+        layout.AddColumn("score", BcsvColumnType.FLOAT);
+        layout.AddColumn("level", BcsvColumnType.STRING);
+        
+        var writer = new BcsvWriter(layout);
+        string path = Application.persistentDataPath + "/gamedata.bcsv";
+        writer.Open(path);
+        
+        var row = writer.GetRow();
+        row.SetInt32(0, playerId);
+        row.SetFloat(1, playerScore);
+        row.SetString(2, currentLevel);
+        writer.WriteRow();
+        writer.Close();
+    }
+}
+```
+
+**Unity Features:**
+- Type-safe C# API
+- GameObject position/rotation logging
+- Save game data with compression
+- Cross-platform (Windows, macOS, Linux)
+- Minimal garbage collection impact
+
+### CLI Tools
+
+Professional command-line conversion utilities:
+
+**csv2bcsv - Advanced CSV to BCSV Converter:**
+```bash
+# Auto-detect everything
+csv2bcsv data.csv
+
+# European format (semicolon delimiter, comma decimal)
+csv2bcsv -d ';' --decimal-separator ',' european_data.csv
+
+# Full control
+csv2bcsv --delimiter ',' --quote '"' --no-header raw_data.csv output.bcsv
+```
+
+**bcsv2csv - BCSV to CSV Converter:**
+```bash
+# Basic conversion
+bcsv2csv data.bcsv output.csv
+
+# Custom formatting
+bcsv2csv -d ';' --quote-all data.bcsv european_output.csv
+```
+
+**CLI Features:**
+- Automatic delimiter detection (comma, semicolon, tab, pipe)
+- Aggressive type optimization (UINT8→INT64 based on data analysis)
+- European CSV support (decimal separator configuration)
+- Progress reporting for large files
+- 127K+ rows/second processing speed
+- Perfect round-trip conversion
 
 ## Project Structure
 
-```
+```text
 bcsv/
-├── include/
-│   └── bcsv/
-│       ├── bcsv.h           # Main header including all components
-│       ├── definitions.h    # Core constants and type definitions
-│       ├── file_header.h    # Binary file header management
-│       ├── layout.h         # Column layout and schema management
-│       ├── row.h           # Individual data rows (flexible and static)
-│       ├── packet_header.h  # Packet-based compression management
-│       ├── reader.h        # Template-based file reading
-│       └── writer.h        # Template-based file writing
-├── examples/
-│   ├── example.cpp         # Flexible interface demo
-│   ├── example_static.cpp  # Static interface demo
-│   ├── performance_benchmark.cpp # Performance comparison
-│   ├── csv2bcsv.cpp       # Professional CSV→BCSV converter
-│   ├── bcsv2csv.cpp       # Professional BCSV→CSV converter
-│   └── CMakeLists.txt
-├── tests/
-│   ├── bcsv_gtest.cpp     # Comprehensive Google Test suite
-│   └── CMakeLists.txt
-├── build/                 # Build output directory
-├── CMakeLists.txt         # CMake configuration with O3 optimization
-└── .vscode/              # VS Code configuration
+├── include/                    # Header-only library (copy this for integration)
+│   ├── bcsv/                  # Core BCSV library headers
+│   │   ├── bcsv.h             # Main header - includes all components
+│   │   ├── bcsv.hpp           # Legacy C++ header (deprecated)
+│   │   ├── definitions.h      # Core constants, types, and version info
+│   │   ├── layout.h/hpp       # Column schema management (flexible & static)
+│   │   ├── row.h/hpp          # Data row containers with type safety
+│   │   ├── reader.h/hpp       # File reading with template optimization
+│   │   ├── writer.h/hpp       # File writing with compression
+│   │   ├── file_header.h/hpp  # Binary file format and metadata
+│   │   ├── packet_header.h/hpp # LZ4 compression packet management
+│   │   ├── bcsv_c_api.h       # C API declarations for shared library
+│   │   ├── bcsv_c_api.cpp     # C API implementation
+│   │   ├── version_generated.h # Auto-generated version constants
+│   │   └── utility headers    # String addressing, bitsets, byte buffers
+│   ├── boost-1.89.0/          # Embedded Boost CRC (if system Boost unavailable)
+│   └── lz4-1.10.0/            # Embedded LZ4 compression (if system LZ4 unavailable)
+├── examples/                   # Comprehensive usage examples and tools
+│   ├── example.cpp            # Flexible interface demonstration
+│   ├── example_static.cpp     # Static interface demonstration (faster)
+│   ├── example_zoh.cpp        # Zero-order-hold optimization example
+│   ├── example_zoh_static.cpp # ZOH with static interface
+│   ├── csv2bcsv.cpp           # Professional CSV→BCSV converter tool
+│   ├── bcsv2csv.cpp           # Professional BCSV→CSV converter tool
+│   ├── performance_benchmark.cpp # Speed and compression benchmarks
+│   ├── large_scale_benchmark.cpp # Large dataset performance testing
+│   ├── c_api_vectorized_example.c # C API usage demonstration
+│   ├── CLI_TOOLS.md           # Detailed CLI tools documentation
+│   ├── PERFORMANCE_COMPARISON.md # Benchmark results and analysis
+│   └── CMakeLists.txt         # Build configuration for examples
+├── tests/                      # Comprehensive test suite
+│   ├── bcsv_comprehensive_test.cpp # Main C++ API test suite
+│   ├── bcsv_c_api_test.c      # C API functionality tests
+│   ├── bcsv_c_api_row_test.c  # C API row operations tests
+│   ├── vectorized_access_test.cpp # Performance-critical access patterns
+│   ├── run_all_tests.ps1      # PowerShell test runner script
+│   └── CMakeLists.txt         # Test build configuration
+├── python/                     # Python bindings (PyBCSV)
+│   ├── pybcsv/                # Python package source
+│   │   ├── __init__.py        # Package interface and exports
+│   │   ├── bindings.cpp       # pybind11 C++ bindings
+│   │   └── pandas_utils.py    # DataFrame integration utilities
+│   ├── examples/              # Python usage examples
+│   ├── tests/                 # Python test suite
+│   ├── pyproject.toml         # Modern Python packaging configuration
+│   ├── setup.py               # Package build script
+│   ├── demo.py                # Interactive demonstration
+│   └── README.md              # Python-specific documentation
+├── unity/                      # Unity game engine integration
+│   ├── Scripts/               # C# wrapper classes
+│   │   ├── BcsvLayout.cs      # Schema management
+│   │   ├── BcsvWriter.cs      # File writing interface
+│   │   ├── BcsvReader.cs      # File reading interface
+│   │   ├── BcsvRow.cs         # Row data access
+│   │   └── BcsvNative.cs      # P/Invoke declarations for C API
+│   ├── Examples/              # Unity usage examples
+│   │   ├── BcsvRecorder.cs    # Game data recording example
+│   │   └── BcsvUnityExample.cs # Basic Unity integration demo
+│   ├── README.md              # Unity-specific setup and usage
+│   └── OWNERSHIP_SEMANTICS.md # Memory management documentation
+├── cmake/                      # CMake build system components
+│   ├── GetGitVersion.cmake    # Automatic version extraction from git tags
+│   └── version.h.in           # Template for version header generation
+├── scripts/                    # Development and deployment utilities
+│   ├── validate_version.sh    # Cross-platform version validation
+│   ├── validate_version.bat   # Windows batch version validation
+│   └── update_version.sh      # Manual version update utility
+├── .github/workflows/          # CI/CD automation
+│   └── release.yml            # Automated version updates on tag push
+├── build/                      # CMake build output (created during build)
+│   ├── bin/Release/           # Compiled executables and tools
+│   ├── lib/                   # Static/shared libraries
+│   └── [various CMake files]  # Build system generated files
+├── .vscode/                    # VS Code IDE configuration
+├── CMakeLists.txt             # Main build configuration
+├── CMakePresets.json          # CMake preset definitions
+├── VERSIONING.md              # Automated versioning system documentation
+├── LICENSE                    # MIT license
+└── README.md                  # This comprehensive documentation
 ```
+
+### Directory Purpose & Integration Guide
+
+#### 🎯 **Core Library (`include/bcsv/`)**
+**Purpose**: The complete header-only library implementation  
+**Integration**: Copy this entire directory to your project's include path  
+**Key Files**:
+- `bcsv.h` - Single include for all functionality
+- `definitions.h` - Version info and core types
+- `layout.h` + `row.h` + `reader.h` + `writer.h` - Main API
+- `bcsv_c_api.h` - C interface for language bindings
+
+#### 🔧 **Dependencies (`include/boost-1.89.0/`, `include/lz4-1.10.0/`)**
+**Purpose**: Embedded dependencies for standalone builds  
+**Integration**: Only copy if your project doesn't already have Boost CRC or LZ4  
+**Note**: System-installed versions take precedence during CMake builds
+
+#### 📚 **Examples (`examples/`)**
+**Purpose**: Complete usage demonstrations and CLI tools  
+**Key Components**:
+- **Learning**: `example.cpp`, `example_static.cpp` - API tutorials
+- **Tools**: `csv2bcsv.cpp`, `bcsv2csv.cpp` - Production conversion utilities  
+- **Benchmarks**: `performance_benchmark.cpp` - Speed and compression testing
+- **Documentation**: `CLI_TOOLS.md`, `PERFORMANCE_COMPARISON.md`
+
+#### 🧪 **Testing (`tests/`)**
+**Purpose**: Comprehensive validation of all library components  
+**Coverage**: C++ API, C API, performance tests, edge cases  
+**Usage**: Run via `cmake --build build --target RUN_TESTS` or manually
+
+#### 🐍 **Python Integration (`python/`)**
+**Purpose**: Full-featured Python bindings with pandas support  
+**Installation**: `cd python && pip install .`  
+**Features**: DataFrame I/O, streaming, type preservation, CSV conversion
+
+#### 🎮 **Unity Integration (`unity/`)**
+**Purpose**: C# wrapper for Unity game development  
+**Installation**: Copy Scripts + compiled C API DLL to Unity project  
+**Use Cases**: Save games, telemetry, compressed game data
+
+#### ⚙️ **Build System (`cmake/`, `scripts/`)**
+**Purpose**: Automated building, versioning, and validation  
+**Key Features**:
+- Git-based version extraction
+- Cross-platform build support
+- Automated CI/CD with GitHub Actions
+- Development utilities for version management
 
 ## API Design
 
@@ -239,17 +519,17 @@ All BCSV v1.0 files include:
 ## Building
 
 ### Prerequisites
-- **C++17 compatible compiler** (MSVC 2019+, GCC 9+, Clang 10+)
+- **C++20 compatible compiler** (MSVC 2019+, GCC 10+, Clang 12+)
 - **CMake 3.20+**
 - **Git** (for automatic LZ4 and Google Test fetching)
 
-### Quick Start
+### Core Library (Header-Only)
 
 ```bash
 # Configure with Release optimization (recommended)
 cmake -B build -S . --preset=default
 
-# Build everything (fast parallel build)
+# Build examples and CLI tools
 cmake --build build -j
 
 # Run comprehensive test suite
@@ -264,6 +544,50 @@ cmake --build build -j
 .\build\bin\Release\csv2bcsv.exe --help
 .\build\bin\Release\bcsv2csv.exe --help
 ```
+
+### C API Shared Library (.dll/.so)
+
+For integration with other languages:
+
+```bash
+# Build the C API shared library
+cmake --build build --target bcsv_c_api
+
+# Output locations:
+# Windows: build/Release/bcsv_c_api.dll
+# Linux:   build/Release/libbcsv_c_api.so  
+# macOS:   build/Release/libbcsv_c_api.dylib
+```
+
+### Python Package
+
+```bash
+# Navigate to Python directory
+cd python/
+
+# Install in development mode
+pip install -e .
+
+# Or build wheel
+pip install build
+python -m build
+
+# Test installation
+python -c "import pybcsv; print(pybcsv.__version__)"
+```
+
+### Unity Plugin
+
+1. **Build C API first** (see above)
+2. **Copy Unity files:**
+   ```bash
+   # Copy C# scripts
+   cp -r unity/Scripts/ YourUnityProject/Assets/BCSV/Scripts/
+   
+   # Copy native library
+   cp build/Release/bcsv_c_api.dll YourUnityProject/Assets/Plugins/
+   ```
+3. **Configure in Unity:** Select the DLL → Inspector → Platform Settings → Check "Any Platform"
 
 ### VS Code Integration
 
@@ -320,12 +644,77 @@ Analysis of `0003_250904_41_4_3.csv` (105K rows, 33 columns):
 - **Repeated processing**: Read performance gains compound
 - **Storage optimization**: 75-85% space reduction typical
 - **Data pipelines**: Fast conversion tools for integration
+- **Game development**: Unity integration with save games
+- **Scientific computing**: Python/pandas integration
+- **Cross-language projects**: C API provides universal access
 
 ⚠️ **Consider alternatives for:**
 - Small datasets (<1K rows): CSV overhead minimal
 - One-time use: Conversion time may not be worth it
 - Text-heavy data: Compression less effective
 - Legacy systems: May need CSV compatibility
+
+### Integration Patterns
+
+**Data Science Workflow:**
+```python
+# Pandas → BCSV → Analysis → BCSV → Results
+import pandas as pd
+import pybcsv
+
+# Load and compress large dataset
+df = pd.read_csv('large_dataset.csv')
+pybcsv.write_dataframe(df, 'compressed.bcsv')  # 75-85% smaller
+
+# Fast repeated analysis
+for experiment in experiments:
+    df = pybcsv.read_dataframe('compressed.bcsv')  # 10x faster load
+    results = analyze(df)
+    pybcsv.write_dataframe(results, f'results_{experiment}.bcsv')
+```
+
+**Game Development Workflow:**
+```csharp
+// Unity: Save game data with automatic compression
+public void SaveGameState() {
+    var layout = new BcsvLayout();
+    layout.AddColumn("timestamp", BcsvColumnType.DOUBLE);
+    layout.AddColumn("player_x", BcsvColumnType.FLOAT);
+    layout.AddColumn("player_y", BcsvColumnType.FLOAT);
+    layout.AddColumn("level", BcsvColumnType.STRING);
+    
+    var writer = new BcsvWriter(layout);
+    writer.Open(Application.persistentDataPath + "/savegame.bcsv");
+    
+    // Log gameplay events efficiently
+    foreach(var event in gameEvents) {
+        var row = writer.GetRow();
+        row.SetDouble(0, event.timestamp);
+        row.SetFloat(1, event.position.x);
+        row.SetFloat(2, event.position.y);
+        row.SetString(3, event.levelName);
+        writer.WriteRow();
+    }
+    writer.Close();
+}
+```
+
+**ETL Pipeline:**
+```bash
+#!/bin/bash
+# High-performance data pipeline
+
+# Stage 1: Convert incoming CSV to compressed BCSV
+csv2bcsv -v raw_data.csv compressed_data.bcsv
+
+# Stage 2: Process with Python (fast BCSV I/O)
+python analysis_script.py compressed_data.bcsv processed_data.bcsv
+
+# Stage 3: Export results in required format
+bcsv2csv processed_data.bcsv final_results.csv
+
+echo "Pipeline complete - data compressed by 80% during processing"
+```
 
 ## Core Classes
 
@@ -347,6 +736,7 @@ Analysis of `0003_250904_41_4_3.csv` (105K rows, 33 columns):
 
 - **LZ4**: Automatically fetched via CMake FetchContent
 - **Google Test**: Automatically fetched for testing (optional)
+- **C++20 Standard Library**: Modern C++ features and concepts
 - **No runtime dependencies**: Header-only library with static linking
 
 ## Version History

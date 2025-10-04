@@ -1,148 +1,259 @@
-# Version Management
+# BCSV Automated Versioning System
 
-The BCSV project uses Git tags as the single source of truth for version numbers. This ensures consistency across:
+## Overview
+
+BCSV implements an automated versioning system designed to ensure that:
+1. **Developers** always get the correct version during development builds
+2. **End users** can download header files with embedded version information
+3. **Git tags** and embedded versions stay synchronized automatically
+4. **Header-only distribution** works without requiring CMake or Git
+
+The system uses Git tags as the single source of truth for version numbers, ensuring consistency across:
+- C++ header files (`include/bcsv/version_generated.h`)
+- CMake builds and configuration
+- GitHub releases and CI/CD workflows
 - Python package on PyPI (`pybcsv`)
-- C++ header files (`include/bcsv/definitions.h`)
-- GitHub releases
 
 ## How It Works
 
-### Git Tags
-Version numbers are defined by Git tags following semantic versioning:
-```bash
-v1.0.0, v1.0.1, v1.2.0, etc.
+### 🔄 **Development Workflow**
+During development, the version is automatically extracted from Git tags:
+- `GetGitVersion.cmake` reads the latest git tag (e.g., `v1.0.3`)
+- Updates `version_generated.h` with the extracted version
+- Development builds show commits since last tag (e.g., `1.0.3-dev.18-dirty`)
+
+### 🚀 **Release Workflow**
+When a new version is released:
+1. **Developer creates tag**: `git tag v1.0.4 && git push origin v1.0.4`
+2. **GitHub Actions triggers**: The `.github/workflows/release.yml` workflow runs
+3. **Version auto-update**: The workflow updates `version_generated.h` to match the tag
+4. **Auto-commit**: Changes are committed back to the repository
+5. **GitHub Release**: A release is automatically created
+
+### 📦 **Distribution**
+Users downloading the repository get:
+- ✅ Correct embedded version in headers
+- ✅ No need for CMake or Git to build
+- ✅ Works as header-only library
+- ✅ Version accessible via `bcsv::getVersion()`
+
+## File Structure
+
+```
+bcsv/
+├── .github/workflows/
+│   └── release.yml              # GitHub Actions workflow for automated releases
+├── cmake/
+│   ├── GetGitVersion.cmake      # Git version extraction for dev builds
+│   └── version.h.in             # Template for version header
+├── include/bcsv/
+│   └── version_generated.h      # Auto-generated version header (DO NOT EDIT)
+├── scripts/
+│   ├── update_version.sh        # Manual version update script
+│   ├── validate_version.sh      # Version validation script
+│   └── validate_version.bat     # Windows version validation
+└── CMakeLists.txt               # Uses VERSION_STRING from git
 ```
 
-The tag **must** start with `v` followed by `MAJOR.MINOR.PATCH` format.
+## Usage Examples
 
-### Python Package (`pybcsv`)
-The Python package uses [setuptools-scm](https://github.com/pypa/setuptools-scm) to automatically extract the version from Git tags during build:
+### For Developers
 
-- **Configuration**: `python/pyproject.toml` contains setuptools-scm configuration
-- **Generated file**: `python/pybcsv/_version.py` is auto-generated during build
-- **Import**: `pybcsv.__version__` imports from the generated file
-- **Fallback**: If not installed via setuptools (e.g., during development), defaults to `0.0.0.dev0`
+#### Check Current Version
+```bash
+# From repository root
+bash scripts/validate_version.sh
+```
 
-### C++ Headers
-The C++ version is extracted at CMake configuration time:
+#### Update Version Manually
+```bash
+# Set specific version
+bash scripts/update_version.sh 1.0.5
 
-- **CMake script**: `cmake/GetGitVersion.cmake` extracts version from `git describe`
-- **Template**: `cmake/version.h.in` is used to generate the version header
-- **Generated file**: `include/bcsv/version_generated.h` contains version constants
-- **Usage**: `include/bcsv/definitions.h` includes and uses the generated version
+# Use latest git tag
+bash scripts/update_version.sh
+```
+
+#### Development Build
+```bash
+mkdir build && cd build
+cmake ..  # Automatically extracts version from git
+cmake --build .
+```
+
+### For End Users
+
+#### Header-Only Usage
+```cpp
+#include "bcsv/definitions.h"
+#include <iostream>
+
+int main() {
+    std::cout << "Using BCSV version: " << bcsv::getVersion() << std::endl;
+    std::cout << "Major: " << bcsv::VERSION_MAJOR << std::endl;
+    std::cout << "Minor: " << bcsv::VERSION_MINOR << std::endl;
+    std::cout << "Patch: " << bcsv::VERSION_PATCH << std::endl;
+    return 0;
+}
+```
 
 ## Creating a New Release
 
-### 1. Update Version (Create Git Tag)
-```bash
-# Create a new annotated tag
-git tag -a v1.0.2 -m "Release version 1.0.2"
+### Option 1: GitHub Web Interface
+1. Go to GitHub repository → Releases → "Create a new release"
+2. Choose tag: `v1.0.4` (create new tag)
+3. Set title: `Release v1.0.4`
+4. Click "Publish release"
+5. GitHub Actions will automatically update the version header
 
-# Push the tag to GitHub
-git push origin v1.0.2
+### Option 2: Command Line
+```bash
+# Create and push tag
+git tag v1.0.4
+git push origin v1.0.4
+
+# GitHub Actions will trigger automatically
 ```
 
-### 2. Build Python Package Locally (Optional Testing)
+### Option 3: With Release Notes
 ```bash
-cd python
-pip install -e .
+# Create annotated tag with message
+git tag -a v1.0.4 -m "Release version 1.0.4
 
-# Verify version
-python -c "import pybcsv; print(pybcsv.__version__)"
-# Should output: 1.0.2
+- Added new feature X
+- Fixed bug Y
+- Improved performance Z"
+
+git push origin v1.0.4
 ```
-
-### 3. Build C++ Project Locally (Optional Testing)
-```bash
-mkdir -p build && cd build
-cmake ..
-cmake --build .
-
-# The version will be extracted from Git and used in version_generated.h
-```
-
-### 4. Automated CI/CD
-When you push a tag to GitHub:
-1. GitHub Actions workflow triggers automatically
-2. Builds Python wheels for all platforms (~47 wheels)
-3. Extracts version from the Git tag
-4. Publishes to PyPI (and optionally TestPyPI)
-
-## Workflow File Requirements
-
-The `.github/workflows/build-and-publish.yml` workflow:
-- Triggers on tags matching `v*` pattern: `on: push: tags: ["v*"]`
-- Uses cibuildwheel to build Python packages
-- Automatically extracts version via setuptools-scm
-- Publishes to PyPI with `--skip-existing` flag (idempotent)
 
 ## Version Format
 
-**Semantic Versioning**: `MAJOR.MINOR.PATCH`
+BCSV uses [Semantic Versioning](https://semver.org/):
 - **MAJOR**: Incompatible API changes
-- **MINOR**: Backwards-compatible functionality additions
-- **PATCH**: Backwards-compatible bug fixes
+- **MINOR**: Backward-compatible functionality
+- **PATCH**: Backward-compatible bug fixes
 
-**Tag Format**: `v<version>`
-- Example: `v1.0.2`, `v2.0.0`, `v1.5.3`
-- Regex: `^v[0-9]+\.[0-9]+\.[0-9]+$`
+### Examples
 
-## Development Versions
+- `v1.0.0` → `1.0.0` (Initial release)
+- `v1.0.1` → `1.0.1` (Bug fix)
+- `v1.1.0` → `1.1.0` (New features)
+- `v2.0.0` → `2.0.0` (Breaking changes)
 
-### Python
-During development (no tag checked out):
-```bash
-cd python
-pip install -e .
-python -c "import pybcsv; print(pybcsv.__version__)"
-# Output: 0.0.0.dev0 (fallback version)
+### Development Versions
+
+- `1.0.3-dev.5` (5 commits after v1.0.3)
+- `1.0.3-dev.5-dirty` (5 commits + uncommitted changes)
+
+## File Format Versioning
+
+BCSV files embed version information for compatibility checking:
+
+```cpp
+// When writing files
+BcsvWriter writer(layout);
+// Version is automatically embedded: VERSION_MAJOR.VERSION_MINOR
+
+// When reading files  
+BcsvReader reader;
+// Automatically validates file version against library version
 ```
 
-### C++
-If no Git tag is found:
-```bash
-cmake ..
-# Warning: No Git tag found, using default version 0.0.0
-# Generated version will be 0.0.0
-```
+### Compatibility Rules:
+- **Major version mismatch**: File cannot be read (breaking changes)
+- **Minor version newer**: File can be read (backward compatibility)
+- **Minor version older**: File can be read (forward compatibility within major)
 
 ## Troubleshooting
 
-### Python package shows wrong version
-1. Ensure you have a Git tag: `git describe --tags`
-2. Reinstall package: `pip install -e . --force-reinstall`
-3. Check generated file exists: `python/pybcsv/_version.py`
+### Version Mismatch Errors
+```bash
+# Check current state
+bash scripts/validate_version.sh
+
+# Fix by updating to match git tag
+bash scripts/update_version.sh
+
+# Or create matching git tag
+git tag v$(grep "STRING" include/bcsv/version_generated.h | cut -d'"' -f2)
+```
+
+### GitHub Actions Not Triggering
+1. Check that tag follows format: `v*.*.*`
+2. Ensure tag was pushed: `git push origin v1.0.4`
+3. Check GitHub Actions tab for workflow runs
+4. Verify repository has Actions enabled
+
+### CMake Version Warnings
+```bash
+# If you see "VERSION keyword not followed by a value"
+cd build
+cmake ..  # Should show extracted git version
+```
 
 ### C++ shows wrong version
 1. Ensure you have a Git tag: `git describe --tags`
 2. Reconfigure CMake: `cd build && cmake ..`
 3. Check generated file: `include/bcsv/version_generated.h`
 
-### CI/CD fails to publish
-- Check that tag format is correct: `v1.0.2` not `1.0.2`
-- Verify GitHub Actions secrets are set (PYPI_TOKEN)
-- Check workflow logs for specific errors
+### Manual Override
+If automatic system fails, manually update version:
+```bash
+# Edit include/bcsv/version_generated.h
+# Then commit changes
+git add include/bcsv/version_generated.h
+git commit -m "Manual version update to 1.0.4"
+```
 
-## File Reference
+## Benefits of This System
 
-**Python:**
-- `python/pyproject.toml` - setuptools-scm configuration
-- `python/pybcsv/__version__.py` - imports from generated file
-- `python/pybcsv/_version.py` - auto-generated (not in Git)
+### ✅ **For Developers**
+- Automatic version management during development
+- No manual version updates needed
+- Clear development vs release version distinction
+- Validation tools prevent version drift
 
-**C++:**
-- `cmake/GetGitVersion.cmake` - version extraction script
-- `cmake/version.h.in` - template for generated header
-- `include/bcsv/version_generated.h` - auto-generated (not in Git)
-- `include/bcsv/definitions.h` - uses generated version
+### ✅ **For Users**
+- Header-only distribution with correct versions
+- No dependency on Git or CMake for basic usage
+- Consistent version information across all builds
+- Easy version checking in code
 
-**CI/CD:**
-- `.github/workflows/build-and-publish.yml` - build and publish workflow
+### ✅ **For Maintainers**
+- Automated release process
+- Reduced human error in version management
+- Clear audit trail of version changes
+- Consistent GitHub releases
 
-## Benefits
+## Migration from Old System
 
-1. **Single source of truth**: Git tags
-2. **No manual edits**: Version is extracted automatically
-3. **Consistency**: Same version across Python, C++, and releases
-4. **CI/CD ready**: Automated publishing on tag push
-5. **Developer friendly**: Simple `git tag` command to release
+If upgrading from a manual versioning system:
+
+1. **Backup current version**:
+   ```bash
+   cp include/bcsv/version_generated.h include/bcsv/version_generated.h.backup
+   ```
+
+2. **Run validation**:
+   ```bash
+   bash scripts/validate_version.sh
+   ```
+
+3. **Fix any mismatches**:
+   ```bash
+   # Either update header to match git tag
+   bash scripts/update_version.sh
+   
+   # Or create git tag to match header
+   git tag v$(grep "STRING" include/bcsv/version_generated.h | cut -d'"' -f2)
+   ```
+
+4. **Test the system**:
+   ```bash
+   mkdir test_build && cd test_build
+   cmake ..
+   cmake --build .
+   ```
+
+The automated versioning system ensures BCSV can be easily integrated into any project while maintaining clear version tracking and compatibility checking.
