@@ -79,3 +79,6 @@ python/.venv/
 python/pybcsv.egg-info/not-zip-safe
 venv/lib64
 venv/pyvenv.cfg
+
+# Ignore experimental scratch directory
+scratch/
