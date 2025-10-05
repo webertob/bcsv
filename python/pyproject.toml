@@ -68,3 +68,4 @@ pybcsv = ["py.typed"]
 [tool.setuptools]
 include-package-data = true
 zip-safe = false
+license-files = []
