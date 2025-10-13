@@ -1,7 +1,71 @@
 Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment is not considered, as we favor small file size. For temporary data and algorithms, higher-order alignment should be used.
-0.5 Document Mission Statment, 
-1. Build a project using bcsv with C++ and Python interfaces
+
+0. Build a project using bcsv with C++ and Python interfaces
     - demonstrate MatPlotLib
+1.  change to stream interface:
+    - benchmarks and tests have shown:
+        - That we must avoid small/medium slized blocks in the range of 16 - 128kb (espacially the region from 32 -64kb) as these size are neither gaining the benefits of sequential reads, nor the benefit of sparse reading. 
+        - We also note that larger blockSizes i.e. 4MBytes result in better compression and faster sparse reads. 
+        - Current batch processing / batch compression leads to uneven execution times for writer.writeRow(), with severe spikes when a packet gets compressed and written to file. 
+          This signifcantly undermines the usage of bcsv for recording real-time applications, which actually is one of the main reasons to develop bcsv. Therefore we need to reduce the worst case exceution time of writer.writeRow(). 
+          Lets aim on optimizing for the lower 1 percentile execution time, while also maintaining a good avergae execution time of writer.writeRow(). --> We propably need to replace batch processing with stream processing.
+        - LZ4 internal mechanisms are not able to ensure data integrit, therefore we still need to apply additional mechanisms i.e. CRC32 checksum to ensure data integrity.
+        - LZ4 stream interface is a good option to sequentially compress individual rows and appending them pieceweise to the file (check lz4_steaming_performance_tests)
+        - To accelerate PacketHeader access, during sparse reading, we want to have a dedicated checksum protecting the packetHeader only. Thus we do not need to process the payload when we actually want to valid the header.
+        - We have tested staggered write pattern (updating the header after processing & writing the payload). It is very slow and we should avoid.
+        - Internet sources highlight xxhash algorithm should be prefered over CRC32 for generating checksums. blake3 to be used if we want to have rudermentary protection against (intentional) file manipulation
+    - The hard problem:
+        - The reader would benefit from knowing information on the positions and content in front of it, i.e. first row, number of rows, payload size of each packet etc. espacially for random access reads. 
+        - While the writer only has that information after writing a row or packet.
+    - Option: 
+        - writer writes the file sequentially, row by row (stream compression, stream checksum, stream write)
+        - writer adds PacketHeaders that are only refering on information already available (checksum of the current header, checksum of the previous packet payload, first row (index) in this packet). The main intend of the PackeHeaders is to mark a reset of the LZ4 stream to improve robustness (data integrity and recovery).
+        - The Packet structure also is an enabler to random read access. 
+        - writer should add an index at the very end of the file, providing information on the position of packet headers and the rows they cover. 
+        - Reader could use that index if random access is intended.
+    
+    Therefore we need to create a new FileFormat along the following design.
+        - No change to FileHeader, except changing version to 1.2.0 to mark the changes
+        - introduce a FileFlag::WideRow to switch maximim encoded row length from 16bit (64kb default) to 32bit(4GB)
+        - use LZ4 stream compression, instead of batch compression
+        - replace CRC32 with xxhash algorithms, for hashing / integrity checksums
+        - dedicated checksums for PacketHeader and PacketPayload
+        -
+
+        - Change PackeHeader: 
+            - PacketHeader to consist of const char[4] PCKT_MAGIC, uint64_t firstRow, uint32_t checkSumPrvPkt, uint32_t checksum.
+                - PCKT_MAGIC is just a 4byte identifier to mark the header/start of a new packet
+                - firstRow is the index of the first row contained in the just starting packet, index relative to file, so it is growing over subsequent packets. also number of packet in the previouse packet cna be calculated by substracting firsts row of previouse packet with first row of this packet. Counting starts with zero (C standrad)
+                - checkSumPrvPkt is the checkSum (xxHash) of the payload of the previouse packet. for the header of the first packet it is 0 (zero).
+                - checkSum (xxHash) over PCKT_MAGIC, firstRow and checkSumPrvPkt do check data integrity and ensure we have a proper header at hand
+        - Interleave row length with row data (i.e. as demonstrated in lz4_stream_termination_test.cpp).:
+            uint16 rowLength: holds how many Bytes the compressed row takes (uint32_t if WideRow mode is used)
+            char[rowLength] rowContent contains the (Lz4 stream compressed) content of the encoded row
+
+            special cases: 
+                if rowLength == 0 and FileFlag::ZoH is used the current row is an exact copy of the previouse one
+                if rowLength == numericalLimit::Max, end of packet no rows left. So we expect the next PacketHeader to start (PCKT_MAGIC) or FileIndex
+
+        - Add FileIndex to the end of the file.
+            uint32_t INDEX_START_MAGIC
+            uint64_t FILE_INDEX_HEADER_1st_PACKET, uint64_t INDEX_FIRST_ROW_1st_PACKET
+            uint64_t FILE_INDEX_HEADER_2nd_PACKET, uint64_t INDEX_FIRST_ROW_2nd_PACKET
+            ...
+            uint64_t FILE_INDEX_HEADER_nth_PACKET, uint64_t INDEX_FIRST_ROW_nth_PACKET
+            uint32_t INDEX_END_MAGIC
+            uint32_t FILE_INDEX_INDEX_START (counted from end of file)
+            uint32_t INDEX_LAST_ROW_IN_FILE
+            uint32_t CHECKSUM Index (xxhash from INDEX_START_MAGIC to INDEX_LAST_ROW_IN_FILE)
+
+        - default PacketSize should be 8196Kb (8Mb). 
+            - if PackeSize == 0Kb we are completley disable packets, and create an absolutly flat file, no overheads, no index, optimized for sequential read/write. in that case payload directly starts after the FileHeader, file ends with checkSum and totalRowCount
+
+
+
+
+        
+
+
 2. Create random access / random read methods:
     Row row(size_t index) {
         if(index == current_index+1) {
