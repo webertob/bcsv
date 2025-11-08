@@ -1,26 +1,47 @@
 Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment is not considered, as we favor small file size. For temporary data and algorithms, higher-order alignment should be used.
 
-0. Build a project using bcsv with C++ and Python interfaces
-    - demonstrate MatPlotLib
-1.  change to stream interface:
+0.  Write project mission statement, upload to git hub
+    Aims on combining the easy usage of CSV files with the performance and file size of a binary format. It should perform specifically well for large time series data sets and also cover small embedded platforms. Therefore it is an explicit requirement that we support files that are larger than the available memory (RAM), thus the file is read in chunks or rows. For the same reason the computational effort should be reasonable small. In order to support real-time processing the call time to write or read data should be constant. 
+    The file should exploit time-series data structure to reduce file size. Specifically it should be efficient on recording  Binary Wave Forms and constant data (spars recording / events) to achieve good compression. Compression ratio to be balanced with requirements on computational and streaming. It should be possible to read data from the file even if write was interrupted. We want to be able to retrieve the last fully written row. The file format is to be optimized for sequential row wise read and write operations, but should support random read with acceptable speeds, too. 
+    The file should feel natural to programmers and compete with CSV with respect of ease of usage. Therefore, we avoid definition or validation of a schema. The file should be defined from within the programming language itself (C/C++, python, C# or …), without the need to run another tool or configuration file format. This is different to FlatBuffers or ProtoBuff. The file structure itself is documented in the file, similar to a header in a CSV. The header in BCSV is mandatory, as we won’t waste storage for delimiters. BCSV also enforces the type defined in the header for each column on every row. Thus you only need to validate the file structure once when you open a file and can rely on every row to show up with a valid type in each column (cell). 
+
+    Design Goals:
+    -	Sequential recording of a 1000 channel stream with 1KHz on an STM32F4 and 10KHz on a STM32F7, Zynq7000, RaspPi-nano
+    -	Small file growth < 1KB/s for 1000 channel stream with 10Khz if nothing happens, except counting a clock/counter. 
+    -	Processing >= 1 million rows/sec for a 1000 channel stream on a modern Zen3 CPU core.
+    -	<30% file size compared to CSV comparing a 1000 channel stream
+    -	Compatible with C/C++, C# and Python
+
+    A set if CLI tools should help working with the files, supporting common work flows (view files, filter files, split and merge files, convert from and other formats).
+    Who is the customer: Anybody how is running metrology tasks with digital tools. 
+
+1.  Create implementation plan
+    1.	Write / improve mission statement. Discus with AI to improve
+    4.	Change file structure to use compression stream (LZ4)
+    5.	Change file structure to use index
+    6.	Implement variable Length Encoding (as of below)
+    7.	Implement File Flags (raw, stats)
+    8.	Implement Column Modifiers (index, volatile, monotonic, ordered)
+
+
+2.  change to stream interface:
     - benchmarks and tests have shown:
         - That we must avoid small/medium slized blocks in the range of 16 - 128kb (espacially the region from 32 -64kb) as these size are neither gaining the benefits of sequential reads, nor the benefit of sparse reading. 
         - We also note that larger blockSizes i.e. 4MBytes result in better compression and faster sparse reads. 
         - Current batch processing / batch compression leads to uneven execution times for writer.writeRow(), with severe spikes when a packet gets compressed and written to file. 
           This signifcantly undermines the usage of bcsv for recording real-time applications, which actually is one of the main reasons to develop bcsv. Therefore we need to reduce the worst case exceution time of writer.writeRow(). 
           Lets aim on optimizing for the lower 1 percentile execution time, while also maintaining a good avergae execution time of writer.writeRow(). --> We propably need to replace batch processing with stream processing.
-        - LZ4 internal mechanisms are not able to ensure data integrit, therefore we still need to apply additional mechanisms i.e. CRC32 checksum to ensure data integrity.
+        - LZ4 internal mechanisms are not able to ensure data integrit. Therefore we use xxHash64.
         - LZ4 stream interface is a good option to sequentially compress individual rows and appending them pieceweise to the file (check lz4_steaming_performance_tests)
         - To accelerate PacketHeader access, during sparse reading, we want to have a dedicated checksum protecting the packetHeader only. Thus we do not need to process the payload when we actually want to valid the header.
         - We have tested staggered write pattern (updating the header after processing & writing the payload). It is very slow and we should avoid.
-        - Internet sources highlight xxhash algorithm should be prefered over CRC32 for generating checksums. blake3 to be used if we want to have rudermentary protection against (intentional) file manipulation
     - The hard problem:
         - The reader would benefit from knowing information on the positions and content in front of it, i.e. first row, number of rows, payload size of each packet etc. espacially for random access reads. 
         - While the writer only has that information after writing a row or packet.
     - Option: 
         - writer writes the file sequentially, row by row (stream compression, stream checksum, stream write)
         - writer adds PacketHeaders that are only refering on information already available (checksum of the current header, checksum of the previous packet payload, first row (index) in this packet). The main intend of the PackeHeaders is to mark a reset of the LZ4 stream to improve robustness (data integrity and recovery).
-        - The Packet structure also is an enabler to random read access. 
+        - The Packet structure also is an enabler to random read access. c
         - writer should add an index at the very end of the file, providing information on the position of packet headers and the rows they cover. 
         - Reader could use that index if random access is intended.
     
@@ -28,17 +49,16 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
         - No change to FileHeader, except changing version to 1.2.0 to mark the changes
         - introduce a FileFlag::WideRow to switch maximim encoded row length from 16bit (64kb default) to 32bit(4GB)
         - use LZ4 stream compression, instead of batch compression
-        - replace CRC32 with xxhash algorithms, for hashing / integrity checksums
         - dedicated checksums for PacketHeader and PacketPayload
-        -
-
+        
         - Change PackeHeader: 
-            - PacketHeader to consist of const char[4] PCKT_MAGIC, uint64_t firstRow, uint32_t checkSumPrvPkt, uint32_t checksum.
+            - PacketHeader to consist of const char[4] PCKT_MAGIC, uint64_t firstRow, uint64_t checkSumPrvPkt, uint64_t checksum.
                 - PCKT_MAGIC is just a 4byte identifier to mark the header/start of a new packet
                 - firstRow is the index of the first row contained in the just starting packet, index relative to file, so it is growing over subsequent packets. also number of packet in the previouse packet cna be calculated by substracting firsts row of previouse packet with first row of this packet. Counting starts with zero (C standrad)
-                - checkSumPrvPkt is the checkSum (xxHash) of the payload of the previouse packet. for the header of the first packet it is 0 (zero).
-                - checkSum (xxHash) over PCKT_MAGIC, firstRow and checkSumPrvPkt do check data integrity and ensure we have a proper header at hand
-        - Interleave row length with row data (i.e. as demonstrated in lz4_stream_termination_test.cpp).:
+                - checkSumPrvPkt is the checkSum (xxHash64) of the payload of the previouse packet. for the header of the first packet it is 0 (zero).
+                - checkSum (xxHash64) over PCKT_MAGIC, firstRow and checkSumPrvPkt do check data integrity and ensure we have a Packetheader is valid/undamaged
+
+        - Interleave row length with row data (i.e. as demonstrated in lz4_stream_termination_test.cpp):
             uint16 rowLength: holds how many Bytes the compressed row takes (uint32_t if WideRow mode is used)
             char[rowLength] rowContent contains the (Lz4 stream compressed) content of the encoded row
 
@@ -54,19 +74,70 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
             uint64_t FILE_INDEX_HEADER_nth_PACKET, uint64_t INDEX_FIRST_ROW_nth_PACKET
             uint32_t INDEX_END_MAGIC
             uint32_t FILE_INDEX_INDEX_START (counted from end of file)
-            uint32_t INDEX_LAST_ROW_IN_FILE
-            uint32_t CHECKSUM Index (xxhash from INDEX_START_MAGIC to INDEX_LAST_ROW_IN_FILE)
+            uint64_t INDEX_LAST_ROW_IN_FILE
+            uint64_t CHECKSUM Index (xxhash from INDEX_START_MAGIC to INDEX_LAST_ROW_IN_FILE)
 
         - default PacketSize should be 8196Kb (8Mb). 
             - if PackeSize == 0Kb we are completley disable packets, and create an absolutly flat file, no overheads, no index, optimized for sequential read/write. in that case payload directly starts after the FileHeader, file ends with checkSum and totalRowCount
 
+3.Variable length encoding (float and integer values)
+    Main usage of bcsv is the handling of time-series data. Thus we expect many rcurring or constantly falling or raising values and values that are similar to previouse values. In many cases the full extend of a variable type is not required to encode the actual value.
+    
+    Design goals:
+    1. shortest possible encoding for: 
+        - const values (Zero-Order-Hold), row(n).col(i) = row(n-1).col(i)
+        - monoton raising/falling values (first-order), row(n).col(i) = row(n-1).col(i) + (row(n-1).col(i) - row(n-2).col(i))
+        - bool to be stored directly as single bit
+    2. small overhead in worst case scenarios
+    3. exploit variable length to shorten storage for large types
+    4. exploit delta encoding to shorten storage for large types
+    5. allow easy comparision between two rows to identify equality in typical scenarios (no change, linear change)
 
-
-
+    Not finaly decided yet:
+        - store column encoding data in a dedictate area (row header) or close to data? Current pitch: lets implement a row header that does not require to follow byte alignment rules 
+            - Bit-0 x N
+            - Bis 1:2 x N (-bools, -rep)
+            
+        - 8bit aligned / byte aligned data?
         
+    Bit-0 Repetion (Rep)
+        0: check bits 1:5 for additional information on column encoding
+        1: column encoding is same as previouse row bit3 1:5 are skipped
+        Note: 
+            1. For column type=bool, this column directly holds the value, no further bits required!
+            2. For column hint=volatile, this column directly switches const/plain.
+    Bit 1:2: column encoding
+        00: const, previouse value is kept constant, bits 3:5 are skipped
+        01: plain, bits 3:5 contain length of field, bits 6:14 contain data, data to simply contain the value we search
+        10: extra, extrapolate using diff between row(n) = row(n-1) + row(n-1) - row(n-2), bits3:5 (length) and bits 6:14 (data) are skipped
+        11: delta, delta relative to previouse row row(n) = row(n-1) + delta;
+        Note: This filed is not present for variables maked volatile!
+    Bit 3:5 length of the following data field, only present if data is provided and length is undefined, length is defined as number of bytes!
+        for 1 byte types this field has a length of 0 bits (as data filed implictily is defined to length of 1 byte)
+        for 2 byte types this field has a length of 1 bit  (0:short (1byte), 1:long (2bytes))
+        for 4 byte types the filed has a maximum length of 2 bits (00:1byte, 01:2bytes, 10:3bytes, 11:4bytes)
+        for 8 byte types the filed has a maximum length of 3 bits (double, unit64) it has a length of 
+    Bit 6:14 data actual data stored for this variable
 
+    Special cases: For small types (1 byte) avoid unnecessary overhead (complexity, runtime, control bits) that won't pay off
+5. dictionary encoding for strings
+    For strings a low cardinality is expected (many repetitions of the same string) are expected. Thus a dictionary based compression should be implemented. Exploit similar approach as for numerical values.
+    Store string at its first occurens and assign ID (simply increment number, within the current packet)
+    Other occurences just to reference that number
 
-2. Create random access / random read methods:
+6. implement additional FileFlags
+    raw:   omit all the complex variable length encoding
+    stats: each packet to contain some stats on what was included in each column, !min!, !max!, mean, median, std
+
+7. implement Column modifier:
+    - volatile: this parameter is changing arbitrarily, don’t spend too much effort to compress it. 
+    - index: there is defined relationship between this value and the row number, i.e. a timestamp or counter.
+    - monotonic: defined to grow with a nearly constant rate
+    - unique: we guarantee there is no duplication of entries in this column 
+    - ascending: this value can only grow for subsequent rows.
+    - descending: this value can only fall for subsequent rows.
+
+8. Create random access / random read methods:
     Row row(size_t index) {
         if(index == current_index+1) {
             //fall back to sequential
@@ -77,27 +148,23 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
         // use specific heuristics for ZoH, i.e. traverse several rows back and for to avoid complex reads
     }
     const auto& cell(size_t rowIndex, size_t colIndex) // To directly access a cell, use RowView as a lightweight abstraction to avoid full deserialization
-3. Modify CLI tools to utilize random read functionality, espacially for bcsvTail and bcsv2csv (in combiniation with slicing), avoid parsing the entire file if poossible
-4. Improve compression:
-    - Implement dictionary compression for strings
-    - Implement ZigZag and variable-length integer encoding (also apply to string addresses, row length, and length)
-    - Implement CHIMP/GORILLA compression for floats
 
-5. Create sampler (select data based on certain conditions)
+9. Create sampler function / API to select data based on certain conditions: 
     - Support C++ interface (iterate over individual rows)
     - Support Python interface (iterate over individual rows and block reads (pandas/numpy))
-6. Add other data types (float8_t, float16_t, float_123_t, uint128_t, int128_t, BLOB)
-7. Add concurrent compression and writing using double buffering to avoid blocking the row interface when a packet needs to be written or read
-8. Investigate stream write/stream read to avoid utilization spikes that come with packet-based format
-9. Create three different bcsv file formats:
-    - Packet-based format: good compromise on size, sequential and random access speeds. Building packets may cause some jitter/spikes in utilization, which may be an issue for hard real-time systems. Compatible with all compression and encoding schemes.
-    - Indexed file format: for maximum random access speeds and highest compression levels.
-    - Stream file format: for hard real-time systems, not compatible with LZ4 compression. Aimed at sequential write & read with limited compute requirements.
+
 10. CLI tools:
-    - bcsv2Parquet
-    - parquet2bcsv
-    - bcsvIndex (creates an indexed file for faster random access)
-    - bcsvSampler (creates an down sampled version, using specific rules provided)
+    - Modify CLI tools to utilize random read functionality to avoid parsing the entire file (when possible):
+        - bcsvTail
+        - bcsvHead
+        - bcsv2csv in combiniation with slicing
+    - create: bcsv2Parquet
+    - create: parquet2bcsv
+    - create: bcsvInspect (checks if the file is complet or damaged (i.e. index missing), can repair file/index, prints information on the file content)
+    - create: bcsvSampler (creates an down sampled version, using specific rules provided)
+    - create: bcsvCompress (insepects the file and tries to apply a more agressive compression, using 2-phase inspection and a file wide dictionary)
+
+Out of Scope (for now):
 13. ROS integration (subscribe ROS topics and store to bcsv and reverse)
 14. MQTT integration (read MQTT topics and store to bcsv and reverse)
 15. Consider performance improvements by enforcing alignment for data types used during read and write, to enable more agressive compiler optimization (alignas())
@@ -105,5 +172,4 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
 17. Add SIMD / vectorized interfaces:
     - Python: implement get/set functions for numpy
     - C#/Unity: compatibility with componet/job system
-18. Improve compression:
-    - Implement first and second order hold schemes (mark candidates in layout/header)
+

@@ -85,12 +85,21 @@ namespace bcsv {
         // find end of file
         temp_stream.seekg(0, std::ios::end);
         std::streampos file_end = temp_stream.tellg();
+        std::streampos file_size = file_end;
 
-        // now jump 1.5 blocks back (we assume the last packet is not larger than 2 blocks)
+        // For small files, start from beginning; for large files, seek back
         uint32_t blockSize = fileHeader_.blockSize();
-        std::streampos seek_pos = file_end - static_cast<std::streamoff>(blockSize*1.5);
-        if(seek_pos < 0) {
-            seek_pos = 0;
+        std::streampos seek_pos;
+        
+        // If file is smaller than 2 blocks, start from file header
+        if (file_size < static_cast<std::streamoff>(blockSize * 2)) {
+            seek_pos = static_cast<std::streamoff>(FileHeader::FIXED_HEADER_SIZE);  // Skip file header
+        } else {
+            // For larger files, jump 1.5 blocks back (we assume last packet < 2 blocks)
+            seek_pos = file_end - static_cast<std::streamoff>(blockSize * 1.5);
+            if(seek_pos < static_cast<std::streamoff>(FileHeader::FIXED_HEADER_SIZE)) {
+                seek_pos = static_cast<std::streamoff>(FileHeader::FIXED_HEADER_SIZE);
+            }
         }
         
         //read from there until we find a valid packet header

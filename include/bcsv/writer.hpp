@@ -207,7 +207,7 @@ namespace bcsv {
         packetHeader.rowFirst = row_cnt_; 
         packetHeader.rowCount = static_cast<uint32_t>(row_lengths_.size()); // number of rows
         row_lengths_.pop_back(); // based on file format last offset is implicitly defined by end of packet payload and does not need to be stored
-        packetHeader.updateCRC32(row_lengths_, buffer_zip_);
+        packetHeader.updateChecksum(row_lengths_, buffer_zip_);
 
         // Write the packet (header + row offsets + compressed data)
         stream_.write(reinterpret_cast<const char*>(&packetHeader), sizeof(packetHeader));

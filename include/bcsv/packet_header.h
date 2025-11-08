@@ -35,7 +35,8 @@ namespace bcsv {
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     |                      Row Count (uint32)                       |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    |                    CRC32 Checksum (uint32)                    |
+    |                                                               |
+    |                   xxHash64 Checksum (uint64)                  |
     +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
     |              Row Lengths - length of each row in bytes        |
     |          for rows 0 to n-1 (uint16 * (Number of Rows - 1))    |
@@ -60,14 +61,14 @@ namespace bcsv {
     class PacketHeader {
     public:
         const uint32_t magic = PCKT_MAGIC; 
-        uint32_t payloadSize; // Size of the compressed payload data
-        uint64_t rowFirst;       // Index of the first row in the packet
-        uint32_t rowCount;       // Number of rows in the packet
-        uint32_t crc32;          // CRC32 checksum of the entire packet (with this field zeroed)
+        uint32_t payloadSize;   // Size of the compressed payload data
+        uint64_t rowFirst;      // Index of the first row in the packet
+        uint32_t rowCount;      // Number of rows in the packet
+        uint64_t checksum;      // Checksum(xxHash64) of the packet header (excluding the checksum field itself)
 
         bool read               (std::istream& stream, std::vector<uint16_t> &rowLengths, ByteBuffer& payloadBuffer, bool resilient = false);
-        void updateCRC32        (const std::vector<uint16_t>& rowLengths, const ByteBuffer& zipBuffer);
-        bool validateCRC32      (const std::vector<uint16_t>& rowLengths, const ByteBuffer& zipBuffer);
+        void updateChecksum     (const std::vector<uint16_t>& rowLengths, const ByteBuffer& zipBuffer);
+        bool validateChecksum   (const std::vector<uint16_t>& rowLengths, const ByteBuffer& zipBuffer);
         bool validate           () const {
             if(magic != PCKT_MAGIC) {
                 return false;
@@ -82,5 +83,5 @@ namespace bcsv {
         }
     };
     #pragma pack(pop)
-    static_assert(sizeof(PacketHeader) == 24, "PacketHeader must be exactly 24 bytes");
+    static_assert(sizeof(PacketHeader) == 28, "PacketHeader must be exactly 28 bytes");
 } // namespace bcsv
