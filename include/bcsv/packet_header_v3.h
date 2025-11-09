@@ -41,11 +41,11 @@ namespace bcsv {
      * - Packet 1: prevPayloadChecksum = 0, calculate payload checksum P1
      * - Packet 2: prevPayloadChecksum = P1, calculate payload checksum P2
      * - Packet N: prevPayloadChecksum = P(N-1), calculate payload checksum PN
-     * - Last packet: payload checksum stored in FileIndex.lastPacketPayloadChecksum
+     * - Last packet: payload checksum stored in FileFooter.lastPacketPayloadChecksum
      * 
      * @note All multi-byte fields use little-endian byte ordering
      * @note Row count for packet = nextPacket.firstRowIndex - currentPacket.firstRowIndex
-     * @note For last packet, row count from FileIndex or scanning payload
+     * @note For last packet, row count from FileFooter or scanning payload
      */
     #pragma pack(push, 1)
     struct PacketHeaderV3 {

@@ -21,8 +21,10 @@
 #include "file_header.h"
 #include "layout.h"
 #include "packet_header.h"
+#include "vle.hpp"
 #include <fstream>
 #include <limits>
+#include <cstring>
 
 
 namespace bcsv {
@@ -48,13 +50,27 @@ namespace bcsv {
         if (!stream_.is_open()) {
             return;
         }
-        flush();
+        
+        if (packetInitialized_) {
+            flushPacket();
+        }
+        
+        FileFooter footer(packetIndex_, packetHash_.finalize(), totalRowCount_);
+        footer.write(stream_);
+        
         stream_.close();
         filePath_.clear();
-        buffer_raw_.clear();
-        buffer_zip_.clear();
-        buffer_raw_.shrink_to_fit();
-        buffer_zip_.shrink_to_fit();        
+        
+        lz4Stream_.reset();
+        bufferRawRow_.clear();
+        bufferRawRow_.shrink_to_fit();
+        bufferCompressed_.clear();
+        bufferCompressed_.shrink_to_fit();
+        bufferPrevRow_.clear();
+        bufferPrevRow_.shrink_to_fit();
+        packetIndex_.clear();
+        packetIndex_.shrink_to_fit();
+        totalRowCount_ = 0;       
     }
 
     template<LayoutConcept LayoutType>
@@ -62,10 +78,8 @@ namespace bcsv {
         if (!stream_.is_open()) {
             return;
         }
-
-        // Write any remaining data in the buffer before flushing the stream
-        if (!buffer_raw_.empty()) {
-            writePacket();
+        if (packetInitialized_) {
+            flushPacket();
         }
         stream_.flush();
     }
@@ -125,15 +139,28 @@ namespace bcsv {
             fileHeader_.setFlags(flags);
             fileHeader_.setBlockSize(std::clamp(blockSizeKB, size_t(1), size_t(4096)) * 1024);  // limit block size to 1-4096 KB
             fileHeader_.writeToBinary(stream_, layout());
-            row_cnt_ = 0;
-            row_.clear();
-            if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
-                row_.trackChanges(true);
-            } else {
-                row_.trackChanges(false);
+            
+            // v1.3.0 streaming initialization
+            totalRowCount_ = 0;
+            packetSize_ = 0;
+            
+            // Initialize LZ4 streaming compression if enabled
+            if (compressionLevel > 0) {
+                lz4Stream_.emplace(compressionLevel);
             }
-            buffer_raw_.reserve(fileHeader_.blockSize());
-            buffer_zip_.reserve(LZ4_COMPRESSBOUND(fileHeader_.blockSize()));
+            
+            // Initialize payload hasher for checksum chaining
+            packetHash_.reset();
+            
+            // Pre-allocate buffers based on maximum row size
+            // Note: Layout doesn't have maxRowSize(), use a conservative estimate
+            size_t estimatedMaxRowSize = layout().columnCount() * 16; // Estimate: 16 bytes per column average
+            bufferRawRow_.reserve(estimatedMaxRowSize);
+            bufferCompressed_.reserve(LZ4_COMPRESSBOUND(estimatedMaxRowSize));
+            bufferPrevRow_.reserve(estimatedMaxRowSize);
+            bufferPrevRow_.clear(); // Start with empty previous row
+            packetIndex_.clear();            
+            row_.clear();
             return true;
 
         } catch (const std::filesystem::filesystem_error& ex) {
@@ -144,84 +171,52 @@ namespace bcsv {
             return false;
         }
 
-        return false;
+        return true;
     }
 
     template<LayoutConcept LayoutType>
-    void Writer<LayoutType>::writePacket() {
+    void Writer<LayoutType>::initializePacket() {
         if (!stream_.is_open()) {
             throw std::runtime_error("Error: File is not open");
         }
 
-        if (buffer_raw_.empty()) {
-            return; // Nothing to write
-        }
-
-        // Handle compression based on level
-        if (compressionLevel() == 0) {
-            // No compression - use raw data directly (avoid LZ4 overhead)
-            // Optimize by reusing the raw buffer as compressed buffer to avoid copying
-            buffer_zip_.swap(buffer_raw_); // Efficient swap instead of copy
-        } else {
-            // Compress the raw buffer using LZ4 with specified level
-            buffer_zip_.resize(buffer_zip_.capacity());
-            
-            int compressedSize;
-            
-            if (compressionLevel() == 1) {
-                // Use fast default compression
-                compressedSize = LZ4_compress_default(reinterpret_cast<const char*>(buffer_raw_.data()), 
-                                                      reinterpret_cast<char*>(buffer_zip_.data()),
-                                                      static_cast<int>(buffer_raw_.size()),
-                                                      static_cast<int>(buffer_zip_.size()));
-            } else {
-                // Use high compression with specified level (2-9)
-                compressedSize = LZ4_compress_HC(reinterpret_cast<const char*>(buffer_raw_.data()), 
-                                                 reinterpret_cast<char*>(buffer_zip_.data()),
-                                                 static_cast<int>(buffer_raw_.size()),
-                                                 static_cast<int>(buffer_zip_.size()),
-                                                 compressionLevel());
-            }
-            
-            if (compressedSize <= 0) {
-                buffer_zip_.clear();
-                throw std::runtime_error("Error: LZ4 compression failed");
-            } else {
-                buffer_zip_.resize(compressedSize);
-            }
+        if( packetInitialized_) {
+            throw std::runtime_error("Error: Packet is already initialized");
         }
         
-        // Check for potential overflow when converting size_t to uint32_t
-        if (RANGE_CHECKING && buffer_raw_.size() >= std::numeric_limits<uint32_t>::max()) {
-            throw std::runtime_error("Raw buffer size exceeds uint32_t maximum");
-        }
-        if (RANGE_CHECKING && buffer_zip_.size() >= std::numeric_limits<uint32_t>::max()) {
-            throw std::runtime_error("Compressed buffer size exceeds uint32_t maximum");
-        }
-        if (RANGE_CHECKING && row_lengths_.size() >= std::numeric_limits<uint16_t>::max()) {
-            throw std::runtime_error("Row count difference exceeds uint16_t maximum");
+        // Record packet start position and row index
+        if(fileHeader_.hasFlag(FileFlags::NO_FILE_INDEX) == false) {
+            size_t packetOffset_ = stream_.tellp();
+            packetIndex_.emplace_back(packetOffset_, totalRowCount_);
         }
         
-        PacketHeader packetHeader;
-        packetHeader.payloadSize = static_cast<uint32_t>(buffer_zip_.size());
-        packetHeader.rowFirst = row_cnt_; 
-        packetHeader.rowCount = static_cast<uint32_t>(row_lengths_.size()); // number of rows
-        row_lengths_.pop_back(); // based on file format last offset is implicitly defined by end of packet payload and does not need to be stored
-        packetHeader.updateChecksum(row_lengths_, buffer_zip_);
+        PacketHeaderV3 header;
+        header.firstRowIndex = totalRowCount_;
+        header.prevPayloadChecksum = packetHash_.finalize();
+        header.write(stream_);
 
-        // Write the packet (header + row offsets + compressed data)
-        stream_.write(reinterpret_cast<const char*>(&packetHeader), sizeof(packetHeader));
+        // Reset packet to initial state
+        packetInitialized_ = true;
+        packetSize_ = 0;
+        packetHash_.reset();
+        if (lz4Stream_.has_value()) {
+            lz4Stream_->reset();
+        }
+    }
+
+    template<LayoutConcept LayoutType>
+    bool Writer<LayoutType>::isZoHRepeat() {
+        // ZoH always enabled: check if current row matches previous row
+        if (bufferPrevRow_.empty()) {
+            return false; // First row can't be a repeat
+        }
         
-        // Safe conversion for row offsets size
-        size_t row_offsets_bytes = row_lengths_.size() * sizeof(uint16_t);
-        stream_.write(reinterpret_cast<const char*>(row_lengths_.data()), static_cast<std::streamsize>(row_offsets_bytes));
-        stream_.write(reinterpret_cast<const char*>(buffer_zip_.data()), static_cast<std::streamsize>(buffer_zip_.size()));
-
-        // Clear buffers for next packet
-        buffer_raw_.clear();
-        buffer_zip_.clear();
-        row_lengths_.clear();
-        row_cnt_ += packetHeader.rowCount; // Update total row count
+        if (bufferRawRow_.size() != bufferPrevRow_.size()) {
+            return false; // Different sizes mean different data
+        }
+        
+        // Compare raw bytes using memcmp
+        return std::memcmp(bufferRawRow_.data(), bufferPrevRow_.data(), bufferRawRow_.size()) == 0;
     }
 
     template<LayoutConcept LayoutType>
@@ -231,31 +226,84 @@ namespace bcsv {
             return false;
         }
 
-        // serialize the row into the raw buffer
-        size_t old_size = buffer_raw_.size();
-        if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
-            row_.trackChanges(true);            // ensure tracking is enabled for ZoH
-            row_.serializeToZoH(buffer_raw_);   // specialized ZoH serialization
-            row_.resetChanges();                // reset all change flags after serialization
+        if(packetInitialized_ == false) {
+            initializePacket();
+        }
+
+        // 1. Serialize row to buffer
+        bufferRawRow_.clear();
+        row_.serializeTo(bufferRawRow_);
+        
+        // 2. Check for ZoH repeat (always enabled via memcmp)
+        bool isZoH = isZoHRepeat();
+        if (isZoH) {
+            // Write ZoH sentinel: VLE(0)
+            auto rowLength = vle_encode<uint64_t>(0);
+            stream_.write(reinterpret_cast<const char*>(rowLength.data()), rowLength.size());
+            packetHash_.update(rowLength.data(), rowLength.size());
+            packetSize_ += rowLength.size(); // VLE(0) is always 1 byte
+            
         } else {
-            row_.serializeTo(buffer_raw_);
-        }
+            // Non-ZoH row: compress and write
+            std::span<const uint8_t> dataToWrite(reinterpret_cast<const uint8_t*>(bufferRawRow_.data()), bufferRawRow_.size());
 
-        size_t row_length = buffer_raw_.size() - old_size; 
-        if (row_length > MAX_ROW_LENGTH) {
-            buffer_raw_.resize(old_size); // revert to previous state
-            throw std::runtime_error("Error: Single row size exceeds uint16_t maximum");
-        }
-        row_lengths_.push_back(static_cast<uint16_t>(row_length));
-
-        if(buffer_raw_.size() + row_length >= fileHeader_.blockSize()) {  // Rough estimate to avoid exceeding block size
-            // if packed gets too large, write current packet and start a new one
-            writePacket();
-            if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
-                row_.setChanges();  // mark all fields as changed, by convention a new packet starts with a fully populated row
+            if (lz4Stream_.has_value()) {
+                // Compress with LZ4 streaming
+                bufferCompressed_.resize(LZ4_COMPRESSBOUND(dataToWrite.size()));
+                
+                // LZ4CompressionStream::compress expects std::span
+                const auto& input = dataToWrite;
+                std::span<uint8_t> output(reinterpret_cast<uint8_t*>(bufferCompressed_.data()), bufferCompressed_.size());
+                int compressedSize = lz4Stream_->compress(input, output);
+                
+                if (compressedSize <= 0) {
+                    std::cerr << "Warning: LZ4 compression failed, writing uncompressed\n";
+                } else {
+                    dataToWrite = std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(bufferCompressed_.data()), compressedSize);
+                }
             }
+            // If compressionLevel == 0, lz4Stream_ is nullopt, so write uncompressed
+            
+            // Write VLE(dataToWrite.size() + 1) and data
+            auto rowLength = vle_encode<uint64_t>(dataToWrite.size() + 1); // Offset by 1 (VLE(0) is ZoH, VLE(1) is terminator)
+            
+            // Write VLE and data
+            stream_.write(reinterpret_cast<const char*>(rowLength.data()), rowLength.size());
+            stream_.write(reinterpret_cast<const char*>(dataToWrite.data()), dataToWrite.size());
+            
+            // Update payload checksum with VLE + data
+            packetHash_.update(rowLength.data(), rowLength.size());
+            packetHash_.update(dataToWrite.data(), dataToWrite.size());
+            packetSize_ += rowLength.size() + dataToWrite.size();
+            
+            // Update previous row buffer for next ZoH comparison
+            std::swap(bufferPrevRow_, bufferRawRow_);
+        }
+        totalRowCount_++;
+        
+        // 3. Check if packet exceeds threshold and flush if needed
+        if (packetSize_ >= fileHeader_.blockSize()) {
+            flushPacket();
         }
         return true;
+    }
+
+    template<LayoutConcept LayoutType>
+    void Writer<LayoutType>::flushPacket() {
+        if (!stream_.is_open()) {
+            throw std::runtime_error("Error: File is not open");
+        }
+        
+        if (packetSize_ == 0) {
+            return; // Empty packet, nothing to flush
+        }
+        
+        // 1. Write terminator VLE(1)
+        auto vleBytes = vle_encode<uint64_t>(1); // Terminator
+        stream_.write(reinterpret_cast<const char*>(vleBytes.data()), vleBytes.size());
+        packetHash_.update(vleBytes.data(), vleBytes.size());
+        packetSize_ += vleBytes.size();
+        packetInitialized_ = false;
     }
 
 } // namespace bcsv

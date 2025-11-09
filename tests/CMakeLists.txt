@@ -26,7 +26,7 @@ add_executable(bcsv_gtest
     vle_template_test.cpp
     packet_header_v3_test.cpp
     lz4_stream_test.cpp
-    file_index_test.cpp
+    file_footer_test.cpp
 )
 
 # Link the bcsv library and Google Test

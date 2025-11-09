@@ -64,9 +64,9 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
 
             special cases: 
                 if rowLength == 0 and FileFlag::ZoH is used the current row is an exact copy of the previouse one
-                if rowLength == numericalLimit::Max, end of packet no rows left. So we expect the next PacketHeader to start (PCKT_MAGIC) or FileIndex
+                if rowLength == numericalLimit::Max, end of packet no rows left. So we expect the next PacketHeader to start (PCKT_MAGIC) or FileFooter
 
-        - Add FileIndex to the end of the file.
+        - Add FileFooter to the end of the file.
             uint32_t INDEX_START_MAGIC
             uint64_t FILE_INDEX_HEADER_1st_PACKET, uint64_t INDEX_FIRST_ROW_1st_PACKET
             uint64_t FILE_INDEX_HEADER_2nd_PACKET, uint64_t INDEX_FIRST_ROW_2nd_PACKET
@@ -133,8 +133,10 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     Other occurences just to reference that number
 
 6. implement additional FileFlags
-    raw:   omit all the complex variable length encoding
+    raw: omit all the complex variable length encoding to save compute
     stats: each packet to contain some stats on what was included in each column, !min!, !max!, mean, median, std
+    stream: omit packet structue and fileindex. also to save compute on constraint architecture, expected to come with significant performance constrains for random read. -> convert to Normal (packet bases) file structure in that case.
+
 
 7. implement Column modifier:
     - volatile: this parameter is changing arbitrarily, don’t spend too much effort to compress it. 

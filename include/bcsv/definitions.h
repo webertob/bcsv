@@ -61,8 +61,8 @@ namespace bcsv {
     enum class FileFlags : uint16_t {
         // All bits currently reserved for future optional features
         NONE                = 0x0000,                  ///< No special features enabled
-        ZERO_ORDER_HOLD     = 0x0001,                  ///< Bit 0: Indicates this file uses zero-order hold compression (not implemented yet)
-        STREAMING_COMPRESSION = 0x0002,                ///< Bit 1: Indicates this file uses streaming LZ4 compression (v1.3.0+)
+        ZERO_ORDER_HOLD     = 0x0001,                  ///< Bit 0: Indicates this file uses zero-order hold compression (v1.2.0, will be always-on in v1.3.0)
+        NO_FILE_INDEX       = 0x0002,                  ///< Bit 1: File has no index (sequential scan only, minimal footer) - for embedded platforms
         // Bits 2-15 reserved for future use
     };
 

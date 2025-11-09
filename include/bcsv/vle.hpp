@@ -308,6 +308,38 @@ inline size_t vle_encode(T value, std::span<uint8_t> output) {
     }
 }
 
+template<VLEInteger T>
+std::vector<uint8_t> vle_encode(T value)
+{
+    if constexpr (sizeof(T) == 1) {
+        std::vector<uint8_t> vleBytes = {static_cast<uint8_t>(value)};
+        return vleBytes;
+    }
+
+    constexpr size_t max_bytes = vle_max_bytes<T>();
+    std::vector<uint8_t> vleBytes;
+    vleBytes.reserve(max_bytes);
+
+    using U = std::make_unsigned_t<T>;
+    // For signed types, apply zigzag encoding first
+    U encoded_value;
+    if constexpr (std::is_signed_v<T>) {
+        encoded_value = zigzag_encode(value);
+    } else {
+        encoded_value = static_cast<U>(value);
+    }
+
+    do {
+        uint8_t byte = encoded_value & 0x7F;
+        encoded_value >>= 7;
+        if (encoded_value != 0) {
+            byte |= 0x80; // More bytes to come
+        }
+        vleBytes.push_back(byte);
+    } while (encoded_value != 0);
+    return vleBytes;
+}
+
 // Convenience aliases for common types
 inline uint64_t vle_decode_u64(std::istream& input) { return vle_decode<uint64_t>(input); }
 inline int64_t vle_decode_i64(std::istream& input) { return vle_decode<int64_t>(input); }

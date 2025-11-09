@@ -325,7 +325,7 @@ struct EncodedRow {
 **Index structure** (appended at EOF):
 
 ```cpp
-struct FileIndex {
+struct FileFooter {
     char startMagic[4];              // "BIDX"
     
     struct PacketIndexEntry {
