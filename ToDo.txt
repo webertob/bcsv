@@ -80,8 +80,15 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
         - default PacketSize should be 8196Kb (8Mb). 
             - if PackeSize == 0Kb we are completley disable packets, and create an absolutly flat file, no overheads, no index, optimized for sequential read/write. in that case payload directly starts after the FileHeader, file ends with checkSum and totalRowCount
 
+2.a Implement block-wise vle_decode and vle_encode functions for row length compression
+    - instead of putting the continuation bits to the highest bit in each byte, we use a group (bock) of bits at the begining of the first byte to encode the total length. The idea is that the encoding/decoding of the total length in a block 
+      is faster. yes we might lose a little compression, as we always encode the entire length. Perhaps we can balance by accepting slightly lower value range. i.e. encoding 64bit would require 3bits at the begining to encode the length. This would limit effective range. 
+      Most likley this acceptable for real use cases as we don't expect a row to ever extend to uint64_t::max, same applies for row nobers (indices)
+    - lets run benchmark to confirm pro and con and documnet the results. 
+
 3.Variable length encoding (float and integer values)
     Main usage of bcsv is the handling of time-series data. Thus we expect many rcurring or constantly falling or raising values and values that are similar to previouse values. In many cases the full extend of a variable type is not required to encode the actual value.
+    This feature is working on a per row level, not only a single cell/value as the current vle_encode / vle_decode functions do. It tries to provide a better balance between computational effort and compression and takes advantange on previouse data (time-series).
     
     Design goals:
     1. shortest possible encoding for: 

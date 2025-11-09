@@ -211,14 +211,14 @@ namespace bcsv {
             row_ = typename LayoutType::RowType(LayoutType()); // reset layout and row
             std::cerr << "Error: Failed to read or validate file header" << std::endl;
             return false;
-        } else if (fileHeader_.versionMajor() != bcsv::VERSION_MAJOR || fileHeader_.versionMinor() != bcsv::VERSION_MINOR) {
+        } else if (fileHeader_.versionMajor() != BCSV_FORMAT_VERSION_MAJOR || fileHeader_.versionMinor() != BCSV_FORMAT_VERSION_MINOR) {
             fileHeader_ = FileHeader();
             row_ = typename LayoutType::RowType(LayoutType()); // reset layout and row
             std::cerr << "Error: Incompatible file version: "
                         << static_cast<int>(fileHeader_.versionMajor()) << "."
                         << static_cast<int>(fileHeader_.versionMinor())
-                        << " (Expected: " << static_cast<int>(bcsv::VERSION_MAJOR) << "." 
-                        << static_cast<int>(bcsv::VERSION_MINOR) << ")\n";
+                        << " (Expected: " << static_cast<int>(BCSV_FORMAT_VERSION_MAJOR) << "." 
+                        << static_cast<int>(BCSV_FORMAT_VERSION_MINOR) << ")\n";
             return false;
         } else {    
             row_ = typename LayoutType::RowType(layout);
