@@ -15,7 +15,7 @@
 #include <string>
 #include <vector>
 #include <filesystem>
-#include <memory>
+#include <optional>
 
 #include <lz4.h>
 
@@ -24,6 +24,11 @@
 #include "file_header.h"
 #include "row.h"
 #include "byte_buffer.h"
+#include "packet_header_v3.h"
+#include "lz4_stream.hpp"
+#include "file_footer.h"
+#include "vle.hpp"
+#include "checksum.hpp"
 
 namespace bcsv {
 
@@ -46,46 +51,50 @@ namespace bcsv {
 
         ReaderMode              mode_ = ReaderMode::STRICT; // Default to strict mode for backward compatibility
         FileHeader              fileHeader_;                // File header for accessing flags and metadata
+        FileFooter              fileFooter_;                // Parsed from EOF, or rebuilt if missing
         FilePath                filePath_;                  // Always present
         std::ifstream           stream_;                    // Always binary file stream
+        std::optional<LZ4DecompressionStream> 
+                                lz4Stream_;                 // Per-packet decompression (nullopt if compressionLevel == 0)
+               
+        // Current packet state
+        Checksum::Streaming     packetHash_;                // Validates payload checksum chain
+        ByteBuffer              bufferRawRow_;              // Current decompressed row (reused for ZoH repeat)
+        std::streampos          currentPacketHeaderPos_;    // File position of current packet header
+        size_t                  currentPacketIndex_;        // Index into fileIndex_ for current packet
 
-        ByteBuffer              buffer_raw_;
-        ByteBuffer              buffer_zip_;
-        std::vector<uint16_t>   row_lengths_;                // row lengths for indexing
-        std::vector<size_t>     row_offsets_;                // to accelerate row lookup
-        size_t                  row_index_file_   = 0;       // current row index within the file
-        size_t                  row_index_packet_ = 0;       // current row index within the packet
-        RowType                 row_;                        // current row
-        size_t                  packet_row_first_ = 0;       // index of the first row in the current packet
-        size_t                  packet_row_count_ = 0;       // number of rows in the current packet
+        // Global row tracking
+        size_t                  currentRowIndex_;           // 0-based absolute row index in file
+        RowType                 row_;                       // Current row
 
     public:
         /**
          * @brief Construct a Reader with a given layout
-         * @param layout The layout defining the structure of rows
          * @param mode The reader mode for error handling (default: STRICT)
          */
         explicit                Reader(ReaderMode mode = ReaderMode::STRICT);
                                 ~Reader();
 
         void                    close();
-        size_t                  countRows() const;
-        uint8_t                 compressionLevel() const        { return fileHeader_.compressionLevel(); }
-        const FilePath&         filePath() const                { return filePath_; }
-        const LayoutType&       layout() const                  { return row_.layout(); }
-        ReaderMode              mode() const                    { return mode_; }
-        size_t                  rowIndex() const                { return row_index_file_; }
+        size_t                  countRows() const           { return fileFooter_.totalRowCount(); }
+        uint8_t                 compressionLevel() const    { return fileHeader_.compressionLevel(); }
+        const FilePath&         filePath() const            { return filePath_; }
+        const LayoutType&       layout() const              { return row_.layout(); }
+        ReaderMode              mode() const                { return mode_; }
+        size_t                  rowIndex() const            { return currentRowIndex_; }
 
-        bool                    isOpen() const                  { return stream_.is_open(); }
+        bool                    isOpen() const              { return stream_.is_open(); }
         bool                    open(const FilePath& filepath);
 
         bool                    readNext();
-        const RowType&          row() const                     { return row_; }
-        void                    setMode(ReaderMode mode)        { mode_ = mode; }
+        const RowType&          row() const                 { return row_; }
+        void                    setMode(ReaderMode mode)    { mode_ = mode; }
 
     private:
         bool                    readFileHeader();
-        bool                    readPacket();        
+        bool                    readFileFooter();            // v1.3.0: Read FileFooter or footer from EOF
+        bool                    rebuildFileFooter();         // v1.3.0: Rebuild index by scanning packets (RESILIENT mode)
+        bool                    openPacket();               // v1.3.0: Open next packet for sequential reading
     };
 
 } // namespace bcsv

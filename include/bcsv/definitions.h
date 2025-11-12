@@ -39,6 +39,11 @@ namespace bcsv {
         return version::STRING;
     }
 
+    // File format version (separate from library version)
+    constexpr uint8_t BCSV_FORMAT_VERSION_MAJOR = 1;
+    constexpr uint8_t BCSV_FORMAT_VERSION_MINOR = 3;
+    constexpr uint8_t BCSV_FORMAT_VERSION_PATCH = 0;
+
     // Constants for the binary file format
     constexpr uint32_t BCSV_MAGIC = 0x56534342;   // "BCSV" in little-endian
     constexpr uint32_t PCKT_MAGIC = 0x54434B50;   // "PCKT" in little-endian
@@ -56,7 +61,8 @@ namespace bcsv {
     enum class FileFlags : uint16_t {
         // All bits currently reserved for future optional features
         NONE                = 0x0000,                  ///< No special features enabled
-        ZERO_ORDER_HOLD     = 0x0001,                  ///< Bit 0: Indicates this file uses zero-order hold compression (not implemented yet)
+        ZERO_ORDER_HOLD     = 0x0001,                  ///< Bit 0: Indicates this file uses zero-order hold compression (v1.2.0, will be always-on in v1.3.0)
+        NO_FILE_INDEX       = 0x0002,                  ///< Bit 1: File has no index (sequential scan only, minimal footer) - for embedded platforms
         // Bits 2-15 reserved for future use
     };
 

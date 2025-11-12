@@ -55,6 +55,8 @@ namespace bcsv {
         { const_layout.columnOffset(index)              } -> std::convertible_to<size_t>;
         { const_layout.columnType(index)                } -> std::convertible_to<ColumnType>;
         { layout.setColumnName(index, name)             } -> std::same_as<bool>;
+        { layout.maxByteSize()                          } -> std::convertible_to<size_t>;
+        { layout.isCompatible(const_layout)             } -> std::convertible_to<bool>;
         { const_layout.isCompatible(const_layout)       } -> std::convertible_to<bool>;
         
         // Type information (for static layouts)
@@ -94,6 +96,7 @@ namespace bcsv {
         const std::string& columnName(size_t index) const           { if constexpr (RANGE_CHECKING) {return column_names_.at(index);}   else { return column_names_[index]; } }
         size_t columnOffset(size_t index) const                     { if constexpr (RANGE_CHECKING) {return column_offsets_.at(index);} else { return column_offsets_[index]; } }
         ColumnType columnType(size_t index) const                   { if constexpr (RANGE_CHECKING) {return column_types_.at(index);}   else { return column_types_[index]; } }
+        size_t maxByteSize() const                                  { return columnOffset(columnCount() - 1) + columnLength(columnCount() - 1); }
         size_t serializedSizeFixed() const                          { return total_fixed_size_; } // Total fixed size of a row in bytes (excluding variable-length strings), based on defined column types (no compression)
         bool setColumnName(size_t index, const std::string& name);
         void setColumnType(size_t index, ColumnType type);
@@ -175,7 +178,7 @@ namespace bcsv {
         ColumnType                  columnTypeT(size_t index) const;
         template<size_t Index>
         static constexpr ColumnType columnType()                                { return toColumnType< column_type<Index> >(); }
-        
+        static constexpr size_t     maxByteSize()                               { return fixed_size; }
         bool                        setColumnName(size_t index, const std::string& name);
 
         // Compatibility checking

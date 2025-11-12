@@ -1076,8 +1076,8 @@ TEST_F(BCSVTestSuite, Performance_FlexibleVsStatic) {
 }
 
 // Test 8: CRC32 Corruption Detection Test
-TEST_F(BCSVTestSuite, CRC32_CorruptionDetection) {
-    std::string test_file = getTestFilePath("crc32_test.bcsv");
+TEST_F(BCSVTestSuite, Checksum_CorruptionDetection) {
+    std::string test_file = getTestFilePath("checksum_test.bcsv");
     std::vector<TestData> test_data;
     
     // Generate small test dataset (just 5 rows for simplicity)
@@ -1151,7 +1151,7 @@ TEST_F(BCSVTestSuite, CRC32_CorruptionDetection) {
                 file.write(file_data.data(), file_data.size());
             }
             
-            // Try to read - should detect corruption via CRC32
+            // Try to read - should detect corruption via checksum
             auto layout = createFullFlexibleLayout();
             
             bool exception_thrown = false;
@@ -1169,8 +1169,8 @@ TEST_F(BCSVTestSuite, CRC32_CorruptionDetection) {
             
             EXPECT_TRUE(exception_thrown) << "Expected exception for payload corruption";
             if (exception_thrown) {
-                // Accept either CRC32 or decompression error as both indicate corruption detection
-                bool is_corruption_detected = (error_message.find("CRC32 validation failed") != std::string::npos) ||
+                // Accept either checksum or decompression error as both indicate corruption detection
+                bool is_corruption_detected = (error_message.find("checksum") != std::string::npos) ||
                                             (error_message.find("LZ4 decompression failed") != std::string::npos);
                 EXPECT_TRUE(is_corruption_detected) 
                     << "Expected corruption detection, got: " << error_message;
@@ -1270,7 +1270,7 @@ TEST_F(BCSVTestSuite, CRC32_CorruptionDetection) {
         }
     }
     
-    std::cout << "CRC32 corruption detection test completed successfully" << std::endl;
+    std::cout << "Checksum corruption detection test completed successfully" << std::endl;
 }
 
 // Test 9: Packet Recovery - Skip Broken Packets and Read Valid Ones

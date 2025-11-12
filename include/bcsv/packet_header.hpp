@@ -11,7 +11,7 @@
 
 #include "bcsv/byte_buffer.h"
 #include "packet_header.h"
-#include <boost/crc.hpp>
+#include "checksum.hpp"
 #include <cstring>
 #include <algorithm>
 #include <iostream>
@@ -79,10 +79,10 @@ namespace bcsv {
                 return false; // Failed to read full payload
             }
 
-            // validate crc32
-            if (!validateCRC32(rowLengths, payloadBuffer)) {
+            // validate header checksum
+            if (!validateChecksum(rowLengths, payloadBuffer)) {
                 if(!resilient) {
-                    throw std::runtime_error("Error: CRC32 validation failed");
+                    throw std::runtime_error("Error: Header checksum validation failed");
                 } else {
                     stream.seekg(file_pos);
                     continue; // Invalid header, try next position
@@ -93,32 +93,26 @@ namespace bcsv {
         return false;
     }
 
-    inline void PacketHeader::updateCRC32(const std::vector<uint16_t>& rowLengths, const ByteBuffer& zipBuffer) {
-        this->crc32 = 0; // Ensure CRC32 field is zeroed before calculation
+    inline void PacketHeader::updateChecksum(const std::vector<uint16_t>& rowLengths, const ByteBuffer& zipBuffer) {
+        // Calculate checksum including row offsets and compressed data
+        bcsv::Checksum::Streaming hasher;
+        hasher.update(this, sizeof(PacketHeader)-sizeof(this->checksum)); // Exclude checksum field itself
+        hasher.update(rowLengths.data(), rowLengths.size() * sizeof(uint16_t));
+        hasher.update(zipBuffer.data(), zipBuffer.size());
 
-        // Calculate CRC32 including row offsets and compressed data
-        boost::crc_32_type crcCalculator;
-        crcCalculator.process_bytes(this, sizeof(PacketHeader));
-        crcCalculator.process_bytes(rowLengths.data(), rowLengths.size() * sizeof(uint16_t));
-        crcCalculator.process_bytes(zipBuffer.data(), zipBuffer.size());
-
-        // Store the CRC32 value in the header
-        this->crc32 = crcCalculator.checksum();
+        // Store the xxHash64 value in the header
+        this->checksum = hasher.finalize();
     }
 
-    inline bool PacketHeader::validateCRC32(const std::vector<uint16_t>& rowLengths, const ByteBuffer& zipBuffer) {
-        uint32_t originalCRC32 = this->crc32;
-        this->crc32 = 0; // Zero out the CRC32 field before calculating
+    inline bool PacketHeader::validateChecksum(const std::vector<uint16_t>& rowLengths, const ByteBuffer& zipBuffer) {
+        // Calculate xxHash64 over the row offsets
+        bcsv::Checksum::Streaming hasher;
+        hasher.update(this, sizeof(PacketHeader)-sizeof(this->checksum)); // Exclude checksum field itself
+        hasher.update(rowLengths.data(), rowLengths.size() * sizeof(uint16_t));
+        hasher.update(zipBuffer.data(), zipBuffer.size());
 
-        // Calculate CRC32 over the row offsets
-        boost::crc_32_type crcCalculator;
-        crcCalculator.process_bytes(this, sizeof(PacketHeader));
-        crcCalculator.process_bytes(rowLengths.data(), rowLengths.size() * sizeof(uint16_t));
-        crcCalculator.process_bytes(zipBuffer.data(), zipBuffer.size());
-
-        this->crc32 = originalCRC32; // Restore original CRC32 value
-        // Compare with the stored CRC32 value
-        return crcCalculator.checksum() == originalCRC32;
+        // Compare with the stored checksum value
+        return hasher.finalize() == this->checksum ;
     }
 
 } // namespace bcsv

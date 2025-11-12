@@ -23,6 +23,10 @@ endif()
 add_executable(bcsv_gtest 
     bcsv_comprehensive_test.cpp
     vectorized_access_test.cpp
+    vle_template_test.cpp
+    packet_header_v3_test.cpp
+    lz4_stream_test.cpp
+    file_footer_test.cpp
 )
 
 # Link the bcsv library and Google Test
