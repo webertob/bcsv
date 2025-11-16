@@ -26,7 +26,7 @@
 #include "file_header.h"
 #include "file_footer.h"
 #include "row.h"
-#include "packet_header_v3.h"
+#include "packet_header.h"
 #include "lz4_stream.hpp"
 #include "vle.hpp"
 #include "checksum.hpp"
@@ -47,20 +47,18 @@ namespace bcsv {
         std::ofstream           stream_;                    // Always binary file stream
         std::optional<LZ4CompressionStream> 
                                 lz4Stream_;                 // std::nullopt if compressionLevel == 0
-        uint64_t                totalRowCount_;             // Total rows written across all packets
         
         // Packet management
         PacketIndex             packetIndex_;               // Builds index in memory (if NO_FILE_INDEX not set)
-        bool                    packetInitialized_ = false; // Whether a packet has been started
         Checksum::Streaming     packetHash_;                // Streaming payload checksum for current packet
+        bool                    packetOpen_ = false;        // Whether a packet has been started
         size_t                  packetSize_;                // Bytes written in current packet payload
         
         // Buffers for streaming compression (pre-allocated, reused)
-        ByteBuffer              bufferRawRow_;              // Serialized raw row
-        ByteBuffer              bufferCompressed_;          // Compressed row data
-        ByteBuffer              bufferPrevRow_;             // Previous row for ZoH comparison
+        ByteBuffer              rowBufferRaw_;              // Serialized raw row
+        ByteBuffer              rowBufferPrev_;             // Previous row for ZoH comparison
+        uint64_t                rowCnt_;                    // Total rows written across all packets
         RowType                 row_;
- 
     public:
         Writer() = delete;
         Writer(const LayoutType& layout);
@@ -68,20 +66,21 @@ namespace bcsv {
 
         void                    close();
         void                    flush();
-        uint8_t                 compressionLevel() const        { return fileHeader_.compressionLevel(); }
+        uint8_t                 compressionLevel() const        { return fileHeader_.getCompressionLevel(); }
         const FilePath&         filePath() const                { return filePath_; }
         const LayoutType&       layout() const                  { return row_.layout(); }
         bool                    is_open() const                 { return stream_.is_open(); }
         bool                    open(const FilePath& filepath, bool overwrite = false, size_t compressionLevel = 1, size_t blockSizeKB = 64, FileFlags flags = FileFlags::NONE);
         RowType&                row()                           { return row_; }
         const RowType&          row() const                     { return row_; }
-        size_t                  rowIndex() const                { return totalRowCount_; }
-        bool                    writeRow();
+        size_t                  rowCount() const                { return rowCnt_; }
+        void                    writeRow();
 
     private:
-        void                    flushPacket();              // v1.3.0: streaming, finalize current packet
-        void                    initializePacket();         // v1.3.0: streaming, start new packet, write pkt header
-        bool                    isZoHRepeat();              // v1.3.0: check if current row is ZoH repeat
+        void                    closePacket();              
+        void                    openPacket();         
+        bool                    isZoHRepeat();
+        void                    writeRowLength(size_t length);
     };
 
 } // namespace bcsv

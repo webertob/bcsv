@@ -21,10 +21,10 @@
 #include "layout.h"
 #include "byte_buffer.h"
 #include <cstring>
+#include <stdexcept>
 #include <string>
 #include <cassert>
 #include <variant>
-#include <iostream>
 #include "string_addr.h"
 
 namespace bcsv {
@@ -204,11 +204,10 @@ namespace bcsv {
         }
     }
 
-    inline bool Row::deserializeFrom(const std::span<const std::byte> buffer)
+    inline void Row::deserializeFrom(const std::span<const std::byte> buffer)
     {
         if (layout_.serializedSizeFixed() > buffer.size()) {
-            std::cerr << "Row::deserializeFrom failed as buffer is too short." << std::endl;
-            return false;
+            throw std::runtime_error("Row::deserializeFrom failed as buffer is too short.");
         }
         for(size_t i = 0; i < layout_.columnCount(); ++i) {
             const std::byte* ptr = buffer.data() + layout_.columnOffset(i);
@@ -263,8 +262,7 @@ namespace bcsv {
                     std::memcpy(&strAddr, ptr, sizeof(strAddr));
                     auto [strOff, strLen] = strAddr.unpack();
                     if (strOff + strLen > buffer.size()) {
-                        std::cerr << "String payload extends beyond buffer" << std::endl;
-                        return false;
+                        throw std::runtime_error("String payload extends beyond buffer");
                     }
                     std::get<std::string>(data_[i]).assign(reinterpret_cast<const char*>(buffer.data() + strOff), strLen);
                     break;
@@ -273,7 +271,6 @@ namespace bcsv {
                     throw std::runtime_error("Unsupported column type");
             }
         }
-        return true;
     }
 
     inline void Row::serializeToZoH(ByteBuffer& buffer) const {
@@ -341,12 +338,11 @@ namespace bcsv {
         std::memcpy(buffer.data() + ptrChanges, changes_.data(), changes_.sizeBytes());
     }
 
-    inline bool Row::deserializeFromZoH(const std::span<const std::byte> buffer) {
+    inline void Row::deserializeFromZoH(const std::span<const std::byte> buffer) {
         trackChanges(true); // ensure change tracking is enabled
         // We expect the buffer to start with the change bitset, followed by the actual row data
         if (buffer.size() < changes_.sizeBytes()) {
-            std::cerr << "Row::deserializeFromZoH() failed! Buffer too small to contain change bitset." << std::endl;
-            return false;
+            throw std::runtime_error("Row::deserializeFromZoH() failed! Buffer too small to contain change bitset.");
         }
         
         // Read change bitset from beginning of buffer
@@ -364,22 +360,19 @@ namespace bcsv {
                 if(type == ColumnType::STRING) {
                     // Special handling for strings
                     if (dataBuffer.size() < sizeof(uint16_t)) {
-                        std::cerr << "Row::deserializeFromZoH() failed! Buffer too small for string length." << std::endl;
-                        return false;
+                        throw std::runtime_error("Row::deserializeFromZoH() failed! Buffer too small for string length.");
                     }
                     uint16_t strLength;
                     std::memcpy(&strLength, dataBuffer.data(), sizeof(uint16_t));
                     if (dataBuffer.size() < sizeof(uint16_t) + strLength) {
-                        std::cerr << "Row::deserializeFromZoH() failed! Buffer too small for string payload." << std::endl;
-                        return false;
+                        throw std::runtime_error("Row::deserializeFromZoH() failed! Buffer too small for string payload.");
                     }
                     std::get<std::string>(data_[i]).assign(reinterpret_cast<const char*>(dataBuffer.data() + sizeof(uint16_t)), strLength);
                     dataBuffer = dataBuffer.subspan(sizeof(uint16_t) + strLength);
                     continue;
                 } else {
                     if (dataBuffer.size() < layout_.columnLength(i)) {
-                        std::cerr << "Row::deserializeFromZoH() failed! Buffer too small for column." << std::endl;
-                        return false;
+                        throw std::runtime_error("Row::deserializeFromZoH() failed! Buffer too small for column.");
                     }
                     if(type == ColumnType::UINT8) {
                         std::memcpy(&std::get<uint8_t>(data_[i]), dataBuffer.data(), sizeof(uint8_t));
@@ -409,7 +402,6 @@ namespace bcsv {
                 }
             }
         }
-        return true;
     }
 
     // ========================================================================
@@ -887,22 +879,21 @@ namespace bcsv {
 
 
     template<typename... ColumnTypes>
-    bool RowStatic<ColumnTypes...>::deserializeFrom(const std::span<const std::byte> buffer)  {
+    void RowStatic<ColumnTypes...>::deserializeFrom(const std::span<const std::byte> buffer)  {
         //we expect the buffer, starts with the first byte of the row and ends with the last byte of the row (no change bitset)
-        return deserializeElements<0>(buffer);
+        deserializeElements<0>(buffer);
     }
 
     template<typename... ColumnTypes>
     template<size_t Index>
-    bool RowStatic<ColumnTypes...>::deserializeElements(const std::span<const std::byte> &buffer) 
+    void RowStatic<ColumnTypes...>::deserializeElements(const std::span<const std::byte> &buffer) 
     {
         if constexpr (Index < column_count) {
             constexpr size_t len = column_lengths[Index];
             constexpr size_t off = column_offsets[Index];
 
             if (off + len > buffer.size()) {
-                std::cerr << "RowStatic::deserializeElements() failed! Buffer overflow while reading." << std::endl;
-                return false;
+                throw std::runtime_error("RowStatic::deserializeElements() failed! Buffer overflow while reading.");
             }
 
             if constexpr (std::is_same_v<column_type<Index>, std::string>) {
@@ -910,8 +901,7 @@ namespace bcsv {
                 std::memcpy(&strAddr, buffer.data() + off, sizeof(strAddr));
                 auto [strOff, strLen] = strAddr.unpack();
                 if (strOff + strLen > buffer.size()) {
-                    std::cerr << "RowStatic::deserializeElements() failed! Buffer overflow while reading." << std::endl;
-                    return false;
+                    throw std::runtime_error("RowStatic::deserializeElements() failed! Buffer overflow while reading.");
                 }
                 std::get<Index>(data_).assign(reinterpret_cast<const char*>(buffer.data() + strOff), strLen);
             } else {
@@ -919,30 +909,27 @@ namespace bcsv {
             }
             
             // Recursively process next element
-            return deserializeElements<Index + 1>(buffer);
-        } else {
-            return true; // All elements processed successfully
+            deserializeElements<Index + 1>(buffer);
         }
     }
 
     template<typename... ColumnTypes>
-    bool RowStatic<ColumnTypes...>::deserializeFromZoH(const std::span<const std::byte> buffer)  
+    void RowStatic<ColumnTypes...>::deserializeFromZoH(const std::span<const std::byte> buffer)  
     {
         // we expect the buffer to start with the change bitset, followed by the actual row data
         if (buffer.size() < changes_.sizeBytes()) {
-            std::cerr << "RowStatic::deserializeFromZoH() failed! Buffer too small to contain change bitset." << std::endl;
-            return false;
+            throw std::runtime_error("RowStatic::deserializeFromZoH() failed! Buffer too small to contain change bitset.");
         } else {
             // read change bitset from beginning of buffer
             std::memcpy(changes_.data(), buffer.data(), changes_.sizeBytes());
         }
         auto dataBuffer = buffer.subspan(changes_.sizeBytes());
-        return deserializeElementsZoH<0>(dataBuffer);
+        deserializeElementsZoH<0>(dataBuffer);
     }
 
     template<typename... ColumnTypes>
     template<size_t Index>
-    bool RowStatic<ColumnTypes...>::deserializeElementsZoH(std::span<const std::byte> &buffer) {
+    void RowStatic<ColumnTypes...>::deserializeElementsZoH(std::span<const std::byte> &buffer) {
         // we expect the buffer to have the next element at the current position
         // thus the buffer needs to get shorter as we read elements
         // We also expect that the change bitset has been read already!
@@ -959,15 +946,13 @@ namespace bcsv {
                 if constexpr (std::is_same_v<column_type<Index>, std::string>) {
                     // special handling for strings, as we need to determine string length
                     if (buffer.size() < sizeof(uint16_t)) {
-                        std::cerr << "RowStatic::deserializeElementsZoH() failed! Buffer too small to contain string length." << std::endl;
-                        return false;
+                        throw std::runtime_error("RowStatic::deserializeElementsZoH() failed! Buffer too small to contain string length.");
                     }
                     uint16_t strLength;
                     std::memcpy(&strLength, buffer.data(), sizeof(uint16_t));
                     
                     if (buffer.size() < sizeof(uint16_t) + strLength) {
-                        std::cerr << "RowStatic::deserializeElementsZoH() failed! Buffer too small to contain string payload." << std::endl;
-                        return false;
+                        throw std::runtime_error("RowStatic::deserializeElementsZoH() failed! Buffer too small to contain string payload.");
                     }
                     std::string value;
                     value.assign(reinterpret_cast<const char*>(buffer.data() + sizeof(uint16_t)), strLength);
@@ -976,17 +961,14 @@ namespace bcsv {
                 } else {
                     // for all other types, we read directly from the start of the buffer
                     if (buffer.size() < sizeof(column_type<Index>)) {
-                        std::cerr << "RowStatic::deserializeElementsZoH() failed! Buffer too small to contain element." << std::endl;
-                        return false;
+                        throw std::runtime_error("RowStatic::deserializeElementsZoH() failed! Buffer too small to contain element.");
                     }
                     std::memcpy(&std::get<Index>(data_), buffer.data(), sizeof(column_type<Index>));
                     buffer = buffer.subspan(sizeof(column_type<Index>));
                 }
             }
             // Column not changed - keeping previous value (no action needed)
-            return deserializeElementsZoH<Index + 1>(buffer);
-        } else {
-            return true; // All elements processed successfully
+            deserializeElementsZoH<Index + 1>(buffer);
         }
     }
 

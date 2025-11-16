@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include <cstdint>
 #include <cstddef>
+#include <span>
 
 namespace bcsv {
 
@@ -16,8 +17,8 @@ namespace bcsv {
  */
 class Checksum {
 public:
-    using hash_t = uint64_t;
-    static constexpr hash_t DEFAULT_SEED = 0;
+    using hash64_t = uint64_t;
+    static constexpr hash64_t DEFAULT_SEED = 0;
 
     /**
      * @brief Compute hash for a memory block (one-shot)
@@ -26,7 +27,7 @@ public:
      * @param seed Optional seed value (default: 0)
      * @return 64-bit hash value
      */
-    static hash_t compute(const void* data, size_t length, hash_t seed = DEFAULT_SEED) {
+    static hash64_t compute(const void* data, size_t length, hash64_t seed = DEFAULT_SEED) {
         return XXH64(data, length, seed);
     }
 
@@ -46,7 +47,7 @@ public:
      */
     class Streaming {
     public:
-        Streaming(hash_t seed = DEFAULT_SEED) {
+        Streaming(hash64_t seed = DEFAULT_SEED) {
             state_ = XXH64_createState();
             if (!state_) {
                 throw std::runtime_error("Failed to create xxHash state");
@@ -83,7 +84,7 @@ public:
         /**
          * @brief Reset hash state with new seed
          */
-        void reset(hash_t seed = DEFAULT_SEED) {
+        void reset(hash64_t seed = DEFAULT_SEED) {
             XXH64_reset(state_, seed);
         }
 
@@ -96,13 +97,17 @@ public:
             XXH64_update(state_, data, length);
         }
 
+        void update(std::span<const std::byte> data) {
+            XXH64_update(state_, data.data(), data.size());
+        }
+
         /**
          * @brief Finalize and return hash value
          * @return 64-bit hash value
          * 
          * Note: After finalize(), you can call reset() to reuse the object
          */
-        hash_t finalize() {
+        hash64_t finalize() {
             return XXH64_digest(state_);
         }
 

@@ -125,6 +125,9 @@ else()
     target_compile_options(bcsv INTERFACE -Wall -Wextra -Wpedantic)
 endif()
 
+# Enable generation of compile_commands.json
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # ============================================================================
 # Build Options
 # ============================================================================

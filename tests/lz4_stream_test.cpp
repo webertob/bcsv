@@ -20,8 +20,13 @@ protected:
     void TearDown() override {}
     
     // Helper to create test data
-    std::vector<uint8_t> createTestData(const std::string& content) {
-        return std::vector<uint8_t>(content.begin(), content.end());
+    std::vector<std::byte> createTestData(const std::string& content) {
+        std::vector<std::byte> result;
+        result.reserve(content.size());
+        for (char c : content) {
+            result.push_back(static_cast<std::byte>(c));
+        }
+        return result;
     }
 };
 
@@ -47,14 +52,13 @@ TEST_F(LZ4StreamTest, DecompressionStreamCreation) {
 
 // Test: Basic compression
 TEST_F(LZ4StreamTest, BasicCompression) {
-    LZ4CompressionStream compressor(1);
+    LZ4CompressionStream compressor(1 );
     
     auto input = createTestData("Hello, World! This is a test string for LZ4 compression.");
-    std::vector<uint8_t> compressed(LZ4_COMPRESSBOUND(input.size()));
+        
+    const auto compressedData = compressor.compress(input);
     
-    int compressedSize = compressor.compress(input, compressed);
-    
-    EXPECT_GT(compressedSize, 0);
+    EXPECT_GT(compressedData.size(), 0);
     // Note: Small data may not compress well, so we don't check if it's smaller
 }
 
@@ -64,20 +68,14 @@ TEST_F(LZ4StreamTest, BasicDecompression) {
     LZ4DecompressionStream decompressor;
     
     auto input = createTestData("Hello, World! This is a test string for LZ4 compression.");
-    std::vector<uint8_t> compressed(LZ4_COMPRESSBOUND(input.size()));
-    std::vector<uint8_t> decompressed(input.size());
     
-    int compressedSize = compressor.compress(input, compressed);
-    ASSERT_GT(compressedSize, 0);
+    const auto& zip = compressor.compress(input);
+    ASSERT_GT(zip.size(), 0);
     
-    int decompressedSize = decompressor.decompress(
-        std::span<const uint8_t>(compressed.data(), compressedSize),
-        decompressed,
-        input.size()
-    );
-    
-    EXPECT_EQ(decompressedSize, static_cast<int>(input.size()));
-    EXPECT_EQ(decompressed, input);
+    const auto unzip = decompressor.decompress(zip);
+    std::vector<std::byte> output(unzip.begin(), unzip.end());
+    EXPECT_EQ(output.size(), input.size());
+    EXPECT_EQ(output, input);
 }
 
 // Test: Round-trip compression/decompression
@@ -90,22 +88,16 @@ TEST_F(LZ4StreamTest, RoundTripCompression) {
     testString += testString;
     
     auto input = createTestData(testString);
-    std::vector<uint8_t> compressed(LZ4_COMPRESSBOUND(input.size()));
-    std::vector<uint8_t> decompressed(input.size());
     
     // Compress
-    int compressedSize = compressor.compress(input, compressed);
-    ASSERT_GT(compressedSize, 0);
+    const auto& compressedData = compressor.compress(input);
+    ASSERT_GT(compressedData.size(), 0);
     
     // Decompress
-    int decompressedSize = decompressor.decompress(
-        std::span<const uint8_t>(compressed.data(), compressedSize),
-        decompressed,
-        input.size()
-    );
-    
-    EXPECT_EQ(decompressedSize, static_cast<int>(input.size()));
-    EXPECT_EQ(decompressed, input);
+    const auto& decompressedData = decompressor.decompress(compressedData);
+    std::vector<std::byte> output(decompressedData.begin(), decompressedData.end());
+    EXPECT_EQ(output.size(), input.size());
+    EXPECT_EQ(output, input);
 }
 
 // Test: Streaming context preservation (multiple compressions)
@@ -118,37 +110,37 @@ TEST_F(LZ4StreamTest, StreamingContextPreservation) {
     auto row2 = createTestData("temperature:25.4,humidity:60.1,pressure:1013.26");
     auto row3 = createTestData("temperature:25.5,humidity:60.0,pressure:1013.27");
     
-    std::vector<uint8_t> compressed1(LZ4_COMPRESSBOUND(row1.size()));
-    std::vector<uint8_t> compressed2(LZ4_COMPRESSBOUND(row2.size()));
-    std::vector<uint8_t> compressed3(LZ4_COMPRESSBOUND(row3.size()));
+    std::vector<std::byte> compressed1;
+    std::vector<std::byte> compressed2;
+    std::vector<std::byte> compressed3;
     
     // Compress rows with streaming context
-    int size1 = compressor.compress(row1, compressed1);
-    int size2 = compressor.compress(row2, compressed2);
-    int size3 = compressor.compress(row3, compressed3);
+    compressed1 = compressor.compress(row1);
+    compressed2 = compressor.compress(row2);
+    compressed3 = compressor.compress(row3);
     
-    ASSERT_GT(size1, 0);
-    ASSERT_GT(size2, 0);
-    ASSERT_GT(size3, 0);
+    ASSERT_GT(compressed1.size(), 0);
+    ASSERT_GT(compressed2.size(), 0);
+    ASSERT_GT(compressed3.size(), 0);
     
     // Second and third compressions should be smaller due to dictionary
     // (Though this is not guaranteed in all cases, it's typical for similar data)
     
     // Decompress with streaming context
-    std::vector<uint8_t> decompressed1(row1.size());
-    std::vector<uint8_t> decompressed2(row2.size());
-    std::vector<uint8_t> decompressed3(row3.size());
+    std::vector<std::byte> decompressed1;
+    std::vector<std::byte> decompressed2;
+    std::vector<std::byte> decompressed3;
     
-    int dsize1 = decompressor.decompress(
-        std::span<const uint8_t>(compressed1.data(), size1), decompressed1, row1.size());
-    int dsize2 = decompressor.decompress(
-        std::span<const uint8_t>(compressed2.data(), size2), decompressed2, row2.size());
-    int dsize3 = decompressor.decompress(
-        std::span<const uint8_t>(compressed3.data(), size3), decompressed3, row3.size());
-    
-    EXPECT_EQ(dsize1, static_cast<int>(row1.size()));
-    EXPECT_EQ(dsize2, static_cast<int>(row2.size()));
-    EXPECT_EQ(dsize3, static_cast<int>(row3.size()));
+    const auto& unzip1 = decompressor.decompress(compressed1);
+    decompressed1.assign(unzip1.begin(), unzip1.end());
+    const auto& unzip2 = decompressor.decompress(compressed2);
+    decompressed2.assign(unzip2.begin(), unzip2.end()); 
+    const auto& unzip3 = decompressor.decompress(compressed3);
+    decompressed3.assign(unzip3.begin(), unzip3.end());
+
+    EXPECT_EQ(decompressed1.size(), row1.size());
+    EXPECT_EQ(decompressed2.size(), row2.size());
+    EXPECT_EQ(decompressed3.size(), row3.size());
     
     EXPECT_EQ(decompressed1, row1);
     EXPECT_EQ(decompressed2, row2);
@@ -165,52 +157,41 @@ TEST_F(LZ4StreamTest, StreamReset) {
     std::vector<uint8_t> decompressed(input.size());
     
     // First compression
-    int size1 = compressor.compress(input, compressed);
-    ASSERT_GT(size1, 0);
+    auto zip1 = compressor.compress(input);
+    ASSERT_GT(zip1.size(), 0);
     
     // Reset compressor
     compressor.reset();
     
     // Second compression after reset
-    int size2 = compressor.compress(input, compressed);
-    ASSERT_GT(size2, 0);
+    auto zip2 = compressor.compress(input);
+    ASSERT_GT(zip2.size(), 0);
     
     // Both compressions should work correctly
-    int dsize = decompressor.decompress(
-        std::span<const uint8_t>(compressed.data(), size2), decompressed, input.size());
-    EXPECT_EQ(dsize, static_cast<int>(input.size()));
-    EXPECT_EQ(decompressed, input);
+    auto unzip2 = decompressor.decompress(zip2);
+    std::vector<std::byte> output(unzip2.begin(), unzip2.end());
+    EXPECT_EQ(output.size(), input.size());
+    EXPECT_EQ(output, input);
     
     // Reset decompressor
     decompressor.reset();
     
     // Decompress again after reset
-    dsize = decompressor.decompress(
-        std::span<const uint8_t>(compressed.data(), size2), decompressed, input.size());
-    EXPECT_EQ(dsize, static_cast<int>(input.size()));
-    EXPECT_EQ(decompressed, input);
+    auto unzip2_after_reset = decompressor.decompress(zip2);
+    std::vector<std::byte> output_after_reset(unzip2_after_reset.begin(), unzip2_after_reset.end());
+    EXPECT_EQ(output_after_reset.size(), input.size());
+    EXPECT_EQ(output_after_reset, input);
 }
 
 // Test: Empty input
 TEST_F(LZ4StreamTest, EmptyInput) {
     LZ4CompressionStream compressor(1);
     
-    std::vector<uint8_t> empty;
-    std::vector<uint8_t> compressed(100);
+    std::vector<std::byte> empty;
+    std::vector<std::byte> compressed(100);
     
-    int compressedSize = compressor.compress(empty, compressed);
-    EXPECT_EQ(compressedSize, 0);
-}
-
-// Test: Insufficient output buffer
-TEST_F(LZ4StreamTest, InsufficientOutputBuffer) {
-    LZ4CompressionStream compressor(1);
-    
-    auto input = createTestData("This is a test");
-    std::vector<uint8_t> tooSmall(1); // Way too small
-    
-    int compressedSize = compressor.compress(input, tooSmall);
-    EXPECT_EQ(compressedSize, 0); // Should fail
+    compressed = compressor.compress(empty);
+    EXPECT_EQ(compressed.size(), 0);
 }
 
 // Test: Acceleration level changes
@@ -227,10 +208,8 @@ TEST_F(LZ4StreamTest, AccelerationLevelChanges) {
     
     // Compression should still work after acceleration change
     auto input = createTestData("Test data");
-    std::vector<uint8_t> compressed(LZ4_COMPRESSBOUND(input.size()));
-    
-    int compressedSize = compressor.compress(input, compressed);
-    EXPECT_GT(compressedSize, 0);
+    const auto& compressed = compressor.compress(input);
+    EXPECT_GT(compressed.size(), 0);
 }
 
 // Test: Move construction for compression stream
@@ -243,9 +222,8 @@ TEST_F(LZ4StreamTest, MoveConstructionCompression) {
     
     // stream2 should be functional
     auto input = createTestData("Test");
-    std::vector<uint8_t> compressed(LZ4_COMPRESSBOUND(input.size()));
-    int size = stream2.compress(input, compressed);
-    EXPECT_GT(size, 0);
+    const auto& compressed = stream2.compress(input);
+    EXPECT_GT(compressed.size(), 0);
 }
 
 // Test: Move assignment for compression stream
@@ -259,9 +237,8 @@ TEST_F(LZ4StreamTest, MoveAssignmentCompression) {
     
     // stream2 should be functional
     auto input = createTestData("Test");
-    std::vector<uint8_t> compressed(LZ4_COMPRESSBOUND(input.size()));
-    int size = stream2.compress(input, compressed);
-    EXPECT_GT(size, 0);
+    const auto& compressed = stream2.compress(input);
+    EXPECT_GT(compressed.size(), 0);
 }
 
 // Test: Move construction for decompression stream
@@ -274,15 +251,12 @@ TEST_F(LZ4StreamTest, MoveConstructionDecompression) {
     // stream2 should be functional - compress and decompress test data
     LZ4CompressionStream compressor(1);
     auto input = createTestData("Test data");
-    std::vector<uint8_t> compressed(LZ4_COMPRESSBOUND(input.size()));
-    std::vector<uint8_t> decompressed(input.size());
     
-    int csize = compressor.compress(input, compressed);
-    ASSERT_GT(csize, 0);
+    const auto& compressed = compressor.compress(input);
+    ASSERT_GT(compressed.size(), 0);
     
-    int dsize = stream2.decompress(
-        std::span<const uint8_t>(compressed.data(), csize), decompressed, input.size());
-    EXPECT_EQ(dsize, static_cast<int>(input.size()));
+    auto decompressed = stream2.decompress(compressed);
+    EXPECT_EQ(decompressed.size(), input.size());
 }
 
 // Test: Decompression with wrong expected size
@@ -290,21 +264,16 @@ TEST_F(LZ4StreamTest, DecompressionWrongExpectedSize) {
     LZ4CompressionStream compressor(1);
     LZ4DecompressionStream decompressor;
     
-    auto input = createTestData("Test data for size mismatch");
-    std::vector<uint8_t> compressed(LZ4_COMPRESSBOUND(input.size()));
-    std::vector<uint8_t> decompressed(input.size() + 100);
-    
-    int compressedSize = compressor.compress(input, compressed);
-    ASSERT_GT(compressedSize, 0);
+    // create very large input data
+    std::vector<uint8_t> input(8*1024*1024, 0xAB);
+    const auto& compressed = compressor.compress(input);    
+    ASSERT_GT(compressed.size(), 0);
     
     // Try to decompress with smaller expected size (should fail)
-    int decompressedSize = decompressor.decompress(
-        std::span<const uint8_t>(compressed.data(), compressedSize),
-        decompressed,
-        input.size() - 5 // Too small expected size
-    );
+    decompressor.resizeBuffer(64*1024); // 64 KB buffer
+    auto decompressedSpan = decompressor.decompress(compressed);    
     
-    EXPECT_LT(decompressedSize, 0); // Should fail
+    EXPECT_EQ(decompressedSpan.size(), input.size()); // Should not fail
 }
 
 // Test: Large data compression
@@ -313,23 +282,16 @@ TEST_F(LZ4StreamTest, LargeDataCompression) {
     LZ4DecompressionStream decompressor;
     
     // Create 100KB of data
-    std::vector<uint8_t> input(100 * 1024);
+    std::vector<std::byte> input(100 * 1024);
     for (size_t i = 0; i < input.size(); ++i) {
-        input[i] = static_cast<uint8_t>(i % 256);
+        input[i] = static_cast<std::byte>(i % 256);
     }
+        
+    const auto& compressed = compressor.compress(input);
+    ASSERT_GT(compressed.size(), 0);
     
-    std::vector<uint8_t> compressed(LZ4_COMPRESSBOUND(input.size()));
-    std::vector<uint8_t> decompressed(input.size());
-    
-    int compressedSize = compressor.compress(input, compressed);
-    ASSERT_GT(compressedSize, 0);
-    
-    int decompressedSize = decompressor.decompress(
-        std::span<const uint8_t>(compressed.data(), compressedSize),
-        decompressed,
-        input.size()
-    );
-    
-    EXPECT_EQ(decompressedSize, static_cast<int>(input.size()));
-    EXPECT_EQ(decompressed, input);
+    auto decompressed = decompressor.decompress(compressed);
+    std::vector<std::byte> output(decompressed.begin(), decompressed.end());
+    EXPECT_EQ(output.size(), input.size());
+    EXPECT_EQ(output, input);
 }

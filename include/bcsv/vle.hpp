@@ -11,6 +11,8 @@
 #include <stdexcept>
 #include <type_traits>
 #include <concepts>
+#include <vector>
+#include "checksum.hpp"
 
 namespace bcsv {
 
@@ -75,7 +77,7 @@ constexpr auto zigzag_decode(T value) noexcept {
  * @throws std::runtime_error if invalid encoding or stream error
  */
 template<VLEInteger T>
-inline T vle_decode(std::istream& input) {
+inline T vle_decode(std::istream& input, Checksum::Streaming *hasher = 0) {
     if (!input) {
         throw std::runtime_error("VLE decode: input stream not valid");
     }
@@ -86,6 +88,7 @@ inline T vle_decode(std::istream& input) {
     if constexpr (sizeof(T) == 1) {
         uint8_t byte;
         input.read(reinterpret_cast<char*>(&byte), 1);
+        if(hasher) hasher->update(&byte, 1);
         if (!input) {
             throw std::runtime_error("VLE decode: unexpected end of stream");
         }
@@ -108,6 +111,7 @@ inline T vle_decode(std::istream& input) {
             }
             
             input.read(reinterpret_cast<char*>(&byte), 1);
+            if(hasher) hasher->update(&byte, 1);
             if (!input) {
                 throw std::runtime_error("VLE decode: unexpected end of stream");
             }

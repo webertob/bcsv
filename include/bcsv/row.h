@@ -9,18 +9,10 @@
 
 #pragma once
 
-#include <bitset>
 #include <cstring>
-#include <iostream>
-#include <map>
-#include <memory>
 #include <span>
-#include <stdexcept>
 #include <string>
 #include <tuple>
-#include <type_traits>
-#include <utility>
-#include <variant>
 #include <vector>
 
 #include "definitions.h"
@@ -442,8 +434,8 @@ namespace bcsv {
 
         void                    serializeTo(ByteBuffer& buffer) const;
         void                    serializeToZoH(ByteBuffer& buffer) const;
-        bool                    deserializeFrom(const std::span<const std::byte> buffer);
-        bool                    deserializeFromZoH(const std::span<const std::byte> buffer);
+        void                    deserializeFrom(const std::span<const std::byte> buffer);
+        void                    deserializeFromZoH(const std::span<const std::byte> buffer);
     };
 
     /* Provides a direct view into a buffer, to allow access with partial serialization/deserialization efforts to accelerate sparse data access. Supports Row interface */
@@ -544,8 +536,8 @@ namespace bcsv {
 
         void                        serializeTo(ByteBuffer& buffer) const;
         void                        serializeToZoH(ByteBuffer& buffer) const;
-        bool                        deserializeFrom(const std::span<const std::byte> buffer);
-        bool                        deserializeFromZoH(const std::span<const std::byte> buffer);
+        void                        deserializeFrom(const std::span<const std::byte> buffer);
+        void                        deserializeFromZoH(const std::span<const std::byte> buffer);
 
     private:
                                     template<size_t Index>
@@ -558,10 +550,10 @@ namespace bcsv {
         void                        serializeElementsZoH(ByteBuffer& buffer) const;
 
                                     template<size_t Index>
-        bool                        deserializeElements(const std::span<const std::byte> &srcBuffer);
+        void                        deserializeElements(const std::span<const std::byte> &srcBuffer);
 
                                     template<size_t Index>
-        bool                        deserializeElementsZoH(std::span<const std::byte> &srcBuffer);
+        void                        deserializeElementsZoH(std::span<const std::byte> &srcBuffer);
 
                                     template<size_t Index>
         void                        calculateStringSizes(size_t& totalSize) const;

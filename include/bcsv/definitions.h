@@ -47,11 +47,13 @@ namespace bcsv {
     // Constants for the binary file format
     constexpr uint32_t BCSV_MAGIC = 0x56534342;   // "BCSV" in little-endian
     constexpr uint32_t PCKT_MAGIC = 0x54434B50;   // "PCKT" in little-endian
+    constexpr uint32_t PCKT_TERMINATOR = 0xFFFF;  // Marker value to indicate end of packet data (no more rows to come)
     constexpr size_t MAX_COLUMN_COUNT  = std::numeric_limits<uint16_t>::max();  // Maximum number of columns
     constexpr size_t MAX_COLUMN_LENGTH = std::numeric_limits<uint16_t>::max();  // Maximum width of column content
     constexpr size_t MAX_STRING_LENGTH = MAX_COLUMN_LENGTH;                     // Maximum length of string data
-    constexpr size_t MAX_ROW_LENGTH    = std::numeric_limits<uint16_t>::max();  // Maximum size of a single row in bytes
-
+    constexpr size_t MAX_ROW_LENGTH    = (1ULL << 24) - 2 ;                     // about 16MB maximum Maximum size of a single row in bytes, using 4b BLE encoding (2 bits for length), reserve 0xFFFF for terminator.
+    constexpr size_t MIN_PACKET_SIZE   = 64 * 1024;                             // 64KB minimum packet size    
+    constexpr size_t MAX_PACKET_SIZE   = 1024 * 1024 * 1024;                    // 1GB maximum packet size
     /**
      * @brief Feature flag bit positions (Reserved for future optional features)
      * 

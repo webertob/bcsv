@@ -20,19 +20,26 @@
 #include "reader.h"
 #include "file_header.h"
 #include "layout.h"
-#include "packet_header_v3.h"
-#include "vle.hpp"
+#include "packet_header.h"
+#include "definitions.h"
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
 #include <fstream>
 #include <cstring>
+#include <iosfwd>
 
 namespace bcsv {
 
     template<LayoutConcept LayoutType>
-    Reader<LayoutType>::Reader(ReaderMode mode) 
-    : mode_(mode)
-    , fileHeader_()
-    , currentPacketIndex_(0)
-    , currentRowIndex_(0)
+    Reader<LayoutType>::Reader() 
+    : fileHeader_()
+    , filePath_()
+    , stream_()
+    , lz4Stream_()
+    , packetHash_()
+    , packetPos_()
+    , rowPos_(0)
     , row_(LayoutType())
     {
     }
@@ -52,14 +59,16 @@ namespace bcsv {
         if(!isOpen()) {
             return;
         }
-        stream_.close();
+
         filePath_.clear();
-        fileHeader_ = FileHeader();
-        fileFooter_.clear();
+        stream_.close();
         lz4Stream_.reset();
-        bufferRawRow_.clear();
-        currentPacketIndex_ = 0;
-        currentRowIndex_ = 0;
+        packetHash_.reset();
+        packetPos_ = 0;
+        rowPos_ = 0;
+        rowBuffer_.clear();
+        rowBuffer_.shrink_to_fit();
+        row_.clear();
     }
 
     /**
@@ -109,13 +118,11 @@ namespace bcsv {
                 filePath_.clear();
                 return false;
             }
-            
-            // Try to read FileFooter from EOF
-            if (!readFileFooter()) {
-                stream_.close();
-                filePath_.clear();
-                return false;
-            } 
+
+            // create LZ4 decompression stream if needed
+            if (compressionLevel() > 0) {
+                lz4Stream_.emplace();
+            }
             return true;
 
         } catch (const std::exception& ex) {
@@ -155,139 +162,256 @@ namespace bcsv {
         }
         // Pre-allocate buffers
         row_ = typename LayoutType::RowType(layout);
-        bufferRawRow_.reserve(row_.maxByteSize());
+        rowBuffer_.reserve(row_.layout().maxByteSize());
         return true;
     }
 
-    /**
-     * @brief Read FileFooter or footer from EOF
-     */
     template<LayoutConcept LayoutType>
-    bool Reader<LayoutType>::readFileFooter() {
-        if(!stream_) {
-            return false;
-        }
+    void Reader<LayoutType>::readRowLength(size_t& rowLength, std::istream& stream, Checksum::Streaming* checksum) {
+        rowLength = 0;
 
-        // Save current position
-        std::streampos currentPos = stream_.tellg();
-
-        // Try to read FileFooter
-        if (!fileFooter_.read(stream_)) {
-            if( mode_ == ReaderMode::RESILIENT ) {
-                std::cerr << "Warning: FileFooter missing or invalid, attempting to rebuild index\n";
-                if (!rebuildFileFooter()) {
-                    std::cerr << "Error: Failed to rebuild FileFooter\n";
-                    stream_.seekg(currentPos);
-                    return false;
-                }
-            } else {
-                std::cerr << "Error: Failed to read FileFooter\n";
-                stream_.seekg(currentPos);
-                return false;
-            }
+        // Read first byte into the 1st byte of a 32-bit register
+        stream.read(reinterpret_cast<char*>(&rowLength), 1);
+        if (!stream || stream.gcount() != 1) {
+            throw std::runtime_error("Failed to read row length: unexpected end of stream");
         }
-        stream_.seekg(currentPos); // Restore position
-        return true;
-    }
-
-    /**
-     * @brief Rebuild FileFooter by scanning packets (RESILIENT mode only)
-     */
-    template<LayoutConcept LayoutType>
-    !! This is Broken! bool Reader<LayoutType>::rebuildFileFooter() {
-        if(!stream_) {
-            return false;
-        }
-        fileFooter_.clear();
         
-        // Get file size
-        stream_.seekg(0, std::ios::end);
-        std::streampos fileSize = stream_.tellg();
+        // Extract length bits (first 2 bits) - determines total bytes (1-4)
+        size_t numBytes = (rowLength & 0x03) + 1; // Mask: 0b00000011 -> values 0-3 map to 1-4 bytes
+        
+        // Fast path for single-byte encoding (most common case)
+        if (numBytes == 1) {
+            if (checksum) {
+                checksum->update(reinterpret_cast<char*>(&rowLength), 1);
+            }
+            rowLength = rowLength >> 2;
+            return;
+        }
+                
+        // Read remaining bytes
+        stream.read(reinterpret_cast<char*>(&rowLength) + 1, numBytes - 1);
+        if (!stream || stream.gcount() != static_cast<std::streamsize>(numBytes - 1)) {
+            throw std::runtime_error("Failed to read row length: incomplete data");
+        }
+        
+        // Update hash with all bytes read
+        if (checksum) {
+            checksum->update(reinterpret_cast<char*>(&rowLength), numBytes);
+        }
+        
+        // Extract value by shifting right 2 bits
+        rowLength = rowLength >> 2;
+    }
+
+    template<LayoutConcept LayoutType>
+    void Reader<LayoutType>::closePacket() {
+        assert(stream_);
+         
+        // Finalize and validate packet checksum
+        uint64_t expectedHash = 0;
+        stream_.read(reinterpret_cast<char*>(&expectedHash), sizeof(expectedHash));
+        if (!stream_ || stream_.gcount() != sizeof(expectedHash)) {
+            throw std::runtime_error("Error: Failed to read packet checksum");
+        }
+        
+        uint64_t calculatedHash = packetHash_.finalize();
+        if (calculatedHash != expectedHash) {
+            throw std::runtime_error("Error: Packet checksum mismatch");
+        }
+    }
+
+    /**
+     * @brief Open next packet for sequential reading
+     */
+    template<LayoutConcept LayoutType>
+    void Reader<LayoutType>::openPacket() {
+        assert(stream_);
+
+        packetPos_ = stream_.tellg();
+        PacketHeader header;
+        if (!header.read(stream_)) {
+            throw std::runtime_error("Error: Failed to read packet header");
+        }
+        
+        // Initialize LZ4 decompression if needed
+        if (lz4Stream_.has_value()) {
+            lz4Stream_->reset();
+        }
+        
+        // Reset payload hasher for checksum validation
+        packetHash_.reset();
+    }
+
+    /**
+     * @brief Read next row from current packet
+     */
+    template<LayoutConcept LayoutType>
+    bool Reader<LayoutType>::readNext() {
+        if (!stream_ || !stream_.good()) {
+            return false;
+        }
+
+        try {
+            //reade row length
+            size_t rowLen;
+            readRowLength(rowLen, stream_, &packetHash_);
+
+            // check for terminator
+            while (rowLen == PCKT_TERMINATOR >> 2) {
+                // End of packet reached
+                closePacket();
+                openPacket();
+                readRowLength(rowLen, stream_, &packetHash_);
+            }
+
+            // if rowLen == 0 -> ZoH repeat previous row
+            if (rowLen == 0) {
+                if(rowPos_ == 0) {
+                    throw std::runtime_error("Error: ZoH repeat not allowed for first row in file");
+                }
+                rowPos_++;
+                return true;
+            }
+
+            rowBuffer_.resize(rowLen);
+            stream_.read(reinterpret_cast<char*>(rowBuffer_.data()), rowLen);
+            if (!stream_ || stream_.gcount() != static_cast<std::streamsize>(rowLen)) {
+                throw std::runtime_error("Error: Failed to read row data");
+            }
+            packetHash_.update(rowBuffer_);
+
+            if(lz4Stream_.has_value()) {
+                const auto decompressedData = lz4Stream_->decompress(rowBuffer_);
+                row_.deserializeFrom(decompressedData);
+            } else {
+                // No compression
+                row_.deserializeFrom(rowBuffer_);
+            }
+            rowPos_++;
+            return true;        
+        } catch (const std::exception& ex) {
+            std::cerr << "Error: reader::readNext() failed! : " << ex.what() << "\n";
+            return false;
+        }
+    }
+
+    template<LayoutConcept LayoutType>
+    void ReaderDirectAccess<LayoutType>::close() {
+        Base::close();
+        fileFooter_.clear();
+    }
+
+    template<LayoutConcept LayoutType>
+    bool ReaderDirectAccess<LayoutType>::open(const FilePath& filepath, bool rebuildFooter ) {
+        // open file as normal
+        if(!Base::open(filepath))
+            return false;
+
+        std::streampos originalPos = Base::stream_.tellg();
+
+        // additionally read file footer
+        try {
+            if(!fileFooter_.read(Base::stream_)) {
+                if(!rebuildFooter) {
+                    Base::stream_.seekg(originalPos);
+                    return false;
+                } else {
+                    std::cerr << "Warning: FileFooter missing or invalid, attempting to rebuild index\n";
+                    buildFileFooter();
+                }
+            }
+        } catch (const std::exception& ex) {
+            std::cerr << "Error: Exception reading FileFooter: " << ex.what() << std::endl;
+            Base::stream_.seekg(originalPos);
+            return false;
+        }
+
+        // restore original position after reader::open(), as expected by the default reader(i.e. ::readNext()).
+        Base::stream_.seekg(originalPos);
+        return true;
+    }
+
+    template<LayoutConcept LayoutType>
+    void ReaderDirectAccess<LayoutType>::buildFileFooter() {
+        assert(Base::stream_);
+        fileFooter_.clear();
+
+        // Store original position
+        std::streampos originalPos = Base::stream_.tellg();
 
         // Jump to first packet (after file header + layout)
-        stream_.seekg(fileHeader_.getBinarySize(layout()), std::ios::beg);
-        std::streampos firstPacketPos = stream_.tellg();    // Save position after file header + layout
-        
-        size_t   packetCount = 0;
-        uint32_t blockSize = fileHeader_.blockSize();
-        
-        while (stream_.tellg() < fileSize - static_cast<std::streamoff>(sizeof(PacketHeaderV3))) {
-            std::streampos packetStart = stream_.tellg();
-            
-            //ToDO This is completly broken.
-            We must seek packets. 
-            we know packets are ATLEAST blockSize appart. 
-            But they are not aligned to block size!, thus we cannot directly jump
+        Base::stream_.seekg(Base::fileHeader_.getBinarySize(Base::layout()), std::ios::beg);
 
-            We search for PacketMagic, but need to validate the whole header. using header checksum
-            If we have found 2 subsequent valid packets, we can put that information into the packetIndex_
+        // Decision: We build a sequential algorithms to rebuild the file footer. 
+        // ToDo: A parallel one would be perfectly possible, but put this to the future
 
-            // Try to read PacketHeaderV3
-            PacketHeaderV3 header;
-            if (!header.read(stream_)) {
-                // Invalid header, try to skip ahead by block size
-                stream_.clear();
-                stream_.seekg(packetStart + static_cast<std::streamoff>(blockSize));
-                continue;
-            }
-            
-            if (!header.validate()) {
-                // Invalid header, skip ahead
-                stream_.clear();
-                stream_.seekg(packetStart + static_cast<std::streamoff>(blockSize));
-                continue;
-            }
-            
-            // Valid packet found
-            fileIndex_.addPacket(
-                static_cast<uint64_t>(packetStart),
+        // Goal build the FileFooter
+        // FileFooter contains
+        //  1. packet index: 
+        //      a. contains one entry per package in the file
+        //      b. each entry contaits the number/count of the first row and the position in the file stream 
+        //      c. index is ordered (position and row count follow same order)
+        //  2. totalRow count in file
+        //      a. first row of last package + row count in last package = number of total rows
+
+        // Algorithm (build packet index):
+        // 1. Start at first packet position
+        // 2. Read packet header
+        // 3. Store packet position and first row in file footer index
+        // 4. Skip packet payload (using block size form file header as estimate)
+        // 5. Repeat until end of file reached
+
+        PacketHeader header;
+        std::streampos pktPos = Base::stream_.tellg();
+        std::streamoff stepSize = static_cast<std::streamoff>(Base::fileHeader_.getPacketSize() + sizeof(PacketHeader));
+        while (header.readNext(Base::stream_, pktPos)) {
+            fileFooter_.packetIndex().emplace_back(
+                static_cast<uint64_t>(pktPos),
                 header.firstRowIndex
             );
-            
-            packetCount++;
-            
+
             // Skip packet payload (estimate using block size)
-            stream_.seekg(packetStart + static_cast<std::streamoff>(blockSize));
+            Base::stream_.seekg(pktPos + stepSize);
         }
-        
-        if (packetCount == 0) {
-            std::cerr << "Error: No valid packets found during rebuild\n";
-            return false;
-        }
-        
-        // Count total rows by scanning last packet payload
-        if (fileIndex_.packetCount() == 0) {
-            fileIndex_.setTotalRowCount(0);
+
+
+        // Algorithm (count total rows):
+        // 1. Seek to last packet position (from packet index)
+        // 2. skip packet header
+        // 3. Read row sizes (skip row data) until terminator reached, count rows
+        // 4. total rows = first row of last packet + counted rows in last packet
+        if (fileFooter_.packetIndex().empty()) {
+            fileFooter_.rowCount() = 0;
         } else {
-            const auto& lastPacket = fileIndex_.getPackets().back();
-            
-            // We already validated the header during the scan above, so it must be valid
+            const auto& lastPacket = fileFooter_.packetIndex().back();
+
             // Seek to last packet payload (skip header) and count rows by jumping through VLE sizes
-            stream_.clear();
-            stream_.seekg(lastPacket.headerOffset + sizeof(PacketHeaderV3));
-            
-            size_t rowsInLastPacket = 0;
-            
-            // Count rows by reading VLE sizes and skipping payload
-            while (stream_) {
+            Base::stream_.clear();
+            Base::stream_.seekg(static_cast<std::streamoff>(lastPacket.byteOffset_) + sizeof(PacketHeader));
+
+            size_t rowCntLstPkt = 0;
+            size_t rowLen;
+
+            // Count rows within last packet using row lengths
+            while (Base::stream_) {
                 try {
-                    size_t vleValue = vle_decode<size_t>(stream_);
-                    
-                    if (vleValue == 0) {
+                    Base::readRowLength(rowLen, Base::stream_, nullptr);
+
+                    if (rowLen == 0) {
                         // ZoH repeat - no payload, just count
-                        rowsInLastPacket++;
-                    } else if (vleValue == 1) {
+                        rowCntLstPkt++;
+                    } else if (rowLen == PCKT_TERMINATOR >> 2) {
                         // Terminator - end of packet
                         break;
                     } else {
-                        // Regular row: vleValue = dataSize + 1
-                        size_t dataSize = vleValue - 1;
-                        
+                        // Regular row: rowLen = dataSize
+                        size_t dataSize = rowLen;
+
                         // Skip over the payload data
-                        stream_.seekg(dataSize, std::ios::cur);
-                        
-                        if (stream_) {
-                            rowsInLastPacket++;
+                        Base::stream_.seekg(static_cast<std::streamoff>(dataSize), std::ios::cur);
+
+                        if (Base::stream_) {
+                            rowCntLstPkt++;
                         } else {
                             // Incomplete row at end of packet (corrupted file)
                             break;
@@ -298,209 +422,11 @@ namespace bcsv {
                     break;
                 }
             }
-            fileIndex_.setTotalRowCount(lastPacket.firstRowIndex + rowsInLastPacket);
-        }        
-        std::cerr << "Rebuilt index: " << packetCount << " packets, ~" << totalRowCount_ << " rows\n";
-        return true;
-    }
-
-    /**
-     * @brief Open next packet for sequential reading
-     */
-    template<LayoutConcept LayoutType>
-    bool Reader<LayoutType>::openPacket() {
-        if (currentPacketIndex_ >= fileIndex_.packetCount()) {
-            return false; // No more packets
+            fileFooter_.rowCount() = lastPacket.firstRow_ + rowCntLstPkt;
         }
         
-        // Get packet info from index
-        const auto& packetEntry = fileIndex_.getPacket(currentPacketIndex_);
-        currentPacketHeaderPos_ = packetEntry.byteOffset_;
-        
-        // Seek to packet header
-        stream_.seekg(currentPacketHeaderPos_);
-        
-        // Read PacketHeaderV3
-        PacketHeaderV3 header;
-        if (!header.read(stream_)) {
-            if (mode_ == ReaderMode::STRICT) {
-                throw std::runtime_error("Error: Failed to read PacketHeaderV3");
-            }
-            std::cerr << "Warning: Failed to read packet header at offset " << currentPacketHeaderPos_ << "\n";
-            return false;
-        }
-        
-        if (!header.validate()) {
-            if (mode_ == ReaderMode::STRICT) {
-                throw std::runtime_error("Error: Invalid PacketHeaderV3 checksum");
-            }
-            std::cerr << "Warning: Invalid packet header checksum\n";
-            return false;
-        }
-        
-        // Verify firstRowIndex matches expected
-        if (header.firstRowIndex != currentRowIndex_) {
-            if (mode_ == ReaderMode::STRICT) {
-                throw std::runtime_error("Error: Packet firstRowIndex mismatch");
-            }
-            std::cerr << "Warning: Packet firstRowIndex mismatch, expected " 
-                      << currentRowIndex_ << " got " << header.firstRowIndex << "\n";
-        }
-        
-        // Initialize LZ4 decompression if needed
-        if (compressionLevel() > 0) {
-            lz4Stream_.emplace();
-        } else {
-            lz4Stream_.reset();
-        }
-        
-        // Reset payload hasher for checksum validation
-        packetHash_.reset();
-        
-        return true;
-    }
-
-    /**
-     * @brief Read next row from current packet
-     */
-    template<LayoutConcept LayoutType>
-    bool Reader<LayoutType>::readNext() {
-        // Check if we're at end of file
-        if (currentRowIndex_ >= totalRowCount_) {
-            return false;
-        }
-        
-        // Determine which packet this row belongs to
-        if (currentPacketIndex_ >= fileIndex_.packetCount()) {
-            return false;
-        }
-        
-        const auto& currentPacket = fileIndex_.getPacket(currentPacketIndex_);
-        
-        // Check if current row is in next packet
-        uint64_t nextPacketFirstRow = (currentPacketIndex_ + 1 < fileIndex_.packetCount()) 
-            ? fileIndex_.getPacket(currentPacketIndex_ + 1).firstRow_
-            : totalRowCount_;
-        
-        if (currentRowIndex_ >= nextPacketFirstRow) {
-            // Move to next packet
-            currentPacketIndex_++;
-            if (!openPacket()) {
-                return false;
-            }
-        } else if (currentRowIndex_ == currentPacket.firstRow_) {
-            // First row of current packet - need to open it
-            if (!openPacket()) {
-                return false;
-            }
-        }
-        
-        // Read VLE size
-        size_t vleValue;
-        try {
-            vleValue = vle_decode<size_t>(stream_);
-        } catch (const std::exception& ex) {
-            if (mode_ == ReaderMode::STRICT) {
-                throw std::runtime_error(std::string("Error reading VLE: ") + ex.what());
-            }
-            std::cerr << "Warning: Failed to read VLE: " << ex.what() << "\n";
-            return false;
-        }
-        
-        // Update payload checksum with VLE
-        uint8_t vleBytes[10];
-        std::span<uint8_t> vleSpan(vleBytes, 10);
-        size_t vleSize = vle_encode(vleValue, vleSpan);
-        packetHash_.update(vleBytes, vleSize);
-        
-        if (vleValue == 0) {
-            // ZoH repeat: reuse bufferCurrentRow_ (no read/decompress needed)
-            // Just deserialize from existing buffer
-            if (!row_.deserializeFrom({bufferRawRow_.data(), bufferRawRow_.size()})) {
-                if (mode_ == ReaderMode::STRICT) {
-                    throw std::runtime_error("Error: Failed to deserialize ZoH row");
-                }
-                return false;
-            }
-            currentRowIndex_++;
-            return true;
-            
-        } else if (vleValue == 1) {
-            // Terminator: move to next packet
-            currentPacketIndex_++;
-            if (currentPacketIndex_ >= fileIndex_.packetCount()) {
-                return false; // No more packets
-            }
-            if (!openPacket()) {
-                return false;
-            }
-            // Recursively read first row of next packet
-            return readNext();
-            
-        } else {
-            // Regular row: vleValue = dataSize + 1
-            size_t dataSize = vleValue - 1;
-            
-            // Read compressed data
-            ByteBuffer compressedData(dataSize);
-            stream_.read(reinterpret_cast<char*>(compressedData.data()), dataSize);
-            
-            if (!stream_ || stream_.gcount() != static_cast<std::streamsize>(dataSize)) {
-                if (mode_ == ReaderMode::STRICT) {
-                    throw std::runtime_error("Error: Failed to read row data");
-                }
-                return false;
-            }
-            
-            // Update payload checksum
-            packetHash_.update(compressedData.data(), dataSize);
-            
-            // Decompress if needed
-            if (lz4Stream_.has_value()) {
-                // Estimate expected size (conservative: 2x compressed size)
-                size_t estimatedSize = dataSize * 2;
-                if (estimatedSize > bufferRawRow_.capacity()) {
-                    bufferRawRow_.reserve(estimatedSize);
-                }
-                bufferRawRow_.resize(bufferRawRow_.capacity());
-                
-                std::span<const uint8_t> input(
-                    reinterpret_cast<const uint8_t*>(compressedData.data()),
-                    compressedData.size()
-                );
-                std::span<uint8_t> output(
-                    reinterpret_cast<uint8_t*>(bufferRawRow_.data()),
-                    bufferRawRow_.size()
-                );
-                
-                int decompressedSize = lz4Stream_->decompress(input, output, static_cast<int>(output.size()));
-                
-                if (decompressedSize < 0) {
-                    if (mode_ == ReaderMode::STRICT) {
-                        throw std::runtime_error("Error: LZ4 decompression failed");
-                    }
-                    std::cerr << "Warning: LZ4 decompression failed, trying uncompressed\n";
-                    // Fall back to uncompressed
-                    bufferRawRow_ = compressedData;
-                } else {
-                    bufferRawRow_.resize(decompressedSize);
-                }
-            } else {
-                // No compression
-                bufferRawRow_ = compressedData;
-            }
-            
-            // Deserialize row
-            if (!row_.deserializeFrom({bufferRawRow_.data(), bufferRawRow_.size()})) {
-                if (mode_ == ReaderMode::STRICT) {
-                    throw std::runtime_error("Error: Failed to deserialize row");
-                }
-                return false;
-            }
-            
-            currentRowIndex_++;
-            return true;
-        }
+        // Restore original position
+        Base::stream_.seekg(originalPos);
     }
 
 } // namespace bcsv

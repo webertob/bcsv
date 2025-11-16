@@ -10,91 +10,101 @@
 #pragma once
 
 #include <cstddef>
-#include <iostream>
 #include <fstream>
-#include <string>
-#include <vector>
 #include <filesystem>
 #include <optional>
-
-#include <lz4.h>
-
-#include "definitions.h"
+#include "bcsv/definitions.h"
 #include "layout.h"
 #include "file_header.h"
-#include "row.h"
 #include "byte_buffer.h"
-#include "packet_header_v3.h"
 #include "lz4_stream.hpp"
 #include "file_footer.h"
-#include "vle.hpp"
 #include "checksum.hpp"
 
 namespace bcsv {
-
-    /**
-     * @brief Reader operation modes for error handling
-     */
-    enum class ReaderMode {
-        STRICT,     ///< Strict mode: Any validation error throws exception immediately
-        RESILIENT   ///< Resilient mode: Attempt to recover from errors by finding next valid packet
-    };
 
     /**
      * @brief Class for reading BCSV binary files
      */
     template<LayoutConcept LayoutType>
     class Reader {
+    protected:
         using RowType           = typename LayoutType::RowType;
         using RowViewType       = typename LayoutType::RowViewType;
         using FilePath          = std::filesystem::path;
 
-        ReaderMode              mode_ = ReaderMode::STRICT; // Default to strict mode for backward compatibility
-        FileHeader              fileHeader_;                // File header for accessing flags and metadata
-        FileFooter              fileFooter_;                // Parsed from EOF, or rebuilt if missing
-        FilePath                filePath_;                  // Always present
-        std::ifstream           stream_;                    // Always binary file stream
-        std::optional<LZ4DecompressionStream> 
-                                lz4Stream_;                 // Per-packet decompression (nullopt if compressionLevel == 0)
-               
+        FileHeader              fileHeader_;            // file header for accessing flags and metadata
+        FilePath                filePath_;              // always present
+        std::ifstream           stream_;                // always binary file stream
+        std::optional< LZ4DecompressionStream< MAX_ROW_LENGTH> >
+                                lz4Stream_;             // packet level (de)-compression facility (nullopt if compressionLevel == 0)
+
         // Current packet state
-        Checksum::Streaming     packetHash_;                // Validates payload checksum chain
-        ByteBuffer              bufferRawRow_;              // Current decompressed row (reused for ZoH repeat)
-        std::streampos          currentPacketHeaderPos_;    // File position of current packet header
-        size_t                  currentPacketIndex_;        // Index into fileIndex_ for current packet
+        Checksum::Streaming     packetHash_;            // stream to validate payload using a checksum chain
+        std::streampos          packetPos_;             // position of the first byte of the current packet header in the file (PacketHeader MAGIC)
 
         // Global row tracking
-        size_t                  currentRowIndex_;           // 0-based absolute row index in file
-        RowType                 row_;                       // Current row
+        ByteBuffer              rowBuffer_;             // current row, encoded, decompressed raw data
+        size_t                  rowPos_;                // postion of current row in file (0-based row counter)
+        RowType                 row_;                   // current row, decoded
 
     public:
         /**
          * @brief Construct a Reader with a given layout
-         * @param mode The reader mode for error handling (default: STRICT)
+         * @param None
          */
-        explicit                Reader(ReaderMode mode = ReaderMode::STRICT);
+                                Reader();
                                 ~Reader();
 
         void                    close();
-        size_t                  countRows() const           { return fileFooter_.totalRowCount(); }
-        uint8_t                 compressionLevel() const    { return fileHeader_.compressionLevel(); }
+        uint8_t                 compressionLevel() const    { return fileHeader_.getCompressionLevel(); }
         const FilePath&         filePath() const            { return filePath_; }
         const LayoutType&       layout() const              { return row_.layout(); }
-        ReaderMode              mode() const                { return mode_; }
-        size_t                  rowIndex() const            { return currentRowIndex_; }
-
+        
         bool                    isOpen() const              { return stream_.is_open(); }
         bool                    open(const FilePath& filepath);
-
         bool                    readNext();
         const RowType&          row() const                 { return row_; }
-        void                    setMode(ReaderMode mode)    { mode_ = mode; }
-
-    private:
+        size_t                  rowPos() const              { return rowPos_; } // 0-based row index in file
+        
+    protected:
+        void                    closePacket();
+        void                    openPacket();
         bool                    readFileHeader();
-        bool                    readFileFooter();            // v1.3.0: Read FileFooter or footer from EOF
-        bool                    rebuildFileFooter();         // v1.3.0: Rebuild index by scanning packets (RESILIENT mode)
-        bool                    openPacket();               // v1.3.0: Open next packet for sequential reading
+        void                    readRowLength(size_t& rowLength, std::istream& stream, Checksum::Streaming* checksum = nullptr);
     };
 
+    /**
+     * @brief Class for direct access reading of BCSV binary files
+     */
+    template<LayoutConcept LayoutType>
+    class ReaderDirectAccess : public Reader<LayoutType> {
+    protected:
+        using Base              = Reader<LayoutType>;
+        using RowType           = typename LayoutType::RowType;
+        using RowViewType       = typename LayoutType::RowViewType;
+        using FilePath          = std::filesystem::path;
+
+        FileFooter  fileFooter_;
+
+        //ToDo: Develop a caching strategy to improve performance in Direct Access Mode (balance with memory requirement)
+        //For now consider: piece wise sequential read as the targeted option. Still a file access. Load to RAW for fully random access, using your own use-case optimizes structures. 
+        //pkt cache --> keep a set of packets open
+        //row cache --> keep a set of rows open
+
+    public:
+        void    close();
+        bool    open(const FilePath& filepath, bool rebuildFooter = false);
+        bool    read(size_t index);
+        size_t  rowCount()const             { return fileFooter_.rowCount(); }
+        const FileFooter& fileFooter()const { return fileFooter_; }
+
+    protected:
+        void    buildFileFooter();
+    };
+
+    
+
 } // namespace bcsv
+
+    

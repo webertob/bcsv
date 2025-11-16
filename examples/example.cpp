@@ -64,10 +64,7 @@ void writeFlexibleBCSV() {
         row.set(1, data.name);
         row.set(2, data.score);
         row.set(3, data.active);
-        if (!writer.writeRow()) {
-            std::cerr << "Failed to write row\n";
-            break;
-        }
+        writer.writeRow();
     }
 
     writer.flush();
@@ -126,7 +123,7 @@ void readFlexibleBCSV() {
                   << std::setw(14) << std::left << name << " | "
                   << std::setw(5) << std::right << std::fixed << std::setprecision(1) << score << " | "
                   << (active ? "Yes" : "No") << "\n";
-        rowIndex = reader.rowIndex();
+        rowIndex = reader.rowPos();
     }
 
     reader.close();

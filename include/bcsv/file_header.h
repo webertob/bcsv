@@ -10,7 +10,6 @@
 #pragma once
 
 #include <string>
-#include <vector>
 #include <iostream>
 #include <cstdint>
 
@@ -128,7 +127,7 @@ namespace bcsv {
          * @note All multi-byte fields use little-endian byte ordering
          */
         #pragma pack(push, 1)
-        struct FileHeaderStruct {
+        struct ConstSection {
             uint32_t magic;            ///< Magic number: 0x56534342 ("BCSV" in ASCII)
             uint8_t  versionMajor;     ///< Major version number (0-255)
             uint8_t  versionMinor;     ///< Minor version number (0-255)
@@ -136,16 +135,15 @@ namespace bcsv {
             uint8_t  compressionLevel; ///< Compression level (0=none, 1-9=LZ4 levels)
             uint16_t flags;            ///< Feature flags bitfield
             uint16_t columnCount;      ///< Number of columns in the file
-            uint32_t blockSize;        ///< Block size in bytes used for compression
+            uint32_t packetSize;       ///< Packet size in bytes used for compression
         };
         #pragma pack(pop)
-
-        static_assert(sizeof(FileHeaderStruct) == 16, "BinaryHeader must be exactly 16 bytes");
+        static_assert(sizeof(ConstSection) == 16, "BinaryHeader must be exactly 16 bytes");
 
         /**
          * @brief File format constants and limits
          */
-        static constexpr size_t FIXED_HEADER_SIZE  = sizeof(FileHeaderStruct);  ///< Size of fixed header: 16 bytes
+        static constexpr size_t FIXED_HEADER_SIZE  = sizeof(ConstSection);  ///< Size of fixed header: 16 bytes
         static constexpr size_t COLUMN_TYPE_SIZE   = sizeof(uint16_t);          ///< Size per column type: 2 bytes  
         static constexpr size_t COLUMN_LENGTH_SIZE = sizeof(uint16_t);          ///< Size per name length: 2 bytes
         
@@ -155,34 +153,34 @@ namespace bcsv {
 
         // Version management
         void        setVersion(uint8_t major, uint8_t minor, uint8_t patch) 
-                                                        { header_.versionMajor = major;
-                                                          header_.versionMinor = minor;
-                                                          header_.versionPatch = patch; }
-        std::string versionString() const               { return    std::to_string(header_.versionMajor) + "." + 
-                                                                    std::to_string(header_.versionMinor) + "." + 
-                                                                    std::to_string(header_.versionPatch); }
-        uint8_t     versionMajor() const                { return header_.versionMajor; }
-        uint8_t     versionMinor() const                { return header_.versionMinor; }
-        uint8_t     versionPatch() const                { return header_.versionPatch; }
+                                                        { constSection_.versionMajor = major;
+                                                          constSection_.versionMinor = minor;
+                                                          constSection_.versionPatch = patch; }
+        std::string versionString() const               { return    std::to_string(constSection_.versionMajor) + "." + 
+                                                                    std::to_string(constSection_.versionMinor) + "." + 
+                                                                    std::to_string(constSection_.versionPatch); }
+        uint8_t     versionMajor() const                { return constSection_.versionMajor; }
+        uint8_t     versionMinor() const                { return constSection_.versionMinor; }
+        uint8_t     versionPatch() const                { return constSection_.versionPatch; }
 
         // Compression management
-        void        setCompressionLevel(size_t level)   { header_.compressionLevel = (level > 9) ? 9 : static_cast<uint8_t>(level); }
-        uint8_t     compressionLevel() const            { return header_.compressionLevel; }
+        void        setCompressionLevel(size_t level)   { constSection_.compressionLevel = (level > 9) ? 9 : static_cast<uint8_t>(level); }
+        uint8_t     getCompressionLevel() const         { return constSection_.compressionLevel; }
 
-        // Block size management
-        void        setBlockSize(size_t blockSize)      { header_.blockSize = static_cast<uint32_t>(blockSize); }
-        uint32_t    blockSize() const                   { return header_.blockSize; }
+        // Packet size management
+        void        setPacketSize(size_t packetSize)    { constSection_.packetSize = static_cast<uint32_t>(packetSize); }
+        uint32_t    getPacketSize() const               { return constSection_.packetSize; }
 
         // Flags management
         void        clearFlag(FileFlags flag)           { setFlag(flag, false); }
         bool        hasFlag(FileFlags flag) const       { return (getFlags() & flag) != FileFlags::NONE; }
-        FileFlags   getFlags() const                    { return static_cast<FileFlags>(header_.flags); }
-        void        setFlags(FileFlags flags)           { header_.flags = static_cast<uint16_t>(flags); }
+        FileFlags   getFlags() const                    { return static_cast<FileFlags>(constSection_.flags); }
+        void        setFlags(FileFlags flags)           { constSection_.flags = static_cast<uint16_t>(flags); }
         void        setFlag(FileFlags flag, bool value);
 
         // Magic number validation
-        bool        isValidMagic() const                { return header_.magic == BCSV_MAGIC; }
-        uint32_t    getMagic() const                    { return header_.magic; }
+        bool        isValidMagic() const                { return constSection_.magic == BCSV_MAGIC; }
+        uint32_t    getMagic() const                    { return constSection_.magic; }
 
         /**
          * @brief Binary I/O operations for complete file headers
@@ -234,7 +232,7 @@ namespace bcsv {
         void printBinaryLayout(const LayoutType& columnLayout) const;
 
     private:
-        FileHeaderStruct header_;
+        ConstSection constSection_;
     };
 
 } // namespace bcsv

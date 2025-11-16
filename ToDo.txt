@@ -1,5 +1,37 @@
 Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment is not considered, as we favor small file size. For temporary data and algorithms, higher-order alignment should be used.
 
+Next tactical items
+1. make dedicated side study BLE vs. VLE for row length encoding
+2. make dedicated side study commparing small chunk performance on xxHash64
+
+- change packet structure.
+    - Replace packet  terminator with 0xFFFFFFFF, not using offset between VLE/BLE and rowlength
+    - terminator is followed by xxHash64
+- packet header comes without hash of previouse payload
+- filefooter comes without hash of previouse payload
+
+
+- derive istream and ostream to include HashStream
+    hash64 bits blocks only
+    include BLE read&write
+
+- finish reader (sequential read)
+- get it compiled
+- run the tests
+- remove packet_header.h/hpp and replace by packet_header_v3.h
+- build ReaderDirectAccess
+- discuss with AI on why we have version_generate.h and definitions.h
+    - Do we want to change file_format versioning, from library versioning?
+- benchmark alternative to VLE BLE?
+- benchmark xxHash64 for adding small chunks (single) --> consider buffering in reader/writer
+- condsider adding a function to write index to an exisiting file cliTool? Or using a Dedicated Reader call, 
+
+
+
+
+
+
+
 0.  Write project mission statement, upload to git hub
     Aims on combining the easy usage of CSV files with the performance and file size of a binary format. It should perform specifically well for large time series data sets and also cover small embedded platforms. Therefore it is an explicit requirement that we support files that are larger than the available memory (RAM), thus the file is read in chunks or rows. For the same reason the computational effort should be reasonable small. In order to support real-time processing the call time to write or read data should be constant. 
     The file should exploit time-series data structure to reduce file size. Specifically it should be efficient on recording  Binary Wave Forms and constant data (spars recording / events) to achieve good compression. Compression ratio to be balanced with requirements on computational and streaming. It should be possible to read data from the file even if write was interrupted. We want to be able to retrieve the last fully written row. The file format is to be optimized for sequential row wise read and write operations, but should support random read with acceptable speeds, too. 
@@ -173,6 +205,7 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     - create: bcsvSampler (creates an down sampled version, using specific rules provided)
     - create: bcsvCompress (insepects the file and tries to apply a more agressive compression, using 2-phase inspection and a file wide dictionary)
 
+11. Create a concept to maintain backward compatibility atleast for reading/translating files!
 Out of Scope (for now):
 13. ROS integration (subscribe ROS topics and store to bcsv and reverse)
 14. MQTT integration (read MQTT topics and store to bcsv and reverse)

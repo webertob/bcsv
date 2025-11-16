@@ -18,6 +18,7 @@
  * for full license information.
  */
 
+#include "bcsv/reader.h"
 #include <gtest/gtest.h>
 #include <bcsv/bcsv.h>
 #include <filesystem>
@@ -25,8 +26,6 @@
 #include <random>
 #include <iomanip>
 #include <cstring>
-#include <sstream>
-#include <memory>
 #include <vector>
 #include <tuple>
 #include <cmath>
@@ -701,9 +700,7 @@ TEST_F(BCSVTestSuite, FlexibleInterface_SequentialWrite_AllTypes) {
         
         for (size_t i = 0; i < NUM_ROWS; ++i) {
             populateFlexibleRow(writer, test_data[i]);
-            if (!writer.writeRow()) {
-                FAIL() << "Failed to write row " << i;
-            }
+            writer.writeRow();
         }
         
         writer.close();
@@ -737,9 +734,7 @@ TEST_F(BCSVTestSuite, StaticInterface_SequentialWrite_AllTypes) {
         
         for (size_t i = 0; i < NUM_ROWS; ++i) {
             populateStaticRow(writer, test_data[i]);
-            if (!writer.writeRow()) {
-                FAIL() << "Failed to write row " << i;
-            }
+            writer.writeRow();
         }
         
         writer.close();
@@ -775,9 +770,7 @@ TEST_F(BCSVTestSuite, FlexibleInterface_SequentialRead_DataIntegrity) {
         
         for (size_t i = 0; i < TEST_ROWS; ++i) {
             populateFlexibleRow(writer, test_data[i]);
-            if (!writer.writeRow()) {
-                FAIL() << "Failed to write row " << i;
-            }
+            writer.writeRow();
         }
         
         writer.close();
@@ -802,7 +795,7 @@ TEST_F(BCSVTestSuite, FlexibleInterface_SequentialRead_DataIntegrity) {
         
         while (reader.readNext()) {
             auto row = reader.row();
-            size_t row_index = reader.rowIndex() - 1; // Convert to 0-based
+            size_t row_index = reader.rowPos() - 1; // Convert to 0-based
             rows_read++;
             
             if (row_index < test_data.size()) {
@@ -846,9 +839,7 @@ TEST_F(BCSVTestSuite, StaticInterface_SequentialRead_DataIntegrity) {
         
         for (size_t i = 0; i < TEST_ROWS; ++i) {
             populateStaticRow(writer, test_data[i]);
-            if (!writer.writeRow()) {
-                FAIL() << "Failed to write row " << i;
-            }
+            writer.writeRow();
         }
         
         writer.close();
@@ -873,7 +864,7 @@ TEST_F(BCSVTestSuite, StaticInterface_SequentialRead_DataIntegrity) {
         
         while (reader.readNext()) {
             auto row = reader.row();
-            size_t row_index = reader.rowIndex() - 1; // Convert to 0-based
+            size_t row_index = reader.rowPos() - 1; // Convert to 0-based
             rows_read++;
             
             if (row_index < test_data.size()) {
@@ -916,9 +907,7 @@ TEST_F(BCSVTestSuite, CrossCompatibility_FlexibleWrite_StaticRead) {
         
         for (size_t i = 0; i < 100; ++i) {
             populateFlexibleRow(writer, test_data[i]);
-            if (!writer.writeRow()) {
-                FAIL() << "Failed to write row " << i;
-            }
+            writer.writeRow();
         }
         
         writer.close();
@@ -1029,9 +1018,7 @@ TEST_F(BCSVTestSuite, Performance_FlexibleVsStatic) {
         
         for (size_t i = 0; i < perf_rows; ++i) {
             populateFlexibleRow(writer, test_data[i]);
-            if (!writer.writeRow()) {
-                FAIL() << "Failed to write row " << i;
-            }
+            writer.writeRow();
         }
         
         writer.close();
@@ -1049,9 +1036,7 @@ TEST_F(BCSVTestSuite, Performance_FlexibleVsStatic) {
         
         for (size_t i = 0; i < perf_rows; ++i) {
             populateStaticRow(writer, test_data[i]);
-            if (!writer.writeRow()) {
-                FAIL() << "Failed to write row " << i;
-            }
+            writer.writeRow();
         }
         
         writer.close();
@@ -1095,9 +1080,7 @@ TEST_F(BCSVTestSuite, Checksum_CorruptionDetection) {
         
         for (size_t i = 0; i < 5; ++i) {
             populateFlexibleRow(writer, test_data[i]);
-            if (!writer.writeRow()) {
-                FAIL() << "Failed to write row " << i;
-            }
+            writer.writeRow();
         }
         
         writer.close();
@@ -1159,7 +1142,6 @@ TEST_F(BCSVTestSuite, Checksum_CorruptionDetection) {
             
             try {
                 bcsv::Reader<bcsv::Layout> reader;
-                reader.setMode(bcsv::ReaderMode::STRICT);
                 reader.open(test_file);
                 reader.readNext();
             } catch (const std::exception& e) {
@@ -1411,17 +1393,17 @@ TEST_F(BCSVTestSuite, CountRows_FunctionalityAndPerformance) {
             
             for (const auto& data : test_data) {
                 populateFlexibleRow(writer, data);
-                ASSERT_TRUE(writer.writeRow()) << "Failed to write test row";
+                writer.writeRow();
             }
             writer.close();
         }
         
         // Test countRows()
         {
-            bcsv::Reader<bcsv::Layout> reader;
+            bcsv::ReaderDirectAccess<bcsv::Layout> reader;
             ASSERT_TRUE(reader.open(test_file)) << "Failed to open small test file";
             
-            size_t counted_rows = reader.countRows();
+            size_t counted_rows = reader.rowCount();
             EXPECT_EQ(counted_rows, test_rows) << "countRows() incorrect for small file";
             
             // Verify by manual counting
@@ -1454,19 +1436,19 @@ TEST_F(BCSVTestSuite, CountRows_FunctionalityAndPerformance) {
             for (size_t i = 0; i < test_rows; ++i) {
                 auto data = generateTestData(i);
                 populateFlexibleRow(writer, data);
-                ASSERT_TRUE(writer.writeRow()) << "Failed to write test row " << i;
+                writer.writeRow();
             }
             writer.close();
         }
         
         // Test countRows() performance vs manual counting
         {
-            bcsv::Reader<bcsv::Layout> reader;
+            bcsv::ReaderDirectAccess<bcsv::Layout> reader;
             ASSERT_TRUE(reader.open(test_file)) << "Failed to open medium test file";
             
             // Time countRows()
             auto start_count = std::chrono::high_resolution_clock::now();
-            size_t counted_rows = reader.countRows();
+            size_t counted_rows = reader.rowCount();
             auto end_count = std::chrono::high_resolution_clock::now();
             auto count_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_count - start_count);
             
@@ -1515,19 +1497,19 @@ TEST_F(BCSVTestSuite, CountRows_FunctionalityAndPerformance) {
             for (size_t i = 0; i < test_rows; ++i) {
                 writer.row().set(0, static_cast<uint64_t>(i));
                 writer.row().set(1, static_cast<double>(i) * 3.14159);
-                ASSERT_TRUE(writer.writeRow()) << "Failed to write test row " << i;
+                writer.writeRow();
             }
             writer.close();
         }
         
         // Test countRows() on multi-packet file
         {
-            bcsv::Reader<bcsv::Layout> reader;
+            bcsv::ReaderDirectAccess<bcsv::Layout> reader;
             ASSERT_TRUE(reader.open(test_file)) << "Failed to open large test file";
             
             // Time countRows()
             auto start_count = std::chrono::high_resolution_clock::now();
-            size_t counted_rows = reader.countRows();
+            size_t counted_rows = reader.rowCount();
             auto end_count = std::chrono::high_resolution_clock::now();
             auto count_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_count - start_count);
             
@@ -1554,10 +1536,10 @@ TEST_F(BCSVTestSuite, CountRows_FunctionalityAndPerformance) {
         
         // Test countRows() on empty file
         {
-            bcsv::Reader<bcsv::Layout> reader;
+            bcsv::ReaderDirectAccess<bcsv::Layout> reader;
             ASSERT_TRUE(reader.open(test_file)) << "Failed to open empty test file";
             
-            size_t counted_rows = reader.countRows();
+            size_t counted_rows = reader.rowCount();
             EXPECT_EQ(counted_rows, 0) << "countRows() should return 0 for empty file";
             
             // Verify by manual counting
@@ -1587,17 +1569,17 @@ TEST_F(BCSVTestSuite, CountRows_FunctionalityAndPerformance) {
             ASSERT_TRUE(writer.open(test_file, true)) << "Failed to create single-row test file";
             
             populateFlexibleRow(writer, test_data);
-            ASSERT_TRUE(writer.writeRow()) << "Failed to write single test row";
+            writer.writeRow();
             writer.close();
         }
         
-        // Test countRows() on single-row file
+        // Test rowCount() on single-row file
         {
-            bcsv::Reader<bcsv::Layout> reader;
+            bcsv::ReaderDirectAccess<bcsv::Layout> reader;
             ASSERT_TRUE(reader.open(test_file)) << "Failed to open single-row test file";
             
-            size_t counted_rows = reader.countRows();
-            EXPECT_EQ(counted_rows, 1) << "countRows() should return 1 for single-row file";
+            size_t counted_rows = reader.rowCount();
+            EXPECT_EQ(counted_rows, 1) << "rowCount() should return 1 for single-row file";
             
             // Verify by manual counting
             size_t manual_count = 0;
@@ -2972,7 +2954,7 @@ TEST_F(BCSVBoundaryTests, MaximumColumnCount_BoundaryValidation) {
         row.set(max_columns/2, false);  
         row.set(max_columns-1, true);
         
-        ASSERT_TRUE(writer.writeRow());
+        writer.writeRow();
         writer.close();
     });
 }
@@ -3001,7 +2983,7 @@ TEST_F(BCSVBoundaryTests, MaximumColumnCount_WriteRead1000BoolColumns) {
         for (size_t i = 0; i < test_columns; ++i) {
             row.set(i, test_data[i]);
         }
-        ASSERT_TRUE(writer.writeRow());
+        writer.writeRow();
         writer.close();
     });
     
@@ -3072,7 +3054,8 @@ TEST_F(BCSVBoundaryTests, MaximumStringLength_AtLimit_ShouldTruncate) {
     // So we need to check if writeRow succeeds or fails due to row size
     bool write_succeeded = false;
     try {
-        write_succeeded = writer.writeRow();
+        writer.writeRow();
+        write_succeeded = true;
     } catch (const std::exception& e) {
         // If row size exceeds limit, that's expected with current 16-bit addressing
         boundary_verbose_output("Row write failed as expected: ", e.what());
@@ -3087,13 +3070,12 @@ TEST_F(BCSVBoundaryTests, MaximumStringLength_AtLimit_ShouldTruncate) {
     // Test with a smaller string that should work
     std::string workable_string = createString(45000, 'B'); // Should fit in row
     EXPECT_NO_THROW(row.set(0, workable_string));
-    EXPECT_TRUE(writer.writeRow()); // Should succeed
+    writer.writeRow();
     
     // Test a normal-sized string
     std::string normal_string = createString(1000, 'C');
     EXPECT_NO_THROW(row.set(0, normal_string));
-    EXPECT_TRUE(writer.writeRow()); // Should succeed normally
-    
+    writer.writeRow();
     writer.close();
     
     // Verify the strings were written correctly
@@ -3141,7 +3123,7 @@ TEST_F(BCSVBoundaryTests, ExcessiveStringLength_ShouldTruncate) {
     // Since the truncated string is MAX_STRING_LENGTH (65535), it may exceed row size
     // So use the original safe-sized string instead
     EXPECT_NO_THROW(row.set(0, original_string));
-    EXPECT_TRUE(writer.writeRow());
+    writer.writeRow();
     
     writer.close();
     
@@ -3179,8 +3161,7 @@ TEST_F(BCSVBoundaryTests, MaximumPracticalRowSize_SingleString) {
     auto& row = writer.row();
     // Should not throw - string should be stored as is
     EXPECT_NO_THROW(row.set(0, normal_string));
-    EXPECT_TRUE(writer.writeRow());
-    
+    writer.writeRow();
     writer.close();
     
     // Verify the data was written correctly
@@ -3218,11 +3199,11 @@ TEST_F(BCSVBoundaryTests, RowSizeLimit_SingleStringMaximumSafe) {
         
         auto& row = writer.row();
         row.set(0, safe_string);
-        ASSERT_TRUE(writer.writeRow());
+        writer.writeRow();
         writer.close();
         
         // Verify read
-        bcsv::Reader<bcsv::Layout> reader;
+        bcsv::ReaderDirectAccess<bcsv::Layout> reader;
         ASSERT_TRUE(reader.open(filepath));
         ASSERT_TRUE(reader.readNext());
         
@@ -3257,7 +3238,8 @@ TEST_F(BCSVBoundaryTests, ErrorRecovery_CanContinueAfterRowSizeError) {
         bool first_write_success = true;
         try {
             row.set(0, oversized_string);
-            first_write_success = writer.writeRow();
+            writer.writeRow();
+            first_write_success = true;
         } catch (const std::exception&) {
             first_write_success = false;
         }
@@ -3268,7 +3250,7 @@ TEST_F(BCSVBoundaryTests, ErrorRecovery_CanContinueAfterRowSizeError) {
         std::string normal_string = createString(1000, 'H');
         ASSERT_NO_THROW({
             row.set(0, normal_string);
-            EXPECT_TRUE(writer.writeRow());
+            writer.writeRow();
         });
         
         writer.close();
@@ -3303,7 +3285,7 @@ TEST_F(BCSVBoundaryTests, EdgeCase_EmptyStrings) {
         
         auto& row = writer.row();
         row.set(0, std::string(""));
-        ASSERT_TRUE(writer.writeRow());
+        writer.writeRow();
         writer.close();
         
         bcsv::Reader<bcsv::Layout> reader;
@@ -3331,7 +3313,7 @@ TEST_F(BCSVBoundaryTests, EdgeCase_SingleByteString) {
         
         auto& row = writer.row();
         row.set(0, single_char);
-        ASSERT_TRUE(writer.writeRow());
+        writer.writeRow();
         writer.close();
         
         bcsv::Reader<bcsv::Layout> reader;
@@ -3369,23 +3351,19 @@ TEST_F(BCSVBoundaryTests, ProgressiveSizes) {
             auto& row = writer.row();
             row.set(0, test_string);
             
-            bool write_success = writer.writeRow();
-            std::cout << "Write result: " << (write_success ? "SUCCESS" : "FAILED") << std::endl;
+            writer.writeRow();
+            std::cout << "Write result: SUCCESS" << std::endl;
+            writer.close();
             
-            if (write_success) {
-                writer.close();
-                
-                bcsv::Reader<bcsv::Layout> reader;
-                ASSERT_TRUE(reader.open(filepath));
-                ASSERT_TRUE(reader.readNext());
-                
-                const auto& read_row = reader.row();
-                std::string read_string = read_row.get<std::string>(0);
-                std::cout << "Read string length: " << read_string.length() << std::endl;
-                
-                reader.close();
-            }
+            bcsv::Reader<bcsv::Layout> reader;
+            ASSERT_TRUE(reader.open(filepath));
+            ASSERT_TRUE(reader.readNext());
             
+            const auto& read_row = reader.row();
+            std::string read_string = read_row.get<std::string>(0);
+            std::cout << "Read string length: " << read_string.length() << std::endl;
+            
+            reader.close();
         } catch (const std::exception& e) {
             std::cout << "Exception at size " << size << ": " << e.what() << std::endl;
             break;

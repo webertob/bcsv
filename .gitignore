@@ -28,6 +28,7 @@ lib/
 *~
 .DS_Store
 Thumbs.db
+*.idx
 
 # Ignore output files from examples
 *.bcsv
@@ -82,3 +83,4 @@ venv/pyvenv.cfg
 
 # Ignore experimental scratch directory
 scratch/
+.cache/clangd/index/bcsv_c_api.cpp.BCC33B22167D8BEA.idx

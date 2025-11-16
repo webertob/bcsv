@@ -138,7 +138,7 @@ const_bcsv_row_t bcsv_reader_row(const_bcsv_reader_t reader) {
     return reinterpret_cast<const_bcsv_row_t>(x);
 }
 size_t bcsv_reader_index(const_bcsv_reader_t reader) {
-    return static_cast<const bcsv::Reader<bcsv::Layout>*>(reader)->rowIndex();
+    return static_cast<const bcsv::Reader<bcsv::Layout>*>(reader)->rowPos();
 }
 
 // Writer API
