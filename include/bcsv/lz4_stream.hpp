@@ -1,331 +1,315 @@
-/*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
- * 
- * This file is part of the BCSV library.
- * 
- * Licensed under the MIT License. See LICENSE file in the project root 
- * for full license information.
- */
-
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
-#include <cstdint>
 #include <cstring>
 #include <span>
 #include <stdexcept>
 #include <vector>
 #include "lz4-1.10.0/lz4.h"
+#include "byte_buffer.h"
 
 namespace bcsv {
 
     /**
-     * @brief RAII wrapper for LZ4 streaming compression
+     * @brief Streaming LZ4 compressor.
      * 
-     * This class manages the lifecycle of LZ4_stream_t for streaming compression.
-     * It maintains compression context across multiple compress operations, enabling
-     * cross-row dictionary compression for better compression ratios.
+     * Maintains a dictionary context to improve compression ratio for sequential data.
      * 
-     * Key Features:
-     * - Automatic stream creation/destruction
-     * - Context preservation across compress calls
-     * - Thread-safe per-instance (not thread-safe across instances)
-     * - Exception-safe resource management
+     * Design Decisions:
+     * - Headerless: Does NOT write the 4-byte uncompressed size header. This saves 4 bytes per row.
+     *   The uncompressed size is not required for decompression; the decompressor will output 
+     *   whatever amount of data was originally compressed in the block.
+     * - Block-Based: One call to compress() corresponds to exactly one call to decompress(). 
+     *   The caller must preserve the boundaries of the compressed blocks (e.g., by storing the compressed size).
+     * - Ring Buffer: Uses a ring buffer to keep the last 64KB as a dictionary for the next compression.
+     * - Zero-Copy: For inputs larger than the dictionary, compresses directly from the source to avoid 
+     *   unnecessary copies, then saves the dictionary.
      * 
-     * Usage Example:
-     * ```cpp
-     * LZ4CompressionStream compressor(9); // acceleration level 1-9
-     * 
-     * // Compress multiple rows maintaining context
-     * std::vector<uint8_t> compressed(LZ4_COMPRESSBOUND(row1.size()));
-     * int size1 = compressor.compress(row1, compressed);
-     * 
-     * // Second compression uses dictionary from first
-     * int size2 = compressor.compress(row2, compressed);
-     * 
-     * // Reset for new packet
-     * compressor.reset();
-     * ```
+     * @tparam MAX_USABLE_BUFFER_SIZE Maximum size of the uncompressed data buffer (excluding dictionary/margin).
      */
+    template<size_t MAX_USABLE_BUFFER_SIZE = 16 * 1024 * 1024> 
     class LZ4CompressionStream {
-    public:
-        /**
-         * @brief Construct compression stream with specified acceleration level
-         * @param acceleration Compression acceleration level (1=best compression, 9=fastest)
-         * @throws std::runtime_error if stream creation fails
-         */
-        explicit LZ4CompressionStream(int acceleration = 1)
-            : stream_(LZ4_createStream())
-            , acceleration_(acceleration)
-            , buffer_()
-        {
-            if (!stream_) {
-                throw std::runtime_error("Failed to create LZ4 compression stream");
-            }
-        }
-        
-        /**
-         * @brief Destructor - automatically frees LZ4 stream
-         */
-        ~LZ4CompressionStream() {
-            if (stream_) {
-                LZ4_freeStream(stream_);
-            }
-        }
-        
-        // Delete copy constructor and assignment operator (non-copyable)
-        LZ4CompressionStream(const LZ4CompressionStream&) = delete;
-        LZ4CompressionStream& operator=(const LZ4CompressionStream&) = delete;
-        
-        // Allow move construction and assignment
-        LZ4CompressionStream(LZ4CompressionStream&& other) noexcept
-            : stream_(other.stream_)
-            , acceleration_(other.acceleration_)
-            , buffer_(std::move(other.buffer_))
-        {
-            other.stream_ = nullptr;
-        }
-        
-        LZ4CompressionStream& operator=(LZ4CompressionStream&& other) noexcept {
-            if (this != &other) {
-                if (stream_) {
-                    LZ4_freeStream(stream_);
-                }
-                stream_ = other.stream_;
-                acceleration_ = other.acceleration_;
-                buffer_ = std::move(other.buffer_);
-                other.stream_ = nullptr;
-            }
-            return *this;
-        }
-        
-        /**
-         * @brief Compress data using streaming context
-         * 
-         * Compresses the input data using LZ4_compress_fast_continue, which maintains
-         * compression dictionary across calls for better compression ratios on similar data.
-         * 
-         * @param input Source data to compress
-         * @param output Destination buffer (must be at least LZ4_COMPRESSBOUND(input.size()))
-         * @return Number of bytes written to output buffer, or 0 on failure
-         * 
-         * @note Output buffer must have capacity >= LZ4_COMPRESSBOUND(input.size())
-         * @note Returns 0 if compression fails (typically means output buffer too small)
-         */
-        const std::vector<std::byte>& compress(std::span<const std::byte> input) {
-            if (input.empty()) {
-                buffer_.clear();
-                return buffer_;
-            }
-            buffer_.resize(LZ4_COMPRESSBOUND(input.size()));
+        private:
+            static constexpr size_t LZ4_DICT_SIZE = 64 * 1024;
+            static constexpr size_t LZ4_MARGIN = 14;
+            static constexpr size_t MAX_BUFFER_SIZE = MAX_USABLE_BUFFER_SIZE + LZ4_DICT_SIZE + LZ4_MARGIN;
             
-            int compressedSize = LZ4_compress_fast_continue(
-                stream_,
-                reinterpret_cast<const char*>(input.data()),
-                reinterpret_cast<char*>(buffer_.data()),
-                static_cast<int>(input.size()),
-                static_cast<int>(buffer_.size()),
-                acceleration_
-            );
-            buffer_.resize(compressedSize);
-            return buffer_;
-        }
-        
-        const std::vector<std::byte>& compress(std::span<const char> input) {
-            return compress({reinterpret_cast<const std::byte*>(input.data()), input.size()});
-        }
-
-        const std::vector<std::byte>& compress(std::span<const uint8_t> input) {
-            return compress({reinterpret_cast<const std::byte*>(input.data()), input.size()});
-        }
-        /**
-         * @brief Reset compression stream for new packet
-         * 
-         * Resets the internal state and dictionary, preparing for a new compression sequence.
-         * Use this between packets to ensure each packet can be decompressed independently.
-         * 
-         * @note Much faster than creating a new stream
-         */
-        void reset() {
-            if (stream_) {
-                LZ4_resetStream_fast(stream_);
+            LZ4_stream_t stream_;
+            std::vector<std::byte, LazyAllocator<std::byte>> buffer_;
+            int acceleration_;
+            int pos_ = 0;
+            
+        public:
+            explicit LZ4CompressionStream(size_t initial_capacity = 64 * 1024, int acceleration = 1)
+                : acceleration_(acceleration)
+                , pos_(0)
+            {
+                size_t buffer_size = LZ4_DICT_SIZE + LZ4_MARGIN + initial_capacity;
+                buffer_.resize(buffer_size);
+                LZ4_initStream(&stream_, sizeof(stream_));
             }
-            buffer_.clear();
-        }
-        
-        /**
-         * @brief Get the acceleration level
-         * @return Current acceleration level (1-9)
-         */
-        int getAcceleration() const {
-            return acceleration_;
-        }
-        
-        /**
-         * @brief Set the acceleration level
-         * @param acceleration New acceleration level (1=best compression, 9=fastest)
-         */
-        void setAcceleration(int acceleration) {
-            acceleration_ = acceleration;
-        }
-        
-        /**
-         * @brief Get the internal compressed buffer
-         * @return Reference to the internal compressed buffer
-         */
-        const std::vector<std::byte>& getCompressedBuffer() const {
-            return buffer_;
-        }
+            
+            ~LZ4CompressionStream() = default;
+            
+            LZ4CompressionStream(const LZ4CompressionStream&) = delete;
+            LZ4CompressionStream& operator=(const LZ4CompressionStream&) = delete;
+            
+            LZ4CompressionStream(LZ4CompressionStream&& other) noexcept
+                : buffer_(std::move(other.buffer_))
+                , acceleration_(other.acceleration_)
+                , pos_(other.pos_)
+            {
+                LZ4_initStream(&stream_, sizeof(stream_));
+                pos_ = 0; // Reset history on move.
+            }
+            
+            LZ4CompressionStream& operator=(LZ4CompressionStream&& other) noexcept {
+                if (this != &other) {
+                    buffer_ = std::move(other.buffer_);
+                    acceleration_ = other.acceleration_;
+                    pos_ = 0; // Reset history
+                    LZ4_initStream(&stream_, sizeof(stream_));
+                }
+                return *this;
+            }
+            
+            void reset() {
+                LZ4_resetStream_fast(&stream_);
+                pos_ = 0;
+            }
+            
+            int getAcceleration() const { return acceleration_; }
+            void setAcceleration(int acc) { acceleration_ = acc; }
 
-    private:
-        LZ4_stream_t* stream_;
-        int acceleration_;
-        std::vector<std::byte> buffer_;
+            /**
+             * @brief Compresses the source span and appends to the destination vector.
+             * 
+             * @param src Input data to compress.
+             * @param dst Destination vector to append compressed data to.
+             * @throws std::runtime_error if compression fails.
+             */
+            void compress(std::span<const std::byte> src, std::vector<std::byte> &dst) {
+                if (src.empty()) return;
+
+                size_t originalSize = dst.size();
+                int srcSize = static_cast<int>(src.size());
+                int maxDestSize = LZ4_compressBound(srcSize);
+                
+                dst.resize(originalSize + maxDestSize);
+                
+                char* dstPtr = reinterpret_cast<char*>(dst.data() + originalSize);
+                int compressedSize = 0;
+
+                // --- Case 1: Append ---
+                if (static_cast<size_t>(pos_ + srcSize) <= buffer_.size()) {
+                    std::memcpy(buffer_.data() + pos_, src.data(), srcSize);
+                    compressedSize = LZ4_compress_fast_continue(
+                        &stream_,
+                        reinterpret_cast<const char*>(buffer_.data() + pos_),
+                        dstPtr,
+                        srcSize,
+                        maxDestSize,
+                        acceleration_
+                    );
+                    pos_ += srcSize;
+                }
+                // --- Case 3: Zero-Copy (Large Input) ---
+                // Optimization: If input is larger than dictionary, it's cheaper to compress directly
+                // and then save the dictionary, rather than copying to ring buffer.
+                else if (static_cast<size_t>(srcSize) > LZ4_DICT_SIZE) {
+                    compressedSize = LZ4_compress_fast_continue(
+                        &stream_,
+                        reinterpret_cast<const char*>(src.data()),
+                        dstPtr,
+                        srcSize,
+                        maxDestSize,
+                        acceleration_
+                    );
+                    int dictBytes = LZ4_saveDict(&stream_, reinterpret_cast<char*>(buffer_.data()), LZ4_DICT_SIZE);
+                    pos_ = dictBytes;
+                }
+                // --- Case 2: Wrap (Ring Buffer) ---
+                // Only wrap if we have enough history (idx_ > DICT_SIZE) AND new data fits before history starts
+                else if (pos_ > static_cast<int>(LZ4_DICT_SIZE) && static_cast<size_t>(srcSize) <= static_cast<size_t>(pos_) - LZ4_DICT_SIZE) {
+                    std::memcpy(buffer_.data(), src.data(), srcSize);
+                    compressedSize = LZ4_compress_fast_continue(
+                        &stream_,
+                        reinterpret_cast<const char*>(buffer_.data()),
+                        dstPtr,
+                        srcSize,
+                        maxDestSize,
+                        acceleration_
+                    );
+                    pos_ = srcSize;
+                }
+                // --- Case 3b: Fallback (Zero-Copy + SaveDict) ---
+                // This handles cases where srcSize <= DICT_SIZE but doesn't fit in ring buffer (and cannot wrap)
+                else {
+                    compressedSize = LZ4_compress_fast_continue(
+                        &stream_,
+                        reinterpret_cast<const char*>(src.data()),
+                        dstPtr,
+                        srcSize,
+                        maxDestSize,
+                        acceleration_
+                    );
+                    int dictBytes = LZ4_saveDict(&stream_, reinterpret_cast<char*>(buffer_.data()), LZ4_DICT_SIZE);
+                    pos_ = dictBytes;
+                }
+
+                if (compressedSize <= 0) throw std::runtime_error("LZ4 compression failed");
+                
+                dst.resize(originalSize + compressedSize);
+            }
+            
+            std::vector<std::byte> compress(std::span<const std::byte> src) {
+                std::vector<std::byte> dst;
+                compress(src, dst);
+                return dst;
+            }
     };
-    
+
     /**
-     * @brief RAII wrapper for LZ4 streaming decompression
+     * @brief Streaming LZ4 decompressor.
      * 
-     * This class manages the lifecycle of LZ4_streamDecode_t for streaming decompression.
-     * It maintains decompression context across multiple decompress operations, enabling
-     * proper decompression of data compressed with cross-row dictionary.
+     * Decompresses data produced by LZ4CompressionStream.
      * 
-     * Key Features:
-     * - Automatic stream creation/destruction
-     * - Context preservation across decompress calls
-     * - Thread-safe per-instance (not thread-safe across instances)
-     * - Exception-safe resource management
-     * - Safe decompression with bounds checking
+     * Design Decisions:
+     * - Dynamic Growth: Starts with a small buffer (64KB) to save memory for small rows.
+     *   If decompression fails (likely due to insufficient space), it doubles the buffer size 
+     *   and retries, up to MAX_USABLE_BUFFER_SIZE.
+     * - Headerless: Does not expect a 4-byte size header. Relies on LZ4_decompress_safe_continue 
+     *   failing if the buffer is too small.
+     * - Block-Based: Expects input to be exactly one block produced by LZ4CompressionStream::compress().
+     *   The caller must ensure the input span contains the full compressed block.
      * 
-     * Usage Example:
-     * ```cpp
-     * LZ4DecompressionStream decompressor;
-     * 
-     * // Decompress multiple rows maintaining context
-     * std::vector<uint8_t> decompressed(original_size);
-     * int size1 = decompressor.decompress(compressed1, decompressed, original_size1);
-     * 
-     * // Second decompression uses dictionary from first
-     * int size2 = decompressor.decompress(compressed2, decompressed, original_size2);
-     * 
-     * // Reset for new packet
-     * decompressor.reset();
-     * ```
+     * @tparam MAX_USABLE_BUFFER_SIZE Maximum size the buffer can grow to. Should match the compressor's max size.
      */
-    template<size_t MaxPayloadSize = 16 * 1024 * 1024> // 16 MB default max payload size
+    template<size_t MAX_USABLE_BUFFER_SIZE = 16 * 1024 * 1024>
     class LZ4DecompressionStream {
-    public:
-        /**
-         * @brief Construct with ring buffer sized for packet
-         * @param maxBlockSize Maximum size of any decompressed row in the packet
-         */
-        explicit LZ4DecompressionStream(size_t PayloadSize = 64 * 1024) // 64 KB default payload size
-            : stream_(LZ4_createStreamDecode())
-            , buffer_()
-            , page_(0)
-        {
-            if (!stream_) {
-                throw std::runtime_error("Failed to create LZ4 decompression stream");
-            }
+        private:
+            static constexpr size_t LZ4_DICT_SIZE = 64 * 1024;
+            static constexpr size_t LZ4_MARGIN = 14;
+            static constexpr size_t MAX_BUFFER_SIZE = MAX_USABLE_BUFFER_SIZE + LZ4_DICT_SIZE + LZ4_MARGIN;
 
-            // Allocate double buffer for decompressed data
-            buffer_[0].resize(PayloadSize);
-            buffer_[1].resize(PayloadSize);
-        }
-        
-        ~LZ4DecompressionStream() {
-            if (stream_) {
-                LZ4_freeStreamDecode(stream_);
-            }
-        }
-        
-        // Delete copy, allow move
-        LZ4DecompressionStream(const LZ4DecompressionStream&) = delete;
-        LZ4DecompressionStream& operator=(const LZ4DecompressionStream&) = delete;
-        
-        LZ4DecompressionStream(LZ4DecompressionStream&& other) noexcept
-            : stream_(other.stream_)
-            , buffer_(std::move(other.buffer_))
-            , page_(other.page_)
-        {
-            other.stream_ = nullptr;
-        }
-        
-        void resizeBuffer(size_t newSize) {
-            if(newSize > MaxPayloadSize) {
-                throw std::runtime_error("LZ4DecompressionStream: Requested buffer size exceeds maximum allowed payload size");
-            }
-            buffer_[0].resize(newSize);
-            buffer_[1].resize(newSize);
-        }
+            LZ4_streamDecode_t stream_;
+            std::vector<std::byte, LazyAllocator<std::byte>> buffer_;
+            int pos_ = 0;
 
-        /**
-         * @brief Decompress into ring buffer
-         * @param input Compressed data
-         * @return Span view into payload buffer containing decompressed data
-         */
-        std::span<const std::byte> decompress(std::span<const std::byte> input) {
-            if (input.empty()) {
-                return {};
+        public:
+            explicit LZ4DecompressionStream(size_t initial_capacity = 64 * 1024) 
+                : pos_(0) 
+            {
+                size_t buffer_size = LZ4_DICT_SIZE + LZ4_MARGIN + initial_capacity;
+                buffer_.resize(buffer_size);
+                LZ4_setStreamDecode(&stream_, nullptr, 0);
             }
             
-            if(input.size() > buffer_[0].size()) {
-                resizeBuffer(input.size()*2);
+            ~LZ4DecompressionStream() = default;
+
+            LZ4DecompressionStream(const LZ4DecompressionStream&) = delete;
+            LZ4DecompressionStream& operator=(const LZ4DecompressionStream&) = delete;
+
+            LZ4DecompressionStream(LZ4DecompressionStream&& other) noexcept
+                : buffer_(std::move(other.buffer_))
+                , pos_(other.pos_)
+            {
+                LZ4_setStreamDecode(&stream_, nullptr, 0);
+                pos_ = 0;
             }
 
-            // swap page [0 and 1]
-            page_ = (page_+ 1) & 1; 
-
-            int decompressedSize = -1;
-            while(decompressedSize < 0) {
-                // Decompress - we don't know exact size, just provide max capacity
-                decompressedSize = LZ4_decompress_safe_continue(
-                    stream_,
-                    reinterpret_cast<const char*>(input.data()),
-                    reinterpret_cast<char*>(buffer_[page_].data()),
-                    static_cast<int>(input.size()),             // Exact compressed size (known)
-                    static_cast<int>(buffer_[page_].size()) // Maximum available space (upper bound)
-                );
-            
-                if (decompressedSize < 0) {
-                    // Decompression failed - likely buffer too small
-                    resizeBuffer(buffer_[page_].size() * 2);
+            LZ4DecompressionStream& operator=(LZ4DecompressionStream&& other) noexcept {
+                if (this != &other) {
+                    buffer_ = std::move(other.buffer_);
+                    pos_ = 0;
+                    LZ4_setStreamDecode(&stream_, nullptr, 0);
                 }
-            };
-            
-            // decompressedSize tells us the ACTUAL size
-            std::span<const std::byte> result(
-                buffer_[page_].data(), static_cast<size_t>(decompressedSize)
-            );           
-            return result;
-        }
-        
-        std::span<const std::byte> decompress(std::span<const uint8_t> input) {
-            return decompress({reinterpret_cast<const std::byte*>(input.data()), input.size()});
-        }
+                return *this;
+            }
 
-        std::span<const std::byte> decompress(std::span<const char> input) {
-            return decompress({reinterpret_cast<const std::byte*>(input.data()), input.size()});
-        }
+            void reset() {
+                LZ4_setStreamDecode(&stream_, nullptr, 0);
+                pos_ = 0;
+            }
 
-        /**
-         * @brief Reset for new packet
-         */
-        void reset() {
-            if (stream_) {
-                LZ4_freeStreamDecode(stream_);
-                stream_ = LZ4_createStreamDecode();
-                if (!stream_) {
-                    throw std::runtime_error("Failed to recreate LZ4 decompression stream");
+            /**
+             * @brief Decompresses data.
+             * 
+             * @param src Compressed data.
+             * @return std::span<const std::byte> View of the decompressed data. Valid until next call.
+             * @throws std::runtime_error if decompression fails or buffer limit exceeded.
+             */
+            std::span<const std::byte> decompress(std::span<const std::byte> src) {
+                if (src.empty()) return {};
+
+                const char* srcPtr = reinterpret_cast<const char*>(src.data());
+                int srcSize = static_cast<int>(src.size());
+                
+                while (true) {
+                    int dictLen = std::min(static_cast<size_t>(pos_), LZ4_DICT_SIZE);
+                    int decompressedBytes = 0;
+
+                    // Attempt 1: Append to Ring Buffer
+                    if (static_cast<size_t>(pos_) < buffer_.size()) {
+                        decompressedBytes = LZ4_decompress_safe_continue(
+                            &stream_,
+                            srcPtr,
+                            reinterpret_cast<char*>(buffer_.data() + pos_),
+                            srcSize,
+                            static_cast<int>(buffer_.size() - pos_)
+                        );
+                        
+                        if (decompressedBytes > 0) {
+                            std::span<const std::byte> result(buffer_.data() + pos_, decompressedBytes);
+                            pos_ += decompressedBytes;
+                            return result;
+                        }
+                    }
+
+                    // Attempt 2: Wrap (Move dict to beginning)
+                    if (pos_ > static_cast<int>(dictLen)) {
+                        if (dictLen > 0) {
+                            std::memmove(buffer_.data(), buffer_.data() + pos_ - dictLen, dictLen);
+                        }
+                        pos_ = dictLen;
+                        LZ4_setStreamDecode(&stream_, reinterpret_cast<char*>(buffer_.data()), dictLen);
+                        
+                        decompressedBytes = LZ4_decompress_safe_continue(
+                            &stream_,
+                            srcPtr,
+                            reinterpret_cast<char*>(buffer_.data() + pos_),
+                            srcSize,
+                            static_cast<int>(buffer_.size() - pos_)
+                        );
+                        
+                        if (decompressedBytes > 0) {
+                            std::span<const std::byte> result(buffer_.data() + pos_, decompressedBytes);
+                            pos_ += decompressedBytes;
+                            return result;
+                        }
+                    }
+
+                    // Attempt 3: Grow
+                    if (buffer_.size() >= MAX_BUFFER_SIZE) {
+                        throw std::runtime_error("LZ4 decompression failed: insufficient buffer or corrupt data");
+                    }
+                    
+                    size_t newCapacity = std::min(buffer_.size() * 2, MAX_BUFFER_SIZE);
+                    if (newCapacity <= buffer_.size()) newCapacity = MAX_BUFFER_SIZE;
+                    
+                    std::vector<std::byte, LazyAllocator<std::byte>> newBuffer(newCapacity);
+                    
+                    if (dictLen > 0) {
+                         std::memcpy(newBuffer.data(), buffer_.data() + pos_ - dictLen, dictLen);
+                    }
+                    
+                    buffer_ = std::move(newBuffer);
+                    pos_ = dictLen;
+                    
+                    LZ4_setStreamDecode(&stream_, reinterpret_cast<char*>(buffer_.data()), dictLen);
                 }
             }
-            page_ = 1;
-        }
-        
-    private:
-        LZ4_streamDecode_t* stream_;
-        std::array< std::vector<std::byte>, 2> buffer_;  // Double buffer for decompression
-        int page_ = 1;
     };
-    
+
 } // namespace bcsv

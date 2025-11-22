@@ -45,7 +45,7 @@ namespace bcsv {
         FileHeader              fileHeader_;                // File header for accessing flags and metadata
         FilePath                filePath_;                  // Always present
         std::ofstream           stream_;                    // Always binary file stream
-        std::optional<LZ4CompressionStream> 
+        std::optional<LZ4CompressionStream<>> 
                                 lz4Stream_;                 // std::nullopt if compressionLevel == 0
         
         // Packet management

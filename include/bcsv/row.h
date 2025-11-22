@@ -432,8 +432,8 @@ namespace bcsv {
                                 template<typename T>
         void                    set(size_t index, std::span<const T> src);
 
-        void                    serializeTo(ByteBuffer& buffer) const;
-        void                    serializeToZoH(ByteBuffer& buffer) const;
+        std::span<std::byte>    serializeTo(ByteBuffer& buffer) const;
+        std::span<std::byte>    serializeToZoH(ByteBuffer& buffer) const;
         void                    deserializeFrom(const std::span<const std::byte> buffer);
         void                    deserializeFromZoH(const std::span<const std::byte> buffer);
     };
@@ -503,8 +503,8 @@ namespace bcsv {
         bool                        hasAnyChanges() const           { return tracks_changes_ && changes_.any(); }
         void                        trackChanges(bool enable);
         bool                        trackChanges() const            { return tracks_changes_; }
-        void                        setChanges()                    { if(tracks_changes_) changes_.set(); } // mark everything as changed
-        void                        resetChanges()                  { if(tracks_changes_) changes_.reset(); } // mark everything as unchanged
+        void                        setChanges()                    { if(tracks_changes_) changes_.set(); }     // mark everything as changed
+        void                        resetChanges()                  { if(tracks_changes_) changes_.reset(); }   // mark everything as unchanged
 
 
                                     template<size_t Index>
@@ -534,8 +534,8 @@ namespace bcsv {
                                     template<typename T, size_t Index = 0>
         void                        set(size_t index, std::span<const T> src);
 
-        void                        serializeTo(ByteBuffer& buffer) const;
-        void                        serializeToZoH(ByteBuffer& buffer) const;
+        std::span<std::byte>        serializeTo(ByteBuffer& buffer) const;
+        std::span<std::byte>        serializeToZoH(ByteBuffer& buffer) const;
         void                        deserializeFrom(const std::span<const std::byte> buffer);
         void                        deserializeFromZoH(const std::span<const std::byte> buffer);
 

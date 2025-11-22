@@ -25,6 +25,7 @@ add_executable(bcsv_gtest
     vectorized_access_test.cpp
     vle_template_test.cpp
     lz4_stream_test.cpp
+    lz4_stress_test.cpp
     file_footer_test.cpp
 )
 

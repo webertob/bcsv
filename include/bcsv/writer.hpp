@@ -152,6 +152,7 @@ namespace bcsv {
             rowBufferPrev_.clear(); // Start with empty previous row
             packetIndex_.clear();            
             row_.clear();
+            row_.trackChanges(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD));     // Enable change tracking by default
             return true;
 
         } catch (const std::filesystem::filesystem_error& ex) {
@@ -213,6 +214,7 @@ namespace bcsv {
         }
         rowBufferPrev_.clear();
         rowBufferRaw_.clear();
+        row_.setChanges();      // mark all as changed for first row
         packetOpen_ = true;
     }
 
@@ -227,17 +229,41 @@ namespace bcsv {
         }
 
         // 1. Serialize row to buffer
-        rowBufferRaw_.clear();
-        row_.serializeTo(rowBufferRaw_);
-        
-        if (rowBufferRaw_ == rowBufferPrev_ && packetSize_ > 0) {
-            // ZoH repeat previouse row
-            writeRowLength(0); // indicates ZoH repeat
+        std::span<std::byte> actRow;
+        if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
+            actRow = row_.serializeToZoH(rowBufferRaw_);
+            row_.resetChanges();
+        } else {
+            actRow = row_.serializeTo(rowBufferRaw_);
+        }
+
+        // 2. write row data to file
+        if ((actRow.size() == 0) || std::equal(actRow.begin(), actRow.end(), rowBufferPrev_.begin())) {
+            // no data or identical to previous row -> ZoH repeat
+            writeRowLength(0);
+            rowBufferRaw_.resize(rowBufferRaw_.size()-actRow.size()); // clear actRow from buffer
         } else if(lz4Stream_.has_value()) {
+            // compress data using LZ4 before writing
+
+
+            // Piecewise compression does not work, as we need to write row length first.
+            // Therefore we need to hold the entire compressed row in memory anyway.
+
+            // we need to inform the LZ4 about, where to find the previouse 64KB uncompressed data
+
             const auto & lz4 = lz4Stream_->compress(rowBufferRaw_);
-            writeRowLength(lz4.size());
-            stream_.write(reinterpret_cast<const char*>(lz4.data()), lz4.size());
-            packetSize_ += lz4.size();
+            // If compression failed or not beneficial (size 0), fall back to uncompressed
+            if (lz4.size() > 0 && lz4.size() < rowBufferRaw_.size()) {
+                // Use compressed data
+                writeRowLength(lz4.size());
+                stream_.write(reinterpret_cast<const char*>(lz4.data()), lz4.size());
+                packetSize_ += lz4.size();
+            } else {
+                // Fall back to uncompressed (compression not beneficial)
+                writeRowLength(rowBufferRaw_.size());
+                stream_.write(reinterpret_cast<const char*>(rowBufferRaw_.data()), rowBufferRaw_.size());
+                packetSize_ += rowBufferRaw_.size();
+            }
             std::swap(rowBufferPrev_, rowBufferRaw_);
         } else {
             // Non-ZoH row, no compression
