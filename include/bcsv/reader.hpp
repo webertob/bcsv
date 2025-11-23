@@ -272,64 +272,59 @@ namespace bcsv {
             return false;
         }
 
-        try {
-            //reade row length
-            size_t rowLen;
+        //reade row length
+        size_t rowLen;
+        readRowLength(rowLen, stream_, &packetHash_);
+
+        // check for terminator
+        while (rowLen == PCKT_TERMINATOR >> 2) {
+            // End of packet reached
+            closePacket();
+            if(!openPacket()) {
+                return false;
+            }
             readRowLength(rowLen, stream_, &packetHash_);
+        }
 
-            // check for terminator
-            while (rowLen == PCKT_TERMINATOR >> 2) {
-                // End of packet reached
-                closePacket();
-                if(!openPacket()) {
-                    return false;
-                }
-                readRowLength(rowLen, stream_, &packetHash_);
+        if (rowLen == 0) {
+            // repeat previous row
+            if(     row_.layout().columnCount() > 0 
+                && !fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) 
+            {
+                throw std::runtime_error("Error: ZERO_ORDER_HOLD flag not set, but repeat row encountered");
             }
 
-            if (rowLen == 0) {
-                // repeat previous row
-                if(     row_.layout().columnCount() > 0 
-                    && !fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) 
-                {
-                    throw std::runtime_error("Error: ZERO_ORDER_HOLD flag not set, but repeat row encountered");
-                }
-
-                if(     rowBuffer_.empty() 
-                    &&  row_.layout().columnCount() > 0 ) 
-                {
-                    throw std::runtime_error("Error: Cannot repeat previous row, no previous row data available");
-                }
-                rowPos_++;
-                return true;
-            }
-
-            // read row data
-            rowBuffer_.resize(rowLen);
-            stream_.read(reinterpret_cast<char*>(rowBuffer_.data()), rowLen);
-            if (!stream_ || stream_.gcount() != static_cast<std::streamsize>(rowLen)) {
-                throw std::runtime_error("Error: Failed to read row data");
-            }
-            packetHash_.update(rowBuffer_);
-            std::span<const std::byte> rowRawData(rowBuffer_);
-
-            // decompress if needed
-            if(lz4Stream_.has_value()) {
-                rowRawData = lz4Stream_->decompress(rowBuffer_);
-            }
-
-            // deserialize row
-            if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
-                row_.deserializeFromZoH(rowRawData);
-            } else {
-                row_.deserializeFrom(rowRawData);
+            if(     rowBuffer_.empty() 
+                &&  row_.layout().columnCount() > 0 ) 
+            {
+                throw std::runtime_error("Error: Cannot repeat previous row, no previous row data available");
             }
             rowPos_++;
-            return true;        
-        } catch (const std::exception& ex) {
-            std::cerr << "Error: reader::readNext() failed! : " << ex.what() << "\n";
-            return false;
+            return true;
         }
+
+        // read row data
+        rowBuffer_.resize(rowLen);
+        stream_.read(reinterpret_cast<char*>(rowBuffer_.data()), rowLen);
+        if (!stream_ || stream_.gcount() != static_cast<std::streamsize>(rowLen)) {
+            throw std::runtime_error("Error: Failed to read row data");
+        }
+        packetHash_.update(rowBuffer_);
+        std::span<const std::byte> rowRawData(rowBuffer_);
+
+        // decompress if needed
+        if(lz4Stream_.has_value()) {
+            rowRawData = lz4Stream_->decompress(rowBuffer_);
+        }
+
+        // deserialize row
+        if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
+            row_.deserializeFromZoH(rowRawData);
+        } else {
+            row_.deserializeFrom(rowRawData);
+        }
+        rowPos_++;
+        return true;        
     }
 
     template<LayoutConcept LayoutType>

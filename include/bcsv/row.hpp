@@ -634,7 +634,12 @@ namespace bcsv {
     void RowStatic<ColumnTypes...>::set(const ValueType& value) {
         //unpack variant and call set with actual type
         std::visit([this](auto&& v) {
-            this->set<Index>(v);
+            using T = std::decay_t<decltype(v)>;
+            if constexpr (std::is_convertible_v<T, column_type<Index>>) {
+                this->set<Index>(v);
+            } else {
+                throw std::runtime_error("Type mismatch in RowStatic::set(ValueType)");
+            }
         }, value);
     }
 
