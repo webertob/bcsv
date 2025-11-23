@@ -14,6 +14,7 @@
 #include <iosfwd>
 #include <iostream>
 #include <vector>
+#include "bcsv/definitions.h"
 #include "xxHash-0.8.3/xxhash.h"
 
 namespace bcsv {
@@ -42,7 +43,7 @@ namespace bcsv {
     #pragma pack(push, 1)
     struct PacketHeader {
         
-        char magic[4];            ///< Magic number: "PCKT" (0x50 0x43 0x4B 0x54)
+        uint32_t magic;            ///< Magic number: "PCKT" (0x50 0x43 0x4B 0x54)
         uint64_t firstRowIndex;   ///< Absolute row index (0-based, file-wide)
         uint32_t checksum;        ///< xxHash32 of bytes 0-19 (magic + firstRowIndex + prevPayloadChecksum)
         
@@ -50,7 +51,7 @@ namespace bcsv {
          * @brief Default constructor - initializes to invalid state
          */
         PacketHeader() 
-            : magic{'P', 'C', 'K', 'T'}
+            : magic(PCKT_MAGIC)
             , firstRowIndex(0)
             , checksum(0)
         {}
@@ -60,7 +61,7 @@ namespace bcsv {
          * @param firstRow Absolute row index (0-based, file-wide)
          */
         PacketHeader(uint64_t firstRow)
-            : magic{'P', 'C', 'K', 'T'}
+            : magic(PCKT_MAGIC)
             , firstRowIndex(firstRow)
             , checksum(0)
         {
@@ -72,7 +73,7 @@ namespace bcsv {
          * @return true if magic number is "PCKT"
          */
         bool isValidMagic() const {
-            return magic[0] == 'P' && magic[1] == 'C' && magic[2] == 'K' && magic[3] == 'T';
+            return magic == PCKT_MAGIC;
         }
         
         /**
@@ -108,19 +109,23 @@ namespace bcsv {
          * @param stream Input stream to read from
          * @return true if read successful and header is valid
          */
-        bool read(std::istream& stream) {
+        bool read(std::istream& stream, bool silent = false) {
             stream.read(reinterpret_cast<char*>(this), sizeof(PacketHeader));
             if (!stream.good()) {
                 return false;
             }
             
             if (!isValidMagic()) {
-                std::cerr << "Error: Invalid packet magic number" << std::endl;
+                if (!silent) {
+                    std::cerr << "Error: Invalid packet header magic" << std::endl;
+                }
                 return false;
             }
             
             if (!validateChecksum()) {
-                std::cerr << "Error: Packet header checksum mismatch" << std::endl;
+                if (!silent) {
+                    std::cerr << "Error: Packet header checksum mismatch" << std::endl;
+                }
                 return false;
             }
             

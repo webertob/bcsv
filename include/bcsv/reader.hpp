@@ -29,6 +29,7 @@
 #include <fstream>
 #include <cstring>
 #include <iosfwd>
+#include <iostream>
 #include <span>
 
 namespace bcsv {
@@ -125,6 +126,14 @@ namespace bcsv {
             if (compressionLevel() > 0) {
                 lz4Stream_.emplace();
             }
+
+            // Open the first packet to prepare for reading rows
+            if (!openPacket()) {
+                std::cout << "Warning: File appears to be empty: " << absolutePath.string() << std::endl;
+                close();
+                return false;
+            }
+
             return true;
 
         } catch (const std::exception& ex) {
@@ -231,10 +240,17 @@ namespace bcsv {
 
         packetPos_ = stream_.tellg();
         PacketHeader header;
-        if (!header.read(stream_)) {
+        if (!header.read(stream_, true)) {
+            if(stream_.eof()) {
+                return false;   // end of file reached, normal exit condition
+            } else if(header.magic == FOOTER_BIDX_MAGIC) {
+                stream_.clear();           // clear fail state
+                stream_.seekg(packetPos_); // reset to previous position
+                return false;   // end of file reached, normal exit condition
+            }
             stream_.clear();           // clear fail state
             stream_.seekg(packetPos_); // reset to previous position
-            return false;
+            throw std::runtime_error("Error: Invalid packet header encountered");
         }
         
         // Initialize LZ4 decompression if needed
@@ -266,16 +282,7 @@ namespace bcsv {
                 // End of packet reached
                 closePacket();
                 if(!openPacket()) {
-                    // check if we have reached end of the file?
-                    char magic[4];
-                    stream_.read(magic, 4);
-                    if(stream_.gcount() != 4) {
-                        return false; // normal exit: end of file reached
-                    } else if(std::memcmp(magic, MAGIC_BYTES_FOOTER_BIDX, 4) != 0) {
-                        return false; // normal exit: end of file (footer) reached
-                    } else {
-                        throw std::runtime_error("Error: Unexpected data after packet terminator");
-                    }
+                    return false;
                 }
                 readRowLength(rowLen, stream_, &packetHash_);
             }

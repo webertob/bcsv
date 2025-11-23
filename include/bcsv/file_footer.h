@@ -217,7 +217,7 @@ namespace bcsv {
             // read FileFooter's ConstSection
             stream.read(reinterpret_cast<char*>(&constSection_), sizeof(ConstSection));
             
-            if (!stream.good() || std::memcmp(constSection_.startMagic, "EIDX", 4) != 0) {
+            if (!stream.good() || constSection_.startMagic != FOOTER_EIDX_MAGIC) {
                 std::cerr << "Error: Invalid file index footer" << std::endl;
                 stream.seekg(originalPos);
                 return false;

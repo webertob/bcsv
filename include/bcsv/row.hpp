@@ -187,6 +187,8 @@ namespace bcsv {
         size_t  offVar = offRow + layout_.serializedSizeFixed(); //offset to the begin of variable-size data section
         buffer.resize(buffer.size() + layout_.serializedSizeFixed());
 
+        // std::cout << "DEBUG: serializeTo row start at buffer offset " << offRow << std::endl;
+
         for (const auto& value : data_) {
             std::visit([&](const auto& v) {
                 using T = std::decay_t<decltype(v)>;
