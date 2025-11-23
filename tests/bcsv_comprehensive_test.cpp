@@ -1008,7 +1008,7 @@ TEST_F(BCSVTestSuite, Performance_FlexibleVsStatic) {
     }
     
     // Measure flexible interface write time
-    auto start = std::chrono::high_resolution_clock::now();
+    auto start = std::chrono::steady_clock::now();
     {
         auto layout = createFullFlexibleLayout();
         bcsv::Writer<bcsv::Layout> writer(layout);
@@ -1023,10 +1023,10 @@ TEST_F(BCSVTestSuite, Performance_FlexibleVsStatic) {
         
         writer.close();
     }
-    auto flex_write_time = std::chrono::high_resolution_clock::now() - start;
+    auto flex_write_time = std::chrono::steady_clock::now() - start;
     
     // Measure static interface write time
-    start = std::chrono::high_resolution_clock::now();
+    start = std::chrono::steady_clock::now();
     {
         auto layout = createStaticLayout();
         bcsv::Writer<FullTestLayoutStatic> writer(layout);
@@ -1041,7 +1041,7 @@ TEST_F(BCSVTestSuite, Performance_FlexibleVsStatic) {
         
         writer.close();
     }
-    auto static_write_time = std::chrono::high_resolution_clock::now() - start;
+    auto static_write_time = std::chrono::steady_clock::now() - start;
     
     // Verify both files have same size (identical format)
     EXPECT_EQ(fs::file_size(flex_file), fs::file_size(static_file));
@@ -1459,9 +1459,9 @@ TEST_F(BCSVTestSuite, CountRows_FunctionalityAndPerformance) {
             ASSERT_TRUE(reader.open(test_file)) << "Failed to open medium test file";
             
             // Time countRows()
-            auto start_count = std::chrono::high_resolution_clock::now();
+            auto start_count = std::chrono::steady_clock::now();
             size_t counted_rows = reader.rowCount();
-            auto end_count = std::chrono::high_resolution_clock::now();
+            auto end_count = std::chrono::steady_clock::now();
             auto count_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_count - start_count);
             
             EXPECT_EQ(counted_rows, test_rows) << "countRows() incorrect for medium file";
@@ -1470,12 +1470,12 @@ TEST_F(BCSVTestSuite, CountRows_FunctionalityAndPerformance) {
             reader.close();
             ASSERT_TRUE(reader.open(test_file)) << "Failed to reopen for manual count";
             
-            auto start_manual = std::chrono::high_resolution_clock::now();
+            auto start_manual = std::chrono::steady_clock::now();
             size_t manual_count = 0;
             while (reader.readNext()) {
                 manual_count++;
             }
-            auto end_manual = std::chrono::high_resolution_clock::now();
+            auto end_manual = std::chrono::steady_clock::now();
             auto manual_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_manual - start_manual);
             
             EXPECT_EQ(manual_count, test_rows) << "Manual count verification failed";
@@ -1520,9 +1520,9 @@ TEST_F(BCSVTestSuite, CountRows_FunctionalityAndPerformance) {
             ASSERT_TRUE(reader.open(test_file)) << "Failed to open large test file";
             
             // Time countRows()
-            auto start_count = std::chrono::high_resolution_clock::now();
+            auto start_count = std::chrono::steady_clock::now();
             size_t counted_rows = reader.rowCount();
-            auto end_count = std::chrono::high_resolution_clock::now();
+            auto end_count = std::chrono::steady_clock::now();
             auto count_duration = std::chrono::duration_cast<std::chrono::microseconds>(end_count - start_count);
             
             EXPECT_EQ(counted_rows, test_rows) << "countRows() incorrect for large multi-packet file";
@@ -2288,7 +2288,7 @@ TEST_F(BCSVTestSuite, CompressionLevels_PerformanceCharacteristics) {
     for (int level : {0, 1, 5, 9}) {
         std::string filename = test_dir_ + "/perf_test_" + std::to_string(level) + ".bcsv";
         
-        auto start = std::chrono::high_resolution_clock::now();
+        auto start = std::chrono::steady_clock::now();
         
         {
             bcsv::Writer<bcsv::Layout> writer(layout);
@@ -2309,7 +2309,7 @@ TEST_F(BCSVTestSuite, CompressionLevels_PerformanceCharacteristics) {
             writer.close();
         }
         
-        auto end = std::chrono::high_resolution_clock::now();
+        auto end = std::chrono::steady_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
         
         size_t file_size = fs::file_size(filename);

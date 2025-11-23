@@ -281,7 +281,7 @@ TEST_F(LZ4StressTest, Benchmark) {
             decompressor.reset();
             latencies.clear();
 
-            auto start_total = std::chrono::high_resolution_clock::now();
+            auto start_total = std::chrono::steady_clock::now();
             size_t total_bytes_processed = 0;
             size_t total_compressed_bytes = 0;
             size_t total_packets = 0;
@@ -293,7 +293,7 @@ TEST_F(LZ4StressTest, Benchmark) {
                 for (size_t p = 0; p < pkg_count; ++p) {
                     auto current_input = getTimeSeriesSpan(pkt_size, s * pkg_count + p);
 
-                    auto t1 = std::chrono::high_resolution_clock::now();
+                    auto t1 = std::chrono::steady_clock::now();
                     
                     // Compress
                     compressed_buffer.clear();
@@ -307,7 +307,7 @@ TEST_F(LZ4StressTest, Benchmark) {
                         FAIL() << "Decompression returned empty";
                     }
 
-                    auto t2 = std::chrono::high_resolution_clock::now();
+                    auto t2 = std::chrono::steady_clock::now();
                     
                     std::chrono::duration<double, std::micro> lat_us = t2 - t1;
                     latencies.push_back(lat_us.count());
@@ -318,7 +318,7 @@ TEST_F(LZ4StressTest, Benchmark) {
                 }
             }
 
-            auto end_total = std::chrono::high_resolution_clock::now();
+            auto end_total = std::chrono::steady_clock::now();
             std::chrono::duration<double> total_sec = end_total - start_total;
 
             // Calculate Metrics

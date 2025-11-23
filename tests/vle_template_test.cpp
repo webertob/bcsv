@@ -208,20 +208,20 @@ TEST(VLETemplateTest, Performance) {
     std::stringstream ss;
     
     // Encode performance
-    auto start = std::chrono::high_resolution_clock::now();
+    auto start = std::chrono::steady_clock::now();
     for (size_t i = 0; i < ITERATIONS; ++i) {
         vle_encode<uint64_t>(i % 1000000, ss);
     }
-    auto end = std::chrono::high_resolution_clock::now();
+    auto end = std::chrono::steady_clock::now();
     auto encode_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
     
     // Decode performance
     ss.seekg(0);
-    start = std::chrono::high_resolution_clock::now();
+    start = std::chrono::steady_clock::now();
     for (size_t i = 0; i < ITERATIONS; ++i) {
         [[maybe_unused]] auto val = vle_decode<uint64_t>(ss);
     }
-    end = std::chrono::high_resolution_clock::now();
+    end = std::chrono::steady_clock::now();
     auto decode_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
     
     std::cout << "VLE Template Performance (" << ITERATIONS << " iterations):\n";

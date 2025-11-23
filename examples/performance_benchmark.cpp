@@ -119,7 +119,7 @@ public:
         layout.addColumn({"category", bcsv::ColumnType::STRING});
 
         // Benchmark writing
-        auto writeStart = std::chrono::high_resolution_clock::now();
+        auto writeStart = std::chrono::steady_clock::now();
         {
             bcsv::Writer<bcsv::Layout> writer(layout);
             // Use compression level 1 for better performance vs no compression
@@ -145,11 +145,11 @@ public:
             }
             writer.close();
         }
-        auto writeEnd = std::chrono::high_resolution_clock::now();
+        auto writeEnd = std::chrono::steady_clock::now();
         double writeTime = std::chrono::duration<double, std::milli>(writeEnd - writeStart).count();
 
         // Benchmark reading
-        auto readStart = std::chrono::high_resolution_clock::now();
+        auto readStart = std::chrono::steady_clock::now();
         {
             bcsv::Reader<bcsv::Layout> reader;
             reader.open(FLEXIBLE_FILENAME);
@@ -184,7 +184,7 @@ public:
             }
             reader.close();
         }
-        auto readEnd = std::chrono::high_resolution_clock::now();
+        auto readEnd = std::chrono::steady_clock::now();
         double readTime = std::chrono::duration<double, std::milli>(readEnd - readStart).count();
 
         std::cout << "  Write time: " << std::fixed << std::setprecision(2) << writeTime << " ms\n";
@@ -209,7 +209,7 @@ public:
         layout.addColumn({"category", bcsv::ColumnType::STRING});
 
         // Benchmark writing with ZoH
-        auto writeStart = std::chrono::high_resolution_clock::now();
+        auto writeStart = std::chrono::steady_clock::now();
         {
             bcsv::Writer<bcsv::Layout> writer(layout);
             // Enable ZoH compression
@@ -239,11 +239,11 @@ public:
             }
             writer.close();
         }
-        auto writeEnd = std::chrono::high_resolution_clock::now();
+        auto writeEnd = std::chrono::steady_clock::now();
         double writeTime = std::chrono::duration<double, std::milli>(writeEnd - writeStart).count();
 
         // Benchmark reading
-        auto readStart = std::chrono::high_resolution_clock::now();
+        auto readStart = std::chrono::steady_clock::now();
         {
             bcsv::Reader<bcsv::Layout> reader;
             reader.open(FLEXIBLE_ZOH_FILENAME);
@@ -276,7 +276,7 @@ public:
             }
             reader.close();
         }
-        auto readEnd = std::chrono::high_resolution_clock::now();
+        auto readEnd = std::chrono::steady_clock::now();
         double readTime = std::chrono::duration<double, std::milli>(readEnd - readStart).count();
 
         std::cout << "\n  Write time: " << std::fixed << std::setprecision(2) << writeTime << " ms\n";
@@ -296,7 +296,7 @@ public:
         BenchmarkLayoutStatic layout(columnNames);
 
         // Benchmark writing
-        auto writeStart = std::chrono::high_resolution_clock::now();
+        auto writeStart = std::chrono::steady_clock::now();
         {
             bcsv::Writer<BenchmarkLayoutStatic> writer(layout);
             // Use compression level 1 for better performance vs no compression
@@ -322,11 +322,11 @@ public:
             }
             writer.close();
         }
-        auto writeEnd = std::chrono::high_resolution_clock::now();
+        auto writeEnd = std::chrono::steady_clock::now();
         double writeTime = std::chrono::duration<double, std::milli>(writeEnd - writeStart).count();
 
         // Benchmark reading
-        auto readStart = std::chrono::high_resolution_clock::now();
+        auto readStart = std::chrono::steady_clock::now();
         {
             bcsv::Reader<BenchmarkLayoutStatic> reader;
             reader.open(STATIC_FILENAME);
@@ -361,7 +361,7 @@ public:
             }
             reader.close();
         }
-        auto readEnd = std::chrono::high_resolution_clock::now();
+        auto readEnd = std::chrono::steady_clock::now();
         double readTime = std::chrono::duration<double, std::milli>(readEnd - readStart).count();
 
         std::cout << "  Write time: " << std::fixed << std::setprecision(2) << writeTime << " ms\n";
@@ -381,7 +381,7 @@ public:
         BenchmarkLayoutStatic layout(columnNames);
 
         // Benchmark writing with ZoH
-        auto writeStart = std::chrono::high_resolution_clock::now();
+        auto writeStart = std::chrono::steady_clock::now();
         {
             bcsv::Writer<BenchmarkLayoutStatic> writer(layout);
             // Enable ZoH compression
@@ -411,11 +411,11 @@ public:
             }
             writer.close();
         }
-        auto writeEnd = std::chrono::high_resolution_clock::now();
+        auto writeEnd = std::chrono::steady_clock::now();
         double writeTime = std::chrono::duration<double, std::milli>(writeEnd - writeStart).count();
 
         // Benchmark reading
-        auto readStart = std::chrono::high_resolution_clock::now();
+        auto readStart = std::chrono::steady_clock::now();
         {
             bcsv::Reader<BenchmarkLayoutStatic> reader;
             reader.open(STATIC_ZOH_FILENAME);
@@ -448,7 +448,7 @@ public:
             }
             reader.close();
         }
-        auto readEnd = std::chrono::high_resolution_clock::now();
+        auto readEnd = std::chrono::steady_clock::now();
         double readTime = std::chrono::duration<double, std::milli>(readEnd - readStart).count();
 
         std::cout << "\n  Write time: " << std::fixed << std::setprecision(2) << writeTime << " ms\n";
@@ -612,7 +612,7 @@ public:
         for (int level : compressionLevels) {
             std::string filename = "compression_test_" + std::to_string(level) + ".bcsv";
             
-            auto start = std::chrono::high_resolution_clock::now();
+            auto start = std::chrono::steady_clock::now();
             {
                 bcsv::Writer<bcsv::Layout> writer(layout);
                 writer.open(filename, true, level);
@@ -627,7 +627,7 @@ public:
                 }
                 writer.close();
             }
-            auto end = std::chrono::high_resolution_clock::now();
+            auto end = std::chrono::steady_clock::now();
             
             double timeMs = std::chrono::duration<double, std::milli>(end - start).count();
             size_t fileSize = std::filesystem::file_size(filename);
@@ -660,7 +660,7 @@ public:
         const std::string csvFilename = "baseline_test.csv";
         
         // Write CSV file
-        auto csvWriteStart = std::chrono::high_resolution_clock::now();
+        auto csvWriteStart = std::chrono::steady_clock::now();
         {
             std::ofstream csv(csvFilename);
             csv << "id,name,score1,score2,active,timestamp,count,category\n";
@@ -676,11 +676,11 @@ public:
                     << sampleStrings_[(i * 7) % sampleStrings_.size()] << "\n";
             }
         }
-        auto csvWriteEnd = std::chrono::high_resolution_clock::now();
+        auto csvWriteEnd = std::chrono::steady_clock::now();
         double csvWriteTime = std::chrono::duration<double, std::milli>(csvWriteEnd - csvWriteStart).count();
         
         // Read CSV file
-        auto csvReadStart = std::chrono::high_resolution_clock::now();
+        auto csvReadStart = std::chrono::steady_clock::now();
         {
             std::ifstream csv(csvFilename);
             std::string line;
@@ -706,7 +706,7 @@ public:
                 }
             }
         }
-        auto csvReadEnd = std::chrono::high_resolution_clock::now();
+        auto csvReadEnd = std::chrono::steady_clock::now();
         double csvReadTime = std::chrono::duration<double, std::milli>(csvReadEnd - csvReadStart).count();
         
         // Write BCSV equivalent for comparison
@@ -721,7 +721,7 @@ public:
         layout.addColumn({"count", bcsv::ColumnType::UINT32});
         layout.addColumn({"category", bcsv::ColumnType::STRING});
         
-        auto bcsvWriteStart = std::chrono::high_resolution_clock::now();
+        auto bcsvWriteStart = std::chrono::steady_clock::now();
         {
             bcsv::Writer<bcsv::Layout> writer(layout);
             writer.open(bcsvFilename, true, 1);
@@ -740,11 +740,11 @@ public:
             }
             writer.close();
         }
-        auto bcsvWriteEnd = std::chrono::high_resolution_clock::now();
+        auto bcsvWriteEnd = std::chrono::steady_clock::now();
         double bcsvWriteTime = std::chrono::duration<double, std::milli>(bcsvWriteEnd - bcsvWriteStart).count();
         
         // Read BCSV
-        auto bcsvReadStart = std::chrono::high_resolution_clock::now();
+        auto bcsvReadStart = std::chrono::steady_clock::now();
         {
             bcsv::Reader<bcsv::Layout> reader;
             reader.open(bcsvFilename);
@@ -766,7 +766,7 @@ public:
             }
             reader.close();
         }
-        auto bcsvReadEnd = std::chrono::high_resolution_clock::now();
+        auto bcsvReadEnd = std::chrono::steady_clock::now();
         double bcsvReadTime = std::chrono::duration<double, std::milli>(bcsvReadEnd - bcsvReadStart).count();
         
         // File sizes

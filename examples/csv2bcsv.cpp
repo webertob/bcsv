@@ -607,7 +607,7 @@ int main(int argc, char* argv[]) {
         auto input_file_size = std::filesystem::file_size(config.input_file);
         
         // Start timing the conversion process
-        auto start_time = std::chrono::high_resolution_clock::now();
+        auto start_time = std::chrono::steady_clock::now();
         
         std::ifstream input(config.input_file);
         if (!input.is_open()) {
@@ -801,7 +801,7 @@ int main(int argc, char* argv[]) {
             writer.close();
             
             // Calculate conversion timing and statistics
-            auto end_time = std::chrono::high_resolution_clock::now();
+            auto end_time = std::chrono::steady_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
             auto output_file_size = std::filesystem::file_size(config.output_file);
             

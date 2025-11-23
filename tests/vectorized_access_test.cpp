@@ -337,7 +337,7 @@ TEST(VectorizedPerformanceTest, CompareIndividualVsBulk) {
     }
 
     // Individual access
-    auto start_individual = std::chrono::high_resolution_clock::now();
+    auto start_individual = std::chrono::steady_clock::now();
     for (size_t iter = 0; iter < NUM_ITERATIONS; ++iter) {
         int32_t buffer[NUM_COLUMNS];
         for (size_t i = 0; i < NUM_COLUMNS; ++i) {
@@ -349,11 +349,11 @@ TEST(VectorizedPerformanceTest, CompareIndividualVsBulk) {
             sum += buffer[i];
         }
     }
-    auto end_individual = std::chrono::high_resolution_clock::now();
+    auto end_individual = std::chrono::steady_clock::now();
     auto duration_individual = std::chrono::duration_cast<std::chrono::microseconds>(end_individual - start_individual);
 
     // Bulk access
-    auto start_bulk = std::chrono::high_resolution_clock::now();
+    auto start_bulk = std::chrono::steady_clock::now();
     for (size_t iter = 0; iter < NUM_ITERATIONS; ++iter) {
         int32_t buffer[NUM_COLUMNS];
         row.get<int32_t>(0, std::span(buffer, NUM_COLUMNS));
@@ -363,7 +363,7 @@ TEST(VectorizedPerformanceTest, CompareIndividualVsBulk) {
             sum += buffer[i];
         }
     }
-    auto end_bulk = std::chrono::high_resolution_clock::now();
+    auto end_bulk = std::chrono::steady_clock::now();
     auto duration_bulk = std::chrono::duration_cast<std::chrono::microseconds>(end_bulk - start_bulk);
 
     std::cout << "Individual access: " << duration_individual.count() << " μs\n";

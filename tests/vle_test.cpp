@@ -447,27 +447,27 @@ TEST(VLETest, Performance) {
     std::vector<uint8_t> buffer(10);
     
     // Test encoding performance
-    auto start = std::chrono::high_resolution_clock::now();
+    auto start = std::chrono::steady_clock::now();
     for (size_t i = 0; i < ITERATIONS; ++i) {
         vle_encode(i % 1000000, buffer);
     }
-    auto end = std::chrono::high_resolution_clock::now();
+    auto end = std::chrono::steady_clock::now();
     auto encode_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
     
     // Test decoding performance (span-based)
     vle_encode(123456, buffer);
-    start = std::chrono::high_resolution_clock::now();
+    start = std::chrono::steady_clock::now();
     size_t value;
     for (size_t i = 0; i < ITERATIONS; ++i) {
         vle_decode(buffer, value);
     }
-    end = std::chrono::high_resolution_clock::now();
+    end = std::chrono::steady_clock::now();
     auto decode_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
     
     // Test streaming decoder performance
     vle_encode(123456, buffer);
     size_t encoded_size = vle_encoded_size(123456);
-    start = std::chrono::high_resolution_clock::now();
+    start = std::chrono::steady_clock::now();
     for (size_t i = 0; i < ITERATIONS; ++i) {
         VLEDecoder decoder;
         for (size_t j = 0; j < encoded_size; ++j) {
@@ -475,7 +475,7 @@ TEST(VLETest, Performance) {
         }
         value = decoder.get_value();
     }
-    end = std::chrono::high_resolution_clock::now();
+    end = std::chrono::steady_clock::now();
     auto stream_decode_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
     
     std::cout << "VLE Performance (1M iterations):\n";
