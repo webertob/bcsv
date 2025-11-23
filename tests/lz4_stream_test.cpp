@@ -38,7 +38,7 @@ TEST_F(LZ4StreamTest, CompressionStreamCreation) {
     });
     
     EXPECT_NO_THROW({
-        LZ4CompressionStream stream(9);
+        LZ4CompressionStream stream(64 * 1024, 9);
         EXPECT_EQ(stream.getAcceleration(), 9);
     });
 }
@@ -115,9 +115,9 @@ TEST_F(LZ4StreamTest, StreamingContextPreservation) {
     std::vector<std::byte> compressed3;
     
     // Compress rows with streaming context
-    compressed1 = compressor.compress(row1);
-    compressed2 = compressor.compress(row2);
-    compressed3 = compressor.compress(row3);
+    auto c1 = compressor.compress(row1); compressed1.assign(c1.begin(), c1.end());
+    auto c2 = compressor.compress(row2); compressed2.assign(c2.begin(), c2.end());
+    auto c3 = compressor.compress(row3); compressed3.assign(c3.begin(), c3.end());
     
     ASSERT_GT(compressed1.size(), 0);
     ASSERT_GT(compressed2.size(), 0);
@@ -188,9 +188,10 @@ TEST_F(LZ4StreamTest, EmptyInput) {
     LZ4CompressionStream compressor(1);
     
     std::vector<std::byte> empty;
-    std::vector<std::byte> compressed(100);
+    std::vector<std::byte> compressed;
     
-    compressed = compressor.compress(empty);
+    auto c = compressor.compress(empty);
+    compressed.assign(c.begin(), c.end());
     EXPECT_EQ(compressed.size(), 0);
 }
 
@@ -214,7 +215,7 @@ TEST_F(LZ4StreamTest, AccelerationLevelChanges) {
 
 // Test: Move construction for compression stream
 TEST_F(LZ4StreamTest, MoveConstructionCompression) {
-    LZ4CompressionStream stream1(5);
+    LZ4CompressionStream stream1(64 * 1024, 5);
     
     // Move construct
     LZ4CompressionStream stream2(std::move(stream1));
@@ -228,7 +229,7 @@ TEST_F(LZ4StreamTest, MoveConstructionCompression) {
 
 // Test: Move assignment for compression stream
 TEST_F(LZ4StreamTest, MoveAssignmentCompression) {
-    LZ4CompressionStream stream1(7);
+    LZ4CompressionStream stream1(64 * 1024, 7);
     LZ4CompressionStream stream2(1);
     
     // Move assign
@@ -269,7 +270,8 @@ TEST_F(LZ4StreamTest, DecompressionWrongExpectedSize) {
         input[i] = static_cast<std::byte>(i % 256);
     }
     
-    std::vector<std::byte> compressed1(compressor.compress(input));
+    auto c1 = compressor.compress(input);
+    std::vector<std::byte> compressed1(c1.begin(), c1.end());
     
     std::cout << "Compressed " << input.size() << " bytes to " << compressed1.size() << " bytes" << std::endl;
     ASSERT_GT(compressed1.size(), 0);
@@ -360,7 +362,8 @@ TEST_F(LZ4StreamTest, SmallRowStreaming) {
         originalRows.push_back(row);
         
         // Compress with streaming context
-        std::vector<std::byte> compressed(compressor.compress(row));
+        auto c = compressor.compress(row);
+        std::vector<std::byte> compressed(c.begin(), c.end());
         compressedRows.push_back(compressed);
         
         // Log first few and last few compressions with hexdump
@@ -450,15 +453,15 @@ TEST_F(LZ4StreamTest, DebugStreamingBehavior) {
     std::cout << "Original sizes: " << row1.size() << ", " << row2.size() << ", " << row3.size() << std::endl;
     
     // Compress with streaming context - MUST COPY because compress() returns reference to internal buffer
-    std::vector<std::byte> compressed1 = compressor.compress(row1);  // Copy, not reference!
+    auto c1 = compressor.compress(row1); std::vector<std::byte> compressed1(c1.begin(), c1.end());  // Copy, not reference!
     std::cout << "Compressed row 1: " << row1.size() << " -> " << compressed1.size() 
               << " bytes (ratio: " << (100.0 * compressed1.size() / row1.size()) << "%)" << std::endl;
     
-    std::vector<std::byte> compressed2 = compressor.compress(row2);  // Copy, not reference!
+    auto c2 = compressor.compress(row2); std::vector<std::byte> compressed2(c2.begin(), c2.end());  // Copy, not reference!
     std::cout << "Compressed row 2: " << row2.size() << " -> " << compressed2.size() 
               << " bytes (ratio: " << (100.0 * compressed2.size() / row2.size()) << "%)" << std::endl;
     
-    std::vector<std::byte> compressed3 = compressor.compress(row3);  // Copy, not reference!
+    auto c3 = compressor.compress(row3); std::vector<std::byte> compressed3(c3.begin(), c3.end());  // Copy, not reference!
     std::cout << "Compressed row 3: " << row3.size() << " -> " << compressed3.size() 
               << " bytes (ratio: " << (100.0 * compressed3.size() / row3.size()) << "%)" << std::endl;
     

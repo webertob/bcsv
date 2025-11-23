@@ -242,7 +242,7 @@ void readZoHStaticBCSV() {
         auto score = row.get<2>();
         auto active = row.get<3>();
 
-        std::cout << std::setw(3) << (reader.rowIndex()) << " | "
+        std::cout << std::setw(3) << (reader.rowPos()) << " | "
                   << std::setw(2) << id << " | "
                   << std::setw(14) << std::left << name << " | "
                   << std::setw(5) << std::right << std::fixed << std::setprecision(1) << score << " | "

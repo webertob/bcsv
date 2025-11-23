@@ -389,7 +389,7 @@ int main(int argc, char* argv[]) {
         }
         
         // Open BCSV file and get layout information
-        bcsv::Reader<bcsv::Layout> reader;
+        bcsv::ReaderDirectAccess<bcsv::Layout> reader;
         reader.open(config.input_file);
         
         const auto& layout = reader.layout();
@@ -467,7 +467,7 @@ int main(int argc, char* argv[]) {
             
             // Try to use the efficient countRows() function first
             try {
-                file_size = static_cast<int64_t>(reader.countRows());
+                file_size = static_cast<int64_t>(reader.rowCount());
                 if (file_size == 0) {
                     throw std::runtime_error("countRows() returned 0");
                 }

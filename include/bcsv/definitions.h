@@ -45,9 +45,15 @@ namespace bcsv {
     constexpr uint8_t BCSV_FORMAT_VERSION_PATCH = 0;
 
     // Constants for the binary file format
+    constexpr char MAGIC_BYTES_BCSV[4] = { 'B', 'C', 'S', 'V' };
+    constexpr char MAGIC_BYTES_PCKT[4] = { 'P', 'C', 'K', 'T' };
+    constexpr char MAGIC_BYTES_FOOTER_BIDX[4] = { 'B', 'I', 'D', 'X' };
+    constexpr char MAGIC_BYTES_FOOTER_EIDX[4] = { 'E', 'I', 'D', 'X' }; 
     constexpr uint32_t BCSV_MAGIC = 0x56534342;   // "BCSV" in little-endian
     constexpr uint32_t PCKT_MAGIC = 0x54434B50;   // "PCKT" in little-endian
-    constexpr uint32_t PCKT_TERMINATOR = 0xFFFF;  // Marker value to indicate end of packet data (no more rows to come)
+    constexpr uint32_t FOOTER_BIDX_MAGIC = 0x58444942;   // "BIDX" in little-endian
+    constexpr uint32_t FOOTER_EIDX_MAGIC = 0x58444945;   // "EIDX" in little-endian
+    constexpr uint32_t PCKT_TERMINATOR = 0xFFFFFFFF;  // Marker value to indicate end of packet data (no more rows to come)
     constexpr size_t MAX_COLUMN_COUNT  = std::numeric_limits<uint16_t>::max();  // Maximum number of columns
     constexpr size_t MAX_COLUMN_LENGTH = std::numeric_limits<uint16_t>::max();  // Maximum width of column content
     constexpr size_t MAX_STRING_LENGTH = MAX_COLUMN_LENGTH;                     // Maximum length of string data

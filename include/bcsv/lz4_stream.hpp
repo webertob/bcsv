@@ -36,7 +36,7 @@ namespace bcsv {
             static constexpr size_t MAX_BUFFER_SIZE = MAX_USABLE_BUFFER_SIZE + LZ4_DICT_SIZE + LZ4_MARGIN;
             
             LZ4_stream_t stream_;
-            std::vector<std::byte, LazyAllocator<std::byte>> buffer_;
+            ByteBuffer buffer_;
             int acceleration_;
             int pos_ = 0;
             
@@ -89,7 +89,7 @@ namespace bcsv {
              * @param dst Destination vector to append compressed data to.
              * @throws std::runtime_error if compression fails.
              */
-            void compress(std::span<const std::byte> src, std::vector<std::byte> &dst) {
+            void compress(std::span<const std::byte> src, ByteBuffer &dst) {
                 if (src.empty()) return;
 
                 size_t originalSize = dst.size();
@@ -163,10 +163,28 @@ namespace bcsv {
                 dst.resize(originalSize + compressedSize);
             }
             
-            std::vector<std::byte> compress(std::span<const std::byte> src) {
-                std::vector<std::byte> dst;
+            ByteBuffer compress(std::span<const std::byte> src) {
+                ByteBuffer dst;
                 compress(src, dst);
                 return dst;
+            }
+    };
+
+    template<size_t MAX_USABLE_BUFFER_SIZE = 16 * 1024 * 1024>
+    class LZ4CompressionStreamInternalBuffer : public LZ4CompressionStream<MAX_USABLE_BUFFER_SIZE> {
+        ByteBuffer compressedBuffer_;
+
+        public:
+            explicit LZ4CompressionStreamInternalBuffer(size_t initial_capacity = 64 * 1024, int acceleration = 1)
+                : LZ4CompressionStream<MAX_USABLE_BUFFER_SIZE>(initial_capacity, acceleration)
+                , compressedBuffer_(initial_capacity)
+            {
+            }
+
+            std::span<std::byte> compressUseInternalBuffer(std::span<const std::byte> src) {
+                compressedBuffer_.clear();
+                this->compress(src, compressedBuffer_);
+                return std::span<std::byte>(compressedBuffer_.data(), compressedBuffer_.size());
             }
     };
 
@@ -194,7 +212,7 @@ namespace bcsv {
             static constexpr size_t MAX_BUFFER_SIZE = MAX_USABLE_BUFFER_SIZE + LZ4_DICT_SIZE + LZ4_MARGIN;
 
             LZ4_streamDecode_t stream_;
-            std::vector<std::byte, LazyAllocator<std::byte>> buffer_;
+            ByteBuffer buffer_;
             int pos_ = 0;
 
         public:

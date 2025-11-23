@@ -13,6 +13,7 @@
 #include <vector>
 #include <iostream>
 #include <cstring>
+#include "bcsv/definitions.h"
 #include "checksum.hpp"
 
 namespace bcsv {
@@ -73,13 +74,13 @@ namespace bcsv {
     public: 
         #pragma pack(push, 1)
         struct ConstSection {
-            const char startMagic[4];   ///< "EIDX" magic number
+            uint32_t startMagic;        ///< "EIDX" magic number
             uint32_t startOffset;       ///< Bytes from EOF to "BIDX"
             uint64_t rowCount;          ///< Total number of rows in file
             uint64_t checksum;          ///< xxHash64 of entire index (from "BIDX" to totalRowCount)
             
             ConstSection(uint32_t startOffset_ = 0, uint64_t totalRows_ = 0)
-                : startMagic{'E', 'I', 'D', 'X'}
+                : startMagic(FOOTER_EIDX_MAGIC)
                 , startOffset(startOffset_)
                 , rowCount(totalRows_)
                 , checksum(0)
@@ -181,14 +182,13 @@ namespace bcsv {
 
             // Calculate checksum
             Checksum::Streaming checksum;
-            const char startMagic[4] = {'B', 'I', 'D', 'X'};
-            checksum.update(startMagic, 4);
+            checksum.update(MAGIC_BYTES_FOOTER_BIDX, 4);
             checksum.update(packetIndex_.data(), packetIndex_.size() * sizeof(PacketIndexEntry));
             checksum.update(&constSection_, sizeof(ConstSection) - sizeof(constSection_.checksum));
             constSection_.checksum = checksum.finalize();
 
             // Write to stream
-            stream.write(startMagic, 4);
+            stream.write(MAGIC_BYTES_FOOTER_BIDX, 4);
             stream.write(reinterpret_cast<const char*>(packetIndex_.data()), packetIndex_.size() * sizeof(PacketIndexEntry));
             stream.write(reinterpret_cast<const char*>(&constSection_), sizeof(ConstSection));
             return stream.good();

@@ -194,7 +194,7 @@ void readBCSV() {
                 error = true;
             }
         }   
-        rowIndex = reader.pos();
+        rowIndex = reader.rowPos();
     }
 
     reader.close();
@@ -264,7 +264,7 @@ void readZoHBCSV() {
                 error = true;
             }
         }   
-        rowIndex = reader.pos();
+        rowIndex = reader.rowPos();
     }
 
     reader.close();

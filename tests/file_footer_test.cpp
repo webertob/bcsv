@@ -75,17 +75,17 @@ TEST_F(FileFooterTest, SetGetProperties) {
 TEST_F(FileFooterTest, CalculateSize) {
     FileFooter index;
     
-    // Empty index: 4 (BIDX) + 4 (EIDX) + 4 (offset) + 8 (checksum) + 8 (rows) + 8 (index checksum) = 36 bytes
-    EXPECT_EQ(index.encodedSize(), 36);
+    // Empty index: 4 (BIDX) + 4 (EIDX) + 4 (offset) + 8 (rows) + 8 (index checksum) = 28 bytes
+    EXPECT_EQ(index.encodedSize(), 28);
     
-    // Add 1 packet: 36 + 16 = 52 bytes
+    // Add 1 packet: 28 + 16 = 44 bytes
     index.packetIndex().emplace_back(100, 0);
-    EXPECT_EQ(index.encodedSize(), 52);
+    EXPECT_EQ(index.encodedSize(), 44);
     
-    // Add 2 more packets: 36 + 48 = 84 bytes
+    // Add 2 more packets: 28 + 48 = 76 bytes
     index.packetIndex().emplace_back(5000, 1000);
     index.packetIndex().emplace_back(10000, 2000);
-    EXPECT_EQ(index.encodedSize(), 84);
+    EXPECT_EQ(index.encodedSize(), 76);
 }
 
 // Test: Clear index
@@ -116,7 +116,7 @@ TEST_F(FileFooterTest, WriteReadEmptyIndex) {
     
     // Position stream at footer for reading (clear state first)
     stream.clear();  // Clear any error flags
-    stream.seekg(-static_cast<int64_t>(sizeof(FileFooter)), std::ios::end);
+    stream.seekg(-static_cast<int64_t>(sizeof(FileFooter::ConstSection)), std::ios::end);
     
     // Read back
     FileFooter copy;
@@ -142,7 +142,7 @@ TEST_F(FileFooterTest, WriteReadWithPackets) {
     
     // Position stream at footer for reading (clear state first)
     stream.clear();
-    stream.seekg(-static_cast<int64_t>(sizeof(FileFooter)), std::ios::end);
+    stream.seekg(-static_cast<int64_t>(sizeof(FileFooter::ConstSection)), std::ios::end);
     
     // Read back
     FileFooter copy;
@@ -212,7 +212,7 @@ TEST_F(FileFooterTest, ReadCorruptedStartMagic) {
     
     // Try to read
     stream.clear();  // Clear state again
-    stream.seekg(-static_cast<int64_t>(sizeof(FileFooter)), std::ios::end);
+    stream.seekg(-static_cast<int64_t>(sizeof(FileFooter::ConstSection)), std::ios::end);
     FileFooter copy;
     EXPECT_FALSE(copy.read(stream));
 }
@@ -229,12 +229,12 @@ TEST_F(FileFooterTest, ReadCorruptedEndMagic) {
     // Find and corrupt the end magic
     size_t indexSize = original.encodedSize();
     stream.clear();  // Clear state
-    stream.seekp(indexSize - sizeof(FileFooter));
+    stream.seekp(indexSize - sizeof(FileFooter::ConstSection));
     stream.write("XXXX", 4);
     
     // Try to read
     stream.clear();  // Clear state again
-    stream.seekg(-static_cast<int64_t>(sizeof(FileFooter)), std::ios::end);
+    stream.seekg(-static_cast<int64_t>(sizeof(FileFooter::ConstSection)), std::ios::end);
     FileFooter copy;
     EXPECT_FALSE(copy.read(stream));
 }
@@ -256,7 +256,7 @@ TEST_F(FileFooterTest, ReadCorruptedChecksum) {
     
     // Try to read
     stream.clear();  // Clear state again
-    stream.seekg(-static_cast<int64_t>(sizeof(FileFooter)), std::ios::end);
+    stream.seekg(-static_cast<int64_t>(sizeof(FileFooter::ConstSection)), std::ios::end);
     FileFooter copy;
     EXPECT_FALSE(copy.read(stream));
 }
@@ -275,12 +275,12 @@ TEST_F(FileFooterTest, LargeIndex) {
     std::stringstream stream;
     EXPECT_TRUE(original.write(stream));
     
-    // Expected size: 36 + 1000*16 = 16036 bytes
-    EXPECT_EQ(original.encodedSize(), 16036);
+    // Expected size: 36 + 1000*16 = 16036 bytes -> 28 + 1000*16 = 16028 bytes
+    EXPECT_EQ(original.encodedSize(), 16028);
     
     // Read back
     stream.clear();  // Clear state
-    stream.seekg(-static_cast<int64_t>(sizeof(FileFooter)), std::ios::end);
+    stream.seekg(-static_cast<int64_t>(sizeof(FileFooter::ConstSection)), std::ios::end);
     FileFooter copy;
     EXPECT_TRUE(copy.read(stream));
     
@@ -322,7 +322,7 @@ TEST_F(FileFooterTest, GetPacketsVector) {
 
 // Test: Footer size constant
 TEST_F(FileFooterTest, FooterSizeConstant) {
-    EXPECT_EQ(sizeof(FileFooter), 32);
+    EXPECT_EQ(sizeof(FileFooter), 48);
 }
 
 // Test: Edge case - maximum values
@@ -336,7 +336,7 @@ TEST_F(FileFooterTest, MaximumValues) {
     EXPECT_TRUE(original.write(stream));
     
     stream.clear();  // Clear state
-    stream.seekg(-static_cast<int64_t>(sizeof(FileFooter)), std::ios::end);
+    stream.seekg(-static_cast<int64_t>(sizeof(FileFooter::ConstSection)), std::ios::end);
     FileFooter copy;
     EXPECT_TRUE(copy.read(stream));
     

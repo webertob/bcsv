@@ -20,14 +20,22 @@ endif()
 # for full license information.
 
 # Tests CMakeLists.txt
-add_executable(bcsv_gtest 
+
+option(BCSV_ENABLE_STRESS_TESTS "Enable time-consuming stress tests and benchmarks" OFF)
+
+set(TEST_SOURCES
     bcsv_comprehensive_test.cpp
     vectorized_access_test.cpp
     vle_template_test.cpp
     lz4_stream_test.cpp
-    lz4_stress_test.cpp
     file_footer_test.cpp
 )
+
+if(BCSV_ENABLE_STRESS_TESTS)
+    list(APPEND TEST_SOURCES lz4_stress_test.cpp)
+endif()
+
+add_executable(bcsv_gtest ${TEST_SOURCES})
 
 # Link the bcsv library and Google Test
 target_link_libraries(bcsv_gtest PRIVATE 

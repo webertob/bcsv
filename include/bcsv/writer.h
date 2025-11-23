@@ -10,25 +10,16 @@
 #pragma once
 
 #include <cstddef>
-#include <iostream>
 #include <fstream>
-#include <string>
-#include <vector>
 #include <filesystem>
 #include <optional>
-
-#include <lz4.h>
-#include <lz4hc.h>
 
 #include "definitions.h"
 #include "byte_buffer.h"
 #include "layout.h"
 #include "file_header.h"
 #include "file_footer.h"
-#include "row.h"
-#include "packet_header.h"
 #include "lz4_stream.hpp"
-#include "vle.hpp"
 #include "checksum.hpp"
 
 namespace bcsv {
@@ -45,7 +36,7 @@ namespace bcsv {
         FileHeader              fileHeader_;                // File header for accessing flags and metadata
         FilePath                filePath_;                  // Always present
         std::ofstream           stream_;                    // Always binary file stream
-        std::optional<LZ4CompressionStream<>> 
+        std::optional<LZ4CompressionStreamInternalBuffer<MAX_ROW_LENGTH>> 
                                 lz4Stream_;                 // std::nullopt if compressionLevel == 0
         
         // Packet management

@@ -177,9 +177,8 @@ namespace bcsv {
         }
 
         // 1. Write packet terminator (this effectivly limits the maximum length of a row)
-        const size_t terminator = PCKT_TERMINATOR; // Large value to indicate terminator
-        stream_.write(reinterpret_cast<const char*>(&terminator), sizeof(terminator));
-        packetHash_.update(reinterpret_cast<const char*>(&terminator), sizeof(terminator));
+        // We use writeRowLength to ensure consistent VLE encoding and checksum updates
+        writeRowLength(PCKT_TERMINATOR >> 2);
 
         // 2. Finalize packet: write checksum
         uint64_t hash = packetHash_.finalize();
@@ -229,6 +228,7 @@ namespace bcsv {
         }
 
         // 1. Serialize row to buffer
+        rowBufferRaw_.clear();
         std::span<std::byte> actRow;
         if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
             actRow = row_.serializeToZoH(rowBufferRaw_);
@@ -238,40 +238,42 @@ namespace bcsv {
         }
 
         // 2. write row data to file
-        if ((actRow.size() == 0) || std::equal(actRow.begin(), actRow.end(), rowBufferPrev_.begin())) {
-            // no data or identical to previous row -> ZoH repeat
+        if  (
+                fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD) 
+            &&  (
+                    actRow.size() == 0
+                ||  (
+                        actRow.size() == rowBufferPrev_.size() 
+                    &&  std::equal(actRow.begin(), actRow.end(), rowBufferPrev_.begin())
+                    )
+                )
+            )
+        {
+            //identical to previous row -> ZoH repeat
             writeRowLength(0);
             rowBufferRaw_.resize(rowBufferRaw_.size()-actRow.size()); // clear actRow from buffer
-        } else if(lz4Stream_.has_value()) {
+            //std::swap(rowBufferPrev_, rowBufferRaw_); --> ZoH repeat, keep previous row inplace
+        }
+        else if(lz4Stream_.has_value()) 
+        {
             // compress data using LZ4 before writing
-
-
-            // Piecewise compression does not work, as we need to write row length first.
-            // Therefore we need to hold the entire compressed row in memory anyway.
-
-            // we need to inform the LZ4 about, where to find the previouse 64KB uncompressed data
-
-            const auto & lz4 = lz4Stream_->compress(rowBufferRaw_);
-            // If compression failed or not beneficial (size 0), fall back to uncompressed
-            if (lz4.size() > 0 && lz4.size() < rowBufferRaw_.size()) {
-                // Use compressed data
-                writeRowLength(lz4.size());
-                stream_.write(reinterpret_cast<const char*>(lz4.data()), lz4.size());
-                packetSize_ += lz4.size();
-            } else {
-                // Fall back to uncompressed (compression not beneficial)
-                writeRowLength(rowBufferRaw_.size());
-                stream_.write(reinterpret_cast<const char*>(rowBufferRaw_.data()), rowBufferRaw_.size());
-                packetSize_ += rowBufferRaw_.size();
-            }
+            const auto compressedData= lz4Stream_->compressUseInternalBuffer(rowBufferRaw_);
+            writeRowLength(compressedData.size());
+            stream_.write(reinterpret_cast<const char*>(compressedData.data()), compressedData.size());
+            packetHash_.update(compressedData);
+            packetSize_ += compressedData.size();
             std::swap(rowBufferPrev_, rowBufferRaw_);
-        } else {
-            // Non-ZoH row, no compression
+        } 
+        else 
+        {
+            // Non-ZoH row, no compression, simply write raw data to stream
             writeRowLength(rowBufferRaw_.size());
             stream_.write(reinterpret_cast<const char*>(rowBufferRaw_.data()), rowBufferRaw_.size());
+            packetHash_.update(rowBufferRaw_);
             packetSize_ += rowBufferRaw_.size();
             std::swap(rowBufferPrev_, rowBufferRaw_);
         }
+
         rowCnt_++;
         if(packetSize_ >= fileHeader_.getPacketSize()) {
             closePacket();

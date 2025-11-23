@@ -73,7 +73,8 @@ protected:
         // Compress
         for (size_t i = 0; i < sizes.size(); ++i) {
             auto input = getRandomSpan(sizes[i], i * 123);
-            compressed_data.push_back(compressor.compress(input));
+            auto c = compressor.compress(input);
+            compressed_data.emplace_back(c.begin(), c.end());
         }
 
         // Decompress
@@ -128,7 +129,8 @@ TEST_F(LZ4StressTest, ComprehensiveRandomStream) {
             auto input_span = getRandomSpan(pkg_size, p * 1024 + s); // Pseudo-random offset
             
             original_sizes.push_back(pkg_size);
-            compressed_stream_data.push_back(compressor.compress(input_span));
+            auto c = compressor.compress(input_span);
+            compressed_stream_data.emplace_back(c.begin(), c.end());
         }
 
         // --- Decompression & Verification Phase ---
@@ -207,7 +209,8 @@ TEST_F(LZ4StressTest, ParallelExecution) {
                     size_t sz = size_dist(rng);
                     sizes.push_back(sz);
                     auto input = getRandomSpan(sz, t*s*p);
-                    compressed_data.push_back(compressor.compress(input));
+                    auto c = compressor.compress(input);
+                    compressed_data.emplace_back(c.begin(), c.end());
                 }
                 
                 // Decompress
@@ -268,7 +271,7 @@ TEST_F(LZ4StressTest, Benchmark) {
     latencies.reserve(NUM_STREAMS * 100);
 
     // Reusable buffer for compression to avoid repeated allocations
-    std::vector<std::byte> compressed_buffer;
+    bcsv::ByteBuffer compressed_buffer;
     // Reserve enough for largest packet + overhead
     compressed_buffer.reserve(16 * 1024 * 1024 + 1024); 
 

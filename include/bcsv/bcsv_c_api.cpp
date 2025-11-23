@@ -83,39 +83,42 @@ void bcsv_layout_assign(bcsv_layout_t dest, const_bcsv_layout_t src) {
 
 // Reader API
 bcsv_reader_t bcsv_reader_create(bcsv_read_mode_t mode) {
-    return new bcsv::Reader<bcsv::Layout>(static_cast<bcsv::ReaderMode>(mode));
+    // Mode is currently ignored as ReaderDirectAccess provides full functionality
+    // and strict/resilient modes are not yet exposed in the new C++ API
+    (void)mode; 
+    return new bcsv::ReaderDirectAccess<bcsv::Layout>();
 }
 
 void bcsv_reader_destroy(bcsv_reader_t reader) {
-    delete static_cast<bcsv::Reader<bcsv::Layout>*>(reader);
+    delete static_cast<bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader);
 }
 
 void bcsv_reader_close(bcsv_reader_t reader) {
-    static_cast<bcsv::Reader<bcsv::Layout>*>(reader)->close();
+    static_cast<bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader)->close();
 }
 
 size_t bcsv_reader_count_rows(const_bcsv_reader_t reader) {
-    return static_cast<const bcsv::Reader<bcsv::Layout>*>(reader)->countRows();
+    return static_cast<const bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader)->rowCount();
 }
 
 bool bcsv_reader_open(bcsv_reader_t reader, const char* filename) {
-    return static_cast<bcsv::Reader<bcsv::Layout>*>(reader)->open(filename);
+    return static_cast<bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader)->open(filename);
 }
 
 bool bcsv_reader_is_open(const_bcsv_reader_t reader) {
-    return static_cast<const bcsv::Reader<bcsv::Layout>*>(reader)->isOpen();
+    return static_cast<const bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader)->isOpen();
 }
 
 #ifdef _WIN32
 const wchar_t* bcsv_reader_filename(const_bcsv_reader_t reader) {
-    const auto* r = static_cast<const bcsv::Reader<bcsv::Layout>*>(reader);
+    const auto* r = static_cast<const bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader);
     const auto& path = r->filePath();
     // On Windows, return native wchar_t string directly (no conversion needed)
     return path.c_str();
 }
 #else
 const char* bcsv_reader_filename(const_bcsv_reader_t reader) {
-    const auto* r = static_cast<const bcsv::Reader<bcsv::Layout>*>(reader);
+    const auto* r = static_cast<const bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader);
     const auto& path = r->filePath();
     // On POSIX systems, return native char string directly (no conversion needed)
     return path.c_str();
@@ -123,22 +126,22 @@ const char* bcsv_reader_filename(const_bcsv_reader_t reader) {
 #endif
 
 const_bcsv_layout_t bcsv_reader_layout(const_bcsv_reader_t reader) {
-    auto r = static_cast<const  bcsv::Reader<bcsv::Layout>*>(reader);
+    auto r = static_cast<const bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader);
     auto l = &(r->layout());
     return reinterpret_cast<const_bcsv_layout_t>(l);
 }
 
 bool bcsv_reader_next(bcsv_reader_t reader) {
-    return static_cast<bcsv::Reader<bcsv::Layout>*>(reader)->readNext();
+    return static_cast<bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader)->readNext();
 }
 
 const_bcsv_row_t bcsv_reader_row(const_bcsv_reader_t reader) {
-    auto r = static_cast<const bcsv::Reader<bcsv::Layout>*>(reader);
+    auto r = static_cast<const bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader);
     auto x = &(r->row());
     return reinterpret_cast<const_bcsv_row_t>(x);
 }
 size_t bcsv_reader_index(const_bcsv_reader_t reader) {
-    return static_cast<const bcsv::Reader<bcsv::Layout>*>(reader)->rowPos();
+    return static_cast<const bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader)->rowPos();
 }
 
 // Writer API
@@ -168,8 +171,8 @@ void bcsv_writer_flush(bcsv_writer_t writer) {
 }
 
 bool bcsv_writer_open(bcsv_writer_t writer, const char* filename, bool overwrite, int compress, int block_size_kb, bcsv_file_flags_t flags) {
-    return static_cast<bcsv::Writer<bcsv::Layout>*>(writer)->open(  std::string_view(filename), 
-                                                                    static_cast<bool>(overwrite),
+    return static_cast<bcsv::Writer<bcsv::Layout>*>(writer)->open(  filename, 
+                                                                    overwrite,
                                                                     static_cast<size_t>(compress),
                                                                     static_cast<size_t>(block_size_kb), 
                                                                     static_cast<bcsv::FileFlags>(flags));
@@ -200,7 +203,8 @@ const_bcsv_layout_t bcsv_writer_layout(const_bcsv_writer_t writer) {
 }
 
 bool bcsv_writer_next(bcsv_writer_t writer) {
-    return static_cast<bcsv::Writer<bcsv::Layout>*>(writer)->writeRow();
+    static_cast<bcsv::Writer<bcsv::Layout>*>(writer)->writeRow();
+    return true; // writeRow returns void, assume success if no exception
 }
 
 bcsv_row_t bcsv_writer_row(bcsv_writer_t writer) {
@@ -208,7 +212,7 @@ bcsv_row_t bcsv_writer_row(bcsv_writer_t writer) {
 }
 
 size_t bcsv_writer_index(const_bcsv_writer_t writer) {
-    return static_cast<const bcsv::Writer<bcsv::Layout>*>(writer)->rowIndex();
+    return static_cast<const bcsv::Writer<bcsv::Layout>*>(writer)->rowCount();
 }
 
 // Row API

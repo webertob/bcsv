@@ -17,6 +17,7 @@
  * Supports v1.3.0 streaming LZ4 compression with VLE-encoded payloads.
  */
 
+#include "bcsv/file_footer.h"
 #include "reader.h"
 #include "file_header.h"
 #include "layout.h"
@@ -28,6 +29,7 @@
 #include <fstream>
 #include <cstring>
 #include <iosfwd>
+#include <span>
 
 namespace bcsv {
 
@@ -224,13 +226,15 @@ namespace bcsv {
      * @brief Open next packet for sequential reading
      */
     template<LayoutConcept LayoutType>
-    void Reader<LayoutType>::openPacket() {
+    bool Reader<LayoutType>::openPacket() {
         assert(stream_);
 
         packetPos_ = stream_.tellg();
         PacketHeader header;
         if (!header.read(stream_)) {
-            throw std::runtime_error("Error: Failed to read packet header");
+            stream_.clear();           // clear fail state
+            stream_.seekg(packetPos_); // reset to previous position
+            return false;
         }
         
         // Initialize LZ4 decompression if needed
@@ -240,6 +244,7 @@ namespace bcsv {
         
         // Reset payload hasher for checksum validation
         packetHash_.reset();
+        return true;
     }
 
     /**
@@ -260,32 +265,57 @@ namespace bcsv {
             while (rowLen == PCKT_TERMINATOR >> 2) {
                 // End of packet reached
                 closePacket();
-                openPacket();
+                if(!openPacket()) {
+                    // check if we have reached end of the file?
+                    char magic[4];
+                    stream_.read(magic, 4);
+                    if(stream_.gcount() != 4) {
+                        return false; // normal exit: end of file reached
+                    } else if(std::memcmp(magic, MAGIC_BYTES_FOOTER_BIDX, 4) != 0) {
+                        return false; // normal exit: end of file (footer) reached
+                    } else {
+                        throw std::runtime_error("Error: Unexpected data after packet terminator");
+                    }
+                }
                 readRowLength(rowLen, stream_, &packetHash_);
             }
 
-            // if rowLen == 0 -> ZoH repeat previous row
             if (rowLen == 0) {
-                if(rowPos_ == 0) {
-                    throw std::runtime_error("Error: ZoH repeat not allowed for first row in file");
+                // repeat previous row
+                if(     row_.layout().columnCount() > 0 
+                    && !fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) 
+                {
+                    throw std::runtime_error("Error: ZERO_ORDER_HOLD flag not set, but repeat row encountered");
+                }
+
+                if(     rowBuffer_.empty() 
+                    &&  row_.layout().columnCount() > 0 ) 
+                {
+                    throw std::runtime_error("Error: Cannot repeat previous row, no previous row data available");
                 }
                 rowPos_++;
                 return true;
             }
 
+            // read row data
             rowBuffer_.resize(rowLen);
             stream_.read(reinterpret_cast<char*>(rowBuffer_.data()), rowLen);
             if (!stream_ || stream_.gcount() != static_cast<std::streamsize>(rowLen)) {
                 throw std::runtime_error("Error: Failed to read row data");
             }
             packetHash_.update(rowBuffer_);
+            std::span<const std::byte> rowRawData(rowBuffer_);
 
+            // decompress if needed
             if(lz4Stream_.has_value()) {
-                const auto decompressedData = lz4Stream_->decompress(rowBuffer_);
-                row_.deserializeFrom(decompressedData);
+                rowRawData = lz4Stream_->decompress(rowBuffer_);
+            }
+
+            // deserialize row
+            if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
+                row_.deserializeFromZoH(rowRawData);
             } else {
-                // No compression
-                row_.deserializeFrom(rowBuffer_);
+                row_.deserializeFrom(rowRawData);
             }
             rowPos_++;
             return true;        
