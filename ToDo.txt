@@ -1,37 +1,5 @@
 Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment is not considered, as we favor small file size. For temporary data and algorithms, higher-order alignment should be used.
 
-Next tactical items
-1. make dedicated side study BLE vs. VLE for row length encoding
-2. make dedicated side study commparing small chunk performance on xxHash64
-
-- change packet structure.
-    - Replace packet  terminator with 0xFFFFFFFF, not using offset between VLE/BLE and rowlength
-    - terminator is followed by xxHash64
-- packet header comes without hash of previouse payload
-- filefooter comes without hash of previouse payload
-
-
-- derive istream and ostream to include HashStream
-    hash64 bits blocks only
-    include BLE read&write
-
-- finish reader (sequential read)
-- get it compiled
-- run the tests
-- remove packet_header.h/hpp and replace by packet_header_v3.h
-- build ReaderDirectAccess
-- discuss with AI on why we have version_generate.h and definitions.h
-    - Do we want to change file_format versioning, from library versioning?
-- benchmark alternative to VLE BLE?
-- benchmark xxHash64 for adding small chunks (single) --> consider buffering in reader/writer
-- condsider adding a function to write index to an exisiting file cliTool? Or using a Dedicated Reader call, 
-
-
-
-
-
-
-
 0.  Write project mission statement, upload to git hub
     Aims on combining the easy usage of CSV files with the performance and file size of a binary format. It should perform specifically well for large time series data sets and also cover small embedded platforms. Therefore it is an explicit requirement that we support files that are larger than the available memory (RAM), thus the file is read in chunks or rows. For the same reason the computational effort should be reasonable small. In order to support real-time processing the call time to write or read data should be constant. 
     The file should exploit time-series data structure to reduce file size. Specifically it should be efficient on recording  Binary Wave Forms and constant data (spars recording / events) to achieve good compression. Compression ratio to be balanced with requirements on computational and streaming. It should be possible to read data from the file even if write was interrupted. We want to be able to retrieve the last fully written row. The file format is to be optimized for sequential row wise read and write operations, but should support random read with acceptable speeds, too. 
@@ -47,76 +15,40 @@ Next tactical items
     A set if CLI tools should help working with the files, supporting common work flows (view files, filter files, split and merge files, convert from and other formats).
     Who is the customer: Anybody how is running metrology tasks with digital tools. 
 
-1.  Create implementation plan
-    1.	Write / improve mission statement. Discus with AI to improve
-    4.	Change file structure to use compression stream (LZ4)
-    5.	Change file structure to use index
-    6.	Implement variable Length Encoding (as of below)
-    7.	Implement File Flags (raw, stats)
-    8.	Implement Column Modifiers (index, volatile, monotonic, ordered)
 
+0. Test and Stabilize direct access feature
+    - build and run unit tests
+    - build and run benchmarks
+1. Test and Stabilize CLI tools:
+    a. bcsv2csv
+    b. csv2bcsv
+    c. bcsvHead
+    d. bcsvTail
+2. Benchmark BCSV 1.3 against 1.2
+3. Test and Stabilize C_API -> C#
+4. Test and Stabilize Python
 
-2.  change to stream interface:
-    - benchmarks and tests have shown:
-        - That we must avoid small/medium slized blocks in the range of 16 - 128kb (espacially the region from 32 -64kb) as these size are neither gaining the benefits of sequential reads, nor the benefit of sparse reading. 
-        - We also note that larger blockSizes i.e. 4MBytes result in better compression and faster sparse reads. 
-        - Current batch processing / batch compression leads to uneven execution times for writer.writeRow(), with severe spikes when a packet gets compressed and written to file. 
-          This signifcantly undermines the usage of bcsv for recording real-time applications, which actually is one of the main reasons to develop bcsv. Therefore we need to reduce the worst case exceution time of writer.writeRow(). 
-          Lets aim on optimizing for the lower 1 percentile execution time, while also maintaining a good avergae execution time of writer.writeRow(). --> We propably need to replace batch processing with stream processing.
-        - LZ4 internal mechanisms are not able to ensure data integrit. Therefore we use xxHash64.
-        - LZ4 stream interface is a good option to sequentially compress individual rows and appending them pieceweise to the file (check lz4_steaming_performance_tests)
-        - To accelerate PacketHeader access, during sparse reading, we want to have a dedicated checksum protecting the packetHeader only. Thus we do not need to process the payload when we actually want to valid the header.
-        - We have tested staggered write pattern (updating the header after processing & writing the payload). It is very slow and we should avoid.
-    - The hard problem:
-        - The reader would benefit from knowing information on the positions and content in front of it, i.e. first row, number of rows, payload size of each packet etc. espacially for random access reads. 
-        - While the writer only has that information after writing a row or packet.
-    - Option: 
-        - writer writes the file sequentially, row by row (stream compression, stream checksum, stream write)
-        - writer adds PacketHeaders that are only refering on information already available (checksum of the current header, checksum of the previous packet payload, first row (index) in this packet). The main intend of the PackeHeaders is to mark a reset of the LZ4 stream to improve robustness (data integrity and recovery).
-        - The Packet structure also is an enabler to random read access. c
-        - writer should add an index at the very end of the file, providing information on the position of packet headers and the rows they cover. 
-        - Reader could use that index if random access is intended.
-    
-    Therefore we need to create a new FileFormat along the following design.
-        - No change to FileHeader, except changing version to 1.2.0 to mark the changes
-        - introduce a FileFlag::WideRow to switch maximim encoded row length from 16bit (64kb default) to 32bit(4GB)
-        - use LZ4 stream compression, instead of batch compression
-        - dedicated checksums for PacketHeader and PacketPayload
-        
-        - Change PackeHeader: 
-            - PacketHeader to consist of const char[4] PCKT_MAGIC, uint64_t firstRow, uint64_t checkSumPrvPkt, uint64_t checksum.
-                - PCKT_MAGIC is just a 4byte identifier to mark the header/start of a new packet
-                - firstRow is the index of the first row contained in the just starting packet, index relative to file, so it is growing over subsequent packets. also number of packet in the previouse packet cna be calculated by substracting firsts row of previouse packet with first row of this packet. Counting starts with zero (C standrad)
-                - checkSumPrvPkt is the checkSum (xxHash64) of the payload of the previouse packet. for the header of the first packet it is 0 (zero).
-                - checkSum (xxHash64) over PCKT_MAGIC, firstRow and checkSumPrvPkt do check data integrity and ensure we have a Packetheader is valid/undamaged
+5. Refactoring:
+    - size_t vle_encode(value, void* dst, size_t dst_capacity)
+    - void   vle_encode(value, ByteBuffer &bufferToAppend)
+    - size_t vle_decode(&value, void* src, size_t src_capacity) //returns the number of bytes consumed
+    - value  vle_decode(std::span<std::byte> &bufferToRead)     //span gets updated, removing the bytes consumed
+    - bool   vle_read(&value, &istream, *hash = 0)
+    - bool   vle_write(&value, &ostream, *hash = 0)
 
-        - Interleave row length with row data (i.e. as demonstrated in lz4_stream_termination_test.cpp):
-            uint16 rowLength: holds how many Bytes the compressed row takes (uint32_t if WideRow mode is used)
-            char[rowLength] rowContent contains the (Lz4 stream compressed) content of the encoded row
+    - size_t ble_encode(value, void* dst, size_t dst_capacity)
+    - void   ble_encode(value, ByteBuffer &bufferToAppend)
+    - size_t ble_decode(&value, void* src, size_t src_capacity) //returns the number of bytes consumed
+    - value  ble_decode(std::span<std::byte> &bufferToRead)     //span gets updated, removing the bytes consumed
+    - bool   ble_read(&value, &istream, *hash = 0)
+    - bool   ble_write(&value, &ostream, *hash = 0)
 
-            special cases: 
-                if rowLength == 0 and FileFlag::ZoH is used the current row is an exact copy of the previouse one
-                if rowLength == numericalLimit::Max, end of packet no rows left. So we expect the next PacketHeader to start (PCKT_MAGIC) or FileFooter
+    - Modify Row to not use std::variants, consider alignment
 
-        - Add FileFooter to the end of the file.
-            uint32_t INDEX_START_MAGIC
-            uint64_t FILE_INDEX_HEADER_1st_PACKET, uint64_t INDEX_FIRST_ROW_1st_PACKET
-            uint64_t FILE_INDEX_HEADER_2nd_PACKET, uint64_t INDEX_FIRST_ROW_2nd_PACKET
-            ...
-            uint64_t FILE_INDEX_HEADER_nth_PACKET, uint64_t INDEX_FIRST_ROW_nth_PACKET
-            uint32_t INDEX_END_MAGIC
-            uint32_t FILE_INDEX_INDEX_START (counted from end of file)
-            uint64_t INDEX_LAST_ROW_IN_FILE
-            uint64_t CHECKSUM Index (xxhash from INDEX_START_MAGIC to INDEX_LAST_ROW_IN_FILE)
+6. Implement new row encoding schema.
+7. Implement File Flags (raw, stats)
+8. Implement Column Modifiers (index, volatile, monotonic, ordered)
 
-        - default PacketSize should be 8196Kb (8Mb). 
-            - if PackeSize == 0Kb we are completley disable packets, and create an absolutly flat file, no overheads, no index, optimized for sequential read/write. in that case payload directly starts after the FileHeader, file ends with checkSum and totalRowCount
-
-2.a Implement block-wise vle_decode and vle_encode functions for row length compression
-    - instead of putting the continuation bits to the highest bit in each byte, we use a group (bock) of bits at the begining of the first byte to encode the total length. The idea is that the encoding/decoding of the total length in a block 
-      is faster. yes we might lose a little compression, as we always encode the entire length. Perhaps we can balance by accepting slightly lower value range. i.e. encoding 64bit would require 3bits at the begining to encode the length. This would limit effective range. 
-      Most likley this acceptable for real use cases as we don't expect a row to ever extend to uint64_t::max, same applies for row nobers (indices)
-    - lets run benchmark to confirm pro and con and documnet the results. 
 
 3.Variable length encoding (float and integer values)
     Main usage of bcsv is the handling of time-series data. Thus we expect many rcurring or constantly falling or raising values and values that are similar to previouse values. In many cases the full extend of a variable type is not required to encode the actual value.
