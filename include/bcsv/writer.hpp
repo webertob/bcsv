@@ -178,7 +178,7 @@ namespace bcsv {
 
         // 1. Write packet terminator (this effectivly limits the maximum length of a row)
         // We use writeRowLength to ensure consistent VLE encoding and checksum updates
-        writeRowLength(PCKT_TERMINATOR >> 2);
+        writeRowLength(PCKT_TERMINATOR);
 
         // 2. Finalize packet: write checksum
         uint64_t hash = packetHash_.finalize();
