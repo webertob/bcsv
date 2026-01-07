@@ -277,7 +277,7 @@ namespace bcsv {
         readRowLength(rowLen, stream_, &packetHash_);
 
         // check for terminator
-        while (rowLen == PCKT_TERMINATOR >> 2) {
+        while (rowLen == PCKT_TERMINATOR) {
             // End of packet reached
             closePacket();
             if(!openPacket()) {
@@ -288,14 +288,12 @@ namespace bcsv {
 
         if (rowLen == 0) {
             // repeat previous row
-            if(     row_.layout().columnCount() > 0 
-                && !fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) 
+            if(!fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD) && row_.layout().columnCount() > 0) 
             {
                 throw std::runtime_error("Error: ZERO_ORDER_HOLD flag not set, but repeat row encountered");
             }
 
-            if(     rowBuffer_.empty() 
-                &&  row_.layout().columnCount() > 0 ) 
+            if( rowBuffer_.empty() && row_.layout().columnCount() > 0 ) 
             {
                 throw std::runtime_error("Error: Cannot repeat previous row, no previous row data available");
             }

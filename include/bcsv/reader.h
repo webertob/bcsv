@@ -34,8 +34,8 @@ namespace bcsv {
         using FilePath          = std::filesystem::path;
 
         FileHeader              fileHeader_;            // file header for accessing flags and metadata
-        FilePath                filePath_;              // always present
-        std::ifstream           stream_;                // always binary file stream
+        FilePath                filePath_;              // points to the input file
+        std::ifstream           stream_;                // input file binary stream
         std::optional< LZ4DecompressionStream< MAX_ROW_LENGTH> >
                                 lz4Stream_;             // packet level (de)-compression facility (nullopt if compressionLevel == 0)
 
@@ -44,9 +44,9 @@ namespace bcsv {
         std::streampos          packetPos_;             // position of the first byte of the current packet header in the file (PacketHeader MAGIC)
 
         // Global row tracking
-        ByteBuffer              rowBuffer_;             // current row, encoded, decompressed raw data
+        ByteBuffer              rowBuffer_;             // current row, encoded data (decompressed)
         size_t                  rowPos_;                // postion of current row in file (0-based row counter)
-        RowType                 row_;                   // current row, decoded
+        RowType                 row_;                   // current row, decoded data
 
     public:
         /**
