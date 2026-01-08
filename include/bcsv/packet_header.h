@@ -111,7 +111,7 @@ namespace bcsv {
          */
         bool read(std::istream& stream, bool silent = false) {
             stream.read(reinterpret_cast<char*>(this), sizeof(PacketHeader));
-            if (!stream.good()) {
+            if (stream.gcount() != sizeof(PacketHeader)) {
                 return false;
             }
             

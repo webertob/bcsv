@@ -179,39 +179,35 @@ namespace bcsv {
 
     template<LayoutConcept LayoutType>
     void Reader<LayoutType>::readRowLength(size_t& rowLength, std::istream& stream, Checksum::Streaming* checksum) {
-        rowLength = 0;
+        // Use a 32-bit buffer as the VLE format implies max 4 bytes (based on 2-bit length indicator)
+        uint32_t encodedValue = 0;
+        char* buffer = reinterpret_cast<char*>(&encodedValue);
 
-        // Read first byte into the 1st byte of a 32-bit register
-        stream.read(reinterpret_cast<char*>(&rowLength), 1);
-        if (!stream || stream.gcount() != 1) {
+        // Read first byte
+        if (!stream.get(buffer[0])) {
             throw std::runtime_error("Failed to read row length: unexpected end of stream");
         }
         
-        // Extract length bits (first 2 bits) - determines total bytes (1-4)
-        size_t numBytes = (rowLength & 0x03) + 1; // Mask: 0b00000011 -> values 0-3 map to 1-4 bytes
+        // Extract length bits (first 2 bits of the first byte)
+        // Mask: 0b00000011 -> values 0-3 map to 1-4 bytes
+        std::streamsize addBytes = (static_cast<uint8_t>(buffer[0]) & 0x03);
         
-        // Fast path for single-byte encoding (most common case)
-        if (numBytes == 1) {
-            if (checksum) {
-                checksum->update(reinterpret_cast<char*>(&rowLength), 1);
+        // Read remaining bytes if needed
+        if (addBytes != 0) {
+            stream.read(buffer + 1, addBytes);
+            if (stream.gcount() != addBytes) {
+                throw std::runtime_error("Failed to read row length: incomplete data");
             }
-            rowLength = rowLength >> 2;
-            return;
-        }
-                
-        // Read remaining bytes
-        stream.read(reinterpret_cast<char*>(&rowLength) + 1, numBytes - 1);
-        if (!stream || stream.gcount() != static_cast<std::streamsize>(numBytes - 1)) {
-            throw std::runtime_error("Failed to read row length: incomplete data");
         }
         
         // Update hash with all bytes read
         if (checksum) {
-            checksum->update(reinterpret_cast<char*>(&rowLength), numBytes);
+            checksum->update(buffer, addBytes+1);
         }
         
         // Extract value by shifting right 2 bits
-        rowLength = rowLength >> 2;
+        // Note: Assumes Little Endian memory layout, consistent with VLE format
+        rowLength = static_cast<size_t>(encodedValue >> 2);
     }
 
     template<LayoutConcept LayoutType>
@@ -240,19 +236,8 @@ namespace bcsv {
 
         packetPos_ = stream_.tellg();
         PacketHeader header;
-        if (!header.read(stream_, true)) {
-            if(stream_.eof()) {
-                return false;   // end of file reached, normal exit condition
-            } else if(header.magic == FOOTER_BIDX_MAGIC) {
-                stream_.clear();           // clear fail state
-                stream_.seekg(packetPos_); // reset to previous position
-                return false;   // end of file reached, normal exit condition
-            }
-            stream_.clear();           // clear fail state
-            stream_.seekg(packetPos_); // reset to previous position
-            throw std::runtime_error("Error: Invalid packet header encountered");
-        }
-        
+        bool success = header.read(stream_, true);
+
         // Initialize LZ4 decompression if needed
         if (lz4Stream_.has_value()) {
             lz4Stream_->reset();
@@ -260,6 +245,20 @@ namespace bcsv {
         
         // Reset payload hasher for checksum validation
         packetHash_.reset();
+
+        if (!success) {
+            if(header.magic == FOOTER_BIDX_MAGIC) {
+                stream_.clear();           // clear fail state
+                stream_.seekg(packetPos_); // reset to previous position
+                return false;   // end of file reached, normal exit condition
+            } else if(stream_.eof()) {
+                return false;   // end of file reached, normal exit condition
+            } else {
+                stream_.clear();           // clear fail state
+                stream_.seekg(packetPos_); // reset to previous position
+                throw std::runtime_error("Error: Failed to read packet header");
+            }
+        }
         return true;
     }
 
