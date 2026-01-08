@@ -33,6 +33,8 @@ namespace bcsv {
         using RowViewType       = typename LayoutType::RowViewType;
         using FilePath          = std::filesystem::path;
 
+        std::string             errMsg_;                // last error message description
+
         FileHeader              fileHeader_;            // file header for accessing flags and metadata
         FilePath                filePath_;              // points to the input file
         std::ifstream           stream_;                // input file binary stream
@@ -41,13 +43,14 @@ namespace bcsv {
 
         // Current packet state
         Checksum::Streaming     packetHash_;            // stream to validate payload using a checksum chain
+        bool                    packetOpen_{false};     // indicates if a packet is currently open for reading
         std::streampos          packetPos_;             // position of the first byte of the current packet header in the file (PacketHeader MAGIC)
 
         // Global row tracking
         ByteBuffer              rowBuffer_;             // current row, encoded data (decompressed)
         size_t                  rowPos_;                // postion of current row in file (0-based row counter)
         RowType                 row_;                   // current row, decoded data
-
+        
     public:
         /**
          * @brief Construct a Reader with a given layout
@@ -60,6 +63,7 @@ namespace bcsv {
         uint8_t                 compressionLevel() const    { return fileHeader_.getCompressionLevel(); }
         const FilePath&         filePath() const            { return filePath_; }
         const LayoutType&       layout() const              { return row_.layout(); }
+        const std::string&      getErrorMsg() const         { return errMsg_; }
         
         bool                    isOpen() const              { return stream_.is_open(); }
         bool                    open(const FilePath& filepath);

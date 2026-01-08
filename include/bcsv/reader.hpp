@@ -36,14 +36,17 @@ namespace bcsv {
 
     template<LayoutConcept LayoutType>
     Reader<LayoutType>::Reader() 
-    : fileHeader_()
+    : errMsg_()
+    , fileHeader_()
     , filePath_()
     , stream_()
     , lz4Stream_()
     , packetHash_()
+    , packetOpen_(false)
     , packetPos_()
     , rowPos_(0)
     , row_(LayoutType())
+
     {
     }
 
@@ -72,6 +75,7 @@ namespace bcsv {
         rowBuffer_.clear();
         rowBuffer_.shrink_to_fit();
         row_.clear();
+        packetOpen_ = false;
     }
 
     /**
@@ -81,10 +85,9 @@ namespace bcsv {
      */
     template<LayoutConcept LayoutType>
     bool Reader<LayoutType>::open(const FilePath& filepath) {
-        if(isOpen()) {
-            std::cerr << "Warning: File is already open: " << filePath_ << std::endl;
-            return false;
-        }
+        errMsg_.clear();
+        if(isOpen())
+            close();
 
         try {
             // Convert to absolute path for consistent handling
@@ -117,9 +120,7 @@ namespace bcsv {
             
             // Read file header
             if(!readFileHeader()) {
-                stream_.close();
-                filePath_.clear();
-                return false;
+                throw std::runtime_error("Failed to read file header");
             }
 
             // create LZ4 decompression stream if needed
@@ -128,22 +129,18 @@ namespace bcsv {
             }
 
             // Open the first packet to prepare for reading rows
-            if (!openPacket()) {
-                std::cout << "Warning: File appears to be empty: " << absolutePath.string() << std::endl;
-                close();
-                return false;
-            }
-
-            return true;
+            packetOpen_ = openPacket();
+            rowPos_ = 0;
 
         } catch (const std::exception& ex) {
-            std::cerr << "Error opening file: " << ex.what() << std::endl;
+            errMsg_ = ex.what();
             if (stream_.is_open()) {
                 stream_.close();
             }
             filePath_.clear();
             return false;
         }
+        return true;
     }
 
     /**
@@ -267,6 +264,10 @@ namespace bcsv {
      */
     template<LayoutConcept LayoutType>
     bool Reader<LayoutType>::readNext() {
+        if (!isOpen() || !packetOpen_) {
+            return false;
+        }
+
         if (!stream_ || !stream_.good()) {
             return false;
         }
@@ -279,7 +280,8 @@ namespace bcsv {
         while (rowLen == PCKT_TERMINATOR) {
             // End of packet reached
             closePacket();
-            if(!openPacket()) {
+            packetOpen_ = openPacket();
+            if(!packetOpen_) {
                 return false;
             }
             readRowLength(rowLen, stream_, &packetHash_);

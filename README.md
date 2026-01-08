@@ -5,7 +5,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://isocpp.org/)
-[![Version](https://img.shields.io/badge/version-1.2.0--dev-orange.svg)](VERSIONING.md)
+[![Version](https://img.shields.io/badge/version-1.3.0--dev-orange.svg)](VERSIONING.md)
 
 ---
 
@@ -124,22 +124,21 @@ int main() {
 
 ## Project Status
 
-**Current Version**: v1.2.0-dev (Active Development)
+**Current Version**: v1.3.0-dev (Active Development)
 
-### Recent Changes (v1.2.0)
-- ✅ **Replaced CRC32 with xxHash64** (3-5x faster checksums)
-- ✅ **Removed Boost dependency** (zero external dependencies)
-- ✅ **Upgraded to C++20** (modern concepts and features)
-- ✅ **Improved test coverage** (59/59 tests passing)
+### Recent Changes (v1.3.0)
+- ✅ **Streaming LZ4 compression**: Constant write latency + efficient compression
+- ✅ **Variable-length encoding (VLE)**: Optimized payload storage for integers
+- ✅ **Enhanced Reader**: Safer buffer handling and improved validation
 
 ### Roadmap
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed roadmap.
 
 **Next milestones**:
-- **v1.3.0** (Dec 2025): Streaming LZ4 compression (constant write latency)
 - **v1.4.0** (Jan 2026): File indexing for fast random access
-- **v1.5.0** (Feb 2026): Variable-length encoding (VLE) for better compression
+- **v1.5.0** (Feb 2026): Advanced compression strategies
+- **v2.0.0** (Q2 2026): Stable release with compatibility guarantees
 - **v2.0.0** (Q2 2026): Stable release with compatibility guarantees
 
 ⚠️ **Development Notice**: Until v2.0.0, file formats may change between minor versions without migration paths. Use for experimentation and non-critical data storage.

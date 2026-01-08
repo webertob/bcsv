@@ -59,8 +59,9 @@ class TestErrorHandling(unittest.TestCase):
         
         reader = pybcsv.Reader()
         
-        # Should return False when trying to open non-existent file
-        self.assertFalse(reader.open(non_existent_file))
+        # Should raise RuntimeError when trying to open non-existent file
+        with self.assertRaises(RuntimeError):
+            reader.open(non_existent_file)
         self.assertFalse(reader.is_open())
 
     def test_file_not_found_writer(self):
@@ -73,8 +74,9 @@ class TestErrorHandling(unittest.TestCase):
         
         writer = pybcsv.Writer(layout)
         
-        # Should return False when trying to open invalid path
-        self.assertFalse(writer.open(invalid_path))
+        # Should raise RuntimeError when trying to open invalid path
+        with self.assertRaises(RuntimeError):
+            writer.open(invalid_path)
         self.assertFalse(writer.is_open())
 
     def test_permission_denied(self):
@@ -90,8 +92,9 @@ class TestErrorHandling(unittest.TestCase):
         
         writer = pybcsv.Writer(layout)
         
-        # Should return False due to permission denied
-        self.assertFalse(writer.open(restricted_path))
+        # Should raise RuntimeError due to permission denied
+        with self.assertRaises(RuntimeError):
+            writer.open(restricted_path)
 
     def test_corrupted_file_header(self):
         """Test reading files with corrupted headers."""
@@ -103,8 +106,9 @@ class TestErrorHandling(unittest.TestCase):
         
         reader = pybcsv.Reader()
         
-        # Should fail to open corrupted file
-        self.assertFalse(reader.open(filepath))
+        # Should raise RuntimeError when opening corrupted file
+        with self.assertRaises(RuntimeError):
+            reader.open(filepath)
 
     def test_truncated_file(self):
         """Test reading truncated files."""
@@ -209,12 +213,9 @@ class TestErrorHandling(unittest.TestCase):
         filepath = self._create_temp_file()
         writer = pybcsv.Writer(empty_layout)
         
-        # Should handle empty layout gracefully
-        self.assertTrue(writer.open(filepath))
-        
-        # Writing to empty layout should work (empty rows)
-        writer.write_row([])
-        writer.close()
+        # Should raise RuntimeError for empty layout
+        with self.assertRaises(RuntimeError):
+            writer.open(filepath)
 
     def test_batch_operation_errors(self):
         """Test error handling in batch operations."""

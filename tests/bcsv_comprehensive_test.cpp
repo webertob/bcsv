@@ -1242,11 +1242,15 @@ TEST_F(BCSVTestSuite, Checksum_CorruptionDetection) {
             
             try {
                 bcsv::Reader<bcsv::Layout> reader;
-                reader.open(test_file);
-                
-                // Try to read all rows to catch any corruption
-                while (reader.readNext()) {
-                    // continue reading
+                if (!reader.open(test_file)) {
+                     // Failed to open - corruption detected by open()
+                     exception_thrown = true;
+                     error_message = "Open failed";
+                } else {
+                    // Try to read all rows to catch any corruption
+                    while (reader.readNext()) {
+                        // continue reading
+                    }
                 }
             } catch (const std::exception& e) {
                 exception_thrown = true;

@@ -1,6 +1,6 @@
 Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment is not considered, as we favor small file size. For temporary data and algorithms, higher-order alignment should be used.
 
-0.  Write project mission statement, upload to git hub
+[x] 0.  Write project mission statement, upload to git hub
     Aims on combining the easy usage of CSV files with the performance and file size of a binary format. It should perform specifically well for large time series data sets and also cover small embedded platforms. Therefore it is an explicit requirement that we support files that are larger than the available memory (RAM), thus the file is read in chunks or rows. For the same reason the computational effort should be reasonable small. In order to support real-time processing the call time to write or read data should be constant. 
     The file should exploit time-series data structure to reduce file size. Specifically it should be efficient on recording  Binary Wave Forms and constant data (spars recording / events) to achieve good compression. Compression ratio to be balanced with requirements on computational and streaming. It should be possible to read data from the file even if write was interrupted. We want to be able to retrieve the last fully written row. The file format is to be optimized for sequential row wise read and write operations, but should support random read with acceptable speeds, too. 
     The file should feel natural to programmers and compete with CSV with respect of ease of usage. Therefore, we avoid definition or validation of a schema. The file should be defined from within the programming language itself (C/C++, python, C# or …), without the need to run another tool or configuration file format. This is different to FlatBuffers or ProtoBuff. The file structure itself is documented in the file, similar to a header in a CSV. The header in BCSV is mandatory, as we won’t waste storage for delimiters. BCSV also enforces the type defined in the header for each column on every row. Thus you only need to validate the file structure once when you open a file and can rely on every row to show up with a valid type in each column (cell). 
@@ -16,35 +16,37 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     Who is the customer: Anybody how is running metrology tasks with digital tools. 
 
 
-0. Test and Stabilize direct access feature
-    - build and run unit tests
-    - build and run benchmarks
-1. Test and Stabilize CLI tools:
+[x] 0. Test and Stabilize direct access feature
+    - build and run unit tests  (passed)
+    - build and run benchmarks  (passed)
+[x] 1. Test and Stabilize CLI tools:
     a. bcsv2csv
     b. csv2bcsv
     c. bcsvHead
     d. bcsvTail
-2. Benchmark BCSV 1.3 against 1.2
-3. Test and Stabilize C_API -> C#
-4. Test and Stabilize Python
+[x] 2. Test and Stabilize C_API -> C#
+[x] 3. Test and Stabilize Python
 
-5. Refactoring:
-    - size_t vle_encode(value, void* dst, size_t dst_capacity)
-    - void   vle_encode(value, ByteBuffer &bufferToAppend)
-    - size_t vle_decode(&value, void* src, size_t src_capacity) //returns the number of bytes consumed
-    - value  vle_decode(std::span<std::byte> &bufferToRead)     //span gets updated, removing the bytes consumed
-    - bool   vle_read(&value, &istream, *hash = 0)
-    - bool   vle_write(&value, &ostream, *hash = 0)
+4. Refactor VLE (Variabel Length Encoding):
+    Note:
+        We won't distinguish between VLE and BLE as we only use "block length encoding" to implement variable length encoding. This means we are string the number of additioaly required bytes required in an block of consecutive bits at the very begining of the byte stream considered.
+        Use templates and expolit knowlegde about the type to improve performance.
+            - fallthrough for single byte types
+            - zigzag encoding only for signed types
+            - destinguish between truncated and normal length mode (truncated means the bits required to encode the length are taken from the actual value, e.g. for uint64_t truncated only leaves 61bit for value)
+            - we encode the number of ADDITIONAL bytes required to encode/decode the value, additional to the 1st byte that must be present anyway e.g. for uint64_t the range is 0 to 7)
+            - avoid loading or shifiting indivudal bytes and replace this with opertions on larger registers if possible to achive higher performance, consider speculative operations and masking (e.g. always load 8bytes for an uint64) if performance can be gained without corrupting the I/O. We now from experiments that this can be highly profitable, espacially when used on data already in memory, but that travesing back and forth in a std::stream has a significant performance penaltiy and must be avoided. 
 
-    - size_t ble_encode(value, void* dst, size_t dst_capacity)
-    - void   ble_encode(value, ByteBuffer &bufferToAppend)
-    - size_t ble_decode(&value, void* src, size_t src_capacity) //returns the number of bytes consumed
-    - value  ble_decode(std::span<std::byte> &bufferToRead)     //span gets updated, removing the bytes consumed
-    - bool   ble_read(&value, &istream, *hash = 0)
-    - bool   ble_write(&value, &ostream, *hash = 0)
+    Functions required:
+    - size_t vle_encode(const T &value, void* dst, size_t dst_capacity)  //returns the number of bytes written to dst to store the value
+    - void   vle_encode(const T &value, ByteBuffer &bufferToAppend)      //appends the bytes to the ByteBuffer increasing its size
+    - size_t vle_decode(T &value, void* src, size_t src_capacity) //returns the number of bytes consumed
+    - T      vle_decode(std::span<std::byte> &bufferToRead)     //span gets updated, removing the bytes consumed
+    - bool   vle_read(T &value, &istream, *hash = 0)
+    - bool   vle_write(const T &value, &ostream, *hash = 0)
 
-    - Modify Row to not use std::variants, consider alignment
-
+   
+6. Modify Row and Layout to not use std::variants, consider alignment
 6. Implement new row encoding schema.
 7. Implement File Flags (raw, stats)
 8. Implement Column Modifiers (index, volatile, monotonic, ordered)
