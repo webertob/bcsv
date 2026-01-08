@@ -23,6 +23,7 @@
 #include "layout.h"
 #include "packet_header.h"
 #include "definitions.h"
+#include "vle.hpp"
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -175,39 +176,6 @@ namespace bcsv {
     }
 
     template<LayoutConcept LayoutType>
-    void Reader<LayoutType>::readRowLength(size_t& rowLength, std::istream& stream, Checksum::Streaming* checksum) {
-        // Use a 32-bit buffer as the VLE format implies max 4 bytes (based on 2-bit length indicator)
-        uint32_t encodedValue = 0;
-        char* buffer = reinterpret_cast<char*>(&encodedValue);
-
-        // Read first byte
-        if (!stream.get(buffer[0])) {
-            throw std::runtime_error("Failed to read row length: unexpected end of stream");
-        }
-        
-        // Extract length bits (first 2 bits of the first byte)
-        // Mask: 0b00000011 -> values 0-3 map to 1-4 bytes
-        std::streamsize addBytes = (static_cast<uint8_t>(buffer[0]) & 0x03);
-        
-        // Read remaining bytes if needed
-        if (addBytes != 0) {
-            stream.read(buffer + 1, addBytes);
-            if (stream.gcount() != addBytes) {
-                throw std::runtime_error("Failed to read row length: incomplete data");
-            }
-        }
-        
-        // Update hash with all bytes read
-        if (checksum) {
-            checksum->update(buffer, addBytes+1);
-        }
-        
-        // Extract value by shifting right 2 bits
-        // Note: Assumes Little Endian memory layout, consistent with VLE format
-        rowLength = static_cast<size_t>(encodedValue >> 2);
-    }
-
-    template<LayoutConcept LayoutType>
     void Reader<LayoutType>::closePacket() {
         assert(stream_);
          
@@ -274,7 +242,7 @@ namespace bcsv {
 
         //reade row length
         size_t rowLen;
-        readRowLength(rowLen, stream_, &packetHash_);
+        vle_decode<uint64_t, true>(stream_, rowLen, &packetHash_);
 
         // check for terminator
         while (rowLen == PCKT_TERMINATOR) {
@@ -284,7 +252,7 @@ namespace bcsv {
             if(!packetOpen_) {
                 return false;
             }
-            readRowLength(rowLen, stream_, &packetHash_);
+            vle_decode<uint64_t, true>(stream_, rowLen, &packetHash_);
         }
 
         if (rowLen == 0) {
@@ -426,7 +394,7 @@ namespace bcsv {
             // Count rows within last packet using row lengths
             while (Base::stream_) {
                 try {
-                    Base::readRowLength(rowLen, Base::stream_, nullptr);
+                    vle_decode<uint64_t, true>(Base::stream_, rowLen, nullptr);
 
                     if (rowLen == 0) {
                         // ZoH repeat - no payload, just count

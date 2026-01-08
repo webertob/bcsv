@@ -75,7 +75,6 @@ namespace bcsv {
         void                    closePacket();
         bool                    openPacket();
         bool                    readFileHeader();
-        void                    readRowLength(size_t& rowLength, std::istream& stream, Checksum::Streaming* checksum = nullptr);
     };
 
     /**

@@ -1,358 +1,383 @@
-// Copyright (c) 2025 Tobias Weber
-// SPDX-License-Identifier: MIT
+/*
+ * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * 
+ * This file is part of the BCSV library.
+ * 
+ * Licensed under the MIT License. See LICENSE file in the project root 
+ * for full license information.
+ */
 
-#ifndef BCSV_VLE_HPP
-#define BCSV_VLE_HPP
+#pragma once
 
 #include <cstdint>
 #include <cstddef>
-#include <iostream>
-#include <span>
+#include <cstring>
 #include <stdexcept>
+#include <span>
+#include <iostream>
 #include <type_traits>
 #include <concepts>
-#include <vector>
-#include "checksum.hpp"
+#include <bit> // For std::bit_width
+#include <limits> // For std::numeric_limits
+#include "byte_buffer.h"
+#include "checksum.hpp" // Required for Checksum::Streaming
 
 namespace bcsv {
 
-/**
- * @brief Variable Length Encoding (VLE) utilities using LEB128-style encoding.
- * 
- * This is a generic VLE implementation supporting uint8_t to uint128_t and int8_t to int128_t.
- * 
- * Encoding format:
- * - Each byte stores 7 bits of data
- * - MSB (bit 7) = continuation bit: 1 = more bytes follow, 0 = last byte
- * - LSB (bits 0-6) = data bits (little-endian)
- * 
- * Signed integers use zigzag encoding: (n << 1) ^ (n >> (bits-1))
- * - Maps signed values to unsigned: 0, -1, 1, -2, 2, -3, 3, ...
- * - Becomes: 0, 1, 2, 3, 4, 5, 6, ...
- * 
- * Optimizations:
- * - uint8_t/int8_t: Direct read/write (no VLE overhead)
- * - Shift limit calculated from sizeof(T) to prevent overflow
- * - Type-specific max bytes: uint16_t=3, uint32_t=5, uint64_t=10, uint128_t=19
- */
+    // Concept for VLE-supported integer types
+    template<typename T>
+    concept VLEInteger = std::is_integral_v<T>;
 
-// Concept for supported integer types
-template<typename T>
-concept VLEInteger = std::is_integral_v<T> && 
-                     (sizeof(T) == 1 || sizeof(T) == 2 || sizeof(T) == 4 || 
-                      sizeof(T) == 8 || sizeof(T) == 16);
-
-// Helper: Calculate maximum bytes needed for type
-template<typename T>
-consteval size_t vle_max_bytes() {
-    constexpr size_t bits = sizeof(T) * 8;
-    return (bits + 6) / 7;  // Ceiling division
-}
-
-// Helper: Zigzag encoding for signed integers
-template<typename T>
-    requires std::signed_integral<T>
-constexpr auto zigzag_encode(T value) noexcept {
-    using U = std::make_unsigned_t<T>;
-    constexpr size_t bits = sizeof(T) * 8;
-    return static_cast<U>((value << 1) ^ (value >> (bits - 1)));
-}
-
-// Helper: Zigzag decoding for signed integers
-template<typename T>
-    requires std::unsigned_integral<T>
-constexpr auto zigzag_decode(T value) noexcept {
-    using S = std::make_signed_t<T>;
-    return static_cast<S>((value >> 1) ^ -(value & 1));
-}
-
-/**
- * @brief Decode a VLE-encoded value from an input stream.
- * 
- * Specialization for 1-byte types (uint8_t/int8_t): trivial read, no VLE overhead.
- * 
- * @tparam T Integer type to decode (uint8_t through uint128_t, int8_t through int128_t)
- * @param input Input stream to read bytes from
- * @return Decoded value
- * @throws std::runtime_error if invalid encoding or stream error
- */
-template<VLEInteger T>
-inline T vle_decode(std::istream& input, Checksum::Streaming *hasher = 0) {
-    if (!input) {
-        throw std::runtime_error("VLE decode: input stream not valid");
+    // Helper: Zigzag encoding for signed integers
+    template<typename T>
+        requires std::signed_integral<T>
+    constexpr auto zigzag_encode(T value) noexcept {
+        using U = std::make_unsigned_t<T>;
+        constexpr size_t bits = sizeof(T) * 8;
+        return static_cast<U>((value << 1) ^ (value >> (bits - 1)));
     }
 
-    using U = std::make_unsigned_t<T>;
+    // Helper: Zigzag decoding for signed integers
+    template<typename T>
+        requires std::unsigned_integral<T>
+    constexpr auto zigzag_decode(T value) noexcept {
+        using S = std::make_signed_t<T>;
+        return static_cast<S>((value >> 1) ^ -(value & 1));
+    }
+
+    // Helper to calculate VLE limits
+    template<typename T, size_t L_BITS>
+    struct VLELimits {
+        static constexpr size_t LengthBits = L_BITS;
+        static constexpr size_t TypeBits = sizeof(T) * 8;
+        // If LengthBits == 0 (1 byte type), Capacity is 8.
+        // Else Capacity = (2^LengthBits * 8) - LengthBits.
+        static constexpr size_t MaxBytes = (1ULL << LengthBits);
+        static constexpr size_t CapBits = (MaxBytes * 8) - LengthBits;
+        static constexpr bool FullRange = (CapBits >= TypeBits);
+
+        static constexpr T max_value() {
+            if constexpr (FullRange) {
+                return std::numeric_limits<T>::max();
+            } else {
+                if constexpr (std::is_signed_v<T>) {
+                    // Zigzag max positive comes from (MAX_U - 1)
+                    // Max U = 2^CapBits - 1
+                    // Max Pos = (Max U - 1) / 2
+                    // Note: (1ULL << CapBits) might overflow if CapBits >= 64, but FullRange check prevents this path
+                    return static_cast<T>(((1ULL << CapBits) - 2) / 2);
+                } else {
+                    return static_cast<T>((1ULL << CapBits) - 1);
+                }
+            }
+        }
+
+        static constexpr T min_value() {
+            if constexpr (FullRange) {
+                return std::numeric_limits<T>::min();
+            } else {
+                if constexpr (std::is_signed_v<T>) {
+                    // Zigzag min negative comes from MAX_U
+                    // Min Neg = zigzag_decode(MAX_U) = (MAX_U >> 1) ^ -1
+                    uint64_t max_u_shifted = ((1ULL << CapBits) - 1) >> 1;
+                    return static_cast<T>(static_cast<int64_t>(max_u_shifted) ^ -1);
+                } else {
+                    return 0;
+                }
+            }
+        }
+    };
+
+    // Traits to determine Length Bits based on Type and Truncated mode
+    template<typename T, bool Truncated>
+    struct VLETraits {
+        static constexpr size_t LengthBits = 
+            (sizeof(T) <= 2) ? (Truncated ? 1 : 2) :
+            (sizeof(T) <= 4) ? (Truncated ? 2 : 3) :
+            (Truncated ? 3 : 4);
+            // Default 3/4 bits for 64-bit types
+        
+        static constexpr size_t MaxEncodedBytes = (sizeof(T) * 8 + LengthBits + 7) / 8;
+        static constexpr T VLE_MAX_VALUE = VLELimits<T, LengthBits>::max_value();
+        static constexpr T VLE_MIN_VALUE = VLELimits<T, LengthBits>::min_value();
+
+        // Architectural optimization: Determine optimal register size (32 or 64 bit)
+        // This ensures better performance on 32-bit MCUs (RISC-V 32, ARM Cortex-M)
+        static constexpr size_t BitsRequired = VLELimits<T, LengthBits>::CapBits + LengthBits;
+        using PacketType = std::conditional_t<(BitsRequired <= 32), uint32_t, uint64_t>;
+        static constexpr bool FitsInRegister = (BitsRequired <= sizeof(PacketType) * 8);
+    };
     
-    // Optimization: 1-byte types - trivial read
-    if constexpr (sizeof(T) == 1) {
-        uint8_t byte;
-        input.read(reinterpret_cast<char*>(&byte), 1);
-        if(hasher) hasher->update(&byte, 1);
-        if (!input) {
+    // Explicit specialization for 1-byte types (trivial encoding handled in function, but for consistency)
+    template<typename T> struct VLETraits<T, true> {
+        static constexpr size_t LengthBits = (sizeof(T) == 1) ? 0 : 
+            (sizeof(T) <= 2) ? 1 :
+            (sizeof(T) <= 4) ? 2 : 3;
+        
+        static constexpr size_t MaxEncodedBytes = (sizeof(T) * 8 + LengthBits + 7) / 8;
+        static constexpr T VLE_MAX_VALUE = VLELimits<T, LengthBits>::max_value();
+        static constexpr T VLE_MIN_VALUE = VLELimits<T, LengthBits>::min_value();
+
+        static constexpr size_t BitsRequired = VLELimits<T, LengthBits>::CapBits + LengthBits;
+        using PacketType = std::conditional_t<(BitsRequired <= 32), uint32_t, uint64_t>;
+        static constexpr bool FitsInRegister = (BitsRequired <= sizeof(PacketType) * 8);
+    };
+    
+    template<typename T> struct VLETraits<T, false> {
+        static constexpr size_t LengthBits = (sizeof(T) == 1) ? 0 : 
+            (sizeof(T) <= 2) ? 2 :
+            (sizeof(T) <= 4) ? 3 : 4;
+
+        static constexpr size_t MaxEncodedBytes = (sizeof(T) * 8 + LengthBits + 7) / 8;
+        static constexpr T VLE_MAX_VALUE = VLELimits<T, LengthBits>::max_value();
+        static constexpr T VLE_MIN_VALUE = VLELimits<T, LengthBits>::min_value();
+
+        static constexpr size_t BitsRequired = VLELimits<T, LengthBits>::CapBits + LengthBits;
+        using PacketType = std::conditional_t<(BitsRequired <= 32), uint32_t, uint64_t>;
+        static constexpr bool FitsInRegister = (BitsRequired <= sizeof(PacketType) * 8);
+    };
+
+
+    /**
+    * @brief Encode an integer using block-length encoding (BLE)
+    * @tparam Truncated If true, optimizes length bits assuming val fits in sizeof(T) bytes.
+    *                   If false, supports full range of T but uses more bits for length.
+    * @tparam CheckBounds If true, throws std::overflow_error/length_error on bounds violation.
+    */
+    template<typename T, bool Truncated = false, bool CheckBounds = true>
+    inline size_t vle_encode(const T &value, void* dst, size_t dst_capacity) {
+        if constexpr (CheckBounds) {
+            if (dst_capacity < 1) [[unlikely]]
+                throw std::length_error("Destination buffer too small for VLE encoding (1 byte)");
+        }
+
+        if constexpr (sizeof(T) == 1) {
+            static_cast<uint8_t*>(dst)[0] = static_cast<uint8_t>(value);
+            return 1;
+        }
+
+        constexpr size_t LEN_BITS = VLETraits<T, Truncated>::LengthBits;
+        constexpr bool FitsInRegister = VLETraits<T, Truncated>::FitsInRegister;
+        using PacketType = typename VLETraits<T, Truncated>::PacketType;
+        
+        using U = std::make_unsigned_t<T>;
+        U uval;
+         
+        if constexpr (std::is_signed_v<T>) {
+            uval = zigzag_encode(value);
+        } else {
+            uval = static_cast<U>(value);
+        }
+
+        // Determine number of bytes needed
+        // std::bit_width returns the number of bits needed to represent the value
+        size_t data_bits = std::bit_width(uval);
+        size_t total_bits = data_bits + LEN_BITS;
+        
+        // Calculate bytes: (total_bits + 7) / 8
+        // If uval is 0, data_bits=0, total_bits=LEN_BITS. If LEN_BITS>0, at least 1 byte.
+        // Cases:
+        // LEN=3. 0->3 bits -> 1 byte. 
+        // 31 (11111) -> 5+3=8 bits -> 1 byte.
+        // 32 (100000) -> 6+3=9 bits -> 2 bytes.
+        size_t numBytes = (total_bits <= 8) ? 1 : ((total_bits + 7) >> 3);
+
+        if constexpr (CheckBounds) {
+             constexpr size_t max_bytes = (1ULL << LEN_BITS);
+             if (numBytes > max_bytes) [[unlikely]] {
+                 throw std::overflow_error("Value too large for VLE encoding configuration");
+             }
+             if (dst_capacity < numBytes) [[unlikely]] {
+                throw std::length_error("Destination buffer too small for VLE encoding");
+            }
+        }
+
+        if constexpr (FitsInRegister) {
+            PacketType packet = (static_cast<PacketType>(uval) << LEN_BITS) | (numBytes - 1);
+            
+            // Fast path: if capacity allows, write fully into buffer (overwriting potentially tail bytes, which is safe if sequential write)
+            if (dst_capacity >= sizeof(PacketType)) {
+                 std::memcpy(dst, &packet, sizeof(PacketType));
+                 return numBytes;
+            }
+
+            // Standard path: Construct packet in register and copy exact bytes
+            // Note: Shifts of uval are safe as uval fits in register, and we only read 'numBytes'.
+            std::memcpy(dst, &packet, numBytes);
+        } else {
+            // uint64 full mode (up to 9 bytes)
+            // Low part (8 bytes)
+            uint64_t packet_low = (static_cast<uint64_t>(uval) << LEN_BITS) | (numBytes - 1);
+            
+            if (numBytes <= 8) {
+                std::memcpy(dst, &packet_low, numBytes);
+            } else {
+                // Write 8 bytes then the 9th
+                std::memcpy(dst, &packet_low, 8);
+                // Extract remaining high bits. 
+                // We shifted left by LEN_BITS (4). So we lost top 4 bits of uval in packet_low.
+                // Recover them from uval.
+                // uval >> (64 - LEN_BITS)
+                uint8_t high = static_cast<uint8_t>(uval >> (64 - LEN_BITS));
+                static_cast<uint8_t*>(dst)[8] = high;
+            }
+        }
+
+        return numBytes;
+    }
+
+     // Appends the bytes to the ByteBuffer increasing its size
+    template<typename T, bool Truncated = false, bool CheckBounds = true>
+    inline void vle_encode(const T &value, ByteBuffer &bufferToAppend) {
+        uint8_t tempBuf[16]; // Increased safety buffer
+        size_t written = vle_encode<T, Truncated, CheckBounds>(value, tempBuf, 16);
+        
+        size_t currentSize = bufferToAppend.size();
+        bufferToAppend.resize(currentSize + written);
+        std::memcpy(bufferToAppend.data() + currentSize, tempBuf, written);
+    }
+
+    // Helper for std::ostream
+    template<typename T, bool Truncated = false, bool CheckBounds = true>
+    inline size_t vle_encode(const T &value, std::ostream& os) {
+        uint8_t tempBuf[16];
+        size_t written = vle_encode<T, Truncated, CheckBounds>(value, tempBuf, 16);
+        os.write(reinterpret_cast<char*>(tempBuf), written);
+        return written;
+    }
+
+    // Returns the number of bytes consumed
+    template<typename T, bool Truncated = false, bool CheckBounds = true>
+    inline size_t vle_decode(T &value, const void* src, size_t src_capacity) {
+        if constexpr (CheckBounds) {
+            if (src_capacity == 0) [[unlikely]] {
+                throw std::runtime_error("Empty buffer in vle_decode");
+            }
+        } else {
+             // If manual bounds checking is disabled, ensure we don't segfault on 0 cap check
+             // if user really wants raw performance they ensure src is valid. 
+             // But we need at least 1 byte read.
+        }
+
+        if constexpr (sizeof(T) == 1) {
+            const T* bytes = static_cast<const T*>(src);
+            value = bytes[0];
+            return 1;
+        }
+        
+        constexpr size_t LEN_BITS = VLETraits<T, Truncated>::LengthBits;
+        constexpr size_t LEN_MASK = (1 << LEN_BITS) - 1;
+        constexpr bool FitsInRegister = VLETraits<T, Truncated>::FitsInRegister;
+        using PacketType = typename VLETraits<T, Truncated>::PacketType;
+
+        const uint8_t* bytes = static_cast<const uint8_t*>(src);
+        
+        // Read length from first bits
+        size_t numBytes = (bytes[0] & LEN_MASK) + 1;
+        
+        if constexpr (CheckBounds) {
+            if (src_capacity < numBytes) [[unlikely]] {
+                throw std::runtime_error("Insufficient data for VLE decoding");
+            }
+        }
+
+        using U = std::make_unsigned_t<T>;
+        U uval = 0;
+
+        if constexpr (FitsInRegister) {
+            PacketType packet = 0;
+            
+            // Fast path: over-read full register if buffer allows
+            if (src_capacity >= sizeof(PacketType)) {
+                 std::memcpy(&packet, bytes, sizeof(PacketType));
+                 
+                 // Clean up potential garbage in high bytes
+                 // Shift left then right clears the top 'unused_bits'.
+                 size_t unused_bits = (sizeof(PacketType) - numBytes) * 8;
+                 packet = (packet << unused_bits) >> unused_bits;
+            } else {
+                std::memcpy(&packet, bytes, numBytes);
+            }
+            
+            uval = static_cast<U>(packet >> LEN_BITS);
+        } else {
+            // uint64 full mode
+            // Need up to 9 bytes. 
+            // Reuse packet logic for first 8 bytes.
+            uint64_t packet = 0;
+            size_t low_bytes = (numBytes > 8) ? 8 : numBytes;
+            std::memcpy(&packet, bytes, low_bytes);
+            
+            uval = static_cast<U>(packet >> LEN_BITS);
+            
+            if (numBytes > 8) {
+                // 9th byte. Bits contribute to top.
+                uint8_t high = bytes[8];
+                // Shift amount: 8*8 - LEN_BITS = 64 - 4 = 60.
+                uval |= (static_cast<U>(high) << (64 - LEN_BITS));
+            }
+        }
+
+        // Assign to T
+        if constexpr (std::is_signed_v<T>) {
+            value = zigzag_decode(static_cast<std::make_unsigned_t<T>>(uval));
+        } else {
+            value = static_cast<T>(uval);
+        }
+
+        return numBytes;
+    }
+
+    // Span gets updated
+    template<typename T, bool Truncated = false, bool CheckBounds = true>
+    inline T vle_decode(std::span<std::byte> &bufferToRead) {
+        T val;
+        size_t consumed = vle_decode<T, Truncated, CheckBounds>(val, bufferToRead.data(), bufferToRead.size());
+        bufferToRead = bufferToRead.subspan(consumed);
+        return val;
+    }
+    
+    // Helper for std::istream
+    template<typename T, bool Truncated = false, bool CheckBounds = true>
+    inline size_t vle_decode(std::istream& is, T& value, Checksum::Streaming* checksum = nullptr) {
+        constexpr size_t MAX_BYTES = VLETraits<T, Truncated>::MaxEncodedBytes;
+        // Align buffer for 64-bit register access optimization
+        alignas(8) uint8_t buffer[MAX_BYTES];
+        
+        if (!is.read(reinterpret_cast<char*>(buffer), 1)) {
             throw std::runtime_error("VLE decode: unexpected end of stream");
         }
-        if constexpr (std::is_signed_v<T>) {
-            return static_cast<T>(static_cast<int8_t>(byte));
-        } else {
-            return static_cast<T>(byte);
+        
+        constexpr size_t LEN_BITS = VLETraits<T, Truncated>::LengthBits;
+        constexpr size_t LEN_MASK = (1 << LEN_BITS) - 1;
+
+        size_t numBytes = (buffer[0] & LEN_MASK) + 1;
+        
+        if constexpr (CheckBounds) {
+             if (numBytes > MAX_BYTES) [[unlikely]] {
+                 throw std::runtime_error("VLE decode: length invalid (too large)");
+             }
         }
-    } else {
-        // General VLE decoding for multi-byte types
-        constexpr size_t max_bits = sizeof(T) * 8;
         
-        U value = 0;
-        size_t shift = 0;
-        uint8_t byte;
+        if (checksum) {
+            checksum->update(reinterpret_cast<char*>(buffer), 1);
+        }
         
-        do {
-            if (shift >= max_bits) {
-                throw std::runtime_error("VLE decode: value exceeds type range");
-            }
-            
-            input.read(reinterpret_cast<char*>(&byte), 1);
-            if(hasher) hasher->update(&byte, 1);
-            if (!input) {
+        if (numBytes > 1) {
+            if (!is.read(reinterpret_cast<char*>(buffer) + 1, numBytes - 1)) {
                 throw std::runtime_error("VLE decode: unexpected end of stream");
             }
-            
-            // Extract data bits (lower 7 bits)
-            U data_bits = byte & 0x7F;
-            value |= (data_bits << shift);
-            shift += 7;
-            
-        } while (byte & 0x80);
-        
-        // For signed types, apply zigzag decoding
-        if constexpr (std::is_signed_v<T>) {
-            return zigzag_decode(value);
-        } else {
-            return static_cast<T>(value);
-        }
-    }
-}
-
-/**
- * @brief Decode a VLE-encoded value from a span buffer.
- * 
- * Specialization for 1-byte types (uint8_t/int8_t): trivial read, no VLE overhead.
- * 
- * @tparam T Integer type to decode (uint8_t through uint128_t, int8_t through int128_t)
- * @param input Input span containing VLE-encoded data
- * @param value Output parameter to store decoded value
- * @return Number of bytes consumed from the input span
- * @throws std::runtime_error if invalid encoding, buffer too small, or value exceeds type range
- */
-template<VLEInteger T>
-inline size_t vle_decode(std::span<const uint8_t> input, T& value) {
-    if (input.empty()) {
-        throw std::runtime_error("VLE decode: input buffer is empty");
-    }
-
-    using U = std::make_unsigned_t<T>;
-    
-    // Optimization: 1-byte types - trivial read
-    if constexpr (sizeof(T) == 1) {
-        if constexpr (std::is_signed_v<T>) {
-            value = static_cast<T>(static_cast<int8_t>(input[0]));
-        } else {
-            value = static_cast<T>(input[0]);
-        }
-        return 1;
-    } else {
-        // General VLE decoding for multi-byte types
-        constexpr size_t max_bits = sizeof(T) * 8;
-        constexpr size_t max_bytes = vle_max_bytes<T>();
-        
-        U decoded = 0;
-        size_t shift = 0;
-        size_t bytes_read = 0;
-        
-        for (size_t i = 0; i < input.size() && i < max_bytes; ++i) {
-            if (shift >= max_bits) {
-                throw std::runtime_error("VLE decode: value exceeds type range");
-            }
-            
-            uint8_t byte = input[i];
-            bytes_read++;
-            
-            // Extract data bits (lower 7 bits)
-            U data_bits = byte & 0x7F;
-            decoded |= (data_bits << shift);
-            shift += 7;
-            
-            // Check if this is the last byte (continuation bit clear)
-            if ((byte & 0x80) == 0) {
-                // For signed types, apply zigzag decoding
-                if constexpr (std::is_signed_v<T>) {
-                    value = zigzag_decode(decoded);
-                } else {
-                    value = static_cast<T>(decoded);
-                }
-                return bytes_read;
+            if(checksum) {
+                checksum->update(reinterpret_cast<char*>(buffer) + 1, numBytes - 1); // Checksum only the bytes after the header
             }
         }
         
-        // If we reach here, either buffer too small or invalid encoding
-        if (input.size() < max_bytes) {
-            throw std::runtime_error("VLE decode: incomplete encoding in buffer");
-        }
+        // Delegate to pointer-based decode
+        T val; 
+        vle_decode<T, Truncated>(val, buffer, numBytes);
+        value = val;
         
-        throw std::runtime_error("VLE decode: invalid encoding (exceeds maximum bytes)");
+        return numBytes;
     }
-}
-
-/**
- * @brief Encode a value into VLE format and write to output stream.
- * 
- * Specialization for 1-byte types (uint8_t/int8_t): trivial write, no VLE overhead.
- * 
- * @tparam T Integer type to encode
- * @param value The value to encode
- * @param output Output stream to write to
- * @return Number of bytes written (1 to vle_max_bytes<T>())
- * @throws std::runtime_error if output stream error
- */
-template<VLEInteger T>
-inline size_t vle_encode(T value, std::ostream& output) {
-    if (!output) {
-        throw std::runtime_error("VLE encode: output stream not valid");
-    }
-
-    using U = std::make_unsigned_t<T>;
-    
-    // Optimization: 1-byte types - trivial write
-    if constexpr (sizeof(T) == 1) {
-        uint8_t byte = static_cast<uint8_t>(value);
-        output.put(static_cast<char>(byte));
-        if (!output) {
-            throw std::runtime_error("VLE encode: stream write failed");
-        }
-        return 1;
-    } else {
-        // For signed types, apply zigzag encoding first
-        U encoded_value;
-        if constexpr (std::is_signed_v<T>) {
-            encoded_value = zigzag_encode(value);
-        } else {
-            encoded_value = static_cast<U>(value);
-        }
-        
-        // VLE encoding
-        size_t bytes_written = 0;
-        do {
-            uint8_t byte = encoded_value & 0x7F;  // Take lower 7 bits
-            encoded_value >>= 7;                   // Shift to next 7 bits
-            
-            if (encoded_value != 0) {
-                byte |= 0x80;  // Set continuation bit
-            }
-            
-            output.put(static_cast<char>(byte));
-            if (!output) {
-                throw std::runtime_error("VLE encode: stream write failed");
-            }
-            bytes_written++;
-            
-        } while (encoded_value != 0);
-        
-        return bytes_written;
-    }
-}
-
-/**
- * @brief Encode a value into VLE format and write to span buffer.
- * 
- * Specialization for 1-byte types (uint8_t/int8_t): trivial write, no VLE overhead.
- * 
- * @tparam T Integer type to encode
- * @param value The value to encode
- * @param output Output span buffer to write encoded bytes
- * @return Number of bytes written (1 to vle_max_bytes<T>())
- * @throws std::runtime_error if output buffer is too small
- */
-template<VLEInteger T>
-inline size_t vle_encode(T value, std::span<uint8_t> output) {
-    constexpr size_t max_bytes = vle_max_bytes<T>();
-    
-    if (output.size() < max_bytes) {
-        throw std::runtime_error("VLE encode: output buffer too small");
-    }
-
-    using U = std::make_unsigned_t<T>;
-    
-    // Optimization: 1-byte types - trivial write
-    if constexpr (sizeof(T) == 1) {
-        output[0] = static_cast<uint8_t>(value);
-        return 1;
-    } else {
-        // For signed types, apply zigzag encoding first
-        U encoded_value;
-        if constexpr (std::is_signed_v<T>) {
-            encoded_value = zigzag_encode(value);
-        } else {
-            encoded_value = static_cast<U>(value);
-        }
-        
-        // VLE encoding
-        size_t bytes_written = 0;
-        do {
-            uint8_t byte = encoded_value & 0x7F;  // Take lower 7 bits
-            encoded_value >>= 7;                   // Shift to next 7 bits
-            
-            if (encoded_value != 0) {
-                byte |= 0x80;  // Set continuation bit
-            }
-            
-            output[bytes_written++] = byte;
-            
-        } while (encoded_value != 0);
-        
-        return bytes_written;
-    }
-}
-
-template<VLEInteger T>
-std::vector<uint8_t> vle_encode(T value)
-{
-    if constexpr (sizeof(T) == 1) {
-        std::vector<uint8_t> vleBytes = {static_cast<uint8_t>(value)};
-        return vleBytes;
-    }
-
-    constexpr size_t max_bytes = vle_max_bytes<T>();
-    std::vector<uint8_t> vleBytes;
-    vleBytes.reserve(max_bytes);
-
-    using U = std::make_unsigned_t<T>;
-    // For signed types, apply zigzag encoding first
-    U encoded_value;
-    if constexpr (std::is_signed_v<T>) {
-        encoded_value = zigzag_encode(value);
-    } else {
-        encoded_value = static_cast<U>(value);
-    }
-
-    do {
-        uint8_t byte = encoded_value & 0x7F;
-        encoded_value >>= 7;
-        if (encoded_value != 0) {
-            byte |= 0x80; // More bytes to come
-        }
-        vleBytes.push_back(byte);
-    } while (encoded_value != 0);
-    return vleBytes;
-}
-
-// Convenience aliases for common types
-inline uint64_t vle_decode_u64(std::istream& input) { return vle_decode<uint64_t>(input); }
-inline int64_t vle_decode_i64(std::istream& input) { return vle_decode<int64_t>(input); }
-inline size_t vle_decode_size(std::istream& input) { return vle_decode<size_t>(input); }
-
-inline size_t vle_encode_u64(uint64_t value, std::ostream& output) { return vle_encode(value, output); }
-inline size_t vle_encode_i64(int64_t value, std::ostream& output) { return vle_encode(value, output); }
-inline size_t vle_encode_size(size_t value, std::ostream& output) { return vle_encode(value, output); }
 
 } // namespace bcsv
-
-#endif // BCSV_VLE_HPP

@@ -21,6 +21,7 @@
 #include "file_header.h"
 #include "layout.h"
 #include "packet_header.h"
+#include "vle.hpp"
 #include <cassert>
 #include <cstddef>
 #include <fstream>
@@ -286,34 +287,15 @@ namespace bcsv {
         assert(stream_.is_open());
         assert(packetOpen_);
 
-        // Inline 4-byte block length encoding (BLE)
-        // First 2 bits encode the number of bytes (1-4 bytes)
-        // Supports values up to 2^30 - 1 (1,073,741,823)
+        // Use unified VLE encoding (Block Length Encoding)
+        uint64_t tempBuf;
+        size_t numBytes = vle_encode<uint64_t, true>(length, &tempBuf, sizeof(tempBuf));
         
-        uint32_t encoded;
-        size_t numBytes;
-        
-        if (length < (1U << 6)) {          // 64
-            numBytes = 1;
-            encoded = (static_cast<uint32_t>(length) << 2) | 0;
-        } else if (length < (1U << 14)) {  // 16,384
-            numBytes = 2;
-            encoded = (static_cast<uint32_t>(length) << 2) | 1;
-        } else if (length < (1U << 22)) {  // 4,194,304
-            numBytes = 3;
-            encoded = (static_cast<uint32_t>(length) << 2) | 2;
-        } else if (length < (1U << 30)) {  // 1,073,741,824
-            numBytes = 4;
-            encoded = (static_cast<uint32_t>(length) << 2) | 3;
-        } else {
-            throw std::overflow_error("Row length too large for 4-byte BLE encoding (max 2^30 - 1)");
-        }
-        
-        // Write encoded bytes directly to stream (little-endian)
-        stream_.write(reinterpret_cast<const char*>(&encoded), numBytes);
+        // Write encoded bytes directly to stream
+        stream_.write(reinterpret_cast<const char*>(&tempBuf), numBytes);
         
         // Update packet checksum and size
-        packetHash_.update(reinterpret_cast<const uint8_t*>(&encoded), numBytes);
+        packetHash_.update(reinterpret_cast<const char*>(&tempBuf), numBytes);
         packetSize_ += numBytes;
     }
 

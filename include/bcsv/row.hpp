@@ -71,7 +71,7 @@ namespace bcsv {
     
     /** Get the value at the specified column index */
     template<typename T>
-    const T& Row::get(size_t index) const {
+    inline const T& Row::get(size_t index) const {
         if (RANGE_CHECKING) {
             return std::get<T>(data_.at(index)); // Will throw
         }
@@ -90,7 +90,7 @@ namespace bcsv {
 
     /** Vectorized access to multiple columns of same type */
     template<typename T>
-    void Row::get(size_t index, std::span<T> dst) const
+    inline void Row::get(size_t index, std::span<T> dst) const
     {
         if (RANGE_CHECKING) {
             // Only check highest index (implicitly checks for all others)
@@ -99,8 +99,13 @@ namespace bcsv {
             }
         }
 
-        for (size_t i = 0; i < dst.size(); ++i) {
-            dst[i] = std::get<T>(data_[index + i]);
+        // Use raw pointers to avoid iterator/operator[] overhead in debug builds
+        const auto* src_ptr = data_.data() + index;
+        T* dst_ptr = dst.data();
+        size_t count = dst.size();
+
+        for (size_t i = 0; i < count; ++i) {
+            dst_ptr[i] = std::get<T>(src_ptr[i]);
         }
     }
 
@@ -150,7 +155,7 @@ namespace bcsv {
 
     /** Vectorized set of multiple columns of same type */
     template<typename T>
-    void Row::set(size_t index, std::span<const T> src)
+    inline void Row::set(size_t index, std::span<const T> src)
     {
         if (RANGE_CHECKING) {
             // Only check highest index (implicitly checks for all others)
@@ -160,20 +165,27 @@ namespace bcsv {
         }
 
         bool tracked = tracksChanges();
-        for (size_t i = 0; i < src.size(); ++i) {
+        auto* data_ptr = data_.data() + index;
+        const T* src_ptr = src.data();
+        size_t count = src.size();
+
+        for (size_t i = 0; i < count; ++i) {
             size_t idx = index + i;
-            std::visit([this, i, idx, src, tracked](auto&& data) {
+            // Use local references to values to avoid capturing the whole span
+            const T& val = src_ptr[i];
+            
+            std::visit([this, idx, &val, tracked](auto&& data) {
                 using DataType = std::decay_t<decltype(data)>;
                 assert(toColumnType<DataType>() == layout_.columnType(idx)); // sanity check
                 if constexpr (std::is_convertible_v<T, DataType>) {
-                    if (tracked && (data != static_cast<DataType>(src[i]))) {
-                        changes_[idx] = true; // mark this column as changed
+                    if (tracked && (data != static_cast<DataType>(val))) {
+                        changes_.set(idx); // mark this column as changed
                     }
-                    data = static_cast<DataType>(src[i]);  // Safe conversion
+                    data = static_cast<DataType>(val);  // Safe conversion
                 } else {
                     throw std::runtime_error("Cannot convert " + std::string(typeid(T).name()) + " to " + std::string(typeid(DataType).name()));
                 }
-            }, data_[idx]);
+            }, data_ptr[i]);
         }
     }
 

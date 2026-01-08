@@ -322,7 +322,7 @@ TEST(VectorizedMixedTest, MixedColumnsPartialAccess) {
 
 TEST(VectorizedPerformanceTest, CompareIndividualVsBulk) {
     constexpr size_t NUM_COLUMNS = 100;
-    constexpr size_t NUM_ITERATIONS = 1000;
+    constexpr size_t NUM_ITERATIONS = 50000;
 
     Layout layout;
     for (size_t i = 0; i < NUM_COLUMNS; ++i) {
