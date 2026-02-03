@@ -69,7 +69,7 @@ private:
 
 public:
     // Static layout with 6 columns per type (48 columns total)
-    using LargeTestLayoutStatic = bcsv::LayoutStaticBase<
+    using LargeTestLayoutStatic = bcsv::LayoutStatic<
         // 6 bool columns
         bool, bool, bool, bool, bool, bool,
         // 6 int8_t columns  

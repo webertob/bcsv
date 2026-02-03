@@ -20,7 +20,7 @@ namespace bcsv {
     // Forward declarations
     class Layout;
     template<typename... ColumnTypes>
-    class LayoutStaticBase;
+    class LayoutStatic;
     enum class ColumnType : uint16_t;
 
     /**
@@ -213,7 +213,7 @@ namespace bcsv {
          * @return true if read was successful, false on error or invalid data
          */
         template<typename... ColumnTypes>
-        bool readFromBinary(std::istream& stream, LayoutStaticBase<ColumnTypes...>& columnLayout);
+        bool readFromBinary(std::istream& stream, LayoutStatic<ColumnTypes...>& columnLayout);
         
         /**
          * @brief Write complete header to binary stream

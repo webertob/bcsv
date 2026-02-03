@@ -54,7 +54,7 @@ protected:
     std::string test_dir_;
     
     // Static layout with 2 columns for each supported data type (24 columns total)
-    using FullTestLayoutStatic = bcsv::LayoutStaticBase<
+    using FullTestLayoutStatic = bcsv::LayoutStatic<
         bool,           // 0: Active flag 1
         bool,           // 1: Active flag 2
         int8_t,         // 2: Small signed integer 1
@@ -2060,7 +2060,7 @@ TEST_F(BCSVTestSuite, CompressionLevels_StaticInterface_AllLevels) {
     std::cout << "\nTesting all compression levels (0-9) with static interface..." << std::endl;
     
     // Create static layout with same structure
-    using TestLayout = bcsv::LayoutStaticBase<uint32_t, std::string, double, float, bool, int64_t>;
+    using TestLayout = bcsv::LayoutStatic<uint32_t, std::string, double, float, bool, int64_t>;
     TestLayout layout({"Column0", "Column1", "Column2", "Column3", "Column4", "Column5"});
     
     const size_t test_rows = 1000;
@@ -2137,7 +2137,7 @@ TEST_F(BCSVTestSuite, CompressionLevels_CrossCompatibility) {
     flexLayout.addColumn({"Column1", bcsv::ColumnType::STRING});
     flexLayout.addColumn({"Column2", bcsv::ColumnType::DOUBLE});
     
-    using StaticLayout = bcsv::LayoutStaticBase<uint32_t, std::string, double>;
+    using StaticLayout = bcsv::LayoutStatic<uint32_t, std::string, double>;
     StaticLayout staticLayout({"Column0", "Column1", "Column2"});
     
     const size_t test_rows = 100;
@@ -2429,7 +2429,7 @@ TEST_F(BCSVTestSuite, ZoH_StaticInterface_BasicFunctionality) {
     std::cout << "\nTesting ZoH with static interface..." << std::endl;
     
     // Create static layout for ZoH testing
-    using ZoHLayout = bcsv::LayoutStaticBase<uint64_t, double, int32_t, bool, std::string>;
+    using ZoHLayout = bcsv::LayoutStatic<uint64_t, double, int32_t, bool, std::string>;
     ZoHLayout layout({"timestamp", "value1", "value2", "status", "name"});
     
     std::string filename = test_dir_ + "/zoh_static_test.bcsv";
@@ -2505,7 +2505,7 @@ TEST_F(BCSVTestSuite, ZoH_CrossCompatibility_FlexibleToStatic) {
     flexLayout.addColumn({"Column2", bcsv::ColumnType::BOOL});
     flexLayout.addColumn({"Column3", bcsv::ColumnType::STRING});
     
-    using StaticLayout = bcsv::LayoutStaticBase<uint32_t, double, bool, std::string>;
+    using StaticLayout = bcsv::LayoutStatic<uint32_t, double, bool, std::string>;
     StaticLayout staticLayout({"Column0", "Column1", "Column2", "Column3"});
     
     std::string filename = test_dir_ + "/zoh_flex_to_static.bcsv";
@@ -2570,7 +2570,7 @@ TEST_F(BCSVTestSuite, ZoH_CrossCompatibility_FlexibleToStatic) {
 TEST_F(BCSVTestSuite, ZoH_CrossCompatibility_StaticToFlexible) {
     std::cout << "\nTesting ZoH cross-compatibility: Static write → Flexible read..." << std::endl;
     
-    using TestLayout = bcsv::LayoutStaticBase<uint32_t, double, bool, std::string>;
+    using TestLayout = bcsv::LayoutStatic<uint32_t, double, bool, std::string>;
     TestLayout layout({"id", "data", "flag", "label"});
     
     bcsv::Layout flexLayout;
@@ -2713,7 +2713,7 @@ TEST_F(BCSVTestSuite, ZoH_CrossCompatibility_FlexibleToFlexible) {
 TEST_F(BCSVTestSuite, ZoH_CrossCompatibility_StaticToStatic) {
     std::cout << "\nTesting ZoH cross-compatibility: Static write → Static read..." << std::endl;
     
-    using TestLayout = bcsv::LayoutStaticBase<uint32_t, int64_t, double, bool, std::string>;
+    using TestLayout = bcsv::LayoutStatic<uint32_t, int64_t, double, bool, std::string>;
     TestLayout layout({"counter", "timestamp", "value", "enabled", "description"});
     
     std::string filename = test_dir_ + "/zoh_static_to_static.bcsv";

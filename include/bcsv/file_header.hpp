@@ -168,7 +168,7 @@ namespace bcsv {
 
     // Specialized version for LayoutStatic - validates that binary matches static definition
     template<typename... ColumnTypes>
-    bool FileHeader::readFromBinary(std::istream& stream, LayoutStaticBase<ColumnTypes...>& layout) {
+    bool FileHeader::readFromBinary(std::istream& stream, LayoutStatic<ColumnTypes...>& layout) {
         // Read fixed header
         stream.read(reinterpret_cast<char*>(&constSection_), sizeof(constSection_));
         if (!stream.good()) {
