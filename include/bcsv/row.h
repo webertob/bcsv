@@ -516,7 +516,7 @@ namespace bcsv {
     private:
         const LayoutType                layout_;
         LayoutType::column_types        data_;
-        mutable bitset<column_count>    changes_;
+        bitset<column_count>            changes_;
         bool                            change_tracking_ = false;
 
     public:
@@ -580,7 +580,7 @@ namespace bcsv {
         void                        serializeElements(ByteBuffer& buffer, const size_t& offRow, size_t& offVar) const;
 
                                     template<size_t Index>
-        void                        serializeElementsZoH(ByteBuffer& buffer, bitset<column_count>& serialization_bits) const;
+        void                        serializeElementsZoH(ByteBuffer& buffer, bitset<column_count>& bitHeader) const;
 
                                     template<size_t Index>
         void                        deserializeElements(const std::span<const std::byte> &srcBuffer);

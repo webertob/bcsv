@@ -433,10 +433,7 @@ namespace bcsv {
             } 
             // 2. Arithmetic Conversion (bool, int, float -> "123", "3.14")
             else if constexpr (std::is_arithmetic_v<DecayedT>) {
-                std::string strVal = std::to_string(value);
-                if (strVal.size() > MAX_STRING_LENGTH) {
-                    strVal.resize(MAX_STRING_LENGTH);
-                }
+                std::string strVal = std::to_string(value); // does not need truncation, as it can nevery grow beyond MAX_STRING_LENGTH
                 if (*strPtr != strVal) {
                     *strPtr = std::move(strVal);
                     if(tracksChanges()) changes_.set(index);
@@ -504,6 +501,7 @@ namespace bcsv {
             }
         }
 
+        // Alignment of data is guaranteed by Row Constructor and Row layout (immutable layout for row's lifetime)
         auto dst = reinterpret_cast<T*>(data_.data() + offsets_[index]);
         if(tracksChanges()) {
             // Element-wise check and set to track changes precisely
@@ -566,8 +564,10 @@ namespace bcsv {
 
     inline void Row::deserializeFrom(const std::span<const std::byte> buffer)
     {
-        size_t off_fix = 0;                       // offset within the fixed section of the buffer. Starts at the begin of this row. We expect that span only contains data for a single row.
+        size_t off_fix = 0;           // offset within the fixed section of the buffer. Starts at the begin of this row. We expect that span only contains data for a single row.
         size_t off_var = offset_var_; // offset within the variable section of the buffer. Starts just after the fixed section for this row.
+        
+        // Safety check: ensure buffer is large enough to contain fixed section
         if (off_var > buffer.size()) [[unlikely]] {
             throw std::runtime_error("Row::deserializeFrom failed as buffer is too short");
         }
@@ -585,7 +585,7 @@ namespace bcsv {
                 auto [strOff, strLen] = strAddr.unpack();
                 
                 if (strOff + strLen > buffer.size()) {
-                    throw std::runtime_error("String payload extends beyond buffer");
+                    throw std::runtime_error("Row::deserializeFrom String payload extends beyond buffer");
                 }
                 
                 std::string& str = *reinterpret_cast<std::string*>(dst);
@@ -815,13 +815,14 @@ namespace bcsv {
     template<typename T>
     inline T RowView::get(size_t index) const {
         assert(layout_.columnCount() == offsets_.size());
+        assert(index < layout_.columnCount() && "RowView::get<T> index out of bounds");
 
-        // 1. Explicit Bounds Check
+        // 1. Get Column Info, offset, length (includes bounds check via layout_)
         ColumnType type = layout_.columnType(index);
         size_t offset = offsets_[index];
         size_t length = binaryFieldLength(type);
 
-        // 2. Data Access
+        // 2. Check Buffer Access
         if (buffer_.data() == nullptr || offset + length > buffer_.size()) {
             throw std::out_of_range("RowView::get<T> Invalid buffer");
         }
@@ -864,35 +865,35 @@ namespace bcsv {
     inline bool RowView::get_as(size_t index, T &dst) const {
         assert(layout_.columnCount() == offsets_.size());
 
-        // call to layout_ implicitly checks range  
-        ColumnType srcType = layout_.columnType(index);
+        // 1. Get Column Info, offset, length (includes bounds check via layout_)
+        ColumnType type = layout_.columnType(index);
+        size_t offset = offsets_[index];
+        size_t length = binaryFieldLength(type);
 
-        // check we have a valid buffer
-        auto data = buffer_.data();
-        auto size = buffer_.size();
-        if(data == nullptr || size < offset_var_) {
+        // 2. Check Buffer Access
+        if (buffer_.data() == nullptr || offset + length > buffer_.size() || index >= layout_.columnCount()) {
+            assert(false && "RowView::get_as buffer access failed");
             return false;
         }
-        auto offset = offsets_[index];
-        auto ptr = data + offset;
 
-        // Functor to check compatibility and assign.
+        // 3. Functor to check compatibility and assign.
         // Uses 'if constexpr' to ensure only valid assignments are compiled.
         auto try_read = [&]<typename SrcType>() -> bool {
              if constexpr (std::is_assignable_v<T&, SrcType>) {
                 // SAFELY READ UNALIGNED DATA
                 // RowView buffer data is packed and potentially unaligned.
                 // We must read into a local aligned variable first using memcpy.
-                assert(offset + sizeof(SrcType) <= size && "RowView Buffer Corruption: Field exceeds buffer size");
                 SrcType tempVal;
-                std::memcpy(&tempVal, ptr, sizeof(SrcType));
+                assert(length == sizeof(SrcType) && "Mismatched length for SrcType");
+                std::memcpy(&tempVal, buffer_.data() + offset, length);
                 dst = tempVal; // Implicit conversion/assignment (e.g. int8 -> int)
                 return true;
             }
             return false;
         };
 
-        switch(srcType) {
+        // 4. Dispatch based on actual column type
+        switch(type) {
             case ColumnType::BOOL:   return try_read.template operator()<bool>();
             case ColumnType::UINT8:  return try_read.template operator()<uint8_t>();
             case ColumnType::UINT16: return try_read.template operator()<uint16_t>();
@@ -905,14 +906,16 @@ namespace bcsv {
             case ColumnType::FLOAT:  return try_read.template operator()<float>();
             case ColumnType::DOUBLE: return try_read.template operator()<double>();
             
+            // Special handling for STRING type, as it requires unpacking the StringAddr
             case ColumnType::STRING: {
                 StringAddr addr;
-                memcpy(&addr, ptr, sizeof(addr));
+                memcpy(&addr, buffer_.data() + offset, sizeof(addr));
                 auto [strOff, strLen] = addr.unpack();
-                if (strOff + strLen > size) {
+                if (strOff + strLen > buffer_.size()) {
+                    assert(false && "RowView::get_as string payload out of bounds");
                     return false; // string data out of bounds
                 }
-                const char* strPtr = reinterpret_cast<const char*>(data + strOff);                
+                const char* strPtr = reinterpret_cast<const char*>(buffer_.data() + strOff);                
                 if constexpr (std::is_same_v<T, std::string>) {
                     dst.assign(strPtr, strLen); // deep copy
                     return true;
@@ -923,8 +926,8 @@ namespace bcsv {
                     dst = std::span<const char>(strPtr, strLen); // zero-copy span
                     return true;
                 } else if constexpr (std::is_assignable_v<T&, std::string>) {
-                    std::string tempStr(strPtr, strLen);
-                    dst = tempStr; // fallback for other assignable types (e.g. std::filesystem::path)
+                    // fallback for other assignable types (e.g. std::filesystem::path)
+                    dst = std::string_view(strPtr, strLen);
                     return true;
                 } else {
                     return false;
@@ -1101,19 +1104,17 @@ namespace bcsv {
 
     inline bool RowView::validate(bool deepValidation) const 
     {
+        // skip validation for empty layouts
         size_t col_count = layout_.columnCount();
         if (col_count == 0) {
-            return true; // Nothing to validate
+            return true;
         }
 
+        // is buffer available and big enough?
         auto data = buffer_.data();
-        if(data == nullptr) {
-            return false; // invalid buffer
-        }
-
         auto size = buffer_.size();
-        if(size < offset_var_) {
-            return false; // buffer too small to hold fixed section
+        if(data == nullptr || size < offset_var_) {
+            return false;
         }
         
         if(deepValidation) {
@@ -1121,7 +1122,8 @@ namespace bcsv {
             for(size_t i = 0; i < col_count; ++i) {
                 if (layout_.columnType(i) == ColumnType::STRING) {
                     StringAddr strAddr;
-                    memcpy(&strAddr, data + offset_var_, sizeof(strAddr));
+                    assert(offsets_.size() == col_count && offsets_[i] + sizeof(strAddr) <= size && "RowView::validate internal error: offsets_ size mismatch or out of bounds");
+                    memcpy(&strAddr, data + offsets_[i], sizeof(strAddr));
                     auto [strOff, strLen] = strAddr.unpack();
                     if (strOff + strLen > size) {
                         return false;
@@ -1141,7 +1143,7 @@ namespace bcsv {
         : layout_(layout), data_() 
     {
         clear();
-        changes_.set();
+        changes_.reset();
     }
 
     /** Clear the row to its default state (default values) */
@@ -1151,7 +1153,9 @@ namespace bcsv {
     {
         if constexpr (Index < column_count) {
             std::get<Index>(data_) = defaultValueT<column_type<Index>>();
-            changes_.set(Index); // mark as changed
+            if(change_tracking_) {
+                changes_.set(Index);
+            }
             clear<Index + 1>();
         }
     }
@@ -1355,25 +1359,27 @@ namespace bcsv {
     template<typename... ColumnTypes>
     template<size_t Index, typename T>
     void RowStatic<ColumnTypes...>::set(const T& value) {
-        using DecayedT = std::decay_t<T>;
-        using ColumnT = column_type<Index>;
-
         static_assert(Index < column_count, "Index out of bounds");
 
-        // 1. Unwrap Variants (including ValueType)
+        // 1. Unwrap Variants (including ValueType) --> recurse into set<>
+        using DecayedT = std::decay_t<T>;
         if constexpr (detail::is_variant_v<DecayedT>) {
             std::visit([this](auto&& v) {
                 this->set<Index>(v);
             }, value);
             return;
         }
-        // 2. Handle Spans (must convert manually to string_view)
+
+        // 2. Handle Spans (must convert manually to string_view) --> recurse into set<>
         else if constexpr (std::is_same_v<DecayedT, std::span<char>> || std::is_same_v<DecayedT, std::span<const char>>) {
             this->set<Index>(std::string_view(value.data(), value.size()));
             return;
         }
+
         // 3. Handle String Columns
-        else if constexpr (std::is_same_v<ColumnT, std::string>) {
+        else if constexpr (std::is_same_v<column_type<Index>, std::string>) {
+            auto& currentVal = std::get<Index>(data_);
+
             // Case 3a: Convertible to string_view (std::string, string_view, const char*, etc.)
             // Note: Creating a string_view from std::string is extremely cheap (pointer copy, no allocation).
             // It allows us to perform zero-allocation truncation via substr(), which is strictly faster 
@@ -1383,47 +1389,32 @@ namespace bcsv {
                 if (sv.size() > MAX_STRING_LENGTH) {
                     sv = sv.substr(0, MAX_STRING_LENGTH);
                 }
-                
-                auto& currentVal = std::get<Index>(data_);
                 if (currentVal != sv) {
                     currentVal.assign(sv); 
                     changes_.set(Index);
                 }
             } 
-            // Case 3b: Arithmetic types -> convert to string (New Feature)
+
+            // Case 3b: Arithmetic types -> convert to string
             else if constexpr (std::is_arithmetic_v<DecayedT>) {
-                // Use std::to_string for conversion
-                std::string strVal = std::to_string(value);
-                if (strVal.size() > MAX_STRING_LENGTH) {
-                    strVal.resize(MAX_STRING_LENGTH);
-                }
-                
-                auto& currentVal = std::get<Index>(data_);
+                std::string strVal = std::to_string(value); // cannot extend max length here               
                 if (currentVal != strVal) {
                     currentVal = std::move(strVal);
                     changes_.set(Index);
                 }
             }
-            // Case 3c: Assignable to string but NOT a view (fallback)
             else {
-                static_assert(std::is_assignable_v<ColumnT&, const T&>, "Type must be assignable to std::string");
-                
-                // We rely on std::string operator= handling the specific type
-                auto& currentVal = std::get<Index>(data_);
-                // Note: We might constructing a temporary string here for comparison if T isn't directly comparable
-                if (currentVal != value) {
-                    currentVal = value;
-                    changes_.set(Index);
-                }
+                static_assert(false, "RowStatic::set<Index>: Unsupported type to assign to string column");
             }
-        } 
+        }
+
         // 4. Handle Primitive Types
         else {
-                static_assert(std::is_assignable_v<ColumnT&, const T&>, "Column type cannot be assigned from the provided value");
+                static_assert(std::is_assignable_v<column_type<Index>&, const T&>, "Column type cannot be assigned from the provided value");
                 auto& currentVal = std::get<Index>(data_);
                 // Check equality after casting to avoid spurious changes (e.g. 5 != 5.1)
-                if (currentVal != static_cast<ColumnT>(value)) {
-                    currentVal = static_cast<ColumnT>(value);
+                if (currentVal != static_cast<column_type<Index>>(value)) {
+                    currentVal = static_cast<column_type<Index>>(value);
                     changes_.set(Index);
                 }
         }
@@ -1497,9 +1488,9 @@ namespace bcsv {
     */
     template<typename... ColumnTypes>
     std::span<std::byte> RowStatic<ColumnTypes...>::serializeTo(ByteBuffer& buffer) const {
-        size_t offRow = buffer.size();                          // remember where this row starts
-        size_t offVar = LayoutType::fixed_size;                 // offset to the begin of variable-size data section (relative to row start)
-        buffer.resize(buffer.size() + LayoutType::fixed_size);  // ensure buffer is large enough to hold fixed-size data
+        size_t offRow = buffer.size();               // remember where this row starts
+        size_t offVar = offset_var_;                 // offset to the begin of variable-size data section (relative to row start)
+        buffer.resize(buffer.size() + offset_var_);  // ensure buffer is large enough to hold fixed-size data
 
         // serialize each tuple element using compile-time recursion
         serializeElements<0>(buffer, offRow, offVar);
@@ -1510,12 +1501,12 @@ namespace bcsv {
     template<size_t Index>
     void RowStatic<ColumnTypes...>::serializeElements(ByteBuffer& buffer, const size_t& offRow, size_t& offVar) const {
         if constexpr (Index < column_count) {
-            constexpr size_t lenFix = LayoutType::column_lengths[Index];
-            constexpr size_t offFix = LayoutType::column_offsets[Index];
+            constexpr size_t lenFix = column_lengths[Index];
+            constexpr size_t offFix = column_offsets[Index];
             if constexpr (std::is_same_v<column_type<Index>, std::string>) {
                 size_t lenVar = std::min(std::get<Index>(data_).size(), MAX_STRING_LENGTH);
-                StringAddr strAddr(offVar, lenVar);                                                     // Make address relative to row start
-                buffer.resize(buffer.size() + lenVar);                                                  // Ensure buffer is large enough to hold string payload
+                StringAddr strAddr(offVar, lenVar);                                                   // Make address relative to row start
+                buffer.resize(offRow + offVar + lenVar);                                                   // Ensure buffer is large enough to hold string payload
                 std::memcpy(buffer.data() + offRow + offFix, &strAddr, sizeof(strAddr));                // write string address
                 std::memcpy(buffer.data() + offRow + offVar, std::get<Index>(data_).c_str(), lenVar);   // write string payload
                 offVar += lenVar;
@@ -1535,33 +1526,36 @@ namespace bcsv {
      */
     template<typename... ColumnTypes>
     std::span<std::byte> RowStatic<ColumnTypes...>::serializeToZoH(ByteBuffer& buffer) const {
+        assert(change_tracking_ && "RowStatic::serializeToZoH() requires change tracking to be enabled.");
+
+        // remember where this row starts, (as we are appending to the buffer)
+        size_t old_size = buffer.size();               
+        auto rowStart = buffer.data() + buffer.size();
+
+        // skips if there is nothing to serialize
         if(!hasAnyChanges()) {
-            return {buffer.data(), 0}; // nothing to serialize
+            return {rowStart, old_size}; 
         }
 
         // reserve space to store change bitset
-        size_t offRow = buffer.size();  // offset to the begin of this row
-        bitset<column_count> serialization_bits = changes_; // make a copy of changes_ to modify during serialization
-        buffer.resize(buffer.size() + serialization_bits.sizeBytes());
+        buffer.resize(buffer.size() + changes_.sizeBytes());
+        auto bit_section = new(rowStart) bitset<column_count>(changes_); // place a copy of changes_ to the begin of the row buffer, we are going to modify only a few bits (bool columns) during serialization. The rest stays as is.
         
         // Serialize each tuple element using compile-time recursion
-        serializeElementsZoH<0>(buffer, serialization_bits);
-
-        // write change bitset to reserved location (we do it at the end as we encode bools in to the bitset, during element serialization)
-        std::memcpy(buffer.data() + offRow, serialization_bits.data(), serialization_bits.sizeBytes());
-        return {buffer.data() + offRow, buffer.size() - offRow};
+        serializeElementsZoH<0>(buffer, *bit_section);
+        return {rowStart, buffer.size() - old_size};
     }
 
     template<typename... ColumnTypes>
     template<size_t Index>
-    void RowStatic<ColumnTypes...>::serializeElementsZoH(ByteBuffer& buffer, bitset<column_count>& serialization_bits) const 
+    void RowStatic<ColumnTypes...>::serializeElementsZoH(ByteBuffer& buffer, bitset<column_count>& bitHeader) const 
     {
         if constexpr (Index < column_count) {
             if constexpr (std::is_same_v<column_type<Index>, bool>) {
                 // store as single bit within serialization_bits
                 bool value = std::get<Index>(data_);
-                serialization_bits.set(Index, value); // mark as changed
-            } else if (serialization_bits.test(Index)) {
+                bitHeader.set(Index, value); // mark as changed
+            } else if (changes_.test(Index)) {
                 // all other types: only serialize if marked as changed)
                 size_t old_size = buffer.size();
                 if constexpr (std::is_same_v<column_type<Index>, std::string>) {
@@ -1585,7 +1579,7 @@ namespace bcsv {
                 }
             }
             // Recursively process next element
-            return serializeElementsZoH<Index + 1>(buffer); 
+            return serializeElementsZoH<Index + 1>(buffer, bitHeader); 
         }
     }
 
