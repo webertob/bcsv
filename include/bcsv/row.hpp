@@ -26,6 +26,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <cassert>
 #include <variant>
 #include <type_traits>
@@ -38,15 +39,13 @@ namespace bcsv {
     // ========================================================================
 
     inline Row::Row(const Layout &layout, bool trackChangesEnabled)
-        : layout_(layout), data_(), offsets_(), changes_()
+        : layout_(layout), offsets_(layout.columnCount()), offset_var_(0), data_(),  changes_()
     {
         size_t columnCount = layout.columnCount();
 
         // Build row's internal data structures based on layout
-        offsets_.resize(columnCount);
-        uint32_t offset = 0;
-
         // Calculate offsets considering alignment requirements
+        uint32_t offset = 0;
         for(size_t i = 0; i < columnCount; ++i) {
             size_t length= 0;
             size_t alignment = 0;
@@ -168,15 +167,63 @@ namespace bcsv {
         }
     }
 
+    inline Row::Row(const Row& other)
+        : layout_(other.layout_)
+        , offsets_(other.offsets_)
+        , offset_var_(other.offset_var_)
+        , data_(other.data_)
+        , changes_(other.changes_)
+    {
+        // Now we need to perform a deep-copy for strings, as they allocate memory themselves
+        for(size_t i = 0; i < layout_.columnCount(); ++i) {
+            ColumnType type = layout_.columnType(i);
+            if(type == ColumnType::STRING) {
+                // Strings need deep copy
+                std::byte* ptrThis = data_.data() + offsets_[i];
+                const std::byte* ptrOther = other.data_.data() + offsets_[i];
+                new (ptrThis) std::string(*reinterpret_cast<const std::string*>(ptrOther)); // placement new with copy constructor
+            }
+        }
+    }
+
+    Row& Row::operator=(const Row& other) noexcept
+    {
+        if (this != &other) {
+            // Destroy existing strings before overwriting data_
+            for(size_t i = 0; i < layout_.columnCount(); ++i) {
+                if(layout_.columnType(i) == ColumnType::STRING) {
+                    std::byte* ptr = data_.data() + offsets_[i];
+                    reinterpret_cast<std::string*>(ptr)->~basic_string();
+                }
+            }
+
+            // Copy layout and metadata
+            layout_ = other.layout_;
+            offsets_ = other.offsets_;
+            offset_var_ = other.offset_var_;
+            data_ = other.data_;  // Shallow copy (includes string objects)
+            changes_ = other.changes_;
+
+            // Reconstruct strings for deep copy
+            for(size_t i = 0; i < layout_.columnCount(); ++i) {
+                if(layout_.columnType(i) == ColumnType::STRING) {
+                    std::byte* ptrThis = data_.data() + offsets_[i];
+                    const std::byte* ptrOther = other.data_.data() + offsets_[i];
+                    new (ptrThis) std::string(*reinterpret_cast<const std::string*>(ptrOther)); // placement new with copy constructor
+                }
+            }
+        }
+        return *this;
+    }
+
     inline Row::~Row()
     {
-        // Safety check: specific for moved-from objects
+        // Safety check for moved-from objects (data_ is empty after move)
         if(data_.empty()) 
             return;
 
         // Manually call destructors for those types that need it (e.g. strings as they allocate memory themselves)
-        size_t columnCount = layout_.columnCount();
-        for(size_t i = 0; i < columnCount; ++i) {
+        for(size_t i = 0; i < layout_.columnCount(); ++i) {
             uint32_t offset = offsets_[i];
             std::byte* ptr = data_.data() + offset;
             ColumnType type = layout_.columnType(i);
@@ -190,8 +237,7 @@ namespace bcsv {
     /** Clear the row to its default state (default values) */
     inline void Row::clear()
     {
-        size_t columnCount = layout_.columnCount();
-        for(size_t i = 0; i < columnCount; ++i) {
+        for(size_t i = 0; i < layout_.columnCount(); ++i) {
             uint32_t offset = offsets_[i];
             std::byte* ptr = data_.data() + offset;
             ColumnType type = layout_.columnType(i);

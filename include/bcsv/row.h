@@ -12,8 +12,6 @@
 #include <cstddef>
 #include <cstring>
 #include <span>
-#include <string>
-#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -405,11 +403,15 @@ namespace bcsv {
 
     /* Dynamic row with flexible layout (runtime-defined)*/
     class Row {
-        const Layout                layout_;      // layout defining column types and order. Can't be changed after construction!
-        std::vector<std::byte>      data_;        // continuous memory buffer to hold data (Note: We store string objects here too. But strings themselves are allocating additional memory elsewhere for their content.)
+    private:
+        // Immutable after construction --> We need to protect these members from modification (const would break the move constructor & assignment)
+        Layout                      layout_;      // layout defining column types and order. Can't be changed after construction!
         std::vector<uint32_t>       offsets_;     // offsets into data_ to access actual data for each column. Considers types alignment requirements.
         uint32_t                    offset_var_;  // offset into serilized buffer (wire), marking the beginning of variable-length section / size of the fixed section. Naive packed wire format (no alignment/padding).
-        mutable bitset_dynamic      changes_;     // change tracking
+        
+        // Mutable data
+        std::vector<std::byte>      data_;        // continuous memory buffer to hold data (Note: We store string objects here too. But strings themselves are allocating additional memory elsewhere for their content.)
+        bitset_dynamic              changes_;     // change tracking
         /* change tracking i.e. for Zero-Order-Hold compression
         *  changes_[0:column_count  ] == true   indicates column i has been modified since last reset.
         *  changes_.empty()           == true   indicates change tracking is disabled.
@@ -418,8 +420,9 @@ namespace bcsv {
     public:
         Row() = delete; // no default constructor, we always need a layout
         Row(const Layout& layout, bool trackChangesEnabled = false);
-        Row(const Row& other) = delete;             // no copy constructor
+        Row(const Row& other);
         Row(Row&& other) noexcept = default;
+        
         ~Row();
 
         void                        clear();
@@ -448,21 +451,28 @@ namespace bcsv {
         void                        deserializeFrom(const std::span<const std::byte> buffer);
         void                        deserializeFromZoH(const std::span<const std::byte> buffer);
 
-        Row&                        operator=(const Row& other) noexcept= delete;  // no copy assignment
+        Row&                        operator=(const Row& other) noexcept;      // need to implement copy assignment due to string deep-copy
+        Row&                        operator=(Row&& other) noexcept = default; // default move assignment (string payload stays in place)
     };
 
     /* RowView provides a direct view into a serilized buffer, partially supporting the row interface. Intended for sparse data access, avoiding costly full deserialization.
        Currently we only support the basic get/set interface for individual columns, into a flat serilized buffer. We do not support ZoH format or more complex encoding schemes.
     */
     class RowView {
-        const Layout                layout_;
-        std::span<std::byte>        buffer_;        // serilized data buffer (fixed + variable section, packed binary format)
-        const std::vector<uint32_t> offsets_;       // offsets data buffer to access actual data for each column during serialization/deserialization (packed binary format, special handling for strings (variable length types))
-        const uint32_t              offset_var_;    // begin of variable section in buffer_     
+        // Immutable after construction --> We need to protect these members from modification (const wont' work due to assignment & move operators)
+        Layout                layout_;
+        std::vector<uint32_t> offsets_;       // offsets data buffer to access actual data for each column during serialization/deserialization (packed binary format, special handling for strings (variable length types))
+        uint32_t              offset_var_;    // begin of variable section in buffer_     
+
+        // Mutable data
+        std::span<std::byte>  buffer_;        // serilized data buffer (fixed + variable section, packed binary format)
+
     
     public:
         RowView() = delete;
         RowView(const Layout& layout, std::span<std::byte> buffer = {});
+        RowView(const RowView& other) = default;        // default copy constructor, as we don't own the buffer
+        RowView(RowView&& other) noexcept = default;    // default move constructor, as we don't own the buffer
         ~RowView() = default;
 
         const std::span<std::byte>& buffer() const noexcept                                 { return buffer_; }
@@ -485,6 +495,10 @@ namespace bcsv {
         bool                        set(size_t index, std::span<const T> src);
                                     template<typename T>
         bool                        set_from(size_t index, const T& value);
+
+
+        RowView& operator=(const RowView& other) noexcept = default; // default copy assignment, as we don't own the buffer
+        RowView& operator=(RowView&& other) noexcept = default;      // default move assignment, as we don't own the buffer
     };
 
 
@@ -495,10 +509,11 @@ namespace bcsv {
     public:
         using LayoutType = LayoutStatic<ColumnTypes...>;
         static constexpr size_t column_count = LayoutType::columnCount();
-
+        
         template<size_t Index>
         using column_type = std::tuple_element_t<Index, typename LayoutType::column_types>;
 
+        // Helpers defining the layout of the wire format (serialized data)
         // serialized data: lengths/size of each column in [bytes]
         static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_lengths = { binaryFieldLength<ColumnTypes>()... };
        
@@ -514,7 +529,10 @@ namespace bcsv {
         static constexpr size_t offset_var_ = (binaryFieldLength<ColumnTypes>() + ... + 0);
 
     private:
-        const LayoutType                layout_;
+        // Immutable after construction --> We need to protect these members from modification (const wont' work due to assignment & move operators)
+        LayoutType layout_;
+
+        // Mutable data
         LayoutType::column_types        data_;
         bitset<column_count>            changes_;
         bool                            change_tracking_ = false;
@@ -523,7 +541,8 @@ namespace bcsv {
         // Constructors
         RowStatic() = delete;
         RowStatic(const LayoutType& layout);
-        RowStatic(RowStatic&& other) noexcept = default;
+        RowStatic(const RowStatic& other) = default;        // default copy constructor, tuple manges copying its members including strings
+        RowStatic(RowStatic&& other) noexcept = default;    // default move constructor, tuple manges moving its members including strings
         ~RowStatic() = default;
        
                                     template<size_t Index = 0>
@@ -575,6 +594,9 @@ namespace bcsv {
         void                        deserializeFrom(const std::span<const std::byte> buffer);
         void                        deserializeFromZoH(const std::span<const std::byte> buffer);
 
+        RowStatic& operator=(const RowStatic& other) noexcept = default; // default copy assignment, tuple manges copying its members including strings
+        RowStatic& operator=(RowStatic&& other) noexcept = default;      // default move assignment, tuple manges moving its members including strings
+
     private:
                                     template<size_t Index>
         void                        serializeElements(ByteBuffer& buffer, const size_t& offRow, size_t& offVar) const;
@@ -603,6 +625,7 @@ namespace bcsv {
         template<size_t Index>
         using column_type = std::tuple_element_t<Index, typename LayoutType::column_types>;
 
+        // Helpers defining the layout of the wire format (serialized data)
         // serialized data: lengths/size of each column in [bytes]
         static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_lengths = { binaryFieldLength<ColumnTypes>()... };
        
@@ -619,7 +642,10 @@ namespace bcsv {
 
 
     private:
-        const LayoutType        layout_;
+        // Immutable after construction --> We need to protect these members from modification (const wont' work due to assignment & move operators)
+        LayoutType              layout_;
+
+        // Mutable data
         std::span<std::byte>    buffer_;
 
     public:
@@ -627,7 +653,8 @@ namespace bcsv {
         RowViewStatic() = delete;
         RowViewStatic(const LayoutType& layout, std::span<std::byte> buffer = {})
             : layout_(layout), buffer_(buffer) {}
-        
+        RowViewStatic(const RowViewStatic& other) = default;        // default copy constructor, as we don't own the buffer
+        RowViewStatic(RowViewStatic&& other) noexcept = default;    // default move constructor
         ~RowViewStatic() = default;
 
         const std::span<std::byte>& buffer() const noexcept                                     { return buffer_; }
@@ -680,6 +707,9 @@ namespace bcsv {
         // =========================================================================
         RowStatic<ColumnTypes...>   toRow() const;
         bool                        validate() const noexcept;
+
+        RowViewStatic& operator=(const RowViewStatic& other) noexcept = default; // default copy assignment, as we don't own the buffer
+        RowViewStatic& operator=(RowViewStatic&& other) noexcept = default;      // default move assignment, as we don't own the buffer
 
     private:
         template<size_t Index = 0>

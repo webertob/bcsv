@@ -21,7 +21,7 @@
  */
 
 // Define our data structure using LayoutStatic template
-using ExampleLayout = bcsv::LayoutStaticBase<
+using ExampleLayout = bcsv::LayoutStatic<
     int32_t,        // id
     std::string,    // name
     float,          // score
