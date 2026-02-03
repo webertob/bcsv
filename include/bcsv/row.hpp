@@ -114,7 +114,7 @@ namespace bcsv {
         data_.resize(offset);
         for(size_t i = 0; i < columnCount; ++i) {
             uint32_t offset = offsets_[i];
-            std::byte* ptr = data_.data() + offset;
+            std::byte* ptr = &data_[offset];
             ColumnType type = layout_.columnType(i);
             switch (type) {
                 case ColumnType::BOOL:
@@ -180,8 +180,8 @@ namespace bcsv {
             ColumnType type = layout_.columnType(i);
             if(type == ColumnType::STRING) {
                 // Strings need deep copy
-                std::byte* ptrThis = data_.data() + offsets_[i];
-                const std::byte* ptrOther = other.data_.data() + offsets_[i];
+                std::byte* ptrThis = &data_[offsets_[i]];
+                const std::byte* ptrOther = &other.data_[offsets_[i]];
                 new (ptrThis) std::string(*reinterpret_cast<const std::string*>(ptrOther)); // placement new with copy constructor
             }
         }
@@ -193,7 +193,7 @@ namespace bcsv {
             // Destroy existing strings before overwriting data_
             for(size_t i = 0; i < layout_.columnCount(); ++i) {
                 if(layout_.columnType(i) == ColumnType::STRING) {
-                    std::byte* ptr = data_.data() + offsets_[i];
+                    std::byte* ptr = &data_[offsets_[i]];
                     reinterpret_cast<std::string*>(ptr)->~basic_string();
                 }
             }
@@ -208,8 +208,8 @@ namespace bcsv {
             // Reconstruct strings for deep copy
             for(size_t i = 0; i < layout_.columnCount(); ++i) {
                 if(layout_.columnType(i) == ColumnType::STRING) {
-                    std::byte* ptrThis = data_.data() + offsets_[i];
-                    const std::byte* ptrOther = other.data_.data() + offsets_[i];
+                    std::byte* ptrThis = &data_[offsets_[i]];
+                    const std::byte* ptrOther = &other.data_[offsets_[i]];
                     new (ptrThis) std::string(*reinterpret_cast<const std::string*>(ptrOther)); // placement new with copy constructor
                 }
             }
@@ -226,7 +226,7 @@ namespace bcsv {
         // Manually call destructors for those types that need it (e.g. strings as they allocate memory themselves)
         for(size_t i = 0; i < layout_.columnCount(); ++i) {
             uint32_t offset = offsets_[i];
-            std::byte* ptr = data_.data() + offset;
+            std::byte* ptr = &data_[offset];
             ColumnType type = layout_.columnType(i);
             if(type == ColumnType::STRING) {
                 // Strings need destructor called
@@ -240,7 +240,7 @@ namespace bcsv {
     {
         for(size_t i = 0; i < layout_.columnCount(); ++i) {
             uint32_t offset = offsets_[i];
-            std::byte* ptr = data_.data() + offset;
+            std::byte* ptr = &data_[offset];
             ColumnType type = layout_.columnType(i);
             switch (type) {
                 case ColumnType::BOOL:
@@ -300,7 +300,7 @@ namespace bcsv {
             assert(index < layout_.columnCount() && "Row::get(index): Index out of bounds");
         }
         size_t offset = offsets_[index];
-        const void* ptr = data_.data() + offset;
+        const void* ptr = &data_[offset];
 
         // Debug checks for safety
 #ifndef NDEBUG
@@ -403,7 +403,7 @@ namespace bcsv {
 
         // All type checks passed, safe to get values
         // Exploit the fact that types are aligned within the row data_ and that we don't have to expect padding bytes between the values. Thus we can do a fast copy.
-        memcpy(dst.data(), data_.data() + offsets_[index], dst.size() * sizeof(T));
+        memcpy(dst.data(), &data_[offsets_[index]], dst.size() * sizeof(T));
     }
 
     // =========================================================================
@@ -499,7 +499,7 @@ namespace bcsv {
         }
 
         ColumnType type = layout_.columnType(index);
-        std::byte* ptr = data_.data() + offsets_[index];
+        std::byte* ptr = &data_[offsets_[index]];
 
         // Specific handling for STRING to support truncation and arithmetic conversion
         if (type == ColumnType::STRING) {
@@ -601,7 +601,7 @@ namespace bcsv {
         }
 
         // Alignment of data is guaranteed by Row Constructor and Row layout (immutable layout for row's lifetime)
-        auto dst = reinterpret_cast<T*>(data_.data() + offsets_[index]);
+        auto dst = reinterpret_cast<T*>(&data_[offsets_[index]]);
         if(tracksChanges()) {
             // Element-wise check and set to track changes precisely
             for (size_t i = 0; i < values.size(); ++i) {
@@ -630,10 +630,10 @@ namespace bcsv {
         size_t count = layout_.columnCount();
         for(size_t i=0; i<count; ++i) {
             ColumnType type = layout_.columnType(i);
-            const std::byte* ptr = data_.data() + offsets_[i];
+            const std::byte* ptr = &data_[offsets_[i]];
             
             if (type == ColumnType::STRING) {
-                const std::string& str = *reinterpret_cast<const std::string*>(ptr);
+                const std::string& str = *reinterpret_cast<const std::string*>(&data_[offsets_[i]]);
                 size_t strLen = std::min(str.length(), MAX_STRING_LENGTH);
                 
                 // Address relative to start of row
@@ -641,24 +641,21 @@ namespace bcsv {
                 StringAddr strAddr(off_var, static_cast<uint16_t>(strLen));
                 
                 // Write StringAddr to fixed section
-                std::byte* dst = buffer.data() + off_fix;
-                std::memcpy(dst, &strAddr, sizeof(strAddr));
+                std::memcpy(&buffer[off_fix], &strAddr, sizeof(strAddr));
                 off_fix += sizeof(strAddr);  // advance fixed offset
                 
                 // Append string data to variable section
                 buffer.resize(off_var + strLen);
-                dst = buffer.data() + off_var;
-                std::memcpy(dst, str.data(), strLen);
+                std::memcpy(&buffer[off_var], str.data(), strLen);
                 off_var += strLen;           // advance variable offset
                 
             } else {
                 size_t len = binaryFieldLength(type);
-                std::byte* dst = buffer.data() + off_fix;
-                std::memcpy(dst, ptr, len);
+                std::memcpy(&buffer[off_fix], ptr, len);
                 off_fix += len; // advance fixed offset
             }
         }
-        return {buffer.data() + off_row, buffer.size() - off_row};
+        return {&buffer[off_row], buffer.size() - off_row};
     }
 
     inline void Row::deserializeFrom(const std::span<const std::byte> buffer)
@@ -673,26 +670,23 @@ namespace bcsv {
         
         size_t count = layout_.columnCount();
         for(size_t i = 0; i < count; ++i) {
-            ColumnType          type    = layout_.columnType(i);
-            const std::byte*    src     = buffer.data() + off_fix;
-            size_t              len     = binaryFieldLength(type);
-            std::byte*          dst     = data_.data() + offsets_[i];
-            
+            ColumnType          type    = layout_.columnType(i);            
             if (type == ColumnType::STRING) {
                 StringAddr strAddr;
-                std::memcpy(&strAddr, src, sizeof(strAddr));
+                assert(binaryFieldLength(type) == sizeof(strAddr));
+                std::memcpy(&strAddr, &buffer[off_fix], sizeof(strAddr));
                 auto [strOff, strLen] = strAddr.unpack();
                 
                 if (strOff + strLen > buffer.size()) {
                     throw std::runtime_error("Row::deserializeFrom String payload extends beyond buffer");
                 }
                 
-                std::string& str = *reinterpret_cast<std::string*>(dst);
-                str.assign(reinterpret_cast<const char*>(buffer.data() + strOff), strLen);
+                std::string& str = *reinterpret_cast<std::string*>(&data_[offsets_[i]]);
+                str.assign(reinterpret_cast<const char*>(&buffer[strOff]), strLen);
             } else {
-                 std::memcpy(dst, src, len);
+                 std::memcpy(&data_[offsets_[i]], &buffer[off_fix], binaryFieldLength(type));
             }
-            off_fix += len; // advance fixed offset
+            off_fix += binaryFieldLength(type); // advance fixed offset
         }
     }
 
@@ -706,48 +700,47 @@ namespace bcsv {
         assert(tracksChanges() && "tracking must be enabled for ZoH serialization");
 
         // preserve offset to beginning of row  
-        size_t old_size = buffer.size();
-        auto rowBegin = buffer.data() + old_size;
+        size_t bufferSizeOld = buffer.size();
 
         // Early exit if no changes
         if(!hasAnyChanges()) {
             // nothing to serialize --> skip and exit early
-            return {rowBegin , 0}; 
+            return {&buffer[bufferSizeOld], 0}; 
         }
 
 
         // reserve space for rowHeader (bitset) at the begin of the row
         bitset_dynamic rowHeader = changes_; // make a copy to modify for bools
-        buffer.resize(buffer.size() + changes_.sizeBytes());
+        buffer.resize(buffer.size() + rowHeader.sizeBytes());
 
         // Serialize each element that has changed
         for(size_t i = 0; i < layout_.columnCount(); ++i) {
             ColumnType type = layout_.columnType(i);           
             if (type == ColumnType::BOOL) {
                 // Special handling for bools: always serialize to single bit in the rowHeader
-                bool val = *reinterpret_cast<const bool*>(data_.data() + offsets_[i]);
+                bool val = *reinterpret_cast<const bool*>(&data_[offsets_[i]]);
                 rowHeader.set(i, val);
             } else if (changes_.test(i)) {
                 size_t off = buffer.size();
                 if(type == ColumnType::STRING) {
                     // Special handling for strings - encoding in ZoH mode happens in place
                     // Indices in string vector
-                    const std::string& str = *reinterpret_cast<const std::string*>(data_.data() + offsets_[i]);
+                    const std::string& str = *reinterpret_cast<const std::string*>(&data_[offsets_[i]]);
                     uint16_t strLength = static_cast<uint16_t>(std::min(str.size(), MAX_STRING_LENGTH));
                     buffer.resize(buffer.size() + sizeof(strLength) + strLength);
-                    std::memcpy(buffer.data() + off, &strLength, sizeof(strLength));
-                    std::memcpy(buffer.data() + off + sizeof(strLength), str.data(), strLength);
+                    std::memcpy(&buffer[off], &strLength, sizeof(strLength));
+                    std::memcpy(&buffer[off + sizeof(strLength)], str.data(), strLength);
                 } else {
                     size_t len = binaryFieldLength(type);
                     buffer.resize(buffer.size() + len);
-                    std::memcpy(buffer.data() + off, data_.data() + offsets_[i], len);
+                    std::memcpy(&buffer[off], &data_[offsets_[i]], len);
                 }
             }
         }
 
         // Write rowHeader to the begin of the row
-        memcpy(rowBegin, rowHeader.data(), rowHeader.sizeBytes());
-        return {rowBegin, buffer.size() - old_size};
+        memcpy(&buffer[bufferSizeOld], rowHeader.data(), rowHeader.sizeBytes());
+        return {&buffer[bufferSizeOld], buffer.size() - bufferSizeOld};
     }
 
     inline void Row::deserializeFromZoH(const std::span<const std::byte> buffer) {
@@ -755,44 +748,42 @@ namespace bcsv {
         
         // buffer starts with the change bitset, followed by the actual row data.
         if (buffer.size() >= changes_.sizeBytes()) {
-            std::memcpy(changes_.data(), buffer.data(), changes_.sizeBytes());  
+            std::memcpy(changes_.data(), &buffer[0], changes_.sizeBytes());  
         } else [[unlikely]] {
             throw std::runtime_error("Row::deserializeFromZoH() failed! Buffer too small to contain change bitset.");
         }        
-        auto buf = buffer.subspan(changes_.sizeBytes());
         
         // Deserialize each element that has changed
-        size_t offset = 0;
+        size_t offset = changes_.sizeBytes();
         for(size_t i = 0; i < layout_.columnCount(); ++i) {
             ColumnType type = layout_.columnType(i);
             if (type == ColumnType::BOOL) {
                 // always deserialize bools from bitset
-                *reinterpret_cast<bool*>(data_.data() + offsets_[i]) = changes_.test(i);
+                *reinterpret_cast<bool*>(&data_[offsets_[i]]) = changes_.test(i);
             
             } else if (changes_.test(i)) {
                 // deserilialize other types only if they have changed
-                std::byte* ptr = data_.data() + offsets_[i];
                 if(type == ColumnType::STRING) {
                     // Special handling of strings: note ZoH encoding places string data next to string length (in place encoding)
                     // read string length
                     uint16_t strLength; 
-                    if (offset + sizeof(strLength) > buf.size()) [[unlikely]]
+                    if (offset + sizeof(strLength) > buffer.size()) [[unlikely]]
                         throw std::runtime_error("buffer too small");
-                    std::memcpy(&strLength, buf.data() + offset, sizeof(strLength));
+                    std::memcpy(&strLength, &buffer[offset], sizeof(strLength));
                     offset += sizeof(strLength);
                     
                     // read string data
-                    if (offset + strLength > buf.size()) [[unlikely]]
+                    if (offset + strLength > buffer.size()) [[unlikely]]
                         throw std::runtime_error("buffer too small");
-                    std::string& str = *reinterpret_cast<std::string*>(ptr);
-                    str.assign(reinterpret_cast<const char*>(buf.data() + offset), strLength);
+                    std::string& str = *reinterpret_cast<std::string*>(&data_[offsets_[i]]);
+                    str.assign(reinterpret_cast<const char*>(&buffer[offset]), strLength);
                     offset += strLength;
                 } else {
                     size_t len = binaryFieldLength(type);
-                    if (offset + len > buf.size()) [[unlikely]]
+                    if (offset + len > buffer.size()) [[unlikely]]
                         throw std::runtime_error("buffer too small");
                     
-                    std::memcpy(ptr, buf.data() + offset, len);
+                    std::memcpy(&data_[offsets_[i]], &buffer[offset], len);
                     offset += len;
                 }
             }
@@ -846,13 +837,11 @@ namespace bcsv {
              return {}; 
         }
 
-        const std::byte* ptr = buffer_.data() + offset;
-
         // 5. Handle String vs Primitive
         if (type == ColumnType::STRING) {
             // Unpack string address safely using memcpy (alignment safe)
             StringAddr strAddr;
-            std::memcpy(&strAddr, ptr, sizeof(strAddr));
+            std::memcpy(&strAddr, &buffer_[offset], sizeof(strAddr));
             
             auto [strOff, strLen] = strAddr.unpack();
             
@@ -862,10 +851,10 @@ namespace bcsv {
             }
 
             // Return span covering the actual string payload
-            return { buffer_.data() + strOff, strLen };
+            return { &buffer_[strOff], strLen };
         } else {
             // Return span covering the primitive value
-            return { ptr, fieldLen };
+            return { &buffer_[offset], fieldLen };
         }
     }
    
@@ -900,7 +889,7 @@ namespace bcsv {
 
         // Note: We know that there is no padding between fields of the same type in the serialized data(wire format), nor in the destination span. Thus we can copy a continuous block of memory. 
         // Note: Yes we know that alignment is not guaranteed by the bcsv::wire format (because we don't pad in serialized data!), but memcpy handles this safely.
-        memcpy(dst.data(), buffer_.data() + offsets_[index], dst.size() * sizeof(T));
+        memcpy(dst.data(), &buffer_[offsets_[index]], dst.size() * sizeof(T));
         return true;
     }
 
@@ -965,7 +954,7 @@ namespace bcsv {
             
             // Unpack string address and validate bounds
             StringAddr addr;
-            std::memcpy(&addr, buffer_.data() + offset, sizeof(addr));
+            std::memcpy(&addr, &buffer_[offset], sizeof(addr));
             auto [strOff, strLen] = addr.unpack();
             
             // Validate string bounds for payload
@@ -975,11 +964,11 @@ namespace bcsv {
 
             // Return appropriate string type
             if constexpr (std::is_same_v<T, std::string_view>) {
-                return std::string_view(reinterpret_cast<const char*>(buffer_.data() + strOff), strLen);
+                return std::string_view(reinterpret_cast<const char*>(&buffer_[strOff]), strLen);
             } else if constexpr (std::is_same_v<T, std::span<const char>>) {
-                return std::span<const char>(reinterpret_cast<const char*>(buffer_.data() + strOff), strLen);
+                return std::span<const char>(reinterpret_cast<const char*>(&buffer_[strOff]), strLen);
             } else { // std::string
-                return std::string(reinterpret_cast<const char*>(buffer_.data() + strOff), strLen);
+                return std::string(reinterpret_cast<const char*>(&buffer_[strOff]), strLen);
             }
         } else {
             // Primitive type requested - verify column is NOT STRING
@@ -998,7 +987,7 @@ namespace bcsv {
             }
             
             T val;
-            std::memcpy(&val, buffer_.data() + offset, sizeof(T));
+            std::memcpy(&val, &buffer_[offset], sizeof(T));
             return val;
         }
     }
@@ -1032,7 +1021,7 @@ namespace bcsv {
                 // We must read into a local aligned variable first using memcpy.
                 SrcType tempVal;
                 assert(length == sizeof(SrcType) && "Mismatched length for SrcType");
-                std::memcpy(&tempVal, buffer_.data() + offset, length);
+                std::memcpy(&tempVal, &buffer_[offset], length);
                 dst = tempVal; // Implicit conversion/assignment (e.g. int8 -> int)
                 return true;
             }
@@ -1056,13 +1045,13 @@ namespace bcsv {
             // Special handling for STRING type, as it requires unpacking the StringAddr
             case ColumnType::STRING: {
                 StringAddr addr;
-                memcpy(&addr, buffer_.data() + offset, sizeof(addr));
+                memcpy(&addr, &buffer_[offset], sizeof(addr));
                 auto [strOff, strLen] = addr.unpack();
                 if (strOff + strLen > buffer_.size()) {
                     assert(false && "RowView::get_as string payload out of bounds");
                     return false; // string data out of bounds
                 }
-                const char* strPtr = reinterpret_cast<const char*>(buffer_.data() + strOff);                
+                const char* strPtr = reinterpret_cast<const char*>(&buffer_[strOff]);                
                 if constexpr (std::is_same_v<T, std::string>) {
                     dst.assign(strPtr, strLen); // deep copy
                     return true;
@@ -1673,7 +1662,7 @@ namespace bcsv {
 
         // serialize each tuple element using compile-time recursion
         serializeElements<0>(buffer, offRow, offVar);
-        return {buffer.data() + offRow, buffer.size() - offRow};
+        return {&buffer[offRow], buffer.size() - offRow};
     }
 
     template<typename... ColumnTypes>
@@ -1686,11 +1675,11 @@ namespace bcsv {
                 size_t lenVar = std::min(std::get<Index>(data_).size(), MAX_STRING_LENGTH);
                 StringAddr strAddr(offVar, lenVar);                                                   // Make address relative to row start
                 buffer.resize(offRow + offVar + lenVar);                                                   // Ensure buffer is large enough to hold string payload
-                std::memcpy(buffer.data() + offRow + offFix, &strAddr, sizeof(strAddr));                // write string address
-                std::memcpy(buffer.data() + offRow + offVar, std::get<Index>(data_).c_str(), lenVar);   // write string payload
+                std::memcpy(&buffer[offRow + offFix], &strAddr, sizeof(strAddr));                // write string address
+                std::memcpy(&buffer[offRow + offVar], std::get<Index>(data_).c_str(), lenVar);   // write string payload
                 offVar += lenVar;
             } else {
-                std::memcpy(buffer.data() + offRow + offFix, &std::get<Index>(data_), lenFix);
+                std::memcpy(&buffer[offRow + offFix], &std::get<Index>(data_), lenFix);
             }
             // Recursively process next element
             serializeElements<Index + 1>(buffer, offRow, offVar);
@@ -1708,23 +1697,23 @@ namespace bcsv {
         assert(change_tracking_ && "RowStatic::serializeToZoH() requires change tracking to be enabled.");
 
         // remember where this row starts, (as we are appending to the buffer)
-        size_t bufferSizeOld = buffer.size();               
-        auto rowBegin = buffer.data() + bufferSizeOld;
+        size_t bufferSizeOld = buffer.size();
 
         // skips if there is nothing to serialize
         if(!hasAnyChanges()) {
-            return {rowBegin, 0}; 
+            return {&buffer[bufferSizeOld], 0}; 
         }
 
         bitset<column_count> rowHeader = changes_;              // make a copy to modify for bools (changes_ are const!)
-        buffer.resize(buffer.size() + changes_.sizeBytes());    // reserve space for rowHeader (bitset) at the begin of the row
+        buffer.resize(buffer.size() + rowHeader.sizeBytes());    // reserve space for rowHeader (bitset) at the begin of the row
         
         // Serialize each tuple element using compile-time recursion
         serializeElementsZoH<0>(buffer, rowHeader);
 
         // after serializing the elements, write the rowHeader to the begin of the row
-        std::memcpy(rowBegin, rowHeader.data(), rowHeader.sizeBytes());
-        return {rowBegin, buffer.size() - bufferSizeOld};
+        // Calculate pointer after all resizes to avoid dangling pointer from vector reallocation
+        std::memcpy(&buffer[bufferSizeOld], rowHeader.data(), rowHeader.sizeBytes());
+        return {&buffer[bufferSizeOld], buffer.size() - bufferSizeOld};
     }
 
     template<typename... ColumnTypes>
@@ -1748,15 +1737,15 @@ namespace bcsv {
                     const std::byte* strDataPtr = reinterpret_cast<const std::byte*>(value.c_str());
 
                     buffer.resize(buffer.size() + sizeof(uint16_t) + strLength);
-                    memcpy(buffer.data() + old_size, strLengthPtr, sizeof(uint16_t));
-                    memcpy(buffer.data() + old_size + sizeof(uint16_t), strDataPtr, strLength);
+                    memcpy(&buffer[old_size], strLengthPtr, sizeof(uint16_t));
+                    memcpy(&buffer[old_size + sizeof(uint16_t)], strDataPtr, strLength);
                 } else {
                     // for all other types, we append directly to the end of the buffer
                     const auto& value = std::get<Index>(data_);
                     const std::byte* dataPtr = reinterpret_cast<const std::byte*>(&value);
                 
                     buffer.resize(buffer.size() + sizeof(column_type<Index>));
-                    memcpy(buffer.data() + old_size, dataPtr, sizeof(column_type<Index>));
+                    memcpy(&buffer[old_size], dataPtr, sizeof(column_type<Index>));
                 }
             }
             // Recursively process next element
@@ -1784,14 +1773,14 @@ namespace bcsv {
 
             if constexpr (std::is_same_v<column_type<Index>, std::string>) {
                 StringAddr strAddr;
-                std::memcpy(&strAddr, buffer.data() + off, sizeof(strAddr));
+                std::memcpy(&strAddr, &buffer[off], sizeof(strAddr));
                 auto [strOff, strLen] = strAddr.unpack();
                 if (strOff + strLen > buffer.size()) {
                     throw std::runtime_error("RowStatic::deserializeElements() failed! Buffer overflow while reading.");
                 }
-                std::get<Index>(data_).assign(reinterpret_cast<const char*>(buffer.data() + strOff), strLen);
+                std::get<Index>(data_).assign(reinterpret_cast<const char*>(&buffer[strOff]), strLen);
             } else {
-                std::memcpy(&std::get<Index>(data_), buffer.data() + off, len);
+                std::memcpy(&std::get<Index>(data_), &buffer[off], len);
             }
             
             // Recursively process next element
@@ -1835,13 +1824,13 @@ namespace bcsv {
                         throw std::runtime_error("RowStatic::deserializeElementsZoH() failed! Buffer too small to contain string length.");
                     }
                     uint16_t strLength;
-                    std::memcpy(&strLength, buffer.data(), sizeof(uint16_t));
+                    std::memcpy(&strLength, &buffer[0], sizeof(uint16_t));
                     
                     if (buffer.size() < sizeof(uint16_t) + strLength) {
                         throw std::runtime_error("RowStatic::deserializeElementsZoH() failed! Buffer too small to contain string payload.");
                     }
                     std::string value;
-                    value.assign(reinterpret_cast<const char*>(buffer.data() + sizeof(uint16_t)), strLength);
+                    value.assign(reinterpret_cast<const char*>(&buffer[sizeof(uint16_t)]), strLength);
                     std::get<Index>(data_) = value;
                     buffer = buffer.subspan(sizeof(uint16_t) + strLength);
                 } else {
