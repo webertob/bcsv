@@ -49,7 +49,12 @@ bcsv_type_t bcsv_layout_column_type(const_bcsv_layout_t layout, size_t index) {
 }
 
 bool bcsv_layout_set_column_name(bcsv_layout_t layout, size_t index, const char* name) {
-    return static_cast<bcsv::Layout*>(layout)->setColumnName(index, name);
+    try {
+        static_cast<bcsv::Layout*>(layout)->setColumnName(index, name);
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 void bcsv_layout_set_column_type(bcsv_layout_t layout, size_t index, bcsv_type_t type) {
@@ -57,8 +62,13 @@ void bcsv_layout_set_column_type(bcsv_layout_t layout, size_t index, bcsv_type_t
 }
 
 bool bcsv_layout_add_column(bcsv_layout_t layout, size_t index, const char* name, bcsv_type_t type) {
-    bcsv::ColumnDefinition colDef = {name, static_cast<bcsv::ColumnType>(type)};
-    return static_cast<bcsv::Layout*>(layout)->addColumn(colDef, index);
+    try {
+        bcsv::ColumnDefinition colDef = {name, static_cast<bcsv::ColumnType>(type)};
+        static_cast<bcsv::Layout*>(layout)->addColumn(colDef, index);
+        return true;
+    } catch (...) {
+        return false;
+    }
 }
 
 void bcsv_layout_remove_column(bcsv_layout_t layout, size_t index) {

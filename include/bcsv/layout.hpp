@@ -86,7 +86,7 @@ namespace bcsv {
 
     inline void Layout::removeColumn(size_t index) {
         if (index >= column_names_.size()) {
-            return; // out of range
+            throw std::out_of_range("Layout::removeColumn: index " + std::to_string(index) + " out of range");
         }
 
         column_index_.erase(column_names_[index]);

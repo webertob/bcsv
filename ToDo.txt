@@ -164,7 +164,8 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
         arrow
         influxDb
         excel
-19. Write paper and release/submit
 
+19. Write paper and release/submit
+20. Change bitset and bitset_dynamic to use the largest nativly supported type on the platform it is compiled (i.e. uint64_t on x64) to exploite large registers and reduce looping. maintain data and sizeByte() to access underlying packed data.
 
 

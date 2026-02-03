@@ -314,6 +314,118 @@ writer.row().set<1>(std::string{"Alice"});
 writer.writeRow();
 ```
 
+### Type Safety: STRICT vs FLEXIBLE Accessors
+
+BCSV provides two accessor patterns for maximum flexibility and performance:
+
+#### STRICT Accessors (Exact Type Match)
+
+**Use when:** You need type safety, optimal performance, or compile-time guarantees.
+
+```cpp
+// Returns reference or value - type must match exactly
+auto value = row.get<float>(0);        // Runtime: get<T>(index)
+auto value = row.get<0>();             // Compile-time: get<Index>()
+
+// Vectorized access - types must match exactly
+std::array<int32_t, 3> values;
+std::span<int32_t> span{values};
+row.get(0, span);                      // get(index, span<T>&)
+```
+
+**Characteristics:**
+- ✅ Throws or returns error if type mismatch
+- ✅ Best performance (no conversions)
+- ✅ Zero-copy for strings (returns `std::string_view`)
+- ✅ Compile-time or runtime type checking
+
+#### FLEXIBLE Accessors (Type Conversions)
+
+**Use when:** You need generic code, cross-type compatibility, or don't know exact types.
+
+```cpp
+// Returns bool - supports implicit conversions
+int value;
+if (row.get(0, value)) {              // get(index, T& dst)
+    // Success: supports int8→int, float→double, string→string_view
+}
+```
+
+**Characteristics:**
+- ✅ Supports safe implicit conversions (e.g., `int8_t→int`, `float→double`)
+- ✅ Supports string type conversions (`string→string_view`, `string_view→string`)
+- ✅ Returns `false` if conversion not possible (instead of throwing)
+- ✅ Ideal for generic/templated code
+
+#### Complete Accessor Matrix
+
+| Class | Strict Accessors | Flexible Accessor |
+|-------|------------------|-------------------|
+| `Row` | `get<T>(index)`, `get(index, span<T>&)` | `get(index, T& dst)` |
+| `RowView` | `get<T>(index)`, `get(index, span<T>&)` | `get(index, T& dst)` |
+| `RowStatic` | `get<Index>()`, `get<T>(index)`, `get(index, span<T>&)` | `get(index, T& dst)` |
+| `RowViewStatic` | `get<Index>()`, `get(index, span<T>&)` | `get(index, T& dst)` |
+
+**Cross-reference:** Each function's documentation includes links to its counterpart for easy navigation.
+
+---
+
+### Return Types: Reference vs Value
+
+BCSV row classes differ in their return types based on memory ownership and alignment guarantees:
+
+#### Reference Returns (`const T&`)
+
+**Classes:** `Row`, `RowStatic`
+
+These classes **own aligned memory**, so they can safely return references:
+
+```cpp
+Row row(layout);
+const int32_t& value = row.get<int32_t>(0);     // Returns reference - safe!
+const std::string& str = row.get<std::string>(1); // Reference to owned string
+```
+
+**Why safe?**
+- `Row`: Owns aligned `std::vector<std::byte>` with proper alignment for all types
+- `RowStatic`: Owns aligned `std::tuple<ColumnTypes...>` with compiler-guaranteed alignment
+- Memory lifetime tied to row object
+- No risk of accessing misaligned data
+
+#### Value Returns (`T`)
+
+**Classes:** `RowView`, `RowViewStatic`
+
+These classes **view external buffers** that may not be aligned, so primitives are returned by value:
+
+```cpp
+RowView view(layout, buffer);
+int32_t value = view.get<int32_t>(0);           // Returns by value - safe copy!
+std::string_view sv = view.get<std::string_view>(1); // View is safe (no alignment requirement)
+```
+
+**Why by value?**
+- Buffer data may come from network, file I/O, or serialized sources
+- Cannot guarantee proper alignment for primitive types
+- Returning reference to misaligned data causes undefined behavior
+- Uses `memcpy` internally - safe for any alignment
+
+**Strings are different:**
+- String types (`std::string_view`, `std::span<const char>`) are safe as views
+- Byte arrays don't require alignment
+- Zero-copy access still possible
+
+#### Summary Table
+
+| Class | Return Type | Reason |
+|-------|-------------|--------|
+| `Row::get<T>(index)` | `const T&` | Owns aligned memory |
+| `RowStatic::get<T>(index)` | `const T&` | Owns aligned tuple |
+| `RowView::get<T>(index)` | `T` | Buffer may be misaligned |
+| `RowViewStatic::get<Index>()` | `T` | Buffer may be misaligned |
+
+**Performance note:** Modern compilers optimize value returns via RVO (Return Value Optimization), so the performance difference is negligible for most use cases.
+
 ---
 
 ## Performance

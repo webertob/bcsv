@@ -17,6 +17,7 @@
  */
 
 #include "bcsv/bitset.hpp"
+#include "bcsv/bitset_dynamic.hpp"
 #include "bcsv/definitions.h"
 #include "row.h"
 #include "layout.h"
@@ -186,7 +187,7 @@ namespace bcsv {
         }
     }
 
-    Row& Row::operator=(const Row& other) noexcept
+    inline Row& Row::operator=(const Row& other) noexcept
     {
         if (this != &other) {
             // Destroy existing strings before overwriting data_
@@ -291,8 +292,12 @@ namespace bcsv {
     // 1. RAW POINTER ACCESS (caller must ensure type safety)
     // =========================================================================
     inline const void* Row::get(size_t index) const {
-        if(index >= layout_.columnCount()) {
-            return nullptr;
+        if constexpr (RANGE_CHECKING) {
+            if (index >= layout_.columnCount()) {
+                return nullptr;
+            }
+        } else {
+            assert(index < layout_.columnCount() && "Row::get(index): Index out of bounds");
         }
         size_t offset = offsets_[index];
         const void* ptr = data_.data() + offset;
@@ -327,33 +332,59 @@ namespace bcsv {
     }
    
     // =========================================================================
-    // 2. TYPED REFERENCE ACCESS (Row Only)
-    // Fastest and type-safe access to single column value. Ensures type matches exactly.
+    // 2. TYPED REFERENCE ACCESS (Row Only) - STRICT
+    // Returns const T& (reference) to column value. Row owns aligned memory, so references are safe.
+    // Type must match exactly (no conversions).
+    // For flexible access with type conversions, use get(index, T& dst) instead.
     // =========================================================================
     template<typename T>
     inline const T& Row::get(size_t index) const {
+        // Compile-time type validation
+        static_assert(
+            std::is_trivially_copyable_v<T> || 
+            std::is_same_v<T, std::string> || 
+            std::is_same_v<T, std::string_view> || 
+            std::is_same_v<T, std::span<const char>>,
+            "Row::get<T>: Type T must be either trivially copyable (primitives) or string-related (std::string, std::string_view, std::span<const char>)"
+        );
+        
         // Use void* get for bounds check
         const void* ptr = get(index); 
         if (!ptr) {
             throw std::out_of_range("Row::get: Invalid column index " + std::to_string(index));
         }
         
-        // Strict Type Check
+        // Strict Type Check - Branch on compile-time type T first for better optimization
         ColumnType actualType = layout_.columnType(index);
-        ColumnType requestedType = toColumnType<T>();
-        if(requestedType != actualType) {
-             // More informative error message
-             std::string msg = "Row::get<T> Type mismatch at index " + std::to_string(index) + 
-                               ". Requested: " + std::string(toString(requestedType)) + 
-                               ", Actual: " + std::string(toString(actualType));
-             throw std::runtime_error(msg);
+        
+        if constexpr (std::is_same_v<T, std::string> || 
+                      std::is_same_v<T, std::string_view> || 
+                      std::is_same_v<T, std::span<const char>>) {
+            // String type requested
+            if (actualType != ColumnType::STRING) [[unlikely]] {
+                throw std::runtime_error(
+                    "Row::get<T>: Type mismatch at index " + std::to_string(index) + 
+                    ". Requested: string type, Actual: " + std::string(toString(actualType)));
+            }
+        } else {
+            // Primitive type requested
+            constexpr ColumnType requestedType = toColumnType<T>();
+            if (requestedType != actualType) [[unlikely]] {
+                throw std::runtime_error(
+                    "Row::get<T>: Type mismatch at index " + std::to_string(index) + 
+                    ". Requested: " + std::string(toString(requestedType)) + 
+                    ", Actual: " + std::string(toString(actualType)));
+            }
         }
 
         // Safe strict aliasing because we constructed the object at this address
         return *reinterpret_cast<const T*>(ptr);
     }
 
-    /** Vectorized access to multiple columns of same type. Types must match exactly */
+    /** Vectorized access to multiple columns of same type - STRICT.
+     *  Types must match exactly (no conversions). Only supports primitive types.
+     *  For flexible access with type conversions, use get(index, T& dst) instead.
+     */
     template<typename T>
     inline void Row::get(size_t index, std::span<T> &dst) const
     {
@@ -376,9 +407,10 @@ namespace bcsv {
     }
 
     // =========================================================================
-    // 3. FLEXIBLE / CONVERTING ACCESS (Best for Shared Interface)
-    // Type safe with implicit conversions (e.g., int8->int, float->double)
-    // Returns false if conversion not possible, true on success
+    // 3. FLEXIBLE / CONVERTING ACCESS (Best for Generic/Shared Interfaces)
+    // Supports implicit type conversions (e.g., int8→int, float→double, string→string_view).
+    // Returns false if conversion not possible, true on success.
+    // For strict access without conversions, use get<T>(index) instead.
     // =========================================================================
     template<typename T>
     inline bool Row::get(size_t index, T &dst) const {
@@ -457,7 +489,14 @@ namespace bcsv {
             return this->set(index, std::string_view(value.data(), value.size()));
         }
 
-        if(index >= layout_.columnCount()) [[unlikely]] return false;
+        // Bounds check
+        if constexpr (RANGE_CHECKING) {
+            if (index >= layout_.columnCount()) [[unlikely]] {
+                return false;
+            }
+        } else {
+            assert(index < layout_.columnCount() && "Row::set(index): Index out of bounds");
+        }
 
         ColumnType type = layout_.columnType(index);
         std::byte* ptr = data_.data() + offsets_[index];
@@ -487,10 +526,23 @@ namespace bcsv {
                 }
                 return true;
             }
+            // 2b. Single Char Conversion (char -> "c")
+            else if constexpr (std::is_same_v<DecayedT, char>) {
+                if (strPtr->size() != 1 || (*strPtr)[0] != value) {
+                    strPtr->assign(1, value);
+                    if(tracksChanges()) changes_.set(index);
+                }
+                return true;
+            }
             // 3. Direct Assignment (captures char, initializer_list, etc.)
             else if constexpr (std::is_assignable_v<std::string&, const T&>) {
-                if (*strPtr != value) {
-                    *strPtr = value;
+                std::string strVal;
+                strVal = value; // assignment uses is_assignable_v
+                if (strVal.size() > MAX_STRING_LENGTH) {
+                    strVal.resize(MAX_STRING_LENGTH);
+                }
+                if(*strPtr != strVal) {
+                    *strPtr = std::move(strVal);
                     if(tracksChanges()) changes_.set(index);
                 }
                 return true;
@@ -664,19 +716,17 @@ namespace bcsv {
         }
 
 
-        // place a copy of the change bitset to the begin of the row
+        // reserve space for rowHeader (bitset) at the begin of the row
+        bitset_dynamic rowHeader = changes_; // make a copy to modify for bools
         buffer.resize(buffer.size() + changes_.sizeBytes());
-        auto rowHeader = new(rowBegin) bitset_dynamic(changes_); // placement new copy
 
-        
         // Serialize each element that has changed
         for(size_t i = 0; i < layout_.columnCount(); ++i) {
             ColumnType type = layout_.columnType(i);           
             if (type == ColumnType::BOOL) {
-                // Special handling for bools: always serialize but store as single bit in changes_
-                // Get generic bool value (Layout handles BOOL types in buffer)
+                // Special handling for bools: always serialize to single bit in the rowHeader
                 bool val = *reinterpret_cast<const bool*>(data_.data() + offsets_[i]);
-                rowHeader->set(i, val);
+                rowHeader.set(i, val);
             } else if (changes_.test(i)) {
                 size_t off = buffer.size();
                 if(type == ColumnType::STRING) {
@@ -695,7 +745,8 @@ namespace bcsv {
             }
         }
 
-        // Write change bitset to reserved location
+        // Write rowHeader to the begin of the row
+        memcpy(rowBegin, rowHeader.data(), rowHeader.sizeBytes());
         return {rowBegin, buffer.size() - old_size};
     }
 
@@ -819,7 +870,11 @@ namespace bcsv {
     }
    
 
-    /** Vectorized access to multiple columns of same type. Only arithmetic types supported. */
+    /** Vectorized access to multiple columns of same type - STRICT.
+     *  Types must match exactly (no conversions). Only arithmetic types supported.
+     *  Returns false on type mismatch or bounds error.
+     *  For flexible access with type conversions, use get(index, T& dst) instead.
+     */
     template<typename T>
     inline bool RowView::get(size_t index, std::span<T> &dst) const
     {
@@ -849,15 +904,39 @@ namespace bcsv {
         return true;
     }
 
-    /** Strict Typed Access.
-     *  Returns primitives by value.
-     *  Returns strings as std::string_view (Zero Copy).
+    /** Strict Typed Access - STRICT.
+     *  Returns T by value (not reference) - buffer data may not be aligned, so we cannot safely return references to primitives.
+     *  Primitives: Returned by value (copied via memcpy, handles misalignment safely).
+     *  Strings: Returns std::string/std::string_view/std::span<const char> (zero-copy, alignment not required for byte arrays).
+     *  Type must match exactly (no implicit conversions for primitives).
      *  Throws std::runtime_error on type mismatch or bounds error.
+     *  For flexible access with type conversions, use get(index, T& dst) instead.
      */
     template<typename T>
     inline T RowView::get(size_t index) const {
+        // Compile-time check: std::string types must only be used with STRING columns (checked at runtime)
+        // For non-STRING columns requesting std::string, this will fail at compile time
+        static_assert(
+            std::is_trivially_copyable_v<T> || 
+            std::is_same_v<T, std::string> || 
+            std::is_same_v<T, std::string_view> || 
+            std::is_same_v<T, std::span<const char>>,
+            "RowView::get<T>: Type T must be either trivially copyable (primitives) or string-related (std::string, std::string_view, std::span<const char>)"
+        );
+        
+        // Bounds check: configurable via RANGE_CHECKING
+        if constexpr (RANGE_CHECKING) {
+            // Runtime check in both debug and release builds
+            if (index >= layout_.columnCount()) {
+                throw std::out_of_range("RowView::get<T>: Invalid column index " + std::to_string(index) + 
+                                        " (column count: " + std::to_string(layout_.columnCount()) + ")");
+            }
+        } else {
+            // Debug-only check (zero cost in release builds)
+            assert(index < layout_.columnCount() && "RowView::get<T> index out of bounds");
+        }
+        
         assert(layout_.columnCount() == offsets_.size());
-        assert(index < layout_.columnCount() && "RowView::get<T> index out of bounds");
 
         // 1. Get Column Info, offset, length (includes bounds check via layout_)
         ColumnType type = layout_.columnType(index);
@@ -866,11 +945,25 @@ namespace bcsv {
 
         // 2. Check Buffer Access
         if (buffer_.data() == nullptr || offset + length > buffer_.size()) {
-            throw std::out_of_range("RowView::get<T> Invalid buffer");
+            throw std::out_of_range("RowView::get<T>: Buffer access out of range at index " + 
+                                    std::to_string(index) + 
+                                    " (offset: " + std::to_string(offset) + 
+                                    ", required: " + std::to_string(offset + length) + 
+                                    ", available: " + std::to_string(buffer_.size()) + ")");
         }
 
-        // 3. Type Check
-        if (type == ColumnType::STRING) {
+        // 3. Type Check - Branch on compile-time type T first for better optimization
+        if constexpr (std::is_same_v<T, std::string> || 
+                      std::is_same_v<T, std::string_view> || 
+                      std::is_same_v<T, std::span<const char>>) {
+            // String type requested - verify column is actually STRING
+            if (type != ColumnType::STRING) {
+                std::string msg = "RowView::get<T>: Type mismatch at index " + std::to_string(index) + 
+                                  ". Requested: string type, Actual: " + std::string(toString(type));
+                throw std::runtime_error(msg);
+            }
+            
+            // Unpack string address and validate bounds
             StringAddr addr;
             std::memcpy(&addr, buffer_.data() + offset, sizeof(addr));
             auto [strOff, strLen] = addr.unpack();
@@ -880,29 +973,41 @@ namespace bcsv {
                 throw std::out_of_range("String payload out of bounds");
             }
 
+            // Return appropriate string type
             if constexpr (std::is_same_v<T, std::string_view>) {
                 return std::string_view(reinterpret_cast<const char*>(buffer_.data() + strOff), strLen);
             } else if constexpr (std::is_same_v<T, std::span<const char>>) {
                 return std::span<const char>(reinterpret_cast<const char*>(buffer_.data() + strOff), strLen);
-            } else if constexpr (std::is_same_v<T, std::string>) {
+            } else { // std::string
                 return std::string(reinterpret_cast<const char*>(buffer_.data() + strOff), strLen);
-            } else {
-                throw std::runtime_error("RowView::get<T> Type mismatch for STRING");
             }
         } else {
-            // Primitive handling
-            if (toColumnType<T>() != type) {
-                throw std::runtime_error("RowView::get<T> Type mismatch");
+            // Primitive type requested - verify column is NOT STRING
+            if (type == ColumnType::STRING) {
+                throw std::runtime_error("RowView::get<T>: Type mismatch at index " + std::to_string(index) + 
+                                         ". Cannot read primitive type from STRING column");
             }
+            
+            // Type must match exactly for primitives
+            ColumnType requestedType = toColumnType<T>();
+            if (requestedType != type) {
+                std::string msg = "RowView::get<T>: Type mismatch at index " + std::to_string(index) + 
+                                  ". Requested: " + std::string(toString(requestedType)) + 
+                                  ", Actual: " + std::string(toString(type));
+                throw std::runtime_error(msg);
+            }
+            
             T val;
             std::memcpy(&val, buffer_.data() + offset, sizeof(T));
             return val;
         }
-        
-        // Should be unreachable given type checks
-        throw std::runtime_error("Unsupported type in RowView::get<T>");
     }
 
+    /** Flexible access with type conversions - FLEXIBLE.
+     *  Supports implicit type conversions (e.g., int8→int, float→double, string→string_view).
+     *  Returns false if conversion not possible or on bounds error, true on success.
+     *  For strict access without conversions, use get<T>(index) instead.
+     */
     template<typename T>
     inline bool RowView::get(size_t index, T &dst) const {
         assert(layout_.columnCount() == offsets_.size());
@@ -1202,7 +1307,11 @@ namespace bcsv {
         }
     }
 
-    /** Direct reference to column data. No overhead. */
+    /** Direct reference to column data (compile-time) - STRICT.
+     *  Compile-time type-safe access. No overhead, no runtime checks.
+     *  Returns const reference to the column value.
+     *  For flexible runtime access with type conversions, use get(index, T& dst) instead.
+     */
     template<typename... ColumnTypes>
     template<size_t Index>
     const auto& RowStatic<ColumnTypes...>::get() const noexcept {
@@ -1255,11 +1364,12 @@ namespace bcsv {
     template<typename... ColumnTypes>
     const void* RowStatic<ColumnTypes...>::get(size_t index) const noexcept {
         // 1. Bounds check
-        assert(index < column_count && "RowStatic::get(index): Index out of bounds");
         if constexpr (RANGE_CHECKING) {
             if (index >= column_count) [[unlikely]] {
                 return nullptr;
             }
+        } else {
+            assert(index < column_count && "RowStatic::get(index): Index out of bounds");
         }
 
         // 2. Define Function Pointer Signature
@@ -1279,25 +1389,53 @@ namespace bcsv {
         return handlers[index](*this);
     }
 
-    /** Get typed reference (strict). Throws if type mismatch or index invalid. 
-     *  Matches Row::get<T>(index) interface and behavior.
+    /** Get typed reference (strict) - STRICT.
+     *  Returns const T& (reference) to column value. RowStatic owns aligned tuple storage, so references are safe.
+     *  Type must match exactly (no conversions).
+     *  Throws if type mismatch or index invalid.
+     *  For flexible access with type conversions, use get(index, T& dst) instead.
      */
     template<typename... ColumnTypes>
     template<typename T>
     const T& RowStatic<ColumnTypes...>::get(size_t index) const {
+        // Compile-time type validation
+        static_assert(
+            std::is_trivially_copyable_v<T> || 
+            std::is_same_v<T, std::string> || 
+            std::is_same_v<T, std::string_view> || 
+            std::is_same_v<T, std::span<const char>>,
+            "RowStatic::get<T>: Type T must be either trivially copyable (primitives) or string-related (std::string, std::string_view, std::span<const char>)"
+        );
+        
         // 1. Reuse raw pointer lookup
         // This makes the code cleaner by isolating the tuple traversal logic in one place.
         const void* ptr = get(index);
         
         if (ptr == nullptr) [[unlikely]] {
-             throw std::out_of_range("Invalid column index");
+             throw std::out_of_range("RowStatic::get<T>: Invalid column index " + std::to_string(index));
         }
 
-        // 2. Strict Type Check
-        // We ensure the requested C++ type T maps to the same ColumnType as the actual data.
-        // RowStatic's layout_ provides efficient O(1) type lookup.
-        if (layout_.columnType(index) != toColumnType<T>()) [[unlikely]] {
-             throw std::runtime_error("Type mismatch in RowStatic::get<T>");
+        // 2. Strict Type Check - Branch on compile-time type T first for better optimization
+        ColumnType actualType = layout_.columnType(index);
+        
+        if constexpr (std::is_same_v<T, std::string> || 
+                      std::is_same_v<T, std::string_view> || 
+                      std::is_same_v<T, std::span<const char>>) {
+            // String type requested
+            if (actualType != ColumnType::STRING) [[unlikely]] {
+                throw std::runtime_error(
+                    "RowStatic::get<T>: Type mismatch at index " + std::to_string(index) + 
+                    ". Requested: string type, Actual: " + std::string(toString(actualType)));
+            }
+        } else {
+            // Primitive type requested
+            constexpr ColumnType requestedType = toColumnType<T>();
+            if (requestedType != actualType) [[unlikely]] {
+                throw std::runtime_error(
+                    "RowStatic::get<T>: Type mismatch at index " + std::to_string(index) + 
+                    ". Requested: " + std::string(toString(requestedType)) + 
+                    ", Actual: " + std::string(toString(actualType)));
+            }
         }
 
         // 3. Safe Cast
@@ -1305,12 +1443,12 @@ namespace bcsv {
         return *static_cast<const T*>(ptr);
     }
 
-    /** Vectorized runtime access. 
+    /** Vectorized runtime access - STRICT.
      *  Copies data from the row starting at 'index' into the destination span.
-     *  Iterates through the range and strictly validates type compatibility for each element.
-     *  
+     *  Type must match exactly for all columns (no conversions).
      *  Throws std::out_of_range if the range exceeds column count.
      *  Throws std::runtime_error (via get<T>) if any column type does not match T.
+     *  For flexible access with type conversions, use get(index, T& dst) instead.
      */
     template<typename... ColumnTypes>
     template<typename T, size_t Extent>
@@ -1329,9 +1467,10 @@ namespace bcsv {
         }
     }
 
-    /** Flexible copy access with type conversion (runtime index). 
-     *  Performs assignment/conversion if possible (e.g., int8->int, float->double).
+    /** Flexible copy access with type conversion - FLEXIBLE.
+     *  Supports implicit type conversions (e.g., int8→int, float→double, string→string_view).
      *  Returns false if conversion not possible, true on success.
+     *  For strict access without conversions, use get<T>(index) instead.
      */
     template<typename... ColumnTypes>
     template<typename T>
@@ -1430,6 +1569,15 @@ namespace bcsv {
                     changes_.set(Index);
                 }
             }
+
+            // Case 3c: Single char -> efficient conversion
+            else if constexpr (std::is_same_v<DecayedT, char>) {
+                if (currentVal.size() != 1 || currentVal[0] != value) {
+                    currentVal.assign(1, value);
+                    changes_.set(Index);
+                }
+            }
+
             else {
                 static_assert(false, "RowStatic::set<Index>: Unsupported type to assign to string column");
             }
@@ -1493,8 +1641,12 @@ namespace bcsv {
         // ToDo: Currently its a simple loop delegating to scalar set(). Should be optimized as we know that elements are contiguous and hence no padding in between.
 
         // 1. Access Check
-        if (index + values.size() > column_count) {
-            throw std::out_of_range("Span exceeds column count");
+        if constexpr (RANGE_CHECKING) {
+            if (index + values.size() > column_count) {
+                throw std::out_of_range("RowStatic::set(span): Span exceeds column count");
+            }
+        } else {
+            assert(index + values.size() <= column_count && "RowStatic::set(span): Span exceeds column count");
         }
 
         // 2. Iterative Set
@@ -1564,12 +1716,14 @@ namespace bcsv {
             return {rowBegin, 0}; 
         }
 
-        // reserve space to store change bitset
-        buffer.resize(buffer.size() + changes_.sizeBytes());
-        auto rowHeader = new(rowBegin) bitset<column_count>(changes_); // place a copy of changes_ to the begin of the row buffer, we are going to modify only a few bits (bool columns) during serialization. The rest stays as is.
+        bitset<column_count> rowHeader = changes_;              // make a copy to modify for bools (changes_ are const!)
+        buffer.resize(buffer.size() + changes_.sizeBytes());    // reserve space for rowHeader (bitset) at the begin of the row
         
         // Serialize each tuple element using compile-time recursion
-        serializeElementsZoH<0>(buffer, *rowHeader);
+        serializeElementsZoH<0>(buffer, rowHeader);
+
+        // after serializing the elements, write the rowHeader to the begin of the row
+        std::memcpy(rowBegin, rowHeader.data(), rowHeader.sizeBytes());
         return {rowBegin, buffer.size() - bufferSizeOld};
     }
 
@@ -1711,9 +1865,12 @@ namespace bcsv {
     // ========================================================================
 
 
-    /** Get value by Static Index.
-     *  for Primitives: Returns T by value (via memcpy).
-     *  for Strings:    Returns std::string_view pointing into buffer (Zero Copy).
+    /** Get value by Static Index (compile-time) - STRICT.
+     *  Compile-time type-safe access with zero-copy for strings.
+     *  Returns T by value (not reference) - buffer data may not be aligned.
+     *  Primitives: Returns T by value (copied via memcpy, safely handles misalignment).
+     *  Strings: Returns std::string_view pointing into buffer (zero-copy, alignment not required for byte arrays).
+     *  For flexible runtime access with type conversions, use get(index, T& dst) instead.
      */
     template<typename... ColumnTypes>
     template<size_t Index>
@@ -1722,14 +1879,16 @@ namespace bcsv {
         
         // check buffer validity
         if (buffer_.data() == nullptr) [[unlikely]] {
-             throw std::runtime_error("RowViewStatic::get<I>() buffer not set");
+             throw std::runtime_error("RowViewStatic::get<" + std::to_string(Index) + ">: Buffer not set");
         }
 
         constexpr size_t length = column_lengths[Index];
         constexpr size_t offset = column_offsets[Index];
         using T = column_type<Index>;
         if (offset + length > buffer_.size()) [[unlikely]] {
-            throw std::out_of_range("RowViewStatic::get<I>() Buffer too small");
+            throw std::out_of_range("RowViewStatic::get<" + std::to_string(Index) + ">: Buffer too small " +
+                                    "(required: " + std::to_string(offset + length) + 
+                                    ", available: " + std::to_string(buffer_.size()) + ")");
         }
 
         if constexpr (std::is_same_v<T, std::string>) {
@@ -1740,7 +1899,10 @@ namespace bcsv {
 
             // Check payload bounds
             if (strOff + strLen > buffer_.size()) [[unlikely]] {
-                throw std::out_of_range("RowViewStatic::get<I>() Buffer too small");
+                throw std::out_of_range("RowViewStatic::get<" + std::to_string(Index) + ">: String payload out of bounds " +
+                                        "(offset: " + std::to_string(strOff) + 
+                                        ", length: " + std::to_string(strLen) + 
+                                        ", buffer size: " + std::to_string(buffer_.size()) + ")");
             }
             
             // Return string_view pointing directly into the buffer payload
@@ -1766,7 +1928,7 @@ namespace bcsv {
 
         // 1. Validate buffer at runtime
         if (buffer_.empty()) {
-            throw std::runtime_error("RowViewStatic::get: Buffer is empty");
+            throw std::runtime_error("RowViewStatic::get<" + std::to_string(StartIndex) + ", " + std::to_string(Extent) + ">: Buffer is empty");
         }
 
         // 2. Check assignability at compile time
@@ -1786,7 +1948,9 @@ namespace bcsv {
             constexpr size_t total_bytes = Extent * sizeof(T);
             
             if (start_offset + total_bytes > buffer_.size()) {
-                throw std::out_of_range("RowViewStatic::get: Buffer access out of range");
+                throw std::out_of_range("RowViewStatic::get<" + std::to_string(StartIndex) + ", " + std::to_string(Extent) + ">: " +
+                                        "Buffer access out of range (required: " + std::to_string(start_offset + total_bytes) + 
+                                        ", available: " + std::to_string(buffer_.size()) + ")");
             }
             
             std::memcpy(dst.data(), buffer_.data() + start_offset, total_bytes);
@@ -1841,7 +2005,11 @@ namespace bcsv {
         return handlers[index](*this);
     }
 
-    /** Runtime vectorized access (Compile-Time) */
+    /** Runtime vectorized access - STRICT.
+     *  Type must match exactly for all columns (no conversions).
+     *  Returns false on type mismatch or bounds error.
+     *  For flexible access with type conversions, use get(index, T& dst) instead.
+     */
     template<typename... ColumnTypes>
     template<typename T, size_t Extent>
     bool RowViewStatic<ColumnTypes...>::get(size_t index, std::span<T, Extent>& dst) const noexcept {
@@ -1875,7 +2043,11 @@ namespace bcsv {
         return true;
     }
 
-
+    /** Flexible access with type conversions - FLEXIBLE.
+     *  Supports implicit type conversions (e.g., int8→int, float→double, string→string_view).
+     *  Returns false if conversion not possible, true on success.
+     *  For strict access without conversions, use get<Index>() (compile-time) instead.
+     */
     template<typename... ColumnTypes>
     template<typename T>
     bool RowViewStatic<ColumnTypes...>::get(size_t index, T& dst) const noexcept {

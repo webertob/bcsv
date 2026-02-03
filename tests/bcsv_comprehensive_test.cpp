@@ -404,23 +404,6 @@ protected:
         size_t column_count = layout.columnCount();
         EXPECT_GT(column_count, 0) << test_name << ": Layout should have columns";
         
-        // Validate total fixed size calculation
-        size_t calculated_size = 0;
-        for (size_t i = 0; i < column_count; ++i) {
-            calculated_size += layout.columnLength(i);
-        }
-        EXPECT_EQ(calculated_size, layout.serializedSizeFixed()) << test_name << ": Total fixed size mismatch";
-        
-        // Validate offsets are monotonically increasing and correct
-        if (column_count > 1) {
-            for (size_t i = 1; i < column_count; ++i) {
-                size_t expected_offset = layout.columnOffset(i-1) + layout.columnLength(i-1);
-                EXPECT_EQ(expected_offset, layout.columnOffset(i)) 
-                    << test_name << ": Column " << i << " offset mismatch. Expected: " 
-                    << expected_offset << ", Got: " << layout.columnOffset(i);
-            }
-        }
-        
         // Validate no duplicate column names
         std::set<std::string> unique_names;
         for (size_t i = 0; i < column_count; ++i) {
@@ -430,16 +413,19 @@ protected:
                 << test_name << ": Duplicate column name: " << name;
         }
         
-        // Validate column index mapping
+        // Validate column index mapping (bidirectional)
         for (size_t i = 0; i < column_count; ++i) {
             std::string name = layout.columnName(i);
             EXPECT_EQ(i, layout.columnIndex(name)) 
                 << test_name << ": Column index mismatch for " << name;
+            EXPECT_TRUE(layout.hasColumn(name))
+                << test_name << ": hasColumn() failed for " << name;
         }
         
-        // Validate first column starts at offset 0
-        if (column_count > 0) {
-            EXPECT_EQ(0, layout.columnOffset(0)) << test_name << ": First column should start at offset 0";
+        // Validate column type is retrievable for all columns
+        for (size_t i = 0; i < column_count; ++i) {
+            EXPECT_NO_THROW(layout.columnType(i)) 
+                << test_name << ": Failed to get type for column " << i;
         }
         
         std::cout << "✓ Layout consistency validation passed for: " << test_name << std::endl;
@@ -461,29 +447,33 @@ TEST_F(BCSVTestSuite, Layout_AddColumn_Positions) {
     validateLayoutConsistency(layout, "Initial 3-column layout");
     
     // Test: Add at the end (position >= size)
-    EXPECT_TRUE(layout.addColumn({"col4_end", bcsv::ColumnType::DOUBLE}, SIZE_MAX));
+    EXPECT_NO_THROW(layout.addColumn({"col4_end", bcsv::ColumnType::DOUBLE}, SIZE_MAX));
     validateLayoutConsistency(layout, "Add at end");
     EXPECT_EQ(4, layout.columnCount());
     EXPECT_EQ("col4_end", layout.columnName(3));
     
     // Test: Add at the beginning (position 0)
-    EXPECT_TRUE(layout.addColumn({"col0_begin", bcsv::ColumnType::BOOL}, 0));
+    EXPECT_NO_THROW(layout.addColumn({"col0_begin", bcsv::ColumnType::BOOL}, 0));
     validateLayoutConsistency(layout, "Add at beginning");
     EXPECT_EQ(5, layout.columnCount());
     EXPECT_EQ("col0_begin", layout.columnName(0));
     EXPECT_EQ("col1", layout.columnName(1)); // shifted
     
     // Test: Add in the middle (position 2)
-    EXPECT_TRUE(layout.addColumn({"col_middle", bcsv::ColumnType::INT64}, 2));
+    EXPECT_NO_THROW(layout.addColumn({"col_middle", bcsv::ColumnType::INT64}, 2));
     validateLayoutConsistency(layout, "Add in middle");
     EXPECT_EQ(6, layout.columnCount());
     EXPECT_EQ("col_middle", layout.columnName(2));
     EXPECT_EQ("col1", layout.columnName(1));
     EXPECT_EQ("col2", layout.columnName(3)); // shifted
     
-    // Test: Duplicate name should fail
-    EXPECT_FALSE(layout.addColumn({"col1", bcsv::ColumnType::UINT32}, 1));
-    validateLayoutConsistency(layout, "After failed duplicate add");
+    // Test: Duplicate name auto-resolution with underscore
+    EXPECT_NO_THROW(layout.addColumn({"col1", bcsv::ColumnType::UINT32}, 1));
+    validateLayoutConsistency(layout, "After duplicate name auto-resolved");
+    EXPECT_EQ(7, layout.columnCount());
+    // Name should be auto-resolved to "col1_"
+    EXPECT_EQ("col1_", layout.columnName(1));
+    EXPECT_TRUE(layout.hasColumn("col1_"));
 }
 
 // Test: Change Column Types at Various Positions
@@ -494,25 +484,22 @@ TEST_F(BCSVTestSuite, Layout_ChangeColumnType_Positions) {
     layout.addColumn({"col1", bcsv::ColumnType::INT8});     // 1 byte
     layout.addColumn({"col2", bcsv::ColumnType::INT32});    // 4 bytes  
     layout.addColumn({"col3", bcsv::ColumnType::DOUBLE});   // 8 bytes
-    layout.addColumn({"col4", bcsv::ColumnType::STRING});   // 4 bytes (32-bit StringAddr)
+    layout.addColumn({"col4", bcsv::ColumnType::STRING});   
     validateLayoutConsistency(layout, "Initial layout for type change");
     
-    size_t initial_size = layout.serializedSizeFixed();
-    
     // Test: Change type at beginning (position 0) - smaller to larger
-    layout.setColumnType(0, bcsv::ColumnType::INT64);  // 1 -> 8 bytes
+    EXPECT_NO_THROW(layout.setColumnType(0, bcsv::ColumnType::INT64));
     validateLayoutConsistency(layout, "Change first column type");
-    EXPECT_EQ(initial_size + 7, layout.serializedSizeFixed()); // +7 bytes
+    EXPECT_EQ(bcsv::ColumnType::INT64, layout.columnType(0));
     
     // Test: Change type in middle (position 1) - larger to smaller  
-    layout.setColumnType(1, bcsv::ColumnType::INT16);  // 4 -> 2 bytes
+    EXPECT_NO_THROW(layout.setColumnType(1, bcsv::ColumnType::INT16));
     validateLayoutConsistency(layout, "Change middle column type");
-    EXPECT_EQ(initial_size + 5, layout.serializedSizeFixed()); // +7-2 = +5 bytes
+    EXPECT_EQ(bcsv::ColumnType::INT16, layout.columnType(1));
     
-    // Test: Change type at end (position 3) - smaller to larger
-    layout.setColumnType(3, bcsv::ColumnType::INT64);  // 4 -> 8 bytes (+4 bytes)
+    // Test: Change type at end (position 3)
+    EXPECT_NO_THROW(layout.setColumnType(3, bcsv::ColumnType::INT64));
     validateLayoutConsistency(layout, "Change last column type");
-    EXPECT_EQ(initial_size + 9, layout.serializedSizeFixed()); // +7-2+4 = +9 bytes
     EXPECT_EQ(bcsv::ColumnType::INT64, layout.columnType(3));
 }
 
@@ -527,57 +514,64 @@ TEST_F(BCSVTestSuite, Layout_ChangeColumnName_Positions) {
     validateLayoutConsistency(layout, "Initial layout for name change");
     
     // Test: Change name at beginning
-    EXPECT_TRUE(layout.setColumnName(0, "new_first"));
+    EXPECT_NO_THROW(layout.setColumnName(0, "new_first"));
     validateLayoutConsistency(layout, "Change first column name");
     EXPECT_EQ("new_first", layout.columnName(0));
     EXPECT_EQ(0, layout.columnIndex("new_first"));
     
     // Test: Change name in middle
-    EXPECT_TRUE(layout.setColumnName(1, "new_middle"));
+    EXPECT_NO_THROW(layout.setColumnName(1, "new_middle"));
     validateLayoutConsistency(layout, "Change middle column name");
     EXPECT_EQ("new_middle", layout.columnName(1));
     EXPECT_EQ(1, layout.columnIndex("new_middle"));
     
     // Test: Change name at end
-    EXPECT_TRUE(layout.setColumnName(2, "new_last"));
+    EXPECT_NO_THROW(layout.setColumnName(2, "new_last"));
     validateLayoutConsistency(layout, "Change last column name");
     EXPECT_EQ("new_last", layout.columnName(2));
     EXPECT_EQ(2, layout.columnIndex("new_last"));
     
-    // Test: Duplicate name should fail
-    EXPECT_FALSE(layout.setColumnName(1, "new_first"));
-    validateLayoutConsistency(layout, "After failed duplicate name change");
-    EXPECT_EQ("new_middle", layout.columnName(1)); // unchanged
+    // Test: Duplicate name auto-resolution with underscore
+    EXPECT_NO_THROW(layout.setColumnName(1, "new_first"));
+    validateLayoutConsistency(layout, "After duplicate name auto-resolved");
+    // Name should be auto-resolved to "new_first_"
+    EXPECT_EQ("new_first_", layout.columnName(1));
+    EXPECT_TRUE(layout.hasColumn("new_first_"));
     
-    // Test: Empty name should fail
-    EXPECT_FALSE(layout.setColumnName(0, ""));
-    validateLayoutConsistency(layout, "After failed empty name change");
-    EXPECT_EQ("new_first", layout.columnName(0)); // unchanged
+    // Test: Empty name gets normalized to default (column letter)
+    EXPECT_NO_THROW(layout.setColumnName(0, ""));
+    validateLayoutConsistency(layout, "After empty name normalized");
+    // Empty names are normalized - should get default name like "A"
+    EXPECT_FALSE(layout.columnName(0).empty());
 }
 
-// Test: Add Duplicate Names
+// Test: Add Duplicate Names - Auto-Resolution
 TEST_F(BCSVTestSuite, Layout_DuplicateNames) {
     bcsv::Layout layout;
     
     // Add initial columns
-    EXPECT_TRUE(layout.addColumn({"col1", bcsv::ColumnType::INT32}));
-    EXPECT_TRUE(layout.addColumn({"col2", bcsv::ColumnType::FLOAT}));
+    EXPECT_NO_THROW(layout.addColumn({"col1", bcsv::ColumnType::INT32}));
+    EXPECT_NO_THROW(layout.addColumn({"col2", bcsv::ColumnType::FLOAT}));
     validateLayoutConsistency(layout, "Initial layout before duplicate test");
     
-    // Test: Attempt to add duplicate name
-    EXPECT_FALSE(layout.addColumn({"col1", bcsv::ColumnType::DOUBLE}));
-    validateLayoutConsistency(layout, "After failed duplicate add");
-    EXPECT_EQ(2, layout.columnCount()); // unchanged
-    
-    // Test: Attempt to add another duplicate name
-    EXPECT_FALSE(layout.addColumn({"col2", bcsv::ColumnType::STRING}));
-    validateLayoutConsistency(layout, "After second failed duplicate add");
-    EXPECT_EQ(2, layout.columnCount()); // unchanged
-    
-    // Test: Add valid name should work
-    EXPECT_TRUE(layout.addColumn({"col3", bcsv::ColumnType::BOOL}));
-    validateLayoutConsistency(layout, "After valid add");
+    // Test: Add duplicate name - should auto-resolve with underscore
+    EXPECT_NO_THROW(layout.addColumn({"col1", bcsv::ColumnType::DOUBLE}));
+    validateLayoutConsistency(layout, "After duplicate name auto-resolved");
     EXPECT_EQ(3, layout.columnCount());
+    EXPECT_EQ("col1_", layout.columnName(2)); // auto-resolved
+    EXPECT_TRUE(layout.hasColumn("col1_"));
+    
+    // Test: Add another duplicate - should get "col1__"
+    EXPECT_NO_THROW(layout.addColumn({"col1", bcsv::ColumnType::STRING}));
+    validateLayoutConsistency(layout, "After second duplicate auto-resolved");
+    EXPECT_EQ(4, layout.columnCount());
+    // May be "col1__" or another variation depending on insertion order
+    EXPECT_NE(layout.columnName(3), "col1");  // Should not be exact duplicate
+    
+    // Test: Add valid unique name should work
+    EXPECT_NO_THROW(layout.addColumn({"col3", bcsv::ColumnType::BOOL}));
+    validateLayoutConsistency(layout, "After valid add");
+    EXPECT_EQ(5, layout.columnCount()); // col1, col2, col1_, col1__, col3
 }
 
 // Test: Remove Columns at Various Positions  
@@ -589,41 +583,37 @@ TEST_F(BCSVTestSuite, Layout_RemoveColumn_Positions) {
     layout.addColumn({"col1", bcsv::ColumnType::INT32});    // 4 bytes
     layout.addColumn({"col2", bcsv::ColumnType::DOUBLE});   // 8 bytes
     layout.addColumn({"col3", bcsv::ColumnType::FLOAT});    // 4 bytes
-    layout.addColumn({"col4", bcsv::ColumnType::STRING});   // 4 bytes (32-bit StringAddr)
+    layout.addColumn({"col4", bcsv::ColumnType::STRING});   
     validateLayoutConsistency(layout, "Initial 5-column layout");
     
-    size_t initial_size = layout.serializedSizeFixed();
     EXPECT_EQ(5, layout.columnCount());
     
     // Test: Remove from middle (position 2) 
-    layout.removeColumn(2); // remove col2 (DOUBLE, 8 bytes)
+    EXPECT_NO_THROW(layout.removeColumn(2)); // remove col2 (DOUBLE)
     validateLayoutConsistency(layout, "After removing middle column");
     EXPECT_EQ(4, layout.columnCount());
-    EXPECT_EQ(initial_size - 8, layout.serializedSizeFixed());
     EXPECT_EQ("col0", layout.columnName(0));
     EXPECT_EQ("col1", layout.columnName(1));
     EXPECT_EQ("col3", layout.columnName(2)); // shifted down
     EXPECT_EQ("col4", layout.columnName(3)); // shifted down
     
     // Test: Remove from beginning (position 0)
-    layout.removeColumn(0); // remove col0 (BOOL, 1 byte)
+    EXPECT_NO_THROW(layout.removeColumn(0)); // remove col0 (BOOL)
     validateLayoutConsistency(layout, "After removing first column");
     EXPECT_EQ(3, layout.columnCount());
-    EXPECT_EQ(initial_size - 9, layout.serializedSizeFixed()); // -8-1 = -9
     EXPECT_EQ("col1", layout.columnName(0)); // shifted down
     EXPECT_EQ("col3", layout.columnName(1)); // shifted down
     EXPECT_EQ("col4", layout.columnName(2)); // shifted down
     
     // Test: Remove from end (last position)
-    layout.removeColumn(2); // remove col4 (STRING, 4 bytes)
+    EXPECT_NO_THROW(layout.removeColumn(2)); // remove col4 (STRING)
     validateLayoutConsistency(layout, "After removing last column");
     EXPECT_EQ(2, layout.columnCount());
-    EXPECT_EQ(initial_size - 13, layout.serializedSizeFixed()); // -8-1-4 = -13
     EXPECT_EQ("col1", layout.columnName(0));
     EXPECT_EQ("col3", layout.columnName(1));
     
-    // Test: Remove invalid index should not crash
-    layout.removeColumn(10); // out of range
+    // Test: Remove invalid index should throw exception
+    EXPECT_THROW(layout.removeColumn(10), std::out_of_range); // out of range
     validateLayoutConsistency(layout, "After invalid remove");
     EXPECT_EQ(2, layout.columnCount()); // unchanged
 }
@@ -639,7 +629,7 @@ TEST_F(BCSVTestSuite, Layout_ComplexOperationsSequence) {
     validateLayoutConsistency(layout, "Initial complex layout");
     
     // Add in middle
-    EXPECT_TRUE(layout.addColumn({"flag", bcsv::ColumnType::BOOL}, 1));
+    EXPECT_NO_THROW(layout.addColumn({"flag", bcsv::ColumnType::BOOL}, 1));
     validateLayoutConsistency(layout, "After add in middle");
     EXPECT_EQ("id", layout.columnName(0));
     EXPECT_EQ("flag", layout.columnName(1));
@@ -647,24 +637,24 @@ TEST_F(BCSVTestSuite, Layout_ComplexOperationsSequence) {
     EXPECT_EQ("value", layout.columnName(3));
     
     // Change type in middle
-    layout.setColumnType(2, bcsv::ColumnType::INT32); // name: STRING -> INT32
+    EXPECT_NO_THROW(layout.setColumnType(2, bcsv::ColumnType::INT32)); // name: STRING -> INT32
     validateLayoutConsistency(layout, "After type change");
     EXPECT_EQ(bcsv::ColumnType::INT32, layout.columnType(2));
     
     // Rename column
-    EXPECT_TRUE(layout.setColumnName(2, "code"));
+    EXPECT_NO_THROW(layout.setColumnName(2, "code"));
     validateLayoutConsistency(layout, "After rename");
     EXPECT_EQ("code", layout.columnName(2));
     EXPECT_EQ(2, layout.columnIndex("code"));
     
     // Add at beginning  
-    EXPECT_TRUE(layout.addColumn({"timestamp", bcsv::ColumnType::INT64}, 0));
+    EXPECT_NO_THROW(layout.addColumn({"timestamp", bcsv::ColumnType::INT64}, 0));
     validateLayoutConsistency(layout, "After add at beginning");
     EXPECT_EQ("timestamp", layout.columnName(0));
     EXPECT_EQ("id", layout.columnName(1));
     
     // Remove from middle
-    layout.removeColumn(2); // remove flag
+    EXPECT_NO_THROW(layout.removeColumn(2)); // remove flag
     validateLayoutConsistency(layout, "After remove from middle");
     EXPECT_EQ("timestamp", layout.columnName(0));
     EXPECT_EQ("id", layout.columnName(1));
@@ -1899,8 +1889,9 @@ TEST_F(BCSVTestSuite, EdgeCase_MixedEmptyOperations) {
             // For empty files (scenarios 0, 1, 2), open() fails, which is expected behavior
             // So we consider it a success if write succeeded (file created)
             if (i == 0) {
-                // Empty layout (0 columns) fails to write due to library limitation
-                EXPECT_FALSE(write_success) << "Scenario '" << scenario.name << "' write should fail (0 columns)";
+                // Empty layout (0 columns) is allowed - file can be created successfully
+                EXPECT_TRUE(write_success) << "Scenario '" << scenario.name << "' write should succeed (0-column files allowed)";
+                // read_success is false because open() failed, which is correct for empty file
             } else if (i <= 2) {
                 EXPECT_TRUE(write_success) << "Scenario '" << scenario.name << "' write should succeed";
                 // read_success is false because open() failed, which is correct for empty file

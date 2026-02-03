@@ -35,14 +35,16 @@ TEST(RowVectorizedTest, GetMultipleInt32) {
 
     // Test with C array wrapped in std::span
     int32_t buffer[3];
-    row.get<int32_t>(1, std::span(buffer, 3));
+    std::span<int32_t> buffer_span{buffer, 3};
+    row.get(1, buffer_span);
     EXPECT_EQ(buffer[0], 20);
     EXPECT_EQ(buffer[1], 30);
     EXPECT_EQ(buffer[2], 40);
 
     // Test span with vector
     std::vector<int32_t> vec(3);
-    row.get<int32_t>(0, std::span(vec));
+    std::span<int32_t> vec_span{vec};
+    row.get(0, vec_span);
     EXPECT_EQ(vec[0], 10);
     EXPECT_EQ(vec[1], 20);
     EXPECT_EQ(vec[2], 30);
@@ -58,14 +60,14 @@ TEST(RowVectorizedTest, SetMultipleInt32) {
 
     // Test with C array wrapped in std::span
     int32_t values[] = {100, 200, 300};
-    row.set<int32_t>(0, std::span(values, 3));
+    row.set(0, std::span<const int32_t>{values, 3});
     EXPECT_EQ(row.get<int32_t>(0), 100);
     EXPECT_EQ(row.get<int32_t>(1), 200);
     EXPECT_EQ(row.get<int32_t>(2), 300);
 
     // Test span with std::array
     std::array<int32_t, 2> arr = {999, 888};
-    row.set<int32_t>(1, std::span(arr));
+    row.set(1, std::span<const int32_t>{arr});
     EXPECT_EQ(row.get<int32_t>(1), 999);
     EXPECT_EQ(row.get<int32_t>(2), 888);
 }
@@ -82,7 +84,8 @@ TEST(RowVectorizedTest, GetMultipleDoubles) {
     row.set<double>(2, 3.5);
 
     double buffer[3];
-    row.get<double>(0, std::span(buffer, 3));
+    std::span<double> buffer_span{buffer, 3};
+    row.get(0, buffer_span);
     EXPECT_DOUBLE_EQ(buffer[0], 1.5);
     EXPECT_DOUBLE_EQ(buffer[1], 2.5);
     EXPECT_DOUBLE_EQ(buffer[2], 3.5);
@@ -102,7 +105,7 @@ TEST(RowVectorizedTest, ChangeTrackingMultiple) {
 
     // Set multiple values
     int32_t values[] = {10, 20, 30};
-    row.set<int32_t>(0, std::span(values, 3));
+    row.set(0, std::span<const int32_t>{values, 3});
 
     EXPECT_TRUE(row.hasAnyChanges());
 }
@@ -115,9 +118,10 @@ TEST(RowVectorizedTest, BoundaryCheck) {
     Row row(layout);
 
     int32_t buffer[5];
+    std::span<int32_t> buffer_span{buffer, 3};
     // This should throw because we're trying to read 3 columns starting at index 1
     // but the layout only has 2 columns total
-    EXPECT_THROW(row.get<int32_t>(1, std::span(buffer, 3)), std::out_of_range);
+    EXPECT_THROW(row.get(1, buffer_span), std::out_of_range);
 }
 
 // =============================================================================
@@ -135,21 +139,23 @@ TEST(RowStaticVectorizedTest, CompileTimeGetMultipleInt32) {
 
     // Test with std::array
     std::array<int32_t, 3> arr;
-    row.get<0, int32_t, 3>(arr);
+    std::span<int32_t, 3> arr_span{arr};
+    row.get<0>(arr_span);
     EXPECT_EQ(arr[0], 10);
     EXPECT_EQ(arr[1], 20);
     EXPECT_EQ(arr[2], 30);
 
     // Test with C array
     int32_t buffer[3];
-    row.get<0, int32_t, 3>(buffer);
+    std::span<int32_t, 3> buffer_span{buffer, 3};
+    row.get<0>(buffer_span);
     EXPECT_EQ(buffer[0], 10);
     EXPECT_EQ(buffer[1], 20);
     EXPECT_EQ(buffer[2], 30);
 
     // Test with span
     std::span<int32_t, 3> span_arr(buffer, 3);
-    row.get<0, int32_t, 3>(span_arr);
+    row.get<0>(span_arr);
     EXPECT_EQ(span_arr[0], 10);
     EXPECT_EQ(span_arr[1], 20);
     EXPECT_EQ(span_arr[2], 30);
@@ -162,14 +168,14 @@ TEST(RowStaticVectorizedTest, CompileTimeSetMultipleInt32) {
 
     // Test with std::array
     std::array<int32_t, 3> arr = {100, 200, 300};
-    row.set<0, int32_t, 3>(arr);
+    row.set<0>(std::span<const int32_t, 3>{arr});
     EXPECT_EQ(row.get<0>(), 100);
     EXPECT_EQ(row.get<1>(), 200);
     EXPECT_EQ(row.get<2>(), 300);
 
     // Test with C array
     int32_t buffer[] = {10, 20, 30};
-    row.set<0, int32_t, 3>(buffer);
+    row.set<0>(std::span<const int32_t, 3>{buffer, 3});
     EXPECT_EQ(row.get<0>(), 10);
     EXPECT_EQ(row.get<1>(), 20);
     EXPECT_EQ(row.get<2>(), 30);
@@ -188,14 +194,16 @@ TEST(RowStaticVectorizedTest, CompileTimeGetPartialRange) {
 
     // Get middle 3 columns
     std::array<int32_t, 3> arr;
-    row.get<1, int32_t, 3>(arr);
+    std::span<int32_t, 3> arr_span{arr};
+    row.get<1>(arr_span);
     EXPECT_EQ(arr[0], 2);
     EXPECT_EQ(arr[1], 3);
     EXPECT_EQ(arr[2], 4);
 
     // Get last 2 columns
     std::array<int32_t, 2> arr2;
-    row.get<3, int32_t, 2>(arr2);
+    std::span<int32_t, 2> arr2_span{arr2};
+    row.get<3>(arr2_span);
     EXPECT_EQ(arr2[0], 4);
     EXPECT_EQ(arr2[1], 5);
 }
@@ -231,14 +239,16 @@ TEST(RowStaticVectorizedTest, RuntimeGetMultipleInt32) {
 
     // Test with C array wrapped in std::span
     int32_t buffer[3];
-    row.get<int32_t>(0, std::span(buffer, 3));
+    std::span<int32_t> buffer_span{buffer, 3};
+    row.get(0, buffer_span);
     EXPECT_EQ(buffer[0], 10);
     EXPECT_EQ(buffer[1], 20);
     EXPECT_EQ(buffer[2], 30);
 
     // Test span with vector
     std::vector<int32_t> vec(2);
-    row.get<int32_t>(1, std::span(vec));
+    std::span<int32_t> vec_span{vec};
+    row.get(1, vec_span);
     EXPECT_EQ(vec[0], 20);
     EXPECT_EQ(vec[1], 30);
 }
@@ -250,14 +260,16 @@ TEST(RowStaticVectorizedTest, RuntimeSetMultipleInt32) {
 
     // Test with C array wrapped in std::span
     int32_t values[] = {100, 200, 300};
-    row.set<int32_t>(0, std::span(values, 3));
+    std::span<const int32_t> values_span{values, 3};
+    row.set(0, values_span);
     EXPECT_EQ(row.get<0>(), 100);
     EXPECT_EQ(row.get<1>(), 200);
     EXPECT_EQ(row.get<2>(), 300);
 
     // Test span with std::array
     std::array<int32_t, 2> arr = {999, 888};
-    row.set<int32_t>(1, std::span(arr));
+    std::span<const int32_t> arr_span{arr};
+    row.set(1, arr_span);
     EXPECT_EQ(row.get<1>(), 999);
     EXPECT_EQ(row.get<2>(), 888);
 }
@@ -268,8 +280,9 @@ TEST(RowStaticVectorizedTest, RuntimeBoundaryCheck) {
     RowStatic<int32_t, int32_t> row(layout);
 
     int32_t buffer[5];
+    std::span<int32_t> buffer_span{buffer, 3};
     // This should throw - trying to read 3 columns starting at index 1, but only 2 columns total
-    EXPECT_THROW(row.get<int32_t>(1, std::span(buffer, 3)), std::out_of_range);
+    EXPECT_THROW(row.get(1, buffer_span), std::out_of_range);
 }
 
 TEST(RowStaticVectorizedTest, RuntimeChangeTracking) {
@@ -283,7 +296,8 @@ TEST(RowStaticVectorizedTest, RuntimeChangeTracking) {
 
     // Set multiple values via runtime interface
     int32_t values[] = {10, 20, 30};
-    row.set<int32_t>(0, std::span(values, 3));
+    std::span<const int32_t> values_span{values, 3};
+    row.set(0, values_span);
 
     EXPECT_TRUE(row.hasAnyChanges());
 }
@@ -305,13 +319,15 @@ TEST(VectorizedMixedTest, MixedColumnsPartialAccess) {
 
     // Get only the two int32 columns
     std::array<int32_t, 2> int_cols;
-    row.get<1, int32_t, 2>(int_cols);
+    std::span<int32_t, 2> int_cols_span{int_cols};
+    row.get<1>(int_cols_span);
     EXPECT_EQ(int_cols[0], 25);
     EXPECT_EQ(int_cols[1], 100);
 
     // Set the two int32 columns
     std::array<int32_t, 2> new_vals = {30, 150};
-    row.set<1, int32_t, 2>(new_vals);
+    std::span<const int32_t, 2> new_vals_span{new_vals};
+    row.set<1>(new_vals_span);
     EXPECT_EQ(row.get<1>(), 30);
     EXPECT_EQ(row.get<2>(), 150);
 }
@@ -356,7 +372,8 @@ TEST(VectorizedPerformanceTest, CompareIndividualVsBulk) {
     auto start_bulk = std::chrono::steady_clock::now();
     for (size_t iter = 0; iter < NUM_ITERATIONS; ++iter) {
         int32_t buffer[NUM_COLUMNS];
-        row.get<int32_t>(0, std::span(buffer, NUM_COLUMNS));
+        std::span<int32_t> buffer_span{buffer, NUM_COLUMNS};
+        row.get(0, buffer_span);
         // Prevent optimization
         volatile int32_t sum = 0;
         for (size_t i = 0; i < NUM_COLUMNS; ++i) {
