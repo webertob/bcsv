@@ -171,7 +171,6 @@ namespace bcsv {
         }
         // Pre-allocate buffers
         row_ = typename LayoutType::RowType(layout);
-        rowBuffer_.reserve(row_.layout().maxByteSize());
         return true;
     }
 

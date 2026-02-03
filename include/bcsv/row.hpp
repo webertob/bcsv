@@ -652,16 +652,21 @@ namespace bcsv {
     inline std::span<std::byte> Row::serializeToZoH(ByteBuffer& buffer) const {
         assert(tracksChanges() && "tracking must be enabled for ZoH serialization");
 
-        // reserve space to store change bitset
-        size_t off_row = buffer.size();      // offset to the begin of this row
+        // preserve offset to beginning of row  
+        size_t old_size = buffer.size();
+        auto rowBegin = buffer.data() + old_size;
 
+        // Early exit if no changes
         if(!hasAnyChanges()) {
             // nothing to serialize --> skip and exit early
-            return {buffer.data() + off_row , 0}; 
+            return {rowBegin , 0}; 
         }
 
-        // reserve space to store change bitset
+
+        // place a copy of the change bitset to the begin of the row
         buffer.resize(buffer.size() + changes_.sizeBytes());
+        auto rowHeader = new(rowBegin) bitset_dynamic(changes_); // placement new copy
+
         
         // Serialize each element that has changed
         for(size_t i = 0; i < layout_.columnCount(); ++i) {
@@ -670,7 +675,7 @@ namespace bcsv {
                 // Special handling for bools: always serialize but store as single bit in changes_
                 // Get generic bool value (Layout handles BOOL types in buffer)
                 bool val = *reinterpret_cast<const bool*>(data_.data() + offsets_[i]);
-                changes_.set(i, val);
+                rowHeader->set(i, val);
             } else if (changes_.test(i)) {
                 size_t off = buffer.size();
                 if(type == ColumnType::STRING) {
@@ -690,8 +695,7 @@ namespace bcsv {
         }
 
         // Write change bitset to reserved location
-        std::memcpy(buffer.data() + off_row, changes_.data(), changes_.sizeBytes());
-        return {buffer.data() + off_row, buffer.size() - off_row};
+        return {rowBegin, buffer.size() - old_size};
     }
 
     inline void Row::deserializeFromZoH(const std::span<const std::byte> buffer) {
@@ -749,21 +753,12 @@ namespace bcsv {
     // ========================================================================
 
     inline RowView::RowView(const Layout& layout, std::span<std::byte> buffer)
-        : layout_(layout), buffer_(buffer), offsets_(), offset_var_(0)
-    {
-        //cast away constness of offsets_ and offset_var_ to initialize them here
-        auto &offsets = const_cast<std::vector<uint32_t>&>(offsets_);
-        auto &offset_var = const_cast<uint32_t&>(offset_var_);
-
-        // update offsets_ based on layout, to enable fast access to fields
-        size_t columnCount = layout_.columnCount();
-        offsets.resize( columnCount);
-        
-        offset_var = 0; // start of variable section (string content), within flat binary buffer
-        for(size_t i = 0; i < columnCount; ++i) {
-            offsets[i] = offset_var;
+        : layout_(layout), offsets_(layout_.columnCount()), offset_var_(0), buffer_(buffer)
+    {        
+        for(size_t i = 0; i < layout_.columnCount(); ++i) {
+            offsets_[i] = offset_var_;
             ColumnType type = layout_.columnType(i);
-            offset_var += binaryFieldLength(type);
+            offset_var_ += binaryFieldLength(type);
         }
     }
 
@@ -1575,32 +1570,32 @@ namespace bcsv {
         assert(change_tracking_ && "RowStatic::serializeToZoH() requires change tracking to be enabled.");
 
         // remember where this row starts, (as we are appending to the buffer)
-        size_t old_size = buffer.size();               
-        auto rowStart = buffer.data() + buffer.size();
+        size_t bufferSizeOld = buffer.size();               
+        auto rowBegin = buffer.data() + bufferSizeOld;
 
         // skips if there is nothing to serialize
         if(!hasAnyChanges()) {
-            return {rowStart, old_size}; 
+            return {rowBegin, 0}; 
         }
 
         // reserve space to store change bitset
         buffer.resize(buffer.size() + changes_.sizeBytes());
-        auto bit_section = new(rowStart) bitset<column_count>(changes_); // place a copy of changes_ to the begin of the row buffer, we are going to modify only a few bits (bool columns) during serialization. The rest stays as is.
+        auto rowHeader = new(rowBegin) bitset<column_count>(changes_); // place a copy of changes_ to the begin of the row buffer, we are going to modify only a few bits (bool columns) during serialization. The rest stays as is.
         
         // Serialize each tuple element using compile-time recursion
-        serializeElementsZoH<0>(buffer, *bit_section);
-        return {rowStart, buffer.size() - old_size};
+        serializeElementsZoH<0>(buffer, *rowHeader);
+        return {rowBegin, buffer.size() - bufferSizeOld};
     }
 
     template<typename... ColumnTypes>
     template<size_t Index>
-    void RowStatic<ColumnTypes...>::serializeElementsZoH(ByteBuffer& buffer, bitset<column_count>& bitHeader) const 
+    void RowStatic<ColumnTypes...>::serializeElementsZoH(ByteBuffer& buffer, bitset<column_count>& rowHeader) const 
     {
         if constexpr (Index < column_count) {
             if constexpr (std::is_same_v<column_type<Index>, bool>) {
                 // store as single bit within serialization_bits
                 bool value = std::get<Index>(data_);
-                bitHeader.set(Index, value); // mark as changed
+                rowHeader.set(Index, value); // mark as changed
             } else if (changes_.test(Index)) {
                 // all other types: only serialize if marked as changed)
                 size_t old_size = buffer.size();
@@ -1625,7 +1620,7 @@ namespace bcsv {
                 }
             }
             // Recursively process next element
-            return serializeElementsZoH<Index + 1>(buffer, bitHeader); 
+            return serializeElementsZoH<Index + 1>(buffer, rowHeader); 
         }
     }
 

@@ -144,16 +144,11 @@ namespace bcsv {
             
             // Initialize payload hasher for checksum chaining
             packetHash_.reset();
-            
-            // Pre-allocate buffers based on maximum row size
-            // Note: Layout doesn't have maxRowSize(), use a conservative estimate
-            size_t estRowSize = layout().maxByteSize(); 
-            rowBufferRaw_.reserve(estRowSize);
-            rowBufferPrev_.reserve(estRowSize);
-            rowBufferPrev_.clear(); // Start with empty previous row
             packetIndex_.clear();            
             row_.clear();
             row_.trackChanges(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD));     // Enable change tracking by default
+            rowBufferRaw_.clear();
+            rowBufferPrev_.clear(); // Start with empty previous row
             return true;
 
         } catch (const std::filesystem::filesystem_error& ex) {
