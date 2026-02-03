@@ -69,7 +69,7 @@ private:
 
 public:
     // Static layout with 6 columns per type (48 columns total)
-    using LargeTestLayoutStatic = bcsv::LayoutStatic<
+    using LargeTestLayoutStatic = bcsv::LayoutStaticBase<
         // 6 bool columns
         bool, bool, bool, bool, bool, bool,
         // 6 int8_t columns  
@@ -496,7 +496,7 @@ public:
                 // Read all values for fair comparison
                 const auto& row = reader.row();
                 for (size_t col = 0; col < 72; ++col) {
-                    auto val = row.get<bcsv::ValueType>(col);
+                    auto val = row.get(col);
                     volatile size_t dummy = std::visit([](const auto& v) { return sizeof(v); }, val);
                     (void)dummy;
                 }

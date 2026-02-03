@@ -125,7 +125,7 @@ TEST(RowVectorizedTest, BoundaryCheck) {
 // =============================================================================
 
 TEST(RowStaticVectorizedTest, CompileTimeGetMultipleInt32) {
-    using LayoutType = LayoutStatic<int32_t, int32_t, int32_t, double, bool>;
+    using LayoutType = LayoutStaticBase<int32_t, int32_t, int32_t, double, bool>;
     LayoutType layout({"col1", "col2", "col3", "col4", "col5"});
     RowStatic<int32_t, int32_t, int32_t, double, bool> row(layout);
 
@@ -156,7 +156,7 @@ TEST(RowStaticVectorizedTest, CompileTimeGetMultipleInt32) {
 }
 
 TEST(RowStaticVectorizedTest, CompileTimeSetMultipleInt32) {
-    using LayoutType = LayoutStatic<int32_t, int32_t, int32_t>;
+    using LayoutType = LayoutStaticBase<int32_t, int32_t, int32_t>;
     LayoutType layout({"col1", "col2", "col3"});
     RowStatic<int32_t, int32_t, int32_t> row(layout);
 
@@ -176,7 +176,7 @@ TEST(RowStaticVectorizedTest, CompileTimeSetMultipleInt32) {
 }
 
 TEST(RowStaticVectorizedTest, CompileTimeGetPartialRange) {
-    using LayoutType = LayoutStatic<int32_t, int32_t, int32_t, int32_t, int32_t>;
+    using LayoutType = LayoutStaticBase<int32_t, int32_t, int32_t, int32_t, int32_t>;
     LayoutType layout({"col1", "col2", "col3", "col4", "col5"});
     RowStatic<int32_t, int32_t, int32_t, int32_t, int32_t> row(layout);
 
@@ -201,7 +201,7 @@ TEST(RowStaticVectorizedTest, CompileTimeGetPartialRange) {
 }
 
 TEST(RowStaticVectorizedTest, CompileTimeChangeTracking) {
-    using LayoutType = LayoutStatic<int32_t, int32_t, int32_t>;
+    using LayoutType = LayoutStaticBase<int32_t, int32_t, int32_t>;
     LayoutType layout({"col1", "col2", "col3"});
     RowStatic<int32_t, int32_t, int32_t> row(layout);
 
@@ -221,7 +221,7 @@ TEST(RowStaticVectorizedTest, CompileTimeChangeTracking) {
 // =============================================================================
 
 TEST(RowStaticVectorizedTest, RuntimeGetMultipleInt32) {
-    using LayoutType = LayoutStatic<int32_t, int32_t, int32_t, double>;
+    using LayoutType = LayoutStaticBase<int32_t, int32_t, int32_t, double>;
     LayoutType layout({"col1", "col2", "col3", "col4"});
     RowStatic<int32_t, int32_t, int32_t, double> row(layout);
 
@@ -244,7 +244,7 @@ TEST(RowStaticVectorizedTest, RuntimeGetMultipleInt32) {
 }
 
 TEST(RowStaticVectorizedTest, RuntimeSetMultipleInt32) {
-    using LayoutType = LayoutStatic<int32_t, int32_t, int32_t>;
+    using LayoutType = LayoutStaticBase<int32_t, int32_t, int32_t>;
     LayoutType layout({"col1", "col2", "col3"});
     RowStatic<int32_t, int32_t, int32_t> row(layout);
 
@@ -263,7 +263,7 @@ TEST(RowStaticVectorizedTest, RuntimeSetMultipleInt32) {
 }
 
 TEST(RowStaticVectorizedTest, RuntimeBoundaryCheck) {
-    using LayoutType = LayoutStatic<int32_t, int32_t>;
+    using LayoutType = LayoutStaticBase<int32_t, int32_t>;
     LayoutType layout({"col1", "col2"});
     RowStatic<int32_t, int32_t> row(layout);
 
@@ -273,7 +273,7 @@ TEST(RowStaticVectorizedTest, RuntimeBoundaryCheck) {
 }
 
 TEST(RowStaticVectorizedTest, RuntimeChangeTracking) {
-    using LayoutType = LayoutStatic<int32_t, int32_t, int32_t>;
+    using LayoutType = LayoutStaticBase<int32_t, int32_t, int32_t>;
     LayoutType layout({"col1", "col2", "col3"});
     RowStatic<int32_t, int32_t, int32_t> row(layout);
 
@@ -293,7 +293,7 @@ TEST(RowStaticVectorizedTest, RuntimeChangeTracking) {
 // =============================================================================
 
 TEST(VectorizedMixedTest, MixedColumnsPartialAccess) {
-    using LayoutType = LayoutStatic<std::string, int32_t, int32_t, double, bool>;
+    using LayoutType = LayoutStaticBase<std::string, int32_t, int32_t, double, bool>;
     LayoutType layout({"name", "age", "score", "rating", "active"});
     RowStatic<std::string, int32_t, int32_t, double, bool> row(layout);
 

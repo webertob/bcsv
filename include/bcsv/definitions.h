@@ -14,7 +14,6 @@
 #include <string>
 #include <cstddef>
 #include <variant>
-#include <algorithm>
 #include <limits>
 #include "string_addr.h"
 
@@ -267,7 +266,7 @@ namespace bcsv {
     using StringAddress = StringAddr<uint32_t>; // Default to 32bit version for now
 
     template<typename T>
-    constexpr size_t binaryFieldLength() {
+    constexpr uint8_t binaryFieldLength() {
         if      constexpr (std::is_same_v<T, bool>    ) return sizeof(bool);
         else if constexpr (std::is_same_v<T, uint8_t> ) return sizeof(uint8_t);
         else if constexpr (std::is_same_v<T, uint16_t>) return sizeof(uint16_t);
@@ -284,7 +283,7 @@ namespace bcsv {
     }
 
     // Helper function to get size for each column type
-    constexpr size_t binaryFieldLength(ColumnType type) {
+    constexpr uint8_t binaryFieldLength(ColumnType type) {
         switch (type) {
             case ColumnType::BOOL:   return sizeof(bool);
             case ColumnType::UINT8:  return sizeof(uint8_t);
@@ -299,20 +298,6 @@ namespace bcsv {
             case ColumnType::DOUBLE: return sizeof(double);
             case ColumnType::STRING: return sizeof(StringAddress); // StringAddress
             default: throw std::runtime_error("Unknown column type");
-        }
-    }
-
-    /* Get the serialized size of a value (cell)
-    *  Considering our custom file layout, especially for strings.
-    */
-    template<typename T>
-    constexpr size_t serializedSize(const T& val) {
-        using DecayT = std::decay_t<T>;
-        if constexpr (std::is_same_v<DecayT, std::string>) {
-            // StringAddress + string itself, limited to 16bit
-            return sizeof(StringAddress) + std::min(val.size(), MAX_STRING_LENGTH);
-        } else {
-            return sizeof(T);
         }
     }
 
@@ -418,4 +403,25 @@ namespace bcsv {
             return defaultValue(targetType);
         }, value);
     }
+
+    
+    namespace detail {
+        // Validation helper: allows templates to check if type is std::variant
+        template<typename T> struct is_variant : std::false_type {};
+        template<typename... Args> struct is_variant<std::variant<Args...>> : std::true_type {};
+
+        template<typename T>
+        inline constexpr bool is_variant_v = is_variant<T>::value;
+
+        // Validation helper: Checks if T is an alternative in std::variant<Types...>
+        template <typename T, typename Variant> struct is_in_variant;
+
+        template <typename T, typename... Ts>
+        struct is_in_variant<T, std::variant<Ts...>> : std::disjunction<std::is_same<T, Ts>...> {};
+
+        template <typename T, typename Variant>
+        constexpr bool is_in_variant_v = is_in_variant<T, Variant>::value;
+    }
+    
+    
 } // namespace bcsv

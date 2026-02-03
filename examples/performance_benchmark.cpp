@@ -48,7 +48,7 @@ private:
 
 public:
     // Static layout definition for performance testing
-    using BenchmarkLayoutStatic = bcsv::LayoutStatic<
+    using BenchmarkLayoutStatic = bcsv::LayoutStaticBase<
         int32_t,        // id
         std::string,    // name
         float,          // score1

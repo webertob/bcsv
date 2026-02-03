@@ -9,10 +9,13 @@
 
 #pragma once
 
+#include <cstddef>
 #include <cstring>
 #include <span>
 #include <string>
+#include <string_view>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #include "definitions.h"
@@ -402,69 +405,86 @@ namespace bcsv {
 
     /* Dynamic row with flexible layout (runtime-defined)*/
     class Row {
-        Layout                    layout_;  // layout defining column types and order
-        std::vector<ValueType>    data_;    // store values for each column
-        mutable bitset_dynamic    changes_; // change tracking
+        const Layout                layout_;      // layout defining column types and order. Can't be changed after construction!
+        std::vector<std::byte>      data_;        // continuous memory buffer to hold data (Note: We store string objects here too. But strings themselves are allocating additional memory elsewhere for their content.)
+        std::vector<uint32_t>       offsets_;     // offsets into data_ to access actual data for each column. Considers types alignment requirements.
+        uint32_t                    offset_var_;  // offset into serilized buffer (wire), marking the beginning of variable-length section / size of the fixed section. Naive packed wire format (no alignment/padding).
+        mutable bitset_dynamic      changes_;     // change tracking
         /* change tracking i.e. for Zero-Order-Hold compression
         *  changes_[0:column_count  ] == true   indicates column i has been modified since last reset.
         *  changes_.empty()           == true   indicates change tracking is disabled.
-        */
-        
+        */        
+    
     public:
-        Row(const Layout& layout);
-        Row() = delete;
-        ~Row() = default;
+        Row() = delete; // no default constructor, we always need a layout
+        Row(const Layout& layout, bool trackChangesEnabled = false);
+        Row(const Row& other) = delete;             // no copy constructor
+        Row(Row&& other) noexcept = default;
+        ~Row();
 
-        void                    clear(); 
-        const Layout&           layout() const                                  { return layout_; }
-        bool                    hasAnyChanges() const                           { return tracksChanges() && changes_.any(); }
-        void                    trackChanges(bool enable);      
-        bool                    tracksChanges() const;
-        void                    setChanges()                                    { changes_.set(); } // mark everything as changed
-        void                    resetChanges()                                  { changes_.reset(); } // mark everything as unchanged
+        void                        clear();
+        const Layout&               layout() const noexcept         { return layout_; }
+        bool                        hasAnyChanges() const noexcept  { return !tracksChanges() || changes_.any(); } // defaults to true if change tracking is disabled
+        void                        trackChanges(bool enable)       { if (enable) { changes_.resize(layout_.columnCount(), true); } else { changes_.resize(0); } }
+        bool                        tracksChanges() const noexcept  { return !changes_.empty(); } 
+        void                        setChanges() noexcept           { changes_.set(); }     // mark everything as changed
+        void                        resetChanges() noexcept         { changes_.reset(); }   // mark everything as unchanged
 
-                                template<typename T = ValueType>
-        const T&                get(size_t index) const;
-                                template<typename T>
-        void                    get(size_t index, std::span<T> dst) const;
-                                template<typename T>
-        void                    set(size_t index, const T& value);
-                                template<typename T>
-        void                    set(size_t index, std::span<const T> src);
+        const void*                 get(size_t index) const;
+                                    template<typename T>
+        const T&                    get(size_t index) const;
+                                    template<typename T>
+        void                        get(size_t index, std::span<T> &dst) const;
+                                    template<typename T>
+        bool                        get_as(size_t index, T &dst) const;
 
-        std::span<std::byte>    serializeTo(ByteBuffer& buffer) const;
-        std::span<std::byte>    serializeToZoH(ByteBuffer& buffer) const;
-        void                    deserializeFrom(const std::span<const std::byte> buffer);
-        void                    deserializeFromZoH(const std::span<const std::byte> buffer);
+                                    template<typename T>
+        bool                        set(size_t index, const T& value);
+                                    template<typename T>
+        void                        set(size_t index, std::span<const T> values);
+
+        std::span<std::byte>        serializeTo(ByteBuffer& buffer) const;
+        std::span<std::byte>        serializeToZoH(ByteBuffer& buffer) const;
+        void                        deserializeFrom(const std::span<const std::byte> buffer);
+        void                        deserializeFromZoH(const std::span<const std::byte> buffer);
+
+        Row&                        operator=(const Row& other) noexcept= delete;  // no copy assignment
     };
 
-    /* Provides a direct view into a buffer, to allow access with partial serialization/deserialization efforts to accelerate sparse data access. Supports Row interface */
-    // Note: Does not support change tracking, yet.
-    // Note: set and get functions should be modified to follow Row interface semantics (avoid auto types, use templates & template specializations)
-    // Note: not fully implemented nor tested! 
+    /* RowView provides a direct view into a serilized buffer, partially supporting the row interface. Intended for sparse data access, avoiding costly full deserialization.
+       Currently we only support the basic get/set interface for individual columns, into a flat serilized buffer. We do not support ZoH format or more complex encoding schemes.
+    */
     class RowView {
-        Layout                          layout_;
-        std::span<std::byte>            buffer_;
-
+        const Layout                layout_;
+        std::span<std::byte>        buffer_;        // serilized data buffer (fixed + variable section, packed binary format)
+        const std::vector<uint32_t> offsets_;       // offsets data buffer to access actual data for each column during serialization/deserialization (packed binary format, special handling for strings (variable length types))
+        const uint32_t              offset_var_;    // begin of variable section in buffer_     
+    
     public:
         RowView() = delete;
-        RowView(const Layout& layout, std::span<std::byte> buffer = {})
-            : layout_(layout), buffer_(buffer)                                          {}
+        RowView(const Layout& layout, std::span<std::byte> buffer = {});
         ~RowView() = default;
 
-                                        template<typename T = ValueType>
-        T                               get(size_t index) const;
-        const std::span<std::byte>&     buffer() const                                  { return buffer_; }
-        const Layout&                   layout() const                                  { return layout_; }
-        void                            set(size_t index, const auto& value);
-        void                            setBuffer(const std::span<std::byte> &buffer)   { buffer_ = buffer; }
+        const std::span<std::byte>& buffer() const noexcept                                 { return buffer_; }
+        const Layout&               layout() const noexcept                                 { return layout_; }
+        void                        setBuffer(const std::span<std::byte> &buffer) noexcept  { buffer_ = buffer; }
+        Row                         toRow() const;
+        bool                        validate(bool deepValidation = true) const;
 
-        Row                             toRow() const;
-        bool                            validate() const;
-    private:
-    
-                                        template<typename T>
-        void                            setExplicit(size_t index, const T& value);
+        std::span<const std::byte>  get(size_t index) const;
+                                    template<typename T>
+        T                           get(size_t index) const;
+                                    template<typename T>
+        bool                        get(size_t index, std::span<T> &dst) const;
+                                    template<typename T>
+        bool                        get_as(size_t index, T &dst) const;
+                
+                                    template<typename T>
+        bool                        set(size_t index, const T& value);
+                                    template<typename T>
+        bool                        set(size_t index, std::span<const T> src);
+                                    template<typename T>
+        bool                        set_from(size_t index, const T& value);
     };
 
 
@@ -474,65 +494,81 @@ namespace bcsv {
     class RowStatic {
     public:
         using LayoutType = LayoutStatic<ColumnTypes...>;
-        static constexpr size_t column_count = LayoutType::column_count;
-        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_offsets = LayoutType::column_offsets;
-        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_lengths = LayoutType::column_lengths;
+        static constexpr size_t column_count = LayoutType::columnCount();
 
         template<size_t Index>
         using column_type = std::tuple_element_t<Index, typename LayoutType::column_types>;
-        using column_types = typename LayoutType::column_types;
+
+        // serialized data: lengths/size of each column in [bytes]
+        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_lengths = { binaryFieldLength<ColumnTypes>()... };
+       
+        // serialized data: offsets of each column in [bytes]
+        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_offsets = []() {
+            size_t off = 0; 
+            return std::array<size_t, sizeof...(ColumnTypes)>{ 
+                std::exchange(off, off + binaryFieldLength<ColumnTypes>())... 
+            }; 
+        }();
+        
+        // serialized data: offset to beginning of variable-length section in [bytes]
+        static constexpr size_t offset_var_ = (binaryFieldLength<ColumnTypes>() + ... + 0);
 
     private:
-        LayoutType                      layout_;
-        column_types                    data_;
+        const LayoutType                layout_;
+        LayoutType::column_types        data_;
         mutable bitset<column_count>    changes_;
-        bool                            tracks_changes_ = false;
-        /* change tracking i.e. for Zero-Order-Hold compression
-        *  changes_[0:column_count  ] == true   indicates column i has been modified since last reset.
-        */
+        bool                            change_tracking_ = false;
 
     public:
-        
         // Constructors
         RowStatic() = delete;
-        RowStatic(const LayoutType& layout) : layout_(layout), data_() {}
+        RowStatic(const LayoutType& layout);
+        RowStatic(RowStatic&& other) noexcept = default;
         ~RowStatic() = default;
        
-        void                        clear();
-        const LayoutType&           layout() const                  { return layout_; }
-        bool                        hasAnyChanges() const           { return tracks_changes_ && changes_.any(); }
-        void                        trackChanges(bool enable);
-        bool                        trackChanges() const            { return tracks_changes_; }
-        void                        setChanges()                    { if(tracks_changes_) changes_.set(); }     // mark everything as changed
-        void                        resetChanges()                  { if(tracks_changes_) changes_.reset(); }   // mark everything as unchanged
-
-
-                                    template<size_t Index>
-        auto&                       get();
-                                    template<size_t Index>
-        const auto&                 get() const;
                                     template<size_t Index = 0>
-        ValueType                   get(size_t index) const;
-                                    template<size_t Index = 0, typename T>
-        void                        set(size_t index, const T& value);
+        void                        clear();
+        const LayoutType&           layout() const noexcept         { return layout_; }
+        bool                        hasAnyChanges() const noexcept  { if(change_tracking_) { return changes_.any(); } else { return true; } } // defaults to true if change tracking is disabled
+        void                        trackChanges(bool enable)       { change_tracking_ = enable; }
+        bool                        tracksChanges() const noexcept  { return change_tracking_; }
+        void                        setChanges() noexcept           { if(change_tracking_) changes_.set(); }     // mark everything as changed
+        void                        resetChanges() noexcept         { if(change_tracking_) changes_.reset(); }   // mark everything as unchanged
+
+        // =========================================================================
+        // 1. Static Access (Compile-Time Index) - Zero Overhead
+        // =========================================================================
+                                    template<size_t Index>
+        const auto&                 get() const noexcept;                                   // Direct reference to column data. No overhead.
+
+                                    template<size_t StartIndex, typename T, size_t Extent>
+        void                        get(std::span<T, Extent> &dst) const noexcept;          // vectorized static access (const)
+
+                                    template<size_t StartIndex, typename T, size_t Extent>
+        void                        get_as(std::span<T, Extent> &dst) const noexcept;       // vectorized static access (const)
+        
+        // =========================================================================
+        // 2. Dynamic Access (Runtime Index) - Branching Overhead
+        // =========================================================================
+        const void*                 get(size_t index) const noexcept;                       // Get raw pointer (void*). returns nullptr if index invalid.
+
+                                    template<typename T>
+        const T&                    get(size_t index) const;                                // Scalar runtime access. Throws on type/index mismatch.
+        
+                                    template<typename T, size_t Extent = std::dynamic_extent> 
+        void                        get(size_t index, std::span<T, Extent> &dst) const;     // vectorized runtime access. Throws on type/index mismatch.
+
+                                    template<typename T>
+        bool                        get_as(size_t index, T &dst) const noexcept;            // Flexible copy access. Performs conversion if possible. Returns false on failure.
+        
                                     template<size_t Index, typename T>
-        void                        set(const T& value);
-                                    template<size_t Index>
-        void                        set(const ValueType& value);
-                                    template<size_t Index>
-        void                        set(const std::string& value);
-
-        // Vectorized access - compile-time indexed
-                                    template<size_t Index, typename T, size_t Count, size_t Recursion = 0>
-        void                        get(std::span<T, Count> dst) const;
-                                    template<size_t Index, typename T, size_t Count, size_t Recursion = 0>
-        void                        set(std::span<const T, Count> src);
-
-        // Vectorized access - runtime indexed
-                                    template<typename T, size_t Index = 0>
-        void                        get(size_t index, std::span<T> dst) const;
-                                    template<typename T, size_t Index = 0>
-        void                        set(size_t index, std::span<const T> src);
+        void                        set(const T& value);                                    // scalar compile-time indexed access
+                                    template<typename T>
+        void                        set(size_t index, const T& value);                      // scalar runtime indexed access
+                                    template<size_t StartIndex, typename T, size_t Extent>
+        void                        set(std::span<const T, Extent> values);                 // vectorized compile-time indexed access
+                                    template<typename T, size_t Extent = std::dynamic_extent>
+        void                        set(size_t index, std::span<const T, Extent> values);   // vectorized runtime indexed access
 
         std::span<std::byte>        serializeTo(ByteBuffer& buffer) const;
         std::span<std::byte>        serializeToZoH(ByteBuffer& buffer) const;
@@ -541,76 +577,113 @@ namespace bcsv {
 
     private:
                                     template<size_t Index>
-        void                        clearHelper();
-
-                                    template<size_t Index>
         void                        serializeElements(ByteBuffer& buffer, const size_t& offRow, size_t& offVar) const;
 
                                     template<size_t Index>
-        void                        serializeElementsZoH(ByteBuffer& buffer) const;
+        void                        serializeElementsZoH(ByteBuffer& buffer, bitset<column_count>& serialization_bits) const;
 
                                     template<size_t Index>
         void                        deserializeElements(const std::span<const std::byte> &srcBuffer);
 
                                     template<size_t Index>
         void                        deserializeElementsZoH(std::span<const std::byte> &srcBuffer);
-
-                                    template<size_t Index>
-        void                        calculateStringSizes(size_t& totalSize) const;
     };
 
 
-    /* Provides a direct view into a buffer, to allow access with partial serialization/deserialization efforts to accelerate sparse data access. Supports RowStatic interface */
-    // Note: Does not support change tracking, yet.
-    // Note: set and get functions should be modified to follow Row interface semantics (avoid auto types, use templates & template specializations)
-    // Note: not fully implemented nor tested! 
+    /* Provides a zero-copy view into a buffer with compile-time layout. 
+       Intended for sparse data access, avoiding costly full deserialization.
+       Currently we only support the basic get/set interface into a flat serilized buffer. We do not support ZoH format or more complex encoding schemes. Change tracking is not supported.
+    */
     template<typename... ColumnTypes>
     class RowViewStatic {
     public:
         using LayoutType = LayoutStatic<ColumnTypes...>;
-        static constexpr size_t column_count = LayoutType::column_count;
-        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_offsets = LayoutType::column_offsets;
-        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_lengths = LayoutType::column_lengths;
+        static constexpr size_t column_count = LayoutType::columnCount();
 
         template<size_t Index>
-        using column_type   = std::tuple_element_t<Index, typename LayoutType::column_types>;
-        using column_types  = typename LayoutType::column_types;
+        using column_type = std::tuple_element_t<Index, typename LayoutType::column_types>;
+
+        // serialized data: lengths/size of each column in [bytes]
+        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_lengths = { binaryFieldLength<ColumnTypes>()... };
+       
+        // serialized data: offsets of each column in [bytes]
+        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_offsets = []() {
+            size_t off = 0; 
+            return std::array<size_t, sizeof...(ColumnTypes)>{ 
+                std::exchange(off, off + binaryFieldLength<ColumnTypes>())... 
+            }; 
+        }();
+        
+        // serialized data: offset to beginning of variable-length section in [bytes]
+        static constexpr size_t offset_var_ = (binaryFieldLength<ColumnTypes>() + ... + 0);
+
 
     private:
-        LayoutType  layout_;
-        std::span<std::byte> buffer_;
+        const LayoutType        layout_;
+        std::span<std::byte>    buffer_;
 
     public:
 
         RowViewStatic() = delete;
         RowViewStatic(const LayoutType& layout, std::span<std::byte> buffer = {})
             : layout_(layout), buffer_(buffer) {}
+        
         ~RowViewStatic() = default;
 
-        template<size_t Index>
-        auto get() const;
-        template<size_t I = 0>
-        ValueType get(size_t index) const;
-        const std::span<std::byte>& buffer() const { return buffer_; }
-        const LayoutType& layout() const { return layout_; }
-        
-        template<size_t Index>
-        void set(const auto& value);
-        template<size_t I = 0>
-        void set(size_t index, const auto& value);
-        void setBuffer(const std::span<std::byte> &buffer) { buffer_ = buffer; }
-        template<size_t Index, typename T>
-        void setExplicit(const T& value);
+        const std::span<std::byte>& buffer() const noexcept                                     { return buffer_; }
+        const LayoutType&           layout() const noexcept                                     { return layout_; }
+        void                        setBuffer(const std::span<std::byte> &buffer) noexcept      { buffer_ = buffer; }
 
-        RowStatic<ColumnTypes...> toRow() const;
-        bool validate() const;
+        // =========================================================================
+        // 1. Static Access (Compile-Time) - Zero Copy where possible
+        // =========================================================================
+        /** Get value by Static Index.
+         *  for Primitives: Returns T by value (via memcpy, handles misalignment).
+         *  for Strings:    Returns std::string_view pointing into buffer (Zero Copy).
+         */
+                                    template<size_t Index>
+        auto                        get() const;                                                    // scalar static access (const)
+
+                                    template<size_t StartIndex, typename T, size_t Extent>
+        bool                        get(std::span<T, Extent> &dst) const noexcept;                  // vectorized static access (const)
+
+
+        /** Set primitive value by Static Index.
+         *  As we cannot resize the underlying buffer, strings are only able to be set to same length as existing string.
+         *  for Primitives: Copies value into buffer (via memcpy, handles misalignment).
+         */
+                                    template<size_t Index, typename T>
+        void                        set(const T& value) noexcept;                                   // scalar static access
+
+                                    template<size_t StartIndex, typename T, size_t Extent>
+        void                        set(std::span<const T, Extent> values) noexcept;                // vectorized static access
+
+        // =========================================================================
+        // 2. Dynamic Access (Runtime Index)
+        // =========================================================================
+        std::span<const std::byte>  get(size_t index) const noexcept;                               // returns empty if index invalid
+
+                                    template<typename T, size_t Extent>
+        bool                        get(size_t index, std::span<T, Extent>& dst) const noexcept;    // vectorized runtime access
+
+                                    template<typename T>
+        bool                        get_as(size_t index, T& dst) const noexcept;                    // flexible copy access
+
+                                    template<typename T>
+        void                        set(size_t index, const T& value) noexcept;                     // scalar runtime access
+
+                                    template<typename T, size_t Extent>
+        void                        set(size_t index, std::span<const T, Extent> values) noexcept;  // vectorized runtime access
+
+        // =========================================================================
+        // 3. Conversion / Validation
+        // =========================================================================
+        RowStatic<ColumnTypes...>   toRow() const;
+        bool                        validate() const noexcept;
 
     private:
         template<size_t Index = 0>
         bool validateStringPayloads() const;
-        
-        template<size_t Index = 0>
-        void copyElements(RowStatic<ColumnTypes...>& row) const;
     };
 
 } // namespace bcsv
