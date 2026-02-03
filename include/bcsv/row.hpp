@@ -377,10 +377,11 @@ namespace bcsv {
 
     // =========================================================================
     // 3. FLEXIBLE / CONVERTING ACCESS (Best for Shared Interface)
-    // Type safe with implicit conversions
+    // Type safe with implicit conversions (e.g., int8->int, float->double)
+    // Returns false if conversion not possible, true on success
     // =========================================================================
     template<typename T>
-    inline bool Row::get_as(size_t index, T &dst) const {
+    inline bool Row::get(size_t index, T &dst) const {
         const void* ptr = get(index);
         if (!ptr) [[unlikely]] {
              return false;
@@ -903,7 +904,7 @@ namespace bcsv {
     }
 
     template<typename T>
-    inline bool RowView::get_as(size_t index, T &dst) const {
+    inline bool RowView::get(size_t index, T &dst) const {
         assert(layout_.columnCount() == offsets_.size());
 
         // 1. Get Column Info, offset, length (includes bounds check via layout_)
@@ -1209,58 +1210,42 @@ namespace bcsv {
         return std::get<Index>(data_);
     }
 
-    /** Vectorized static access. 
+    /** Vectorized static access with smart type handling.
     *  Copies 'Extent' elements starting from 'StartIndex' to 'dst'.
-    *  Unrolled at compile time. 
-    *  Performs implicit type conversion (e.g. read int column into double span).
+    *  Unrolled at compile time with two paths:
+    *  - Fast path: Direct copy when types match exactly
+    *  - Conversion path: Element-wise static_cast when types are assignable
+    *  Compile-time error if types are not assignable.
     */
     template<typename... ColumnTypes>
     template<size_t StartIndex, typename T, size_t Extent>
-    void RowStatic<ColumnTypes...>::get(std::span<T, Extent> &dst) const noexcept {
+    void RowStatic<ColumnTypes...>::get(std::span<T, Extent> &dst) const {
         // 1. Static Checks
         static_assert(Extent != std::dynamic_extent, "RowStatic: Static vectorized get requires fixed-extent span (std::span<T, N>)");
         static_assert(StartIndex + Extent <= column_count, "RowStatic: Access range exceeds column count");
 
-        // 2. Unrolled Assignment using Fold Expression
-        // Creates a compile-time sequence 0..Extent-1 to access tuple elements
+        // 2. Check assignability (compile-time error if not convertible)
         [&]<size_t... I>(std::index_sequence<I...>) {
-            
-            // a) Verify convertibility for ALL columns (Fold over &&)
-            static_assert(((std::is_same_v<column_type<StartIndex + I>, T>) && ...), 
-                "RowStatic::get(span) [Static]: Type mismatch. All columns in the range must match the Span type exactly.");
-
-            // b) Assignment with conversion (Fold over comma operator)
-            // Expands to: dst[0] = ...; dst[1] = ...; etc.
-            ((dst[I] = static_cast<T>(std::get<StartIndex + I>(data_))), ...);
-
-        }(std::make_index_sequence<Extent>{});
-    }
-
-    /** Vectorized static access. 
-    *  Copies 'Extent' elements starting from 'StartIndex' to 'dst'.
-    *  Unrolled at compile time. 
-    *  Performs implicit type conversion (e.g. read int column into double span).
-    */
-    template<typename... ColumnTypes>
-    template<size_t StartIndex, typename T, size_t Extent>
-    void RowStatic<ColumnTypes...>::get_as(std::span<T, Extent> &dst) const noexcept {
-        // 1. Static Checks
-        static_assert(Extent != std::dynamic_extent, "RowStatic: Static vectorized get requires fixed-extent span (std::span<T, N>)");
-        static_assert(StartIndex + Extent <= column_count, "RowStatic: Access range exceeds column count");
-
-        // 2. Unrolled Assignment using Fold Expression
-        // Creates a compile-time sequence 0..Extent-1 to access tuple elements
-        [&]<size_t... I>(std::index_sequence<I...>) {
-            
-            // a) Verify convertibility for ALL columns (Fold over &&)
             static_assert((std::is_assignable_v<T&, const column_type<StartIndex + I>&> && ...), 
-                "RowStatic: Column type is not assignable to destination span type");
-
-            // b) Assignment with conversion (Fold over comma operator)
-            // Expands to: dst[0] = ...; dst[1] = ...; etc.
-            ((dst[I] = static_cast<T>(std::get<StartIndex + I>(data_))), ...);
-
+                "RowStatic::get(span): Column types are not assignable to destination span type");
         }(std::make_index_sequence<Extent>{});
+
+        // 3. Choose fast path or conversion path at compile time
+        constexpr bool all_types_match = []<size_t... I>(std::index_sequence<I...>) {
+            return ((std::is_same_v<T, column_type<StartIndex + I>>) && ...);
+        }(std::make_index_sequence<Extent>{});
+        
+        if constexpr (all_types_match) {
+            // Fast path: All types match exactly - direct access
+            [&]<size_t... I>(std::index_sequence<I...>) {
+                ((dst[I] = std::get<StartIndex + I>(data_)), ...);
+            }(std::make_index_sequence<Extent>{});
+        } else {
+            // Conversion path: Types differ but are assignable - use static_cast
+            [&]<size_t... I>(std::index_sequence<I...>) {
+                ((dst[I] = static_cast<T>(std::get<StartIndex + I>(data_))), ...);
+            }(std::make_index_sequence<Extent>{});
+        }
     }
 
     /** Get raw pointer (void*). Returns nullptr if index invalid.
@@ -1344,12 +1329,13 @@ namespace bcsv {
         }
     }
 
-    /** Flexible copy access (runtime index). 
-     *  Performs assignment/conversion if possible. 
+    /** Flexible copy access with type conversion (runtime index). 
+     *  Performs assignment/conversion if possible (e.g., int8->int, float->double).
+     *  Returns false if conversion not possible, true on success.
      */
     template<typename... ColumnTypes>
     template<typename T>
-    bool RowStatic<ColumnTypes...>::get_as(size_t index, T& dst) const noexcept {
+    bool RowStatic<ColumnTypes...>::get(size_t index, T& dst) const noexcept {
         // 1. Bounds Check
         if (index >= column_count) [[unlikely]] {
             return false;
@@ -1767,43 +1753,49 @@ namespace bcsv {
         }
     }
 
-    /** Vectorized static access (Compile-Time) 
-     *  Optimized for contiguous block copy. 
-     *  Enforces strict type matching and fixed-extent spans at compile time.
+    /** Vectorized static access with smart type handling.
+     *  Optimized for contiguous block copy when types match. 
+     *  Falls back to element-wise conversion if types differ but are assignable.
+     *  Compile-time error if types are not compatible.
      */
     template<typename... ColumnTypes>
     template<size_t StartIndex, typename T, size_t Extent>
-    bool RowViewStatic<ColumnTypes...>::get(std::span<T, Extent>& dst) const noexcept {
-        static_assert(Extent != std::dynamic_extent, "RowViewStatic::get(span) [Static] requires fixed-extent span");
-        static_assert(std::is_arithmetic_v<T>, "RowViewStatic::get(span) [Static] supports primitive types only");
-        static_assert(StartIndex + Extent <= column_count, "RowViewStatic::get(span) [Static] range out of bounds");
-        
-        // 1. Strict Type Integrity (Compile-Time)
-        // verify that every column in the target range matches T exactly.
-        // This guarantees that the source data is a contiguous block of sizeof(T) * Extent bytes.
-        [&]<size_t... I>(std::index_sequence<I...>) {
-            static_assert(((std::is_same_v<column_type<StartIndex + I>, T>) && ...), 
-                "RowViewStatic::get(span) [Static]: Type mismatch. All columns in range must match Span type.");
-        }(std::make_index_sequence<Extent>{});
+    void RowViewStatic<ColumnTypes...>::get(std::span<T, Extent>& dst) const {
+        static_assert(Extent != std::dynamic_extent, "RowViewStatic: requires fixed-extent span");
+        static_assert(StartIndex + Extent <= column_count, "RowViewStatic: Range exceeds column count");
 
-        // 2. Buffer Validity Check
-        if (buffer_.empty()) [[unlikely]] return false;
-
-        // 3. Calculate Offsets (Compile-Time Constants)
-        // These resolve to immediate values in the assembly code.
-        constexpr size_t offset = column_offsets[StartIndex];
-        constexpr size_t length = Extent * sizeof(T);
-
-        // 4. Buffer Boundary Check
-        // Single runtime check covers the entire block.
-        if (offset + length > buffer_.size()) [[unlikely]] {
-            return false;
+        // 1. Validate buffer at runtime
+        if (buffer_.empty()) {
+            throw std::runtime_error("RowViewStatic::get: Buffer is empty");
         }
 
-        // 5. Fast Block Copy
-        // We know from step 1 that types are identical and packed, allowing safe memcpy.
-        std::memcpy(dst.data(), buffer_.data() + offset, length);
-        return true;
+        // 2. Check assignability at compile time
+        [&]<size_t... I>(std::index_sequence<I...>) {
+            static_assert((std::is_assignable_v<T&, column_type<StartIndex + I>> && ...), 
+                "RowViewStatic::get: Column types are not assignable to destination span type");
+        }(std::make_index_sequence<Extent>{});
+
+        // 3. Choose optimal path based on type matching
+        constexpr bool all_types_match = []<size_t... I>(std::index_sequence<I...>) {
+            return ((std::is_same_v<T, column_type<StartIndex + I>>) && ...);
+        }(std::make_index_sequence<Extent>{});
+        
+        if constexpr (all_types_match) {
+            // Fast path: Types match exactly, contiguous memory copy
+            constexpr size_t start_offset = column_offsets[StartIndex];
+            constexpr size_t total_bytes = Extent * sizeof(T);
+            
+            if (start_offset + total_bytes > buffer_.size()) {
+                throw std::out_of_range("RowViewStatic::get: Buffer access out of range");
+            }
+            
+            std::memcpy(dst.data(), buffer_.data() + start_offset, total_bytes);
+        } else {
+            // Conversion path: Element-wise access with type conversion
+            [&]<size_t... I>(std::index_sequence<I...>) {
+                ((dst[I] = static_cast<T>(this->template get<StartIndex + I>())), ...);
+            }(std::make_index_sequence<Extent>{});
+        }
     }
 
     /** Get raw span by runtime index.
@@ -1886,10 +1878,10 @@ namespace bcsv {
 
     template<typename... ColumnTypes>
     template<typename T>
-    bool RowViewStatic<ColumnTypes...>::get_as(size_t index, T& dst) const noexcept {
+    bool RowViewStatic<ColumnTypes...>::get(size_t index, T& dst) const noexcept {
         // 1. Bounds Check (Runtime)
         if constexpr (RANGE_CHECKING) {
-            assert(index < column_count && "RowViewStatic<ColumnTypes...>::get_as(index): Index out of bounds");
+            assert(index < column_count && "RowViewStatic<ColumnTypes...>::get(index): Index out of bounds");
             if (index >= column_count) [[unlikely]] 
                 return false;
         }

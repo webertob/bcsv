@@ -1,3 +1,5 @@
+#pragma once
+
 /*
  * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
  * 
@@ -6,8 +8,6 @@
  * Licensed under the MIT License. See LICENSE file in the project root 
  * for full license information.
  */
-
-#pragma once
 
 #include <cstdint>
 #include <cstddef>

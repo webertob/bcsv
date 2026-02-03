@@ -1,3 +1,5 @@
+#pragma once
+
 /*
  * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
  * 
@@ -7,7 +9,6 @@
  * for full license information.
  */
 
-#pragma once
 
 /**
  * @file writer.hpp

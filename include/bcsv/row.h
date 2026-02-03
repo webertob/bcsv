@@ -439,7 +439,7 @@ namespace bcsv {
                                     template<typename T>
         void                        get(size_t index, std::span<T> &dst) const;
                                     template<typename T>
-        bool                        get_as(size_t index, T &dst) const;
+        bool                        get(size_t index, T &dst) const;                        // Flexible: allows type conversions, returns false on failure
 
                                     template<typename T>
         bool                        set(size_t index, const T& value);
@@ -487,7 +487,7 @@ namespace bcsv {
                                     template<typename T>
         bool                        get(size_t index, std::span<T> &dst) const;
                                     template<typename T>
-        bool                        get_as(size_t index, T &dst) const;
+        bool                        get(size_t index, T &dst) const;                        // Flexible: allows type conversions, returns false on failure
                 
                                     template<typename T>
         bool                        set(size_t index, const T& value);
@@ -561,10 +561,7 @@ namespace bcsv {
         const auto&                 get() const noexcept;                                   // Direct reference to column data. No overhead.
 
                                     template<size_t StartIndex, typename T, size_t Extent>
-        void                        get(std::span<T, Extent> &dst) const noexcept;          // vectorized static access (const)
-
-                                    template<size_t StartIndex, typename T, size_t Extent>
-        void                        get_as(std::span<T, Extent> &dst) const noexcept;       // vectorized static access (const)
+        void                        get(std::span<T, Extent> &dst) const;                   // Vectorized: exact match fast path, conversions if needed
         
         // =========================================================================
         // 2. Dynamic Access (Runtime Index) - Branching Overhead
@@ -575,10 +572,10 @@ namespace bcsv {
         const T&                    get(size_t index) const;                                // Scalar runtime access. Throws on type/index mismatch.
         
                                     template<typename T, size_t Extent = std::dynamic_extent> 
-        void                        get(size_t index, std::span<T, Extent> &dst) const;     // vectorized runtime access. Throws on type/index mismatch.
+        void                        get(size_t index, std::span<T, Extent> &dst) const;     // Strict: vectorized runtime access. Throws on type/index mismatch.
 
                                     template<typename T>
-        bool                        get_as(size_t index, T &dst) const noexcept;            // Flexible copy access. Performs conversion if possible. Returns false on failure.
+        bool                        get(size_t index, T &dst) const noexcept;               // Flexible: allows type conversions, returns false on failure.
         
                                     template<size_t Index, typename T>
         void                        set(const T& value);                                    // scalar compile-time indexed access
@@ -672,7 +669,7 @@ namespace bcsv {
         auto                        get() const;                                                    // scalar static access (const)
 
                                     template<size_t StartIndex, typename T, size_t Extent>
-        bool                        get(std::span<T, Extent> &dst) const noexcept;                  // vectorized static access (const)
+        void                        get(std::span<T, Extent> &dst) const;                            // Vectorized: exact match fast path, conversions if needed
 
 
         /** Set primitive value by Static Index.
@@ -691,10 +688,10 @@ namespace bcsv {
         std::span<const std::byte>  get(size_t index) const noexcept;                               // returns empty if index invalid
 
                                     template<typename T, size_t Extent>
-        bool                        get(size_t index, std::span<T, Extent>& dst) const noexcept;    // vectorized runtime access
+        bool                        get(size_t index, std::span<T, Extent>& dst) const noexcept;    // Strict: vectorized runtime access
 
                                     template<typename T>
-        bool                        get_as(size_t index, T& dst) const noexcept;                    // flexible copy access
+        bool                        get(size_t index, T& dst) const noexcept;                       // Flexible: allows type conversions
 
                                     template<typename T>
         void                        set(size_t index, const T& value) noexcept;                     // scalar runtime access

@@ -41,6 +41,7 @@
 
 // Include implementations
 #include "bcsv.hpp"
+#include "column_name_index.hpp"
 #include "file_header.hpp"
 #include "layout.hpp"
 #include "reader.hpp"

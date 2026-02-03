@@ -54,7 +54,7 @@ namespace bcsv {
         { const_layout.columnName(index)                } -> std::convertible_to<std::string>;
         { const_layout.columnType(index)                } -> std::convertible_to<ColumnType>;
         { const_layout.hasColumn(name)                  } -> std::convertible_to<bool>;    
-        { layout.setColumnName(index, name)             } -> std::same_as<bool>;
+        { layout.setColumnName(index, name)             };  // No return type constraint (may return void or bool, may throw on error)
         { const_layout.isCompatible(const_layout)       } -> std::convertible_to<bool>;
 
         // Type information (for static layouts)
@@ -69,7 +69,7 @@ namespace bcsv {
     class Layout {
     private:
         std::vector<std::string>       column_names_;  // column --> name
-        ColumnNameIndex<>              column_index_;  // name --> column
+        ColumnNameIndex<0>             column_index_;  // name --> column
         std::vector<ColumnType>        column_types_;  // column --> type
     
     protected:
@@ -85,18 +85,18 @@ namespace bcsv {
         ~Layout() = default;
 
                                         // Basic Layout information
-        bool                            addColumn(ColumnDefinition column, size_t position = SIZE_MAX);
+        void                            addColumn(ColumnDefinition column, size_t position = SIZE_MAX);
         void                            clear();   
         size_t                          columnCount() const noexcept                    { return column_names_.size(); }
         size_t                          columnIndex(const std::string& name) const      { return column_index_[name]; }
         const std::string&              columnName(size_t index) const                  { checkRange(index); return column_names_[index]; }
-        const ColumnType&               columnType(size_t index) const                  { checkRange(index); return column_types_[index]; }
+        ColumnType                      columnType(size_t index) const                  { checkRange(index); return column_types_[index]; }
         bool                            hasColumn(const std::string& name) const        { return column_index_.contains(name); }
                                         
                                         template<typename OtherLayout>
         bool                            isCompatible(const OtherLayout& other) const;
         void                            removeColumn(size_t index);
-        bool                            setColumnName(size_t index, std::string name);
+        void                            setColumnName(size_t index, std::string name);
         void                            setColumnType(size_t index, ColumnType type);
         void                            setColumns(const std::vector<ColumnDefinition>& columns);
                                         
@@ -128,6 +128,8 @@ namespace bcsv {
 
         LayoutStatic();
         LayoutStatic(const std::array<std::string, sizeof...(ColumnTypes)>& columnNames);
+        LayoutStatic(const LayoutStatic&) = default;
+        LayoutStatic(LayoutStatic&&) = default;
         ~LayoutStatic() = default;
 
                                         // Basic Layout information
@@ -138,17 +140,19 @@ namespace bcsv {
                                         template<size_t Index>
         static constexpr ColumnType     columnType()                                    { return types[Index]; }          // compile-time version
 
-        static constexpr ColumnType     columnType(size_t index)                        { if (index >= sizeof...(ColumnTypes)) { throw std::out_of_range("LayoutStatic::columnType: Index out of range"); } return types[index]; } // runtime version
+        static ColumnType               columnType(size_t index)                        { if (index >= sizeof...(ColumnTypes)) { throw std::out_of_range("LayoutStatic::columnType: Index out of range"); } return types[index]; } // runtime version
         bool                            hasColumn(const std::string& name) const        { return column_index_.contains(name); }
                                         
                                         template<typename OtherLayout>
         bool                            isCompatible(const OtherLayout& other) const;
-        bool                            setColumnName(size_t index, std::string name);
+        void                            setColumnName(size_t index, std::string name);
                                         template<typename Container>
         bool                            setColumnNames(const Container& names);
                                         
+        LayoutStatic&                   operator=(const LayoutStatic&) = default;      // Copies column names (types are compile-time fixed)
+        LayoutStatic&                   operator=(LayoutStatic&&) = default;           // Moves column names (types are compile-time fixed)
                                         template<typename OtherLayout>
-        LayoutStatic&                   operator=(const OtherLayout& other);
+        LayoutStatic&                   operator=(const OtherLayout& other);           // Copies column names if layouts are compatible (types must match)
     };
 
     // Stream operator for Layout - provides human-readable column information

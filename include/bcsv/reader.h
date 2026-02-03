@@ -13,7 +13,7 @@
 #include <fstream>
 #include <filesystem>
 #include <optional>
-#include "bcsv/definitions.h"
+#include "definitions.h"
 #include "layout.h"
 #include "file_header.h"
 #include "byte_buffer.h"

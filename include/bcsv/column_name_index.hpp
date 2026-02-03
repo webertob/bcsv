@@ -1,14 +1,24 @@
-#include "bcsv/definitions.h"
-#include "column_name_index.h"
+#pragma once
+/**
+ * @file column_name_index.hpp
+ * @brief Binary CSV (BCSV) Library - Column Name Index utilities
+ * 
+ * This file contains utilities for managing column name indices, providing
+ * a unified interface for both dynamic (std::vector) and fixed-size (std::array) storage.
+ * 
+ * Licensed under the MIT License. See LICENSE file in the project root 
+ * for full license information.
+ */
 
+
+#include "column_name_index.h"
 #include <algorithm>
 
 namespace bcsv {
 
-    
     /* Clears std::vector and resets Array to default names*/
     template<size_t Capacity>
-    void ColumnNameIndex<Capacity>::clear() {
+    inline void ColumnNameIndex<Capacity>::clear() {
         if constexpr (IS_FIXED_SIZE) {
             for(size_t i = 0; i < Capacity; ++i) {
                 Entry& entry = data_[i];
@@ -21,7 +31,7 @@ namespace bcsv {
     }
 
     template<size_t Capacity>
-    bool ColumnNameIndex<Capacity>::contains(const std::string& name) const
+    inline bool ColumnNameIndex<Capacity>::contains(const std::string& name) const
     {
         auto it = std::lower_bound(data_.begin(), data_.end(), name, Comparator{});
         return it != data_.end() && it->first == name;
@@ -29,7 +39,7 @@ namespace bcsv {
 
 
     template<size_t Capacity>
-    void ColumnNameIndex<Capacity>::erase(const std::string& name) {
+    inline void ColumnNameIndex<Capacity>::erase(const std::string& name) {
         static_assert(!IS_FIXED_SIZE, "Cannot resize a fixed-size ColumnIndex");
         if constexpr (!IS_FIXED_SIZE) {
             Iterator iter = std::lower_bound(data_.begin(), data_.end(), name, Comparator{});
@@ -49,13 +59,9 @@ namespace bcsv {
     }
 
     template<size_t Capacity>
-    bool ColumnNameIndex<Capacity>::insert(std::string& name, size_t column) {
+    inline void ColumnNameIndex<Capacity>::applyNameConventionAndInsert(std::string& name, size_t column) {
         static_assert(!IS_FIXED_SIZE, "Cannot insert into a fixed-size ColumnIndex");
         if constexpr (!IS_FIXED_SIZE) {
-            if(size()+1 > MAX_COLUMN_COUNT) {
-                return false; // cannot exceed max column count
-            }
-
             normalizeName(column, name);
             
             // find a slot to insert
@@ -75,11 +81,10 @@ namespace bcsv {
             }
             data_.insert(iter, Entry{name, column});
         }
-        return false;
     }
     
     template<size_t Capacity>
-    bool ColumnNameIndex<Capacity>::rename(std::string& oldName, std::string& newName)
+    inline bool ColumnNameIndex<Capacity>::rename(const std::string& oldName, std::string& newName)
     {
         // 1. Find old entry
         Iterator it_old = std::lower_bound(data_.begin(), data_.end(), oldName, Comparator{});
@@ -123,12 +128,11 @@ namespace bcsv {
     }
 
     template<size_t Capacity>
-    size_t ColumnNameIndex<Capacity>::operator[](const std::string& name) const {
+    inline size_t ColumnNameIndex<Capacity>::operator[](const std::string& name) const {
         auto it = std::lower_bound(data_.begin(), data_.end(), name, Comparator{});
         if (it != data_.end() && it->first == name) {
             return it->second;
         }
         return MAX_COLUMN_COUNT; // Standard sentinel for "not found"
     }
-
 };

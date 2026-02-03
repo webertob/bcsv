@@ -114,15 +114,16 @@ void readFlexibleBCSV() {
     // Step 3: Read rows using RowView
     size_t rowIndex = 0;
     while (reader.readNext()) {
+        auto& row = reader.row();
         int32_t id;
         std::string name;
         float score;
         bool active;
 
-        reader.row().get(0, id);
-        reader.row().get(1, name);        
-        reader.row().get(2, score);
-        reader.row().get(3, active);
+        row.get(0, id);
+        row.get(1, name);        
+        row.get(2, score);
+        row.get(3, active);
 
         std::cout << std::setw(2) << id << " | "
                   << std::setw(14) << std::left << name << " | "

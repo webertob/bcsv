@@ -46,7 +46,7 @@ namespace bcsv {
         setColumns(columns);
     }
     
-    inline bool Layout::addColumn(ColumnDefinition column, size_t position) {
+    inline void Layout::addColumn(ColumnDefinition column, size_t position) {
         if (columnCount() >= MAX_COLUMN_COUNT) [[unlikely]] {
             throw std::runtime_error("Cannot exceed maximum column count");
         }
@@ -54,10 +54,9 @@ namespace bcsv {
         // if position is past the end or at the end of the current layout we simply append to the end.
         position = std::min(position, columnCount());
 
-        column_index_.insert(column.name, position);
+        column_index_.applyNameConventionAndInsert(column.name, position);
         column_names_.insert(column_names_.begin() + position, std::move(column.name));
         column_types_.insert(column_types_.begin() + position, column.type);
-        return true;
     }
     
     inline void Layout::clear() {
@@ -95,17 +94,16 @@ namespace bcsv {
         column_types_.erase(column_types_.begin() + index);
     }
 
-    inline bool Layout::setColumnName(size_t index, std::string name) {
+    inline void Layout::setColumnName(size_t index, std::string name) {
         checkRange(index);
         if (column_names_[index] == name) {
             // NOP if name is unchanged
-            return true;
+            return;
         }
         if(!column_index_.rename(column_names_[index], name)) [[unlikely]] {
-            return false; // rename failed due to conflict
+            throw std::runtime_error("Column name '" + name + "' already exists or rename failed");
         }
         column_names_[index] = name;
-        return true;
     }
 
     inline void Layout::setColumns(const std::vector<ColumnDefinition>& columns)  {
@@ -205,14 +203,13 @@ namespace bcsv {
     }
 
     template<typename... ColumnTypes>
-    inline bool LayoutStatic<ColumnTypes...>::setColumnName(size_t index, std::string name) {
+    inline void LayoutStatic<ColumnTypes...>::setColumnName(size_t index, std::string name) {
         checkRange(index);
         
         if(!column_index_.rename(column_names_[index], name)) [[unlikely]] {
-            return false;
+            throw std::runtime_error("Column name '" + name + "' already exists or rename failed");
         }
         column_names_[index] = name;
-        return true;
     }
 
     template<typename... ColumnTypes>
@@ -225,9 +222,7 @@ namespace bcsv {
 
         for (size_t i = 0; i < N; ++i) {
             const std::string& name = names[i];
-            if(!setColumnName(i, name)) {
-                return false; // conflict during renaming
-            }
+            setColumnName(i, name); // throws on conflict
         }
         return true;
     }

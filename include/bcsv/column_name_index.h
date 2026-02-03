@@ -146,9 +146,8 @@ namespace bcsv {
          * Only available for dynamic layouts. Resolves naming conflicts automatically.
          * @param name The name of the new column (may be modified if conflict occurs).
          * @param column The position index of the new column.
-         * @return true on success, false on failure (e.g. max count exceeded).
          */
-        bool insert(std::string& name, size_t column);
+        void applyNameConventionAndInsert(std::string& name, size_t column);
 
         /**
          * @brief Renames an existing column.
@@ -157,7 +156,7 @@ namespace bcsv {
          * @param newName The desired new name (may be modified).
          * @return true if oldName was found and renamed, false otherwise.
          */
-        bool rename(std::string& oldName, std::string& newName);
+        bool rename(const std::string& oldName, std::string& newName);
 
         /**
          * @brief Requests that the vector capacity be at least enough to contain n elements.

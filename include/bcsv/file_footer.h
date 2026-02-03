@@ -13,7 +13,7 @@
 #include <vector>
 #include <iostream>
 #include <cstring>
-#include "bcsv/definitions.h"
+#include "definitions.h"
 #include "checksum.hpp"
 
 namespace bcsv {
