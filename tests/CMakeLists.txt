@@ -26,6 +26,7 @@ option(BCSV_ENABLE_STRESS_TESTS "Enable time-consuming stress tests and benchmar
 set(TEST_SOURCES
     bcsv_comprehensive_test.cpp
     vectorized_access_test.cpp
+    row_parameterized_test.cpp
     vle_template_test.cpp
     lz4_stream_test.cpp
     file_footer_test.cpp

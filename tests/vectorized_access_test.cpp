@@ -37,17 +37,17 @@ TEST(RowVectorizedTest, GetMultipleInt32) {
     int32_t buffer[3];
     std::span<int32_t> buffer_span{buffer, 3};
     row.get(1, buffer_span);
-    EXPECT_EQ(buffer[0], 20);
-    EXPECT_EQ(buffer[1], 30);
-    EXPECT_EQ(buffer[2], 40);
+    EXPECT_EQ(buffer[0], 20) << "Vectorized get failed: buffer[0] from column 1 expected 20";
+    EXPECT_EQ(buffer[1], 30) << "Vectorized get failed: buffer[1] from column 2 expected 30";
+    EXPECT_EQ(buffer[2], 40) << "Vectorized get failed: buffer[2] from column 3 expected 40";
 
     // Test span with vector
     std::vector<int32_t> vec(3);
     std::span<int32_t> vec_span{vec};
     row.get(0, vec_span);
-    EXPECT_EQ(vec[0], 10);
-    EXPECT_EQ(vec[1], 20);
-    EXPECT_EQ(vec[2], 30);
+    EXPECT_EQ(vec[0], 10) << "Vectorized get to vector failed: vec[0] from column 0 expected 10";
+    EXPECT_EQ(vec[1], 20) << "Vectorized get to vector failed: vec[1] from column 1 expected 20";
+    EXPECT_EQ(vec[2], 30) << "Vectorized get to vector failed: vec[2] from column 2 expected 30";
 }
 
 TEST(RowVectorizedTest, SetMultipleInt32) {
@@ -61,15 +61,15 @@ TEST(RowVectorizedTest, SetMultipleInt32) {
     // Test with C array wrapped in std::span
     int32_t values[] = {100, 200, 300};
     row.set(0, std::span<const int32_t>{values, 3});
-    EXPECT_EQ(row.get<int32_t>(0), 100);
-    EXPECT_EQ(row.get<int32_t>(1), 200);
-    EXPECT_EQ(row.get<int32_t>(2), 300);
+    EXPECT_EQ(row.get<int32_t>(0), 100) << "Vectorized set failed: column 0 should be 100";
+    EXPECT_EQ(row.get<int32_t>(1), 200) << "Vectorized set failed: column 1 should be 200";
+    EXPECT_EQ(row.get<int32_t>(2), 300) << "Vectorized set failed: column 2 should be 300";
 
     // Test span with std::array
     std::array<int32_t, 2> arr = {999, 888};
     row.set(1, std::span<const int32_t>{arr});
-    EXPECT_EQ(row.get<int32_t>(1), 999);
-    EXPECT_EQ(row.get<int32_t>(2), 888);
+    EXPECT_EQ(row.get<int32_t>(1), 999) << "Array-based vectorized set failed: column 1 should be 999";
+    EXPECT_EQ(row.get<int32_t>(2), 888) << "Array-based vectorized set failed: column 2 should be 888";
 }
 
 TEST(RowVectorizedTest, GetMultipleDoubles) {
@@ -86,9 +86,9 @@ TEST(RowVectorizedTest, GetMultipleDoubles) {
     double buffer[3];
     std::span<double> buffer_span{buffer, 3};
     row.get(0, buffer_span);
-    EXPECT_DOUBLE_EQ(buffer[0], 1.5);
-    EXPECT_DOUBLE_EQ(buffer[1], 2.5);
-    EXPECT_DOUBLE_EQ(buffer[2], 3.5);
+    EXPECT_DOUBLE_EQ(buffer[0], 1.5) << "Vectorized double get failed: column 0 expected 1.5";
+    EXPECT_DOUBLE_EQ(buffer[1], 2.5) << "Vectorized double get failed: column 1 expected 2.5";
+    EXPECT_DOUBLE_EQ(buffer[2], 3.5) << "Vectorized double get failed: column 2 expected 3.5";
 }
 
 TEST(RowVectorizedTest, ChangeTrackingMultiple) {
@@ -101,13 +101,15 @@ TEST(RowVectorizedTest, ChangeTrackingMultiple) {
     row.trackChanges(true);
     row.resetChanges();
 
-    EXPECT_FALSE(row.hasAnyChanges());
+    EXPECT_FALSE(row.hasAnyChanges()) 
+        << "After resetChanges(), hasAnyChanges() should return false";
 
     // Set multiple values
     int32_t values[] = {10, 20, 30};
     row.set(0, std::span<const int32_t>{values, 3});
 
-    EXPECT_TRUE(row.hasAnyChanges());
+    EXPECT_TRUE(row.hasAnyChanges()) 
+        << "After vectorized set, hasAnyChanges() should return true";
 }
 
 TEST(RowVectorizedTest, BoundaryCheck) {
@@ -121,7 +123,8 @@ TEST(RowVectorizedTest, BoundaryCheck) {
     std::span<int32_t> buffer_span{buffer, 3};
     // This should throw because we're trying to read 3 columns starting at index 1
     // but the layout only has 2 columns total
-    EXPECT_THROW(row.get(1, buffer_span), std::out_of_range);
+    EXPECT_THROW(row.get(1, buffer_span), std::out_of_range) 
+        << "Vectorized get should throw std::out_of_range when accessing beyond column count";
 }
 
 // =============================================================================
