@@ -496,8 +496,9 @@ public:
                 // Read all values for fair comparison
                 const auto& row = reader.row();
                 for (size_t col = 0; col < 72; ++col) {
-                    auto val = row.get(col);
-                    volatile size_t dummy = std::visit([](const auto& v) { return sizeof(v); }, val);
+                    // Get pointer to data and use it to prevent optimization
+                    const void* val = row.get(col);
+                    volatile const void* dummy = val;
                     (void)dummy;
                 }
                 ++rowCount;
