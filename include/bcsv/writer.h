@@ -32,6 +32,7 @@ namespace bcsv {
         using RowViewType       = typename LayoutType::RowViewType;
         using FilePath          = std::filesystem::path;
 
+        std::string             errMsg_;                    // last error message description
         FileHeader              fileHeader_;                // File header for accessing flags and metadata
         FilePath                filePath_;                  // Always present
         std::ofstream           stream_;                    // Always binary file stream
@@ -57,6 +58,7 @@ namespace bcsv {
         void                    close();
         void                    flush();
         uint8_t                 compressionLevel() const        { return fileHeader_.getCompressionLevel(); }
+        const std::string&      getErrorMsg() const             { return errMsg_; }
         const FilePath&         filePath() const                { return filePath_; }
         const LayoutType&       layout() const                  { return row_.layout(); }
         bool                    is_open() const                 { return stream_.is_open(); }

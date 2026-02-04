@@ -9,33 +9,23 @@
 
 ---
 
-## Mission Statement
+## What is BCSV?
 
-**BCSV combines the ease of use of CSV files with the performance and storage efficiency of binary formats**, specifically optimized for large time-series datasets on both high-performance and embedded platforms.
+**BCSV combines the ease of use of CSV files with the performance and storage efficiency of binary formats.** It's specifically designed for time-series data on both high-performance and embedded platforms.
 
-### Core Principles
+### Key Features
 
-- **No schema files**: Define data structures directly in your code (C++, Python, C#)
-- **Self-documenting**: File header contains all type information, like CSV but enforced
-- **Streaming first**: Read/write data larger than available RAM, row by row
-- **Constant-time operations**: Predictable performance for real-time recording
-- **Time-series optimized**: Efficient compression for constant values and binary waveforms
-- **Crash-resilient**: Retrieve data even from incomplete/interrupted writes
-- **Natural to use**: Feels like CSV, works like binary
+- 📦 **15-25% of CSV size** with LZ4 compression (3-4% with Zero-Order Hold)
+- 🚀 **3.6M-7.5M rows/second** processing speed (8-33 columns, Zen3 CPU)
+- 🎯 **Self-documenting format** - no separate schema files needed
+- 🌊 **Streaming I/O** - process datasets larger than available RAM
+- 🛡️ **Crash-resilient** - recover data from incomplete writes
+- 🌍 **Multi-language** - C++, Python, C#/Unity support
+- ⚡ **Real-time capable** - constant-time operations for embedded systems
 
-### Design Goals
+### Target Users
 
-| Goal | Target | Status |
-|------|--------|--------|
-| **Sequential recording** | 1000 channels @ 1KHz (STM32F4), 10KHz (STM32F7/Zynq/RPi) | ✅ Achievable |
-| **Idle file growth** | <1KB/s for 1000-channel 10KHz stream (counter only) | ✅ With ZoH |
-| **Processing speed** | ≥1M rows/sec for 1000-channel streams on Zen3 CPU | ⚠️ 127K+ rows/sec* |
-| **Compression ratio** | <30% of equivalent CSV size | ✅ 15-25% typical |
-| **Platform support** | C/C++, C#, Python | ✅ All supported |
-
-\* _Typical datasets (8-33 columns) achieve 3.6M rows/sec (flexible API) to 7.5M rows/sec (static API). The 1M rows/sec target for 1000-channel streams requires further optimization._
-
-**Target users**: Anyone running metrology, data acquisition, or telemetry tasks with digital tools.
+Anyone running **metrology, data acquisition, or telemetry** tasks - from embedded systems to HPC clusters.
 
 ---
 
@@ -43,22 +33,27 @@
 
 ### Installation
 
-```bash
-# Header-only library - just copy include directory
-cp -r include/bcsv/ your_project/include/
+**Header-only library** - just include the directory:
 
-# Or use CMake
-cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
+```cpp
+#include <bcsv/bcsv.h>  // C++ API
 ```
 
-### Hello BCSV
+Or build with CMake:
+
+```bash
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+./build/bin/bcsv_gtest  # Run tests
+```
+
+### 5-Minute Example
 
 ```cpp
 #include <bcsv/bcsv.h>
 
 int main() {
-    // Create layout
+    // Define schema
     bcsv::Layout layout;
     layout.addColumn({"timestamp", bcsv::ColumnType::DOUBLE});
     layout.addColumn({"temperature", bcsv::ColumnType::FLOAT});
@@ -88,401 +83,97 @@ int main() {
 }
 ```
 
----
-
-## Features
-
-### Core Capabilities
-
-- **Header-only C++20 library**: Easy integration, no linking required
-- **LZ4 compression**: Fast compression with excellent ratios (70-85% reduction)
-- **xxHash64 checksums**: Fast, reliable data integrity validation (3-5x faster than CRC32)
-- **Zero-Order Hold (ZoH)**: Extreme compression for constant/sparse data
-- **Dual API**: Flexible runtime interface + static compile-time interface
-- **Type safety**: Enforced types per column with compile-time or runtime validation
-- **Crash recovery**: Read last complete row even from interrupted writes
-- **Random access**: Efficient seeking for non-sequential reads
-
-### Cross-Platform & Multi-Language
-
-- **C++ API**: Modern C++20 header-only library
-- **C API**: Shared library (.dll/.so) for language bindings
-- **Python**: Full pandas integration via PyBCSV package
-- **C# / Unity**: Game development integration with minimal GC impact
-- **CLI Tools**: Professional csv2bcsv and bcsv2csv converters
-
-### Performance Highlights
-
-- **3.6M-7.5M rows/second** processing (8-33 columns, flexible/static API, Release build, Zen3)
-- **127K+ rows/second** for 1000-channel wide datasets
-- **40-60% compression** with LZ4 on real-world datasets
-- **75-96% size reduction** vs CSV (ZoH for sparse data)
-- **3-5x faster checksums** with xxHash64 vs CRC32
-- **Constant-time writes**: No compression spikes (streaming mode)
-
----
-
-## Project Status
-
-**Current Version**: v1.3.0-dev (Active Development)
-
-### Recent Changes (v1.3.0)
-- ✅ **Streaming LZ4 compression**: Constant write latency + efficient compression
-- ✅ **Variable-length encoding (VLE)**: Optimized payload storage for integers
-- ✅ **Enhanced Reader**: Safer buffer handling and improved validation
-
-### Roadmap
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed roadmap.
-
-**Next milestones**:
-- **v1.4.0** (Jan 2026): File indexing for fast random access
-- **v1.5.0** (Feb 2026): Advanced compression strategies
-- **v2.0.0** (Q2 2026): Stable release with compatibility guarantees
-- **v2.0.0** (Q2 2026): Stable release with compatibility guarantees
-
-⚠️ **Development Notice**: Until v2.0.0, file formats may change between minor versions without migration paths. Use for experimentation and non-critical data storage.
+**Result:** 84% size reduction (105MB CSV → 16.3MB BCSV) with full type safety.
 
 ---
 
 ## Documentation
 
-- **[ARCHITECTURE.md](ARCHITECTURE.md)**: Design decisions, performance requirements, technical details
-- **[VERSIONING.md](VERSIONING.md)**: Automated versioning system
-- **[examples/CLI_TOOLS.md](examples/CLI_TOOLS.md)**: CLI tool usage and examples
-- **[examples/PERFORMANCE_COMPARISON.md](examples/PERFORMANCE_COMPARISON.md)**: Benchmark results
-- **[python/README.md](python/README.md)**: Python package documentation
-- **[unity/README.md](unity/README.md)**: Unity integration guide
+### 📚 Core Documentation
+
+- **[docs/API_OVERVIEW.md](docs/API_OVERVIEW.md)** - Compare C++, C, Python, C# APIs with examples
+- **[docs/ERROR_HANDLING.md](docs/ERROR_HANDLING.md)** - Error handling patterns and best practices
+- **[docs/INTEROPERABILITY.md](docs/INTEROPERABILITY.md)** - Cross-language file compatibility
+- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Design decisions and binary format specification
+- **[VERSIONING.md](VERSIONING.md)** - Automated versioning system
+
+### 🎯 Getting Started
+
+- **[examples/](examples/)** - C++ usage examples and CLI tools
+- **[examples/CLI_TOOLS.md](examples/CLI_TOOLS.md)** - csv2bcsv and bcsv2csv documentation
+- **[python/README.md](python/README.md)** - Python package (pandas integration)
+- **[unity/README.md](unity/README.md)** - C# Unity integration guide
+
+### 📊 Performance
+
+- **[tests/PERFORMANCE_COMPARISON.md](tests/PERFORMANCE_COMPARISON.md)** - Detailed benchmarks and comparisons
+- **Typical speeds:** 3.6M rows/sec (flexible), 7.5M rows/sec (static), 127K rows/sec (1000 columns)
+- **Compression:** 15-25% of CSV size (LZ4), 3-4% with Zero-Order Hold
 
 ---
 
-## Supported Data Types
+## Supported Platforms & Languages
 
-| Type | Size | Range/Precision | Use Case |
-|------|------|-----------------|----------|
-| `BOOL` | 1 byte | true/false | Flags, states |
-| `UINT8` | 1 byte | 0-255 | Small counters, IDs |
-| `UINT16` | 2 bytes | 0-65535 | Sensor IDs, small values |
-| `UINT32` | 4 bytes | 0-4.3B | Timestamps, large counters |
-| `UINT64` | 8 bytes | 0-18.4E | High-res timestamps |
-| `INT8` | 1 byte | -128 to 127 | Small signed values |
-| `INT16` | 2 bytes | -32K to 32K | Temperature readings |
-| `INT32` | 4 bytes | -2.1B to 2.1B | Standard integers |
-| `INT64` | 8 bytes | Large range | 64-bit signed data |
-| `FLOAT` | 4 bytes | ±3.4E±38, 7 digits | Sensor values |
-| `DOUBLE` | 8 bytes | ±1.7E±308, 15 digits | High-precision measurements |
-| `STRING` | Variable | UTF-8 text | Labels, descriptions |
-
-**Automatic type optimization** in CLI tools minimizes storage by selecting smallest appropriate type.
-
----
-
-## Building
-
-### Prerequisites
-
-- **C++20 compiler**: GCC 10+, Clang 12+, MSVC 2019+
-- **CMake 3.20+**
-- **Git** (for dependency fetching)
-
-### Build Commands
-
-```bash
-# Configure (Release recommended for performance)
-cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
-
-# Build everything
-cmake --build build -j
-
-# Run tests
-./build/bin/bcsv_gtest
-
-# Run examples
-./build/bin/example
-./build/bin/performance_benchmark
-
-# Use CLI tools
-./build/bin/csv2bcsv data.csv
-./build/bin/bcsv2csv data.bcsv output.csv
-```
-
-### Python Package
-
-```bash
-cd python/
-pip install -e .  # Development mode
-# or
-pip install .     # Standard install
-```
-
-### Integration Patterns
-
-**CMake Project**:
-```cmake
-add_subdirectory(external/bcsv)
-target_link_libraries(your_target PRIVATE bcsv)
-```
-
-**Header-only (manual)**:
-```cpp
-#include "bcsv/bcsv.h"
-// No linking needed, just include path
-```
-
----
-
-## Usage Examples
-
-### CLI Tools
-
-```bash
-# Convert CSV to BCSV (auto-detect format)
-csv2bcsv measurements.csv
-
-# European CSV (semicolon delimiter, comma decimal)
-csv2bcsv -d ';' --decimal-separator ',' data.csv
-
-# Convert back to CSV
-bcsv2csv measurements.bcsv output.csv
-```
-
-### Python
-
-```python
-import pybcsv
-import pandas as pd
-
-# Pandas integration
-df = pd.DataFrame({'time': [1, 2, 3], 'value': [10.5, 20.3, 15.7]})
-pybcsv.write_dataframe(df, "data.bcsv")
-
-df_read = pybcsv.read_dataframe("data.bcsv")
-print(df_read)
-```
-
-### C# / Unity
-
-```csharp
-using BCSV;
-
-var layout = new BcsvLayout();
-layout.AddColumn("timestamp", BcsvColumnType.DOUBLE);
-layout.AddColumn("position_x", BcsvColumnType.FLOAT);
-
-var writer = new BcsvWriter(layout);
-writer.Open("player_data.bcsv");
-
-var row = writer.GetRow();
-row.SetDouble(0, Time.time);
-row.SetFloat(1, transform.position.x);
-writer.WriteRow();
-writer.Close();
-```
-
----
-
-## API Design
-
-### Flexible Interface (Runtime Schema)
-
-Best for dynamic schemas, prototyping, varying structures:
+### C++ (Header-Only)
 
 ```cpp
 bcsv::Layout layout;
 layout.addColumn({"id", bcsv::ColumnType::INT32});
-layout.addColumn({"name", bcsv::ColumnType::STRING});
-
 bcsv::Writer<bcsv::Layout> writer(layout);
-writer.open("data.bcsv", true);
-writer.row().set(0, int32_t{123});
-writer.row().set(1, std::string{"Alice"});
-writer.writeRow();
 ```
 
-### Static Interface (Compile-Time Schema)
+Modern C++20, header-only library. **Fastest performance** with static API.
 
-Best for known schemas, performance-critical code (4-5x faster):
+### Python (pip package)
 
-```cpp
-using MyLayout = bcsv::LayoutStatic<int32_t, std::string>;
-auto layout = MyLayout::create({"id", "name"});
-
-bcsv::Writer<MyLayout> writer(layout);
-writer.open("data.bcsv", true);
-writer.row().set<0>(int32_t{123});      // Type-safe compile-time index
-writer.row().set<1>(std::string{"Alice"});
-writer.writeRow();
+```python
+import pybcsv
+df = pybcsv.read_dataframe("data.bcsv")
+pybcsv.write_dataframe(df, "output.bcsv")
 ```
 
-### Type Safety: STRICT vs FLEXIBLE Accessors
+Full pandas integration. See [python/README.md](python/README.md).
 
-BCSV provides two accessor patterns for maximum flexibility and performance:
+### C# / Unity
 
-#### STRICT Accessors (Exact Type Match)
-
-**Use when:** You need type safety, optimal performance, or compile-time guarantees.
-
-```cpp
-// Returns reference or value - type must match exactly
-auto value = row.get<float>(0);        // Runtime: get<T>(index)
-auto value = row.get<0>();             // Compile-time: get<Index>()
-
-// Vectorized access - types must match exactly
-std::array<int32_t, 3> values;
-std::span<int32_t> span{values};
-row.get(0, span);                      // get(index, span<T>&)
+```csharp
+var layout = new BcsvLayout();
+var writer = new BcsvWriter(layout);
+writer.Open("data.bcsv");
 ```
 
-**Characteristics:**
-- ✅ Throws or returns error if type mismatch
-- ✅ Best performance (no conversions)
-- ✅ Zero-copy for strings (returns `std::string_view`)
-- ✅ Compile-time or runtime type checking
+Game development integration. See [unity/README.md](unity/README.md).
 
-#### FLEXIBLE Accessors (Type Conversions)
+### C API (Shared Library)
 
-**Use when:** You need generic code, cross-type compatibility, or don't know exact types.
-
-```cpp
-// Returns bool - supports implicit conversions
-int value;
-if (row.get(0, value)) {              // get(index, T& dst)
-    // Success: supports int8→int, float→double, string→string_view
-}
+```c
+bcsv_writer_t writer = bcsv_writer_create(layout);
+bcsv_writer_open(writer, "data.bcsv", 1);
 ```
 
-**Characteristics:**
-- ✅ Supports safe implicit conversions (e.g., `int8_t→int`, `float→double`)
-- ✅ Supports string type conversions (`string→string_view`, `string_view→string`)
-- ✅ Returns `false` if conversion not possible (instead of throwing)
-- ✅ Ideal for generic/templated code
+For language bindings and embedded systems.
 
-#### Complete Accessor Matrix
-
-| Class | Strict Accessors | Flexible Accessor |
-|-------|------------------|-------------------|
-| `Row` | `get<T>(index)`, `get(index, span<T>&)` | `get(index, T& dst)` |
-| `RowView` | `get<T>(index)`, `get(index, span<T>&)` | `get(index, T& dst)` |
-| `RowStatic` | `get<Index>()`, `get<T>(index)`, `get(index, span<T>&)` | `get(index, T& dst)` |
-| `RowViewStatic` | `get<Index>()`, `get(index, span<T>&)` | `get(index, T& dst)` |
-
-**Cross-reference:** Each function's documentation includes links to its counterpart for easy navigation.
+**All APIs produce identical binary format** - files are 100% cross-compatible. See [docs/INTEROPERABILITY.md](docs/INTEROPERABILITY.md).
 
 ---
 
-### Return Types: Reference vs Value
+## Project Status
 
-BCSV row classes differ in their return types based on memory ownership and alignment guarantees:
+**Current Version:** v1.3.0-dev (Active Development)
 
-#### Reference Returns (`const T&`)
+### Recent Additions (v1.3.0)
 
-**Classes:** `Row`, `RowStatic`
+- ✅ Streaming LZ4 compression with constant write latency
+- ✅ Variable-length encoding (VLE) for efficient integer storage
+- ✅ Enhanced Reader with improved validation
 
-These classes **own aligned memory**, so they can safely return references:
+### Roadmap
 
-```cpp
-Row row(layout);
-const int32_t& value = row.get<int32_t>(0);     // Returns reference - safe!
-const std::string& str = row.get<std::string>(1); // Reference to owned string
-```
+- **v1.4.0** (Jan 2026): File indexing for fast random access
+- **v1.5.0** (Feb 2026): Advanced compression strategies
+- **v2.0.0** (Q2 2026): Stable release with compatibility guarantees
 
-**Why safe?**
-- `Row`: Owns aligned `std::vector<std::byte>` with proper alignment for all types
-- `RowStatic`: Owns aligned `std::tuple<ColumnTypes...>` with compiler-guaranteed alignment
-- Memory lifetime tied to row object
-- No risk of accessing misaligned data
-
-#### Value Returns (`T`)
-
-**Classes:** `RowView`, `RowViewStatic`
-
-These classes **view external buffers** that may not be aligned, so primitives are returned by value:
-
-```cpp
-RowView view(layout, buffer);
-int32_t value = view.get<int32_t>(0);           // Returns by value - safe copy!
-std::string_view sv = view.get<std::string_view>(1); // View is safe (no alignment requirement)
-```
-
-**Why by value?**
-- Buffer data may come from network, file I/O, or serialized sources
-- Cannot guarantee proper alignment for primitive types
-- Returning reference to misaligned data causes undefined behavior
-- Uses `memcpy` internally - safe for any alignment
-
-**Strings are different:**
-- String types (`std::string_view`, `std::span<const char>`) are safe as views
-- Byte arrays don't require alignment
-- Zero-copy access still possible
-
-#### Summary Table
-
-| Class | Return Type | Reason |
-|-------|-------------|--------|
-| `Row::get<T>(index)` | `const T&` | Owns aligned memory |
-| `RowStatic::get<T>(index)` | `const T&` | Owns aligned tuple |
-| `RowView::get<T>(index)` | `T` | Buffer may be misaligned |
-| `RowViewStatic::get<Index>()` | `T` | Buffer may be misaligned |
-
-**Performance note:** Modern compilers optimize value returns via RVO (Return Value Optimization), so the performance difference is negligible for most use cases.
-
----
-
-## Performance
-
-### Benchmarks (Zen3 CPU, Release Build)
-
-| Operation | Speed | Details |
-|-----------|-------|---------|
-| **Sequential write (static)** | 4.7M rows/sec | 8-column dataset |
-| **Sequential read (static)** | 7.5M rows/sec | 8-column dataset |
-| **Sequential write (flexible)** | 3.6M rows/sec | 8-column dataset |
-| **Sequential read (flexible)** | 2.3M rows/sec | 8-column dataset |
-| **1000-channel stream** | 127K rows/sec | Wide dataset (1000 columns) |
-| **CSV → BCSV** | 130K rows/sec | Auto type optimization |
-| **BCSV → CSV** | 220K rows/sec | Round-trip conversion |
-| **Compression ratio** | 15-25% | Typical vs CSV |
-| **ZoH compression** | 3-4% | Sparse/constant data |
-
-### Real-World Example
-
-**Dataset**: 105K rows × 33 columns (time-series data)
-- CSV size: 105 MB
-- BCSV size: 16.3 MB (84% reduction)
-- Processing: 127K rows/second
-- Type optimization: 13 FLOAT + 19 DOUBLE + 1 UINT32 (vs 33 STRING default)
-
----
-
-## Dependencies
-
-- **LZ4**: Embedded in repository (v1.10.0) or system version
-- **xxHash**: Embedded in repository (v0.8.3)
-- **C++20 Standard Library**: No external runtime dependencies
-
-**Optional** (build/test only):
-- **Google Test**: Auto-fetched by CMake for testing
-- **Python**: For PyBCSV package
-- **pybind11**: Auto-fetched for Python bindings
-
----
-
-## License
-
-MIT License - Copyright (c) 2025 Tobias Weber
-
-See [LICENSE](LICENSE) file for full details.
-
----
-
-## Contributing
-
-Contributions welcome! Please:
-
-1. **Open an issue** for bugs or feature requests
-2. **Include benchmarks** for performance-related changes
-3. **Add tests** for new features
-4. **Update documentation** for API changes
+⚠️ **Development Notice:** Until v2.0.0, file formats may change between minor versions. Use for experimentation and non-critical storage.
 
 ---
 
@@ -490,18 +181,111 @@ Contributions welcome! Please:
 
 ```
 bcsv/
-├── include/bcsv/          # Header-only library (copy this to integrate)
-├── examples/              # Usage examples and CLI tools
-├── tests/                 # Comprehensive test suite
-├── python/                # Python package (PyBCSV)
-├── unity/                 # C# Unity integration
-├── cmake/                 # Build system utilities
-├── CMakeLists.txt         # Main build configuration
-├── README.md              # This file
-├── ARCHITECTURE.md        # Design and requirements
-└── VERSIONING.md          # Version management
+├── include/bcsv/          # 📦 Header-only library (copy this to integrate)
+│   ├── bcsv.h             #    Main include file
+│   ├── reader.hpp         #    Reader implementation
+│   ├── writer.hpp         #    Writer implementation
+│   └── ...                #    Supporting headers
+│
+├── docs/                  # 📚 User-facing documentation
+│   ├── API_OVERVIEW.md    #    Multi-language API comparison
+│   ├── ERROR_HANDLING.md  #    Error handling guide
+│   └── INTEROPERABILITY.md#    Cross-language compatibility
+│
+├── examples/              # 🎯 Usage examples and CLI tools
+│   ├── example.cpp        #    Basic usage
+│   ├── csv2bcsv.cpp       #    CSV → BCSV converter
+│   └── bcsv2csv.cpp       #    BCSV → CSV converter
+│
+├── tests/                 # ✅ Comprehensive test suite (187 tests)
+├── python/                # 🐍 Python package (pip install)
+├── unity/                 # 🎮 C# Unity integration
+├── cmake/                 # 🔧 Build system utilities
+│
+├── ARCHITECTURE.md        # 🏗️  Design and technical specification
+├── VERSIONING.md          # 📋 Version management
+└── README.md              # 👋 This file
 ```
 
 ---
 
-**Ready to get started?** Check out the [examples/](examples/) directory or dive into [ARCHITECTURE.md](ARCHITECTURE.md) for technical details.
+## Key Concepts
+
+### Data Types
+
+Supports 12 types: `BOOL`, `UINT8/16/32/64`, `INT8/16/32/64`, `FLOAT`, `DOUBLE`, `STRING`
+
+All types are stored in **little-endian** format with **IEEE 754** for floating point. See [docs/INTEROPERABILITY.md](docs/INTEROPERABILITY.md#type-compatibility).
+
+### Flexible vs Static API
+
+- **Flexible (Runtime):** Dynamic schemas, runtime validation, 3.6M rows/sec
+- **Static (Compile-Time):** Type-safe templates, compile-time validation, 7.5M rows/sec
+
+See [docs/API_OVERVIEW.md](docs/API_OVERVIEW.md#flexible-vs-static-apis) for detailed comparison.
+
+### Error Handling
+
+- **I/O operations return `bool`** - check return value and use `getErrorMsg()`
+- **Row access throws exceptions** - catch `std::out_of_range` and `std::runtime_error`
+
+See [docs/ERROR_HANDLING.md](docs/ERROR_HANDLING.md) for complete guide.
+
+---
+
+## Building & Testing
+
+### Build Commands
+
+**Build and test:**
+
+```bash
+# Configure and build
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j
+
+# Run tests (187 tests)
+./build/bin/bcsv_gtest
+
+# Try examples
+./build/bin/example
+./build/bin/csv2bcsv data.csv
+```
+
+**Python package:**
+
+```bash
+cd python/
+pip install -e .  # Development mode
+```
+
+**CMake integration:**
+
+```cmake
+add_subdirectory(external/bcsv)
+target_link_libraries(your_target PRIVATE bcsv)
+```
+
+---
+
+## Dependencies
+
+- **LZ4** (v1.10.0) - Embedded or system version
+- **xxHash** (v0.8.3) - Embedded
+- **C++20 Standard Library** - No other runtime dependencies
+
+**Build/test only:**
+- Google Test (auto-fetched)
+- pybind11 (auto-fetched for Python)
+
+---
+
+## License & Contributing
+
+**MIT License** - Copyright (c) 2025 Tobias Weber. See [LICENSE](LICENSE).
+
+**Contributions welcome!** Please open issues for bugs/features and include tests with PRs.
+
+---
+
+**Ready to start?** Check out [examples/](examples/) or [docs/API_OVERVIEW.md](docs/API_OVERVIEW.md) for detailed API documentation.

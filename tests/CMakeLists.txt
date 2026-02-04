@@ -30,6 +30,7 @@ set(TEST_SOURCES
     vle_template_test.cpp
     lz4_stream_test.cpp
     file_footer_test.cpp
+    error_handling_test.cpp
 )
 
 if(BCSV_ENABLE_STRESS_TESTS)

@@ -31,6 +31,7 @@
 #include <cstring>
 #include <iosfwd>
 #include <iostream>
+#include <sstream>
 #include <span>
 
 namespace bcsv {
@@ -150,23 +151,32 @@ namespace bcsv {
     template<LayoutConcept LayoutType>
     bool Reader<LayoutType>::readFileHeader() {
         if (!stream_) {
+            errMsg_ = "Error: Stream is not open";
             return false;
         }
         
         LayoutType layout;
         if(!fileHeader_.readFromBinary(stream_, layout)) {
-            std::cerr << "Error: Failed to read file header\n";
+            errMsg_ = "Error: Failed to read file header";
+            if constexpr (DEBUG_OUTPUTS) {
+                std::cerr << errMsg_ << "\n";
+            }
             return false;
         }
         
         // Check version compatibility (v1.3.0 only)
         if (fileHeader_.versionMajor() != BCSV_FORMAT_VERSION_MAJOR || 
             fileHeader_.versionMinor() != BCSV_FORMAT_VERSION_MINOR) {
-            std::cerr << "Error: Incompatible file version: "
-                      << static_cast<int>(fileHeader_.versionMajor()) << "."
-                      << static_cast<int>(fileHeader_.versionMinor())
-                      << " (Expected: " << static_cast<int>(BCSV_FORMAT_VERSION_MAJOR) << "." 
-                      << static_cast<int>(BCSV_FORMAT_VERSION_MINOR) << ")\n";
+            std::ostringstream oss;
+            oss << "Error: Incompatible file version: "
+                << static_cast<int>(fileHeader_.versionMajor()) << "."
+                << static_cast<int>(fileHeader_.versionMinor())
+                << " (Expected: " << static_cast<int>(BCSV_FORMAT_VERSION_MAJOR) << "." 
+                << static_cast<int>(BCSV_FORMAT_VERSION_MINOR) << ")";
+            errMsg_ = oss.str();
+            if constexpr (DEBUG_OUTPUTS) {
+                std::cerr << errMsg_ << "\n";
+            }
             return false;
         }
         // Pre-allocate buffers
@@ -311,15 +321,26 @@ namespace bcsv {
         try {
             if(!fileFooter_.read(Base::stream_)) {
                 if(!rebuildFooter) {
+                    Base::errMsg_ = "Error: FileFooter missing or invalid (use rebuildFooter=true to reconstruct)";
+                    if constexpr (DEBUG_OUTPUTS) {
+                        std::cerr << Base::errMsg_ << "\n";
+                    }
                     Base::stream_.seekg(originalPos);
                     return false;
                 } else {
-                    std::cerr << "Warning: FileFooter missing or invalid, attempting to rebuild index\n";
+                    Base::errMsg_ = "Warning: FileFooter missing or invalid, attempting to rebuild index";
+                    if constexpr (DEBUG_OUTPUTS) {
+                        std::cerr << Base::errMsg_ << "\n";
+                    }
                     buildFileFooter();
+                    Base::errMsg_.clear();  // Clear warning after successful rebuild
                 }
             }
         } catch (const std::exception& ex) {
-            std::cerr << "Error: Exception reading FileFooter: " << ex.what() << std::endl;
+            Base::errMsg_ = std::string("Error: Exception reading FileFooter: ") + ex.what();
+            if constexpr (DEBUG_OUTPUTS) {
+                std::cerr << Base::errMsg_ << std::endl;
+            }
             Base::stream_.seekg(originalPos);
             return false;
         }

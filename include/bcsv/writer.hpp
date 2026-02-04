@@ -88,8 +88,13 @@ namespace bcsv {
      */
     template<LayoutConcept LayoutType>
     bool Writer<LayoutType>::open(const FilePath& filepath, bool overwrite, size_t compressionLevel, size_t blockSizeKB, FileFlags flags) {
+        errMsg_.clear();
+        
         if(is_open()) {
-            std::cerr << "Warning: File is already open: " << filePath_ << std::endl;
+            errMsg_ = "Warning: File is already open: " + filePath_.string();
+            if constexpr (DEBUG_OUTPUTS) {
+                std::cerr << errMsg_ << std::endl;
+            }
             return false;
         }
 
@@ -102,16 +107,18 @@ namespace bcsv {
             if (!parentDir.empty() && !std::filesystem::exists(parentDir)) {
                 std::error_code ec;
                 if (!std::filesystem::create_directories(parentDir, ec)) {
-                    throw std::runtime_error("Error: Cannot create directory: " + parentDir.string() +
-                                               " (Error: " + ec.message() + ")");
+                    errMsg_ = "Error: Cannot create directory: " + parentDir.string() +
+                              " (Error: " + ec.message() + ")";
+                    throw std::runtime_error(errMsg_);
                 }
             }
 
             // Check if file already exists
             if (std::filesystem::exists(absolutePath)) {
                 if (!overwrite) {
-                    throw std::runtime_error("Warning: File already exists: " + absolutePath.string() +
-                                               ". Use overwrite=true to replace it.");
+                    errMsg_ = "Warning: File already exists: " + absolutePath.string() +
+                              ". Use overwrite=true to replace it.";
+                    throw std::runtime_error(errMsg_);
                 }
             }
 
@@ -119,14 +126,16 @@ namespace bcsv {
             std::error_code ec;
             auto perms = std::filesystem::status(parentDir, ec).permissions();
             if (ec || (perms & std::filesystem::perms::owner_write) == std::filesystem::perms::none) {
-                throw std::runtime_error("Error: No write permission for directory: " + parentDir.string());
+                errMsg_ = "Error: No write permission for directory: " + parentDir.string();
+                throw std::runtime_error(errMsg_);
             }
 
             // Open the binary file
             stream_.open(absolutePath, std::ios::binary);
             if (!stream_.good()) {
-                throw std::runtime_error("Error: Cannot open file for writing: " + absolutePath.string() +
-                                           " (Check permissions and disk space)");
+                errMsg_ = "Error: Cannot open file for writing: " + absolutePath.string() +
+                          " (Check permissions and disk space)";
+                throw std::runtime_error(errMsg_);
             }
 
             // Store file path
@@ -153,10 +162,20 @@ namespace bcsv {
             return true;
 
         } catch (const std::filesystem::filesystem_error& ex) {
-            std::cerr << "Filesystem error: " << ex.what() << std::endl;
+            if (errMsg_.empty()) {
+                errMsg_ = std::string("Filesystem error: ") + ex.what();
+            }
+            if constexpr (DEBUG_OUTPUTS) {
+                std::cerr << errMsg_ << std::endl;
+            }
             return false;
         } catch (const std::exception& ex) {
-            std::cerr << "Error opening file: " << ex.what() << std::endl;
+            if (errMsg_.empty()) {
+                errMsg_ = std::string("Error opening file: ") + ex.what();
+            }
+            if constexpr (DEBUG_OUTPUTS) {
+                std::cerr << errMsg_ << std::endl;
+            }
             return false;
         }
 

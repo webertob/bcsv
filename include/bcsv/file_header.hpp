@@ -172,22 +172,30 @@ namespace bcsv {
         // Read fixed header
         stream.read(reinterpret_cast<char*>(&constSection_), sizeof(constSection_));
         if (!stream.good()) {
-            std::cerr << "error: Failed to read BCSV header from stream" << std::endl;
+            if constexpr (DEBUG_OUTPUTS) {
+                std::cerr << "error: Failed to read BCSV header from stream" << std::endl;
+            }
             return false;
         }
         
         if (!isValidMagic()) {
-            std::cerr << "error: Invalid magic number in BCSV header. Expected: 0x" << std::hex << BCSV_MAGIC << ", Got: 0x" << std::hex << constSection_.magic << std::endl;
+            if constexpr (DEBUG_OUTPUTS) {
+                std::cerr << "error: Invalid magic number in BCSV header. Expected: 0x" << std::hex << BCSV_MAGIC << ", Got: 0x" << std::hex << constSection_.magic << std::endl;
+            }
             return false;
         }
         
         // Validate column count matches static definition
         if (constSection_.columnCount != layout.columnCount()) {
-            std::cerr << "error: Column count mismatch. Static layout expects " << layout.columnCount() << " columns, but binary has " << constSection_.columnCount << " columns" << std::endl;
+            if constexpr (DEBUG_OUTPUTS) {
+                std::cerr << "error: Column count mismatch. Static layout expects " << layout.columnCount() << " columns, but binary has " << constSection_.columnCount << " columns" << std::endl;
+            }
             return false;
         }
         if (constSection_.columnCount > MAX_COLUMN_COUNT) {
-            std::cerr << "error: Column count (" << constSection_.columnCount << ") exceeds maximum limit (" << MAX_COLUMN_COUNT << ")" << std::endl;
+            if constexpr (DEBUG_OUTPUTS) {
+                std::cerr << "error: Column count (" << constSection_.columnCount << ") exceeds maximum limit (" << MAX_COLUMN_COUNT << ")" << std::endl;
+            }
             return false;
         }   
 
@@ -196,13 +204,17 @@ namespace bcsv {
             ColumnType type;
             stream.read(reinterpret_cast<char*>(&type), sizeof(type));
             if (!stream.good()) {
-                std::cerr << "error: Failed to read column data type at index " << std::to_string(i) << std::endl;
+                if constexpr (DEBUG_OUTPUTS) {
+                    std::cerr << "error: Failed to read column data type at index " << std::to_string(i) << std::endl;
+                }
                 return false;
             }
             if (type != layout.columnType(i)) {
-                std::cerr << "error: Column type mismatch at index " << std::to_string(i) << 
-                            ". Static layout expects " << toString(layout.columnType(i)) << 
-                            ", but binary has " << toString(type) << std::endl;
+                if constexpr (DEBUG_OUTPUTS) {
+                    std::cerr << "error: Column type mismatch at index " << std::to_string(i) << 
+                                ". Static layout expects " << toString(layout.columnType(i)) << 
+                                ", but binary has " << toString(type) << std::endl;
+                }
                 return false;
             }
         }
@@ -212,14 +224,18 @@ namespace bcsv {
         for (uint16_t i = 0; i < layout.columnCount(); ++i) {
             stream.read(reinterpret_cast<char*>(&nameLengths[i]), sizeof(uint16_t));
             if (!stream.good()) {
-                std::cerr << "error: Failed to read column name length at index " << std::to_string(i) << std::endl;
+                if constexpr (DEBUG_OUTPUTS) {
+                    std::cerr << "error: Failed to read column name length at index " << std::to_string(i) << std::endl;
+                }
                 return false;
             }
             // Validate name length
             if (nameLengths[i] > MAX_STRING_LENGTH) {
-                std::cerr << "error: Column name length (" << std::to_string(nameLengths[i]) << 
-                            ") exceeds maximum (" << std::to_string(MAX_STRING_LENGTH) << 
-                            ") at index " << std::to_string(i) << std::endl;
+                if constexpr (DEBUG_OUTPUTS) {
+                    std::cerr << "error: Column name length (" << std::to_string(nameLengths[i]) << 
+                                ") exceeds maximum (" << std::to_string(MAX_STRING_LENGTH) << 
+                                ") at index " << std::to_string(i) << std::endl;
+                }
                 return false;
             }
         }
@@ -231,7 +247,9 @@ namespace bcsv {
                 nameBuffer.resize(nameLengths[i]);
                 stream.read(nameBuffer.data(), nameLengths[i]);
                 if (!stream.good()) {
-                    std::cerr << "error: Failed to read column name at index " << std::to_string(i) << std::endl;
+                    if constexpr (DEBUG_OUTPUTS) {
+                        std::cerr << "error: Failed to read column name at index " << std::to_string(i) << std::endl;
+                    }
                     return false;
                 }
                 layout.setColumnName(i, std::string(nameBuffer.begin(), nameBuffer.end()));

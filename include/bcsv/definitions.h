@@ -24,7 +24,8 @@ namespace bcsv {
     
     // Configuration
     constexpr bool RANGE_CHECKING = true;
-    using StringAddr = StrAddr32_t; // Default StringAddress type (4 bytes address type)
+    constexpr bool DEBUG_OUTPUTS  = true;       // sends information to std::cerr and std::cout to support development and debugging
+    using StringAddr = StrAddr32_t;             // Default StringAddress type (4 bytes address type)
 
     // Helper template for static_assert
     template<typename T>
