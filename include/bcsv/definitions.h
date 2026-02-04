@@ -24,6 +24,7 @@ namespace bcsv {
     
     // Configuration
     constexpr bool RANGE_CHECKING = true;
+    using StringAddr = StrAddr32_t; // Default StringAddress type (4 bytes address type)
 
     // Helper template for static_assert
     template<typename T>
@@ -55,7 +56,7 @@ namespace bcsv {
     constexpr uint32_t PCKT_TERMINATOR = 0x3FFFFFFF ;    // Marker value to indicate end of packet data (no more rows to come)
     constexpr size_t MAX_COLUMN_COUNT  = std::numeric_limits<uint16_t>::max();  // Maximum number of columns
     constexpr size_t MAX_COLUMN_LENGTH = std::numeric_limits<uint16_t>::max();  // Maximum width of column content
-    constexpr size_t MAX_STRING_LENGTH = MAX_COLUMN_LENGTH;                     // Maximum length of string data
+    constexpr size_t MAX_STRING_LENGTH = StringAddr::MAX_STRING_LENGTH;        // Maximum length of string data
     constexpr size_t MAX_ROW_LENGTH    = (1ULL << 24) - 2 ;                     // about 16MB maximum Maximum size of a single row in bytes, using 4b BLE encoding (2 bits for length), reserve 0xFFFF for terminator.
     constexpr size_t MIN_PACKET_SIZE   = 64 * 1024;                             // 64KB minimum packet size    
     constexpr size_t MAX_PACKET_SIZE   = 1024 * 1024 * 1024;                    // 1GB maximum packet size
@@ -262,9 +263,7 @@ namespace bcsv {
             static_assert(always_false<Type>, "Unsupported type for defaultValueT");
         }
     }
-
-    using StringAddress = StringAddr<uint32_t>; // Default to 32bit version for now
-
+        
     template<typename T>
     constexpr uint8_t binaryFieldLength() {
         if      constexpr (std::is_same_v<T, bool>    ) return sizeof(bool);
@@ -278,7 +277,7 @@ namespace bcsv {
         else if constexpr (std::is_same_v<T, int64_t> ) return sizeof(int64_t);
         else if constexpr (std::is_same_v<T, float>   ) return sizeof(float);
         else if constexpr (std::is_same_v<T, double>  ) return sizeof(double);
-        else if constexpr (std::is_same_v<T, string>  ) return sizeof(StringAddress); // StringAddress
+        else if constexpr (std::is_same_v<T, string>  ) return sizeof(StringAddr); // StringAddress
         else static_assert(always_false<T>, "Unsupported type");
     }
 
@@ -296,7 +295,7 @@ namespace bcsv {
             case ColumnType::INT64:  return sizeof(int64_t);
             case ColumnType::FLOAT:  return sizeof(float);
             case ColumnType::DOUBLE: return sizeof(double);
-            case ColumnType::STRING: return sizeof(StringAddress); // StringAddress
+            case ColumnType::STRING: return sizeof(StringAddr); // StringAddress
             default: throw std::runtime_error("Unknown column type");
         }
     }

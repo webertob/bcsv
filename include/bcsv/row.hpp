@@ -620,34 +620,32 @@ namespace bcsv {
     * @return A span pointing to the serialized row data within the buffer.
     */
     inline std::span<std::byte> Row::serializeTo(ByteBuffer& buffer) const  {
-        size_t  off_row = buffer.size();            // offset to the begin of this row
-        size_t  off_fix = buffer.size();            // offset within the fixed section of the buffer. Starts at the begin of this row (both fixed and variable data)
-        size_t  off_var = offset_var_;  // offset within the variable section of the buffer. Starts just after the fixed section for this row.
+        const size_t  off_row = buffer.size();          // offset to the begin of this row
+        size_t        off_fix = off_row;                // tracking offset(position) within the fixed section of the buffer. Starts at the begin of this row, used to write fixed data.
+        size_t        off_var = offset_var_;            // tracking offset(position) within the variable section of the buffer. Starts just after the fixed section for this row.
         
-        // Resize to hold fixed section
-        buffer.resize(off_fix + off_var);
-
+        // resize buffer to have enough room to hold the entire fixed section of the row
+        buffer.resize(buffer.size() + offset_var_);
         size_t count = layout_.columnCount();
         for(size_t i=0; i<count; ++i) {
             ColumnType type = layout_.columnType(i);
             const std::byte* ptr = &data_[offsets_[i]];
             
             if (type == ColumnType::STRING) {
-                const std::string& str = *reinterpret_cast<const std::string*>(&data_[offsets_[i]]);
-                size_t strLen = std::min(str.length(), MAX_STRING_LENGTH);
-                
-                // Address relative to start of row
-                // Variable data starts at current end of buffer
-                StringAddr strAddr(off_var, static_cast<uint16_t>(strLen));
+                const std::string& str = *reinterpret_cast<const std::string*>(&data_[offsets_[i]]);               
+                // Create StringAddr pointing to string data in variable section, handles truncation
+                StringAddr strAddr(off_var, str.length());
                 
                 // Write StringAddr to fixed section
                 std::memcpy(&buffer[off_fix], &strAddr, sizeof(strAddr));
                 off_fix += sizeof(strAddr);  // advance fixed offset
                 
-                // Append string data to variable section
-                buffer.resize(off_var + strLen);
-                std::memcpy(&buffer[off_var], str.data(), strLen);
-                off_var += strLen;           // advance variable offset
+                // Append actual string data to variable section (only if non-empty)
+                if (strAddr.length() > 0) {
+                    buffer.resize(off_row + off_var + strAddr.length());
+                    std::memcpy(&buffer[off_row + off_var], str.data(), strAddr.length());
+                    off_var += strAddr.length();           // advance variable offset
+                }
                 
             } else {
                 size_t len = binaryFieldLength(type);
@@ -674,15 +672,17 @@ namespace bcsv {
             if (type == ColumnType::STRING) {
                 StringAddr strAddr;
                 assert(binaryFieldLength(type) == sizeof(strAddr));
-                std::memcpy(&strAddr, &buffer[off_fix], sizeof(strAddr));
-                auto [strOff, strLen] = strAddr.unpack();
-                
-                if (strOff + strLen > buffer.size()) {
+                std::memcpy(&strAddr, &buffer[off_fix], sizeof(strAddr));                
+                if (strAddr.offset() + strAddr.length() > buffer.size()) {
                     throw std::runtime_error("Row::deserializeFrom String payload extends beyond buffer");
                 }
                 
                 std::string& str = *reinterpret_cast<std::string*>(&data_[offsets_[i]]);
-                str.assign(reinterpret_cast<const char*>(&buffer[strOff]), strLen);
+                if (strAddr.length() > 0) {
+                    str.assign(reinterpret_cast<const char*>(&buffer[strAddr.offset()]), strAddr.length());
+                } else {
+                    str.clear();
+                }
             } else {
                  std::memcpy(&data_[offsets_[i]], &buffer[off_fix], binaryFieldLength(type));
             }
@@ -729,7 +729,9 @@ namespace bcsv {
                     uint16_t strLength = static_cast<uint16_t>(std::min(str.size(), MAX_STRING_LENGTH));
                     buffer.resize(buffer.size() + sizeof(strLength) + strLength);
                     std::memcpy(&buffer[off], &strLength, sizeof(strLength));
-                    std::memcpy(&buffer[off + sizeof(strLength)], str.data(), strLength);
+                    if (strLength > 0) {
+                        std::memcpy(&buffer[off + sizeof(strLength)], str.data(), strLength);
+                    }
                 } else {
                     size_t len = binaryFieldLength(type);
                     buffer.resize(buffer.size() + len);
@@ -776,7 +778,11 @@ namespace bcsv {
                     if (offset + strLength > buffer.size()) [[unlikely]]
                         throw std::runtime_error("buffer too small");
                     std::string& str = *reinterpret_cast<std::string*>(&data_[offsets_[i]]);
-                    str.assign(reinterpret_cast<const char*>(&buffer[offset]), strLength);
+                    if (strLength > 0) {
+                        str.assign(reinterpret_cast<const char*>(&buffer[offset]), strLength);
+                    } else {
+                        str.clear();
+                    }
                     offset += strLength;
                 } else {
                     size_t len = binaryFieldLength(type);
@@ -843,15 +849,13 @@ namespace bcsv {
             StringAddr strAddr;
             std::memcpy(&strAddr, &buffer_[offset], sizeof(strAddr));
             
-            auto [strOff, strLen] = strAddr.unpack();
-            
             // 6. Validate Variable Section Bounds
-            if (strOff + strLen > buffer_.size()) [[unlikely]] {
+            if (strAddr.offset() + strAddr.length() > buffer_.size()) [[unlikely]] {
                 return {}; // string data extends beyond buffer
             }
 
             // Return span covering the actual string payload
-            return { &buffer_[strOff], strLen };
+            return { &buffer_[strAddr.offset()], strAddr.length() };
         } else {
             // Return span covering the primitive value
             return { &buffer_[offset], fieldLen };
@@ -954,21 +958,19 @@ namespace bcsv {
             
             // Unpack string address and validate bounds
             StringAddr addr;
-            std::memcpy(&addr, &buffer_[offset], sizeof(addr));
-            auto [strOff, strLen] = addr.unpack();
-            
+            std::memcpy(&addr, &buffer_[offset], sizeof(addr));            
             // Validate string bounds for payload
-            if (strOff + strLen > buffer_.size()) {
+            if (addr.offset() + addr.length() > buffer_.size()) {
                 throw std::out_of_range("String payload out of bounds");
             }
 
             // Return appropriate string type
             if constexpr (std::is_same_v<T, std::string_view>) {
-                return std::string_view(reinterpret_cast<const char*>(&buffer_[strOff]), strLen);
+                return std::string_view(reinterpret_cast<const char*>(&buffer_[addr.offset()]), addr.length());
             } else if constexpr (std::is_same_v<T, std::span<const char>>) {
-                return std::span<const char>(reinterpret_cast<const char*>(&buffer_[strOff]), strLen);
+                return std::span<const char>(reinterpret_cast<const char*>(&buffer_[addr.offset()]), addr.length());
             } else { // std::string
-                return std::string(reinterpret_cast<const char*>(&buffer_[strOff]), strLen);
+                return std::string(reinterpret_cast<const char*>(&buffer_[addr.offset()]), addr.length());
             }
         } else {
             // Primitive type requested - verify column is NOT STRING
@@ -1046,24 +1048,23 @@ namespace bcsv {
             case ColumnType::STRING: {
                 StringAddr addr;
                 memcpy(&addr, &buffer_[offset], sizeof(addr));
-                auto [strOff, strLen] = addr.unpack();
-                if (strOff + strLen > buffer_.size()) {
+                if (addr.offset() + addr.length() > buffer_.size()) {
                     assert(false && "RowView::get_as string payload out of bounds");
                     return false; // string data out of bounds
                 }
-                const char* strPtr = reinterpret_cast<const char*>(&buffer_[strOff]);                
+             
                 if constexpr (std::is_same_v<T, std::string>) {
-                    dst.assign(strPtr, strLen); // deep copy
+                    dst.assign(reinterpret_cast<const char*>(&buffer_[addr.offset()]), addr.length()); // deep copy
                     return true;
                 } else if constexpr (std::is_same_v<T, std::string_view>) {
-                    dst = std::string_view(strPtr, strLen); // zero-copy view (careful with lifetime!)
+                    dst = std::string_view(reinterpret_cast<const char*>(&buffer_[addr.offset()]), addr.length()); // zero-copy view (careful with lifetime!)
                     return true;
                 } else if constexpr (std::is_same_v<T, std::span<const char>>) {
-                    dst = std::span<const char>(strPtr, strLen); // zero-copy span
+                    dst = std::span<const char>(reinterpret_cast<const char*>(&buffer_[addr.offset()]), addr.length()); // zero-copy span
                     return true;
                 } else if constexpr (std::is_assignable_v<T&, std::string>) {
                     // fallback for other assignable types (e.g. std::filesystem::path)
-                    dst = std::string_view(strPtr, strLen);
+                    dst = std::string_view(reinterpret_cast<const char*>(&buffer_[addr.offset()]), addr.length());
                     return true;
                 } else {
                     return false;
@@ -1260,8 +1261,7 @@ namespace bcsv {
                     StringAddr strAddr;
                     assert(offsets_.size() == col_count && offsets_[i] + sizeof(strAddr) <= size && "RowView::validate internal error: offsets_ size mismatch or out of bounds");
                     memcpy(&strAddr, data + offsets_[i], sizeof(strAddr));
-                    auto [strOff, strLen] = strAddr.unpack();
-                    if (strOff + strLen > size) {
+                    if (strAddr.offset() + strAddr.length() > size) {
                         return false;
                     }
                 }
@@ -1672,12 +1672,14 @@ namespace bcsv {
             constexpr size_t lenFix = column_lengths[Index];
             constexpr size_t offFix = column_offsets[Index];
             if constexpr (std::is_same_v<column_type<Index>, std::string>) {
-                size_t lenVar = std::min(std::get<Index>(data_).size(), MAX_STRING_LENGTH);
-                StringAddr strAddr(offVar, lenVar);                                                   // Make address relative to row start
-                buffer.resize(offRow + offVar + lenVar);                                                   // Ensure buffer is large enough to hold string payload
+                size_t lenVar = std::get<Index>(data_).size();
+                StringAddr strAddr(offVar, lenVar);                                                   // Make address relative to row start, handles truncation
                 std::memcpy(&buffer[offRow + offFix], &strAddr, sizeof(strAddr));                // write string address
-                std::memcpy(&buffer[offRow + offVar], std::get<Index>(data_).c_str(), lenVar);   // write string payload
-                offVar += lenVar;
+                if (strAddr.length() > 0) {
+                    buffer.resize(offRow + offVar + strAddr.length());                                   // Ensure buffer is large enough to hold string payload
+                    std::memcpy(&buffer[offRow + offVar], std::get<Index>(data_).c_str(), strAddr.length());   // write string payload
+                    offVar += strAddr.length();
+                }
             } else {
                 std::memcpy(&buffer[offRow + offFix], &std::get<Index>(data_), lenFix);
             }
@@ -1738,7 +1740,9 @@ namespace bcsv {
 
                     buffer.resize(buffer.size() + sizeof(uint16_t) + strLength);
                     memcpy(&buffer[old_size], strLengthPtr, sizeof(uint16_t));
-                    memcpy(&buffer[old_size + sizeof(uint16_t)], strDataPtr, strLength);
+                    if (strLength > 0) {
+                        memcpy(&buffer[old_size + sizeof(uint16_t)], strDataPtr, strLength);
+                    }
                 } else {
                     // for all other types, we append directly to the end of the buffer
                     const auto& value = std::get<Index>(data_);
@@ -1774,11 +1778,14 @@ namespace bcsv {
             if constexpr (std::is_same_v<column_type<Index>, std::string>) {
                 StringAddr strAddr;
                 std::memcpy(&strAddr, &buffer[off], sizeof(strAddr));
-                auto [strOff, strLen] = strAddr.unpack();
-                if (strOff + strLen > buffer.size()) {
+                if (strAddr.offset() + strAddr.length() > buffer.size()) {
                     throw std::runtime_error("RowStatic::deserializeElements() failed! Buffer overflow while reading.");
                 }
-                std::get<Index>(data_).assign(reinterpret_cast<const char*>(&buffer[strOff]), strLen);
+                if (strAddr.length() > 0) {
+                    std::get<Index>(data_).assign(reinterpret_cast<const char*>(&buffer[strAddr.offset()]), strAddr.length());
+                } else {
+                    std::get<Index>(data_).clear();
+                }
             } else {
                 std::memcpy(&std::get<Index>(data_), &buffer[off], len);
             }
@@ -1814,8 +1821,7 @@ namespace bcsv {
                 // Special handling for bools: 
                 //  - always deserialize!
                 //  - but stored as single bit within changes_
-                bool value = changes_.test(Index);
-                std::get<Index>(data_) = value;
+                std::get<Index>(data_) = changes_.test(Index);
             } else if(changes_.test(Index)) {
                 // all other types: only deserialize if marked as changed
                 if constexpr (std::is_same_v<column_type<Index>, std::string>) {
@@ -1829,9 +1835,11 @@ namespace bcsv {
                     if (buffer.size() < sizeof(uint16_t) + strLength) {
                         throw std::runtime_error("RowStatic::deserializeElementsZoH() failed! Buffer too small to contain string payload.");
                     }
-                    std::string value;
-                    value.assign(reinterpret_cast<const char*>(&buffer[sizeof(uint16_t)]), strLength);
-                    std::get<Index>(data_) = value;
+                    if (strLength > 0) {
+                        std::get<Index>(data_).assign(reinterpret_cast<const char*>(&buffer[sizeof(uint16_t)]), strLength);
+                    } else {
+                        std::get<Index>(data_).clear();
+                    }
                     buffer = buffer.subspan(sizeof(uint16_t) + strLength);
                 } else {
                     // for all other types, we read directly from the start of the buffer
@@ -1884,18 +1892,14 @@ namespace bcsv {
             // Decode StringAddr from fixed section
             StringAddr addr;
             std::memcpy(&addr, buffer_.data() + offset, length);
-            auto [strOff, strLen] = addr.unpack();
-
             // Check payload bounds
-            if (strOff + strLen > buffer_.size()) [[unlikely]] {
+            if (addr.offset() + addr.length() > buffer_.size()) [[unlikely]] {
                 throw std::out_of_range("RowViewStatic::get<" + std::to_string(Index) + ">: String payload out of bounds " +
-                                        "(offset: " + std::to_string(strOff) + 
-                                        ", length: " + std::to_string(strLen) + 
-                                        ", buffer size: " + std::to_string(buffer_.size()) + ")");
+                                        "(offset: " + std::to_string(addr.offset()) + ", length: " + std::to_string(addr.length()) + ", buffer size: " + std::to_string(buffer_.size()) + ")");
             }
             
             // Return string_view pointing directly into the buffer payload
-            return std::string_view(reinterpret_cast<const char*>(buffer_.data() + strOff), strLen);
+            return std::string_view(reinterpret_cast<const char*>(buffer_.data() + addr.offset()), addr.length());
         } else {
             // Primitives: Read value
             T val;
@@ -1979,10 +1983,8 @@ namespace bcsv {
                         // For strings, jump to payload
                         StringAddr addr;
                         std::memcpy(&addr, ptr, length);
-                        auto [strOff, strLen] = addr.unpack();
-                        
-                        if (strOff + strLen > self.buffer_.size()) return {};
-                        return { self.buffer_.data() + strOff, strLen };
+                        if (addr.offset() + addr.length() > self.buffer_.size()) return {};
+                        return { self.buffer_.data() + addr.offset(), addr.length() };
                     } else {
                         // For primitives, return fixed field
                         return { ptr, length };
@@ -2196,10 +2198,9 @@ namespace bcsv {
             return true;
         } else {
             if constexpr (std::is_same_v<column_type<Index>, std::string>) {
-                StringAddr strAddr;
-                std::memcpy(&strAddr, buffer_.data() + LayoutType::column_offsets[Index], sizeof(strAddr));
-                auto [strOff, strLen] = strAddr.unpack();
-                if (strOff + strLen > buffer_.size()) {
+                StringAddr addr;
+                std::memcpy(&addr, buffer_.data() + LayoutType::column_offsets[Index], sizeof(addr));
+                if (addr.offset() + addr.length() > buffer_.size()) {
                     return false;
                 }
             }
