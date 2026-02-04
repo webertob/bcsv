@@ -9,6 +9,8 @@
 
 #include <iostream>
 #include <iomanip>
+#include <fstream>
+#include <cmath>
 #include <bcsv/bcsv.h>
 
 /**
@@ -28,7 +30,24 @@ using ExampleLayout = bcsv::LayoutStatic<
     bool            // active
 >;
 
-void writeStaticBCSV() {
+struct SampleData {
+    int32_t id;
+    std::string name;
+    float score;
+    bool active;
+};
+
+std::vector<SampleData> generateTestData() {
+    return {
+        {1, "Alice Johnson", 95.5f, true},
+        {2, "Bob Smith", 87.2f, true},
+        {3, "Carol Williams", 92.8f, false},
+        {4, "David Brown", 78.9f, true},
+        {5, "Eve Davis", 88.1f, false}
+    };
+}
+
+void writeStaticBCSV(const std::vector<SampleData>& testData) {
     std::cout << "=== Writing with Static Interface ===\n\n";
 
     // Step 1: Create static layout with column names
@@ -44,23 +63,8 @@ void writeStaticBCSV() {
         return;
     }
 
-    // Step 3: Create and write data rows
-    struct SampleData {
-        int32_t id;
-        std::string name;
-        float score;
-        bool active;
-    };
-
-    std::vector<SampleData> sampleData = {
-        {1, "Alice Johnson", 95.5f, true},
-        {2, "Bob Smith", 87.2f, true},
-        {3, "Carol Williams", 92.8f, false},
-        {4, "David Brown", 78.9f, true},
-        {5, "Eve Davis", 88.1f, false}
-    };
-
-    for (const auto& data : sampleData) {
+    // Step 3: Write data rows
+    for (const auto& data : testData) {
         auto& row = writer.row();
         row.set<0>(data.id);
         row.set<1>(data.name);
@@ -70,12 +74,30 @@ void writeStaticBCSV() {
     }
 
     writer.close();
-    std::cout << "Successfully wrote " << sampleData.size() << " rows to " << filename << "\n\n";
+    std::cout << "Successfully wrote " << testData.size() << " rows to " << filename << "\n\n";
 }
 
-void readStaticBCSV() {
+bool validateWriteSuccess(const std::string& filename) {
+    std::ifstream file_check(filename, std::ios::binary | std::ios::ate);
+    if (!file_check) {
+        std::cerr << "VALIDATION ERROR: File does not exist: " << filename << "\n";
+        return false;
+    }
+    size_t file_size = file_check.tellg();
+    file_check.close();
+    std::cout << "Write validation: File exists with size " << file_size << " bytes\n";
+    if (file_size < 100) {
+        std::cerr << "VALIDATION ERROR: File size too small (" << file_size << " bytes)\n";
+        return false;
+    }
+    return true;
+}
+
+std::vector<SampleData> readStaticBCSV() {
     std::cout << "=== Reading with Static Interface ===\n\n";
 
+    std::vector<SampleData> readData;
+    
     // Step 1: Create matching layout for reading
     ExampleLayout layout({"id", "name", "score", "active"});
     std::cout << "Created static layout with " << layout.columnCount() << " columns\n";
@@ -85,12 +107,12 @@ void readStaticBCSV() {
     bcsv::Reader<ExampleLayout> reader;
     if (!reader.open(filename)) {
         std::cerr << "Failed to open file: " << filename << "\n";
-        return;
+        return readData;
     }
 
     if (!reader.layout().isCompatible(layout)) {
         std::cerr << "Incompatible layout for reading BCSV file\n";
-        return;
+        return readData;
     }
 
     //optional check column names
@@ -108,24 +130,61 @@ void readStaticBCSV() {
     std::cout << "ID | Name           | Score | Active\n";
     std::cout << "---|----------------|-------|-------\n";
     
-    size_t rowIndex = 0;
+    // Step 3: Read all rows
     while (reader.readNext()) {
-        // Use template get<N>() method for type-safe access
         const auto& row = reader.row();
-        auto id = row.get<0>();
-        auto name = row.get<1>();
-        auto score = row.get<2>();
-        auto active = row.get<3>();
+        SampleData data;
+        data.id = row.get<0>();
+        data.name = row.get<1>();
+        data.score = row.get<2>();
+        data.active = row.get<3>();
+        
+        readData.push_back(data);
 
-        std::cout << std::setw(2) << id << " | "
-                  << std::setw(14) << std::left << name << " | "
-                  << std::setw(5) << std::right << std::fixed << std::setprecision(1) << score << " | "
-                  << (active ? "Yes" : "No") << "\n";
-        rowIndex++;
+        std::cout << std::setw(2) << data.id << " | "
+                  << std::setw(14) << std::left << data.name << " | "
+                  << std::setw(5) << std::right << std::fixed << std::setprecision(1) << data.score << " | "
+                  << (data.active ? "Yes" : "No") << "\n";
     }
 
     reader.close();
-    std::cout << "\nSuccessfully read " << rowIndex << " rows from " << filename << "\n\n";
+    std::cout << "\nSuccessfully read " << readData.size() << " rows from " << filename << "\n\n";
+    
+    return readData;
+}
+
+bool validateReadSuccess(const std::vector<SampleData>& expectedData, const std::vector<SampleData>& readData) {
+    std::cout << "=== Validating Read Data ===\n\n";
+    
+    if (readData.size() != expectedData.size()) {
+        std::cerr << "❌ VALIDATION FAILED: Expected " << expectedData.size() 
+                  << " rows, but read " << readData.size() << " rows!\n\n";
+        return false;
+    }
+    
+    bool validationError = false;
+    for (size_t i = 0; i < expectedData.size(); i++) {
+        const auto& expected = expectedData[i];
+        const auto& actual = readData[i];
+        
+        if (actual.id != expected.id || actual.name != expected.name || 
+            std::abs(actual.score - expected.score) > 0.01f || actual.active != expected.active) {
+            std::cerr << "ERROR: Data mismatch at row " << i << "\n";
+            std::cerr << "  Expected: id=" << expected.id << ", name=\"" << expected.name 
+                      << "\", score=" << expected.score << ", active=" << expected.active << "\n";
+            std::cerr << "  Got:      id=" << actual.id << ", name=\"" << actual.name 
+                      << "\", score=" << actual.score << ", active=" << actual.active << "\n";
+            validationError = true;
+        }
+    }
+    
+    if (validationError) {
+        std::cerr << "\n❌ VALIDATION FAILED: Read data does not match expected data!\n\n";
+        return false;
+    }
+    
+    std::cout << "✓ VALIDATION PASSED: All " << readData.size() << " rows verified successfully!\n\n";
+    return true;
 }
 
 int main() {
@@ -135,11 +194,24 @@ int main() {
     std::cout << "using the static LayoutStatic/RowStatic interface for compile-time schemas.\n\n";
     
     try {
+        // Generate test data once
+        auto testData = generateTestData();
+        
         // Write data using static interface
-        writeStaticBCSV();
+        writeStaticBCSV(testData);
+        
+        // Validate write success (test code)
+        if (!validateWriteSuccess("example_static.bcsv")) {
+            return 1;
+        }
         
         // Read data back using static interface
-        readStaticBCSV();
+        auto readData = readStaticBCSV();
+        
+        // Validate read data matches expected data (test code)
+        if (!validateReadSuccess(testData, readData)) {
+            return 1;
+        }
         
         std::cout << "✓ Example completed successfully!\n";
         std::cout << "The static interface provides better performance through\n";

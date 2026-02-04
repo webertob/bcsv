@@ -9,6 +9,8 @@
 
 #include <iostream>
 #include <iomanip>
+#include <fstream>
+#include <cmath>
 #include <bcsv/bcsv.h>
 
 /**
@@ -20,7 +22,24 @@
  * data structure at compile time.
  */
 
-void writeFlexibleBCSV() {
+struct SampleData {
+    int32_t id;
+    std::string name;
+    float score;
+    bool active;
+};
+
+std::vector<SampleData> generateTestData() {
+    return {
+        {1, "Alice Johnson", 95.5f, true},
+        {2, "Bob Smith", 87.2f, true},
+        {3, "Carol Williams", 92.8f, false},
+        {4, "David Brown", 78.9f, true},
+        {5, "Eve Davis", 88.1f, false}
+    };
+}
+
+void writeFlexibleBCSV(const std::vector<SampleData>& testData) {
     std::cout << "=== Writing with Flexible Interface ===\n\n";
 
     // Step 1: Create a flexible layout
@@ -42,23 +61,8 @@ void writeFlexibleBCSV() {
         return;
     }
 
-    // Step 3: Create and write data rows
-    struct SampleData {
-        int32_t id;
-        std::string name;
-        float score;
-        bool active;
-    };
-
-    std::vector<SampleData> sampleData = {
-        {1, "Alice Johnson", 95.5f, true},
-        {2, "Bob Smith", 87.2f, true},
-        {3, "Carol Williams", 92.8f, false},
-        {4, "David Brown", 78.9f, true},
-        {5, "Eve Davis", 88.1f, false}
-    };
-
-    for (const auto& data : sampleData) {
+    // Step 3: Write data rows
+    for (const auto& data : testData) {
         auto& row = writer.row();
         row.set(0, data.id);
         row.set(1, data.name);
@@ -68,12 +72,30 @@ void writeFlexibleBCSV() {
     }
 
     writer.flush();
-    std::cout << "Successfully wrote " << sampleData.size() << " rows to " << filename << "\n\n";
+    std::cout << "Successfully wrote " << testData.size() << " rows to " << filename << "\n\n";
 }
 
-void readFlexibleBCSV() {
+bool validateWriteSuccess(const std::string& filename) {
+    std::ifstream file_check(filename, std::ios::binary | std::ios::ate);
+    if (!file_check) {
+        std::cerr << "VALIDATION ERROR: File does not exist: " << filename << "\n";
+        return false;
+    }
+    size_t file_size = file_check.tellg();
+    file_check.close();
+    std::cout << "Write validation: File exists with size " << file_size << " bytes\n";
+    if (file_size < 100) {
+        std::cerr << "VALIDATION ERROR: File size too small (" << file_size << " bytes)\n";
+        return false;
+    }
+    return true;
+}
+
+std::vector<SampleData> readFlexibleBCSV() {
     std::cout << "=== Reading with Flexible Interface ===\n\n";
 
+    std::vector<SampleData> readData;
+    
     // Step 1: Create matching layout for reading
     // Must match the layout used for writing
     bcsv::Layout layoutExpected;
@@ -87,13 +109,13 @@ void readFlexibleBCSV() {
     bcsv::Reader<bcsv::Layout> reader;
     if (!reader.open(filename)) {
         std::cerr << "Failed to open file: " << filename << "\n";
-        return;
+        return readData;
     }
     // Validate layout compatibility (column count, types)
     if (!reader.layout().isCompatible(layoutExpected)) {
         std::cerr << "Error: File layout is not compatible with expected layout\n";
         reader.close();
-        return;
+        return readData;
     }
 
     //Optional: Compare column names
@@ -111,29 +133,62 @@ void readFlexibleBCSV() {
     std::cout << "ID | Name           | Score | Active\n";
     std::cout << "---|----------------|-------|-------\n";
 
-    // Step 3: Read rows using RowView
-    size_t rowIndex = 0;
+    // Step 3: Read rows
     while (reader.readNext()) {
         auto& row = reader.row();
-        int32_t id;
-        std::string name;
-        float score;
-        bool active;
+        SampleData data;
+        
+        row.get(0, data.id);
+        row.get(1, data.name);        
+        row.get(2, data.score);
+        row.get(3, data.active);
+        
+        readData.push_back(data);
 
-        row.get(0, id);
-        row.get(1, name);        
-        row.get(2, score);
-        row.get(3, active);
-
-        std::cout << std::setw(2) << id << " | "
-                  << std::setw(14) << std::left << name << " | "
-                  << std::setw(5) << std::right << std::fixed << std::setprecision(1) << score << " | "
-                  << (active ? "Yes" : "No") << "\n";
-        rowIndex = reader.rowPos();
+        std::cout << std::setw(2) << data.id << " | "
+                  << std::setw(14) << std::left << data.name << " | "
+                  << std::setw(5) << std::right << std::fixed << std::setprecision(1) << data.score << " | "
+                  << (data.active ? "Yes" : "No") << "\n";
     }
 
     reader.close();
-    std::cout << "\nSuccessfully read " << rowIndex << " rows from " << filename << "\n\n";
+    std::cout << "\nSuccessfully read " << readData.size() << " rows from " << filename << "\n\n";
+    
+    return readData;
+}
+
+bool validateReadSuccess(const std::vector<SampleData>& expectedData, const std::vector<SampleData>& readData) {
+    std::cout << "=== Validating Read Data ===\n\n";
+    
+    if (readData.size() != expectedData.size()) {
+        std::cerr << "❌ VALIDATION FAILED: Expected " << expectedData.size() 
+                  << " rows, but read " << readData.size() << " rows!\n\n";
+        return false;
+    }
+    
+    bool validationError = false;
+    for (size_t i = 0; i < expectedData.size(); i++) {
+        const auto& expected = expectedData[i];
+        const auto& actual = readData[i];
+        
+        if (actual.id != expected.id || actual.name != expected.name || 
+            std::abs(actual.score - expected.score) > 0.01f || actual.active != expected.active) {
+            std::cerr << "ERROR: Data mismatch at row " << i << "\n";
+            std::cerr << "  Expected: id=" << expected.id << ", name=\"" << expected.name 
+                      << "\", score=" << expected.score << ", active=" << expected.active << "\n";
+            std::cerr << "  Got:      id=" << actual.id << ", name=\"" << actual.name 
+                      << "\", score=" << actual.score << ", active=" << actual.active << "\n";
+            validationError = true;
+        }
+    }
+    
+    if (validationError) {
+        std::cerr << "\n❌ VALIDATION FAILED: Read data does not match expected data!\n\n";
+        return false;
+    }
+    
+    std::cout << "✓ VALIDATION PASSED: All " << readData.size() << " rows verified successfully!\n\n";
+    return true;
 }
 
 int main() {
@@ -143,11 +198,24 @@ int main() {
     std::cout << "using the flexible Layout/Row interface for runtime-defined schemas.\n\n";
     
     try {
+        // Generate test data once
+        auto testData = generateTestData();
+        
         // Write data using flexible interface
-        writeFlexibleBCSV();
+        writeFlexibleBCSV(testData);
+        
+        // Validate write success (test code)
+        if (!validateWriteSuccess("example_flexible.bcsv")) {
+            return 1;
+        }
         
         // Read data back using flexible interface
-        readFlexibleBCSV();
+        auto readData = readFlexibleBCSV();
+        
+        // Validate read data matches expected data (test code)
+        if (!validateReadSuccess(testData, readData)) {
+            return 1;
+        }
         
         std::cout << "✓ Example completed successfully!\n";
         std::cout << "The flexible interface is ideal when you need to define\n";
