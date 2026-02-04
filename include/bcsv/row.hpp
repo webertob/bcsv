@@ -705,7 +705,8 @@ namespace bcsv {
         // Early exit if no changes
         if(!hasAnyChanges()) {
             // nothing to serialize --> skip and exit early
-            return {&buffer[bufferSizeOld], 0}; 
+            // Return empty span without accessing buffer elements
+            return std::span<std::byte>{}; 
         }
 
 
@@ -1703,7 +1704,8 @@ namespace bcsv {
 
         // skips if there is nothing to serialize
         if(!hasAnyChanges()) {
-            return {&buffer[bufferSizeOld], 0}; 
+            // Return empty span without accessing buffer elements
+            return std::span<std::byte>{}; 
         }
 
         bitset<column_count> rowHeader = changes_;              // make a copy to modify for bools (changes_ are const!)

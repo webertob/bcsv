@@ -52,3 +52,15 @@ set_target_properties(bcsv_gtest PROPERTIES
 
 # Enable C++20 standard
 target_compile_features(bcsv_gtest PRIVATE cxx_std_20)
+
+# Benchmark executables
+add_executable(benchmark_performance benchmark_performance.cpp)
+target_link_libraries(benchmark_performance PRIVATE bcsv)
+
+add_executable(benchmark_large benchmark_large.cpp)
+target_link_libraries(benchmark_large PRIVATE bcsv)
+
+# Set output directory for benchmarks
+set_target_properties(benchmark_performance benchmark_large PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+)
