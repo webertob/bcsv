@@ -45,44 +45,53 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     - bool   vle_read(T &value, &istream, *hash = 0)
     - bool   vle_write(const T &value, &ostream, *hash = 0)
 
+[x] 5. Consider a robust handling of ColumnNames. 
+    - do not modify ColumnNames protected by ""
+    - allow dupplicate ColumnNames
    
-6. Modify Row and Layout to not use std::variants, consider alignment
-    get it compiled
-    pass tests
-    pass benchmark
-    update tools
-    commit
+[x] 6. Modify Row and Layout to not use std::variants, consider alignment
+    [x] get it compiled
+    [x] pass tests
+    [x] pass benchmark
+    [o] update tools --> [10]
+    [o] commit
+    [0] build and test python --> [10]
+    [o] build and test C# --> [10]
 
-    actions: overload std::array with own array that performes bound checking in debug builds!
-    
-7. Improve benchmarks (more realistic use cases, better coverage, better insights)
+7. Refactor bitset_dynamic to use full register width instead of narrow bytes. Thus we want to use 64bit types on 64bit platform. Consider alignment.
+
+8. Add visit() function to Row, RowStatic, RowView, RowViewStatic enable fast operations on the data 
+
+9. Implement CSV write and read functionality using the BCSV interface
+    - CSVLayout(Static) (delimier, decimal, precision, setw, alignment)
+    - Row(Static), RowView(Static) serializeCSV(), deserializeCSV()
+    - Reader::readCSV, Writer::writeCSV
+
+10. Update Tools and Libraries to use new API
+    update and test CLI to use new API tools-tools
+    update and test python libraries
+    update and test C# (Unity)
+
+11. Improve benchmarks (more realistic use cases, better coverage, better insights)
+    - ensure csv code in benchmark_large is comprable quality
+    - update generic data set for ZoH
+    - indroduce official data sets (references)
     - add csv-to-bcsv to large_scale_benchmark
     - add bcsv-to-csv to large_scale_benchmark
     - add performance metrics to bcsv2csv and csv2bcsv tools
-    - port benchmarks back to run old version (perviouse week) and compare
+    - python based benchmark suite:
+        - use the CLI tools
+        - Generate reporting --> MatPlot, MarkUps.
 
-8. Add visit() function to Row, RowStatic, RowView, RowViewStatic enable fast operations on the data 
-   Add support for dupplicated names, to improve flexibility of use
-   Refactor bitset_dynamic to use full register width instead of narrow bytes. Thus we want to use 64bit types on 64bit platform. Consider alignment.
 
-9. Consider a robust handling of ColumnNames. 
-    - do not modify ColumnNames protected by ""
-    - allow dupplicate ColumnNames
-10. Implement File Flags (raw, stats)
-    File Flags to provide information on file layout to swtich between different Read / Write approaches. Enables different behaviour based on usecase and platform. 
+12. Implement File Flags (raw, stats)
+    File Flags to provide information on file layout to switch between different Read / Write approaches. Enables different behaviour based on usecase and platform. 
     Flags to consider: 
         raw:        omit all the complex variable length encoding to save compute --> standard flat encoding schema
         stream:     omit packet structue and fileindex. also to save compute on constraint architecture, expected to come with significant performance constrains for random read. -> convert to Normal (packet bases) file structure in that case.
-        statistics: packet header to contain stasticical values on data included in each column, !min!, !max!, mean, median, std
-11. Implement Column Modifiers
-    provides hints on what encoding schema to be used for this particular column
-    modifiers to consider:
-        index:      unique numbers
-        volatile:   numbers are scattered, do not apply delta encoding
-        monotonic:  apply higher order delta encoding as a "nearly" monotonic (smooth) behaviour is expected
-        ordered:    data to fall or grow in ordered fashion 
+ [park] statistics: packet header to contain stasticical values on data included in each column, !min!, !max!, mean, median, std
 
-12. Implement new row encoding schema, using variable length encoding for float and integer values
+13. Implement new row encoding schema, using variable length encoding for float and integer values
     Main usage of bcsv is the handling of time-series data. Thus we expect many rcurring or constantly falling or raising values and values that are similar to previouse values. In many cases the full extend of a variable type is not required to encode the actual value.
     This feature is working on a per row level, not only a single cell/value as the current vle_encode / vle_decode functions do. It tries to provide a better balance between computational effort and compression and takes advantange on previouse data (time-series).
     
@@ -123,12 +132,12 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     Bit 6:14 data actual data stored for this variable
 
     Special cases: For small types (1 byte) avoid unnecessary overhead (complexity, runtime, control bits) that won't pay off
-13. dictionary encoding for strings
+14. dictionary encoding for strings
     For strings a low cardinality is expected (many repetitions of the same string) are expected. Thus a dictionary based compression should be implemented. Exploit similar approach as for numerical values.
     Store string at its first occurens and assign ID (simply increment number, within the current packet)
     Other occurences just to reference that number
 
-14. Benchmark and improve random access / random read methods:
+15. Benchmark and improve random access / random read methods:
     Row row(size_t index) {
         if(index == current_index+1) {
             //fall back to sequential
@@ -140,11 +149,11 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     }
     const auto& cell(size_t rowIndex, size_t colIndex) // To directly access a cell, use RowView as a lightweight abstraction to avoid full deserialization
 
-15. Create sampler function / API to select data based on certain conditions: 
+16. Create sampler function / API to select data based on certain conditions: 
     - Support C++ interface (iterate over individual rows)
     - Support Python interface (iterate over individual rows and block reads (pandas/numpy))
 
-16. CLI tools:
+17. CLI tools:
     - Modify CLI tools to utilize random read functionality to avoid parsing the entire file (when possible):
         - bcsvTail
         - bcsvHead
@@ -157,15 +166,21 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     - create: bcsvIndex     (tool to rebuild index)
     - create: bcsvConvert   (converts from one bcsv file format to another, use to rebuild index or improve compression)
 
-17. Create a concept to maintain backward compatibility at least for reading/translating files!
-18. Compare against (document and benchmarks):
+18. Create a concept to maintain backward compatibility at least for reading/translating files!
+19. Compare against (document and benchmarks):
         parquet
         csv
         arrow
         influxDb
         excel
 
-19. Write paper and release/submit
-20. Change bitset and bitset_dynamic to use the largest nativly supported type on the platform it is compiled (i.e. uint64_t on x64) to exploite large registers and reduce looping. maintain data and sizeByte() to access underlying packed data.
+20. Write paper and release/submit
 
+21. Implement Column Modifiers
+    provides hints on what encoding schema to be used for this particular column
+    modifiers to consider:
+        index:      unique numbers
+        volatile:   numbers are scattered, do not apply delta encoding
+        monotonic:  apply higher order delta encoding as a "nearly" monotonic (smooth) behaviour is expected
+        ordered:    data to fall or grow in ordered fashion 
 
