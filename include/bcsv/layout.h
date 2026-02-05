@@ -82,6 +82,7 @@ namespace bcsv {
         Layout() = default;
         Layout(const Layout& other) = default;
         explicit Layout(const std::vector<ColumnDefinition>& columns);
+        explicit Layout(const std::vector<std::string>& columnNames, const std::vector<ColumnType>& columnTypes);
         ~Layout() = default;
 
                                         // Basic Layout information
@@ -99,6 +100,7 @@ namespace bcsv {
         void                            setColumnName(size_t index, std::string name);
         void                            setColumnType(size_t index, ColumnType type);
         void                            setColumns(const std::vector<ColumnDefinition>& columns);
+        void                            setColumns(const std::vector<std::string>& columnNames, const std::vector<ColumnType>& columnTypes);
                                         
                                         template<typename OtherLayout>
         Layout&                         operator=(const OtherLayout& other);
@@ -147,7 +149,7 @@ namespace bcsv {
         bool                            isCompatible(const OtherLayout& other) const;
         void                            setColumnName(size_t index, std::string name);
                                         template<typename Container>
-        bool                            setColumnNames(const Container& names);
+        void                            setColumnNames(const Container& names, size_t offset = 0);
                                         
         LayoutStatic&                   operator=(const LayoutStatic&) = default;      // Copies column names (types are compile-time fixed)
         LayoutStatic&                   operator=(LayoutStatic&&) = default;           // Moves column names (types are compile-time fixed)

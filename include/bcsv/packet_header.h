@@ -43,7 +43,7 @@ namespace bcsv {
     #pragma pack(push, 1)
     struct PacketHeader {
         
-        uint32_t magic;            ///< Magic number: "PCKT" (0x50 0x43 0x4B 0x54)
+        uint32_t magic;           ///< Magic number: "PCKT" (0x50 0x43 0x4B 0x54)
         uint64_t firstRowIndex;   ///< Absolute row index (0-based, file-wide)
         uint32_t checksum;        ///< xxHash32 of bytes 0-19 (magic + firstRowIndex + prevPayloadChecksum)
         

@@ -9,6 +9,7 @@
  */
 
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <string>
@@ -41,14 +42,16 @@ namespace bcsv {
         using Entry = std::pair<std::string, size_t>;
         
         /// Underlying storage type, switched based on Capacity.
+        template<typename T>
         using ContainerType = std::conditional_t<
             IS_FIXED_SIZE,
-            std::array<Entry, Capacity>,
-            std::vector<Entry>
+            std::array<T, Capacity>,
+            std::vector<T>
         >;
 
-        using Iterator = typename ContainerType::iterator;
-        using ConstIterator = typename ContainerType::const_iterator;
+        using Container = ContainerType<Entry>;
+        using Iterator = typename Container::iterator;
+        using ConstIterator = typename Container::const_iterator;
         
         /**
          * @brief Generates an Excel-style default column name from an index (e.g., 0->A, 26->AA).
@@ -97,7 +100,7 @@ namespace bcsv {
         };
 
     private:
-        ContainerType data_;
+        Container data_;
 
         /**
          * @brief Internal comparator for transparent lookups.
@@ -117,6 +120,16 @@ namespace bcsv {
         Iterator begin()                { return data_.begin(); }
         ConstIterator begin() const     { return data_.begin(); }
         
+        void build(const ContainerType<std::string>& columnNames) {
+            if constexpr (!IS_FIXED_SIZE) {
+                data_.resize(columnNames.size());
+            }
+            for (size_t i = 0; i < columnNames.size(); ++i) {
+                data_[i] = {columnNames[i], i };
+            }
+            std::sort(data_.begin(), data_.end(), Comparator());
+        }
+
         /**
          * @brief Clears the index.
          * For dynamic vectors, this empties the container. 

@@ -155,33 +155,36 @@ namespace bcsv {
             return false;
         }
         
-        LayoutType layout;
-        if(!fileHeader_.readFromBinary(stream_, layout)) {
-            errMsg_ = "Error: Failed to read file header";
+        try {
+            LayoutType layout;
+            fileHeader_.readFromBinary(stream_, layout);
+            
+            // Check version compatibility (v1.3.0 only)
+            if (fileHeader_.versionMajor() != BCSV_FORMAT_VERSION_MAJOR || 
+                fileHeader_.versionMinor() != BCSV_FORMAT_VERSION_MINOR) {
+                std::ostringstream oss;
+                oss << "Error: Incompatible file version: "
+                    << static_cast<int>(fileHeader_.versionMajor()) << "."
+                    << static_cast<int>(fileHeader_.versionMinor())
+                    << " (Expected: " << static_cast<int>(BCSV_FORMAT_VERSION_MAJOR) << "." 
+                    << static_cast<int>(BCSV_FORMAT_VERSION_MINOR) << ")";
+                errMsg_ = oss.str();
+                if constexpr (DEBUG_OUTPUTS) {
+                    std::cerr << errMsg_ << "\n";
+                }
+                return false;
+            }
+            
+            row_ = typename LayoutType::RowType(layout);
+            return true;
+            
+        } catch (const std::exception& ex) {
+            errMsg_ = std::string("Error: Failed to read file header: ") + ex.what();
             if constexpr (DEBUG_OUTPUTS) {
                 std::cerr << errMsg_ << "\n";
             }
             return false;
         }
-        
-        // Check version compatibility (v1.3.0 only)
-        if (fileHeader_.versionMajor() != BCSV_FORMAT_VERSION_MAJOR || 
-            fileHeader_.versionMinor() != BCSV_FORMAT_VERSION_MINOR) {
-            std::ostringstream oss;
-            oss << "Error: Incompatible file version: "
-                << static_cast<int>(fileHeader_.versionMajor()) << "."
-                << static_cast<int>(fileHeader_.versionMinor())
-                << " (Expected: " << static_cast<int>(BCSV_FORMAT_VERSION_MAJOR) << "." 
-                << static_cast<int>(BCSV_FORMAT_VERSION_MINOR) << ")";
-            errMsg_ = oss.str();
-            if constexpr (DEBUG_OUTPUTS) {
-                std::cerr << errMsg_ << "\n";
-            }
-            return false;
-        }
-        // Pre-allocate buffers
-        row_ = typename LayoutType::RowType(layout);
-        return true;
     }
 
     template<LayoutConcept LayoutType>

@@ -144,8 +144,8 @@ namespace bcsv {
          * @brief File format constants and limits
          */
         static constexpr size_t FIXED_HEADER_SIZE  = sizeof(ConstSection);  ///< Size of fixed header: 16 bytes
-        static constexpr size_t COLUMN_TYPE_SIZE   = sizeof(uint16_t);          ///< Size per column type: 2 bytes  
-        static constexpr size_t COLUMN_LENGTH_SIZE = sizeof(uint16_t);          ///< Size per name length: 2 bytes
+        static constexpr size_t COLUMN_TYPE_SIZE   = sizeof(uint16_t);      ///< Size per column type: 2 bytes  
+        static constexpr size_t COLUMN_LENGTH_SIZE = sizeof(uint16_t);      ///< Size per name length: 2 bytes
         
         // Constructors
         FileHeader(size_t columnCount = 0, size_t compressionLevel = 9, uint8_t major = BCSV_FORMAT_VERSION_MAJOR, uint8_t minor = BCSV_FORMAT_VERSION_MINOR, uint8_t patch = BCSV_FORMAT_VERSION_PATCH);
@@ -202,18 +202,18 @@ namespace bcsv {
          * @brief Read complete header from binary stream
          * @param stream Input stream to read from
          * @param columnLayout Column layout to populate from stream
-         * @return true if read was successful, false on error or invalid data
+         * @throws std::runtime_error on error or invalid data
          */
-        bool readFromBinary(std::istream& stream, Layout& columnLayout);
+        void readFromBinary(std::istream& stream, Layout& columnLayout);
 
         /**
          * @brief Read complete header from binary stream
          * @param stream Input stream to read from
-         * @param columnLayout Column layout to populate from stream
-         * @return true if read was successful, false on error or invalid data
+         * @param columnLayout Column layout to validate and populate from stream
+         * @throws std::runtime_error on error or invalid data
          */
         template<typename... ColumnTypes>
-        bool readFromBinary(std::istream& stream, LayoutStatic<ColumnTypes...>& columnLayout);
+        void readFromBinary(std::istream& stream, LayoutStatic<ColumnTypes...>& columnLayout);
         
         /**
          * @brief Write complete header to binary stream

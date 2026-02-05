@@ -7,10 +7,10 @@
  * for full license information.
  */
 
+#include <cstddef>
 #include <iostream>
 #include <vector>
 #include <chrono>
-#include <random>
 #include <iomanip>
 #include <filesystem>
 #include <fstream>
@@ -28,6 +28,151 @@
  * - Read/Write performance breakdown
  */
 
+/**
+ * TestDataGenerator - Single source of truth for deterministic test data
+ * 
+ * Generates the exact same data for a given (row, col, type) triplet.
+ * This ensures write and read validation use identical data without
+ * storing anything in memory.
+ */
+class TestDataGenerator {
+private:
+    // Type-specific hash functions optimized for each data type
+    static constexpr uint8_t hashBool(size_t row, size_t col) {
+        return static_cast<uint8_t>((row * 7919ULL + col * 6947ULL) & 1);
+    }
+    
+    static constexpr int8_t hashInt8(size_t row, size_t col) {
+        return static_cast<int8_t>(row * 2654435761ULL + col * 1597334677ULL);
+    }
+    
+    static constexpr int16_t hashInt16(size_t row, size_t col) {
+        return static_cast<int16_t>(row * 1000003ULL + col * 7919ULL);
+    }
+    
+    static constexpr int32_t hashInt32(size_t row, size_t col) {
+        return static_cast<int32_t>(row * 2654435761ULL + col * 1597334677ULL);
+    }
+    
+    static constexpr int64_t hashInt64(size_t row, size_t col) {
+        return static_cast<int64_t>((row * 6364136223846793005ULL) ^ (col * 1442695040888963407ULL));
+    }
+    
+    static constexpr uint8_t hashUInt8(size_t row, size_t col) {
+        return static_cast<uint8_t>(row * 7919ULL + col * 6947ULL);
+    }
+    
+    static constexpr uint16_t hashUInt16(size_t row, size_t col) {
+        return static_cast<uint16_t>(row * 48271ULL + col * 22695477ULL);
+    }
+    
+    static constexpr uint32_t hashUInt32(size_t row, size_t col) {
+        return static_cast<uint32_t>(row * 1597334677ULL + col * 2654435761ULL);
+    }
+    
+    static constexpr uint64_t hashUInt64(size_t row, size_t col) {
+        return (row * 11400714819323198485ULL) ^ (col * 14029467366897019727ULL);
+    }
+    
+    static constexpr float hashFloat(size_t row, size_t col) {
+        uint32_t h = static_cast<uint32_t>(row * 1597334677ULL + col * 2654435761ULL);
+        return static_cast<float>(static_cast<int32_t>(h % 2000000U) - 1000000) / 1000.0f;
+    }
+    
+    static constexpr double hashDouble(size_t row, size_t col) {
+        uint64_t h = (row * 6364136223846793005ULL) ^ (col * 1442695040888963407ULL);
+        return static_cast<double>(static_cast<int64_t>(h % 20000000ULL) - 10000000) / 1000.0;
+    }
+
+public:
+    // Generate random-like deterministic values
+    template<typename T>
+    void getRandom(size_t row, size_t col, T& value) const {
+        if constexpr (std::is_same_v<T, bool>) {
+            value = hashBool(row, col) != 0;
+        } else if constexpr (std::is_same_v<T, int8_t>) {
+            value = hashInt8(row, col);
+        } else if constexpr (std::is_same_v<T, int16_t>) {
+            value = hashInt16(row, col);
+        } else if constexpr (std::is_same_v<T, int32_t>) {
+            value = hashInt32(row, col);
+        } else if constexpr (std::is_same_v<T, int64_t>) {
+            value = hashInt64(row, col);
+        } else if constexpr (std::is_same_v<T, uint8_t>) {
+            value = hashUInt8(row, col);
+        } else if constexpr (std::is_same_v<T, uint16_t>) {
+            value = hashUInt16(row, col);
+        } else if constexpr (std::is_same_v<T, uint32_t>) {
+            value = hashUInt32(row, col);
+        } else if constexpr (std::is_same_v<T, uint64_t>) {
+            value = hashUInt64(row, col);
+        } else if constexpr (std::is_same_v<T, float>) {
+            value = hashFloat(row, col);
+        } else if constexpr (std::is_same_v<T, double>) {
+            value = hashDouble(row, col);
+        } else if constexpr (std::is_same_v<T, std::string>) {
+            // String size round-robin through 5 sizes: 9, 48, 512, 4096, 128
+            // col % 5 determines size category (branchless)
+            constexpr size_t sizes[5] = {9, 48, 512, 4096, 128};
+            size_t sizeCategory = col % 5;
+            size_t maxLen = sizes[sizeCategory];
+            
+            uint64_t h = hashUInt64(row, col);
+            size_t len = (h % maxLen) + 1;
+            
+            // Efficient string generation: resize once, fill directly
+            value.resize(len);
+            char baseChar = 'A' + static_cast<char>(h % 26);
+            for (size_t i = 0; i < len; ++i) {
+                value[i] = static_cast<char>(baseChar + (i % 26));
+            }
+        }
+    }
+
+    // Generate time-series data with temporal correlation
+    // Value parameter serves as storage for previous value
+    template<typename T>
+    void getTimeSeries(size_t row, size_t col, T& value) const {
+        // Change interval: values change every 100 rows
+        constexpr size_t changeInterval = 100;
+        size_t segment = row / changeInterval;
+        
+        if constexpr (std::is_same_v<T, bool>) {
+            value = ((segment + col) % 3) == 0;
+        } else if constexpr (std::is_same_v<T, int8_t>) {
+            value = static_cast<int8_t>((segment % 50) + col * 10);
+        } else if constexpr (std::is_same_v<T, int16_t>) {
+            value = static_cast<int16_t>((segment % 1000) + col * 100);
+        } else if constexpr (std::is_same_v<T, int32_t>) {
+            value = static_cast<int32_t>(segment * 10 + col * 1000);
+        } else if constexpr (std::is_same_v<T, int64_t>) {
+            value = static_cast<int64_t>(1640995200000LL + segment * 60000 + col * 1000);
+        } else if constexpr (std::is_same_v<T, uint8_t>) {
+            value = static_cast<uint8_t>((segment + col * 20) % 200);
+        } else if constexpr (std::is_same_v<T, uint16_t>) {
+            value = static_cast<uint16_t>((segment % 10000) + col * 5000);
+        } else if constexpr (std::is_same_v<T, uint32_t>) {
+            value = static_cast<uint32_t>(segment * 100 + col * 10000);
+        } else if constexpr (std::is_same_v<T, uint64_t>) {
+            value = static_cast<uint64_t>(segment * 1000000ULL + col * 1000000000ULL);
+        } else if constexpr (std::is_same_v<T, float>) {
+            value = static_cast<float>(50.0f + (segment % 100) * 0.5f + col * 10.0f);
+        } else if constexpr (std::is_same_v<T, double>) {
+            value = static_cast<double>(100.0 + (segment % 500) * 0.1 + col * 25.0);
+        } else if constexpr (std::is_same_v<T, std::string>) {
+            // Repeated string categories for ZoH compression
+            const char* categories[] = {"Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta"};
+            value = categories[(segment / 5 + col) % 6];
+        }
+    }
+    
+    // Backwards compatibility alias
+    template<typename T>
+    void get(size_t row, size_t col, T& value) const {
+        getRandom(row, col, value);
+    }
+};
+
 class LargeScaleBenchmark {
 private:
     static constexpr size_t NUM_ROWS = 500000;
@@ -38,95 +183,7 @@ private:
     static constexpr const char* BCSV_FLEXIBLE_ZOH_FILENAME = "large_flexible_zoh.bcsv";
     static constexpr const char* BCSV_STATIC_ZOH_FILENAME = "large_static_zoh.bcsv";
     
-    // Single source of truth for test data generation
-    // Uses compile-time knowledge to avoid runtime overhead
-    struct TestDataGenerator {
-        // Fast deterministic hash
-        static constexpr uint64_t hash(size_t row, size_t col) {
-            return (row * 1000003ULL) ^ (col * 2654435761ULL);
-        }
-        
-        // Generate values directly into output parameters (no allocations)
-        template<size_t ColIdx>
-        static void getBool(size_t row, bool& out) {
-            out = (hash(row, ColIdx) & 1) == 1;
-        }
-        
-        template<size_t ColIdx>
-        static void getInt8(size_t row, int8_t& out) {
-            out = static_cast<int8_t>((hash(row, ColIdx) >> 8) & 0xFF);
-        }
-        
-        template<size_t ColIdx>
-        static void getInt16(size_t row, int16_t& out) {
-            out = static_cast<int16_t>((hash(row, ColIdx) >> 16) & 0xFFFF);
-        }
-        
-        template<size_t ColIdx>
-        static void getInt32(size_t row, int32_t& out) {
-            out = static_cast<int32_t>(hash(row, ColIdx) & 0xFFFFFFFF);
-        }
-        
-        template<size_t ColIdx>
-        static void getInt64(size_t row, int64_t& out) {
-            out = static_cast<int64_t>(hash(row, ColIdx));
-        }
-        
-        template<size_t ColIdx>
-        static void getUInt8(size_t row, uint8_t& out) {
-            out = static_cast<uint8_t>((hash(row, ColIdx) >> 24) & 0xFF);
-        }
-        
-        template<size_t ColIdx>
-        static void getUInt16(size_t row, uint16_t& out) {
-            out = static_cast<uint16_t>((hash(row, ColIdx) >> 32) & 0xFFFF);
-        }
-        
-        template<size_t ColIdx>
-        static void getUInt32(size_t row, uint32_t& out) {
-            out = static_cast<uint32_t>((hash(row, ColIdx) >> 8) & 0xFFFFFFFF);
-        }
-        
-        template<size_t ColIdx>
-        static void getUInt64(size_t row, uint64_t& out) {
-            uint64_t h = hash(row, ColIdx);
-            out = h ^ (h << 13);
-        }
-        
-        template<size_t ColIdx>
-        static void getFloat(size_t row, float& out) {
-            uint64_t h = hash(row, ColIdx);
-            out = static_cast<float>(static_cast<int32_t>(h % 2000000) - 1000000) / 1000.0f;
-        }
-        
-        template<size_t ColIdx>
-        static void getDouble(size_t row, double& out) {
-            uint64_t h = hash(row, ColIdx);
-            out = static_cast<double>(static_cast<int64_t>(h % 20000000) - 10000000) / 1000.0;
-        }
-        
-        template<size_t ColIdx>
-        static void getString(size_t row, std::string& out) {
-            // String length based on column
-            size_t maxLen;
-            if (ColIdx < 2) maxLen = 9;
-            else if (ColIdx < 4) maxLen = 48;
-            else if (ColIdx < 5) maxLen = 512;
-            else maxLen = 4096;
-            
-            uint64_t h = hash(row, ColIdx);
-            size_t len = (h % maxLen) + 1;
-            
-            // Resize once and fill directly
-            out.resize(len);
-            char baseChar = 'A' + (h % 26);
-            for (size_t i = 0; i < len; ++i) {
-                out[i] = baseChar + (i % 26);
-            }
-        }
-    };
-    
-    std::vector<std::string> sampleStrings_;
+    TestDataGenerator dataGen_;
     
     // Optimization prevention helper
     template<typename T>
@@ -140,6 +197,24 @@ private:
     void prevent_optimization(const volatile std::string& value) {
         volatile const void* ptr = &value;
         (void)ptr;
+    }
+    
+    // Validate that a file exists, is accessible, and has non-zero size
+    // Returns file size in bytes
+    size_t validateFile(const std::string& filepath) {
+        if (!std::filesystem::exists(filepath)) {
+            throw std::runtime_error("File does not exist: " + filepath);
+        }
+        
+        if (!std::filesystem::is_regular_file(filepath)) {
+            throw std::runtime_error("Path is not a regular file: " + filepath);
+        }
+        
+        size_t fileSize = std::filesystem::file_size(filepath);
+        if (fileSize == 0) {
+            throw std::runtime_error("File has zero size: " + filepath);
+        }         
+        return fileSize;
     }
 
 public:
@@ -172,202 +247,15 @@ public:
     >;
 
     LargeScaleBenchmark() {
-        // Generate diverse sample strings
-        sampleStrings_ = {
-            "Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta", "Eta", "Theta", "Iota", "Kappa",
-            "Lambda", "Mu", "Nu", "Xi", "Omicron", "Pi", "Rho", "Sigma", "Tau", "Upsilon",
-            "Phi", "Chi", "Psi", "Omega", "ProductA", "ProductB", "CategoryX", "CategoryY",
-            "DepartmentSales", "DepartmentIT", "LocationNY", "LocationCA", "StatusActive", "StatusInactive",
-            "Very Long Product Name With Multiple Words And Detailed Description",
-            "Short", "", "NULL", "UNDEFINED", "TempData123", "TempData456", "TempData789"
-        };
-        
         std::cout << "Large Scale BCSV Performance Benchmark\n";
         std::cout << "=====================================\n";
         std::cout << "Test Configuration:\n";
         std::cout << "  Rows: " << NUM_ROWS << "\n";
         std::cout << "  Columns: " << (COLUMNS_PER_TYPE * 12) << " (6 per data type)\n";
         std::cout << "  Data types: BOOL(6), INT8(6), INT16(6), INT32(6), INT64(6), UINT8(6), UINT16(6), UINT32(6), UINT64(6), FLOAT(6), DOUBLE(6), STRING(6)\n";
+        std::cout << "  Data generation: Deterministic (TestDataGenerator)\n";
         std::cout << "  Compression: LZ4 Level 1\n";
         std::cout << "  Platform: " << sizeof(void*) * 8 << "-bit\n\n";
-    }
-
-    // Generate ZoH-friendly data with time-series patterns for large scale testing
-    template<typename RowType>
-    void generateZoHRowData(size_t rowIndex, RowType& row) {
-        // Create time-series patterns with gradual changes suitable for ZoH compression
-        const size_t changeInterval = 100; // Change values every 100 rows for better compression
-        const size_t segment = rowIndex / changeInterval;
-        
-        // Generate data with repetitive patterns
-        // Boolean columns - alternating patterns
-        row.template set<0>((segment + 0) % 3 == 0);
-        row.template set<1>((segment + 1) % 3 == 0);
-        row.template set<2>((segment + 2) % 3 == 0);
-        row.template set<3>((segment + 3) % 3 == 0);
-        row.template set<4>((segment + 4) % 3 == 0);
-        row.template set<5>((segment + 5) % 3 == 0);
-        
-        // int8_t columns - small incremental changes
-        row.template set<6>(static_cast<int8_t>((segment % 50) + 0 * 10));
-        row.template set<7>(static_cast<int8_t>((segment % 50) + 1 * 10));
-        row.template set<8>(static_cast<int8_t>((segment % 50) + 2 * 10));
-        row.template set<9>(static_cast<int8_t>((segment % 50) + 3 * 10));
-        row.template set<10>(static_cast<int8_t>((segment % 50) + 4 * 10));
-        row.template set<11>(static_cast<int8_t>((segment % 50) + 5 * 10));
-        
-        // int16_t columns - moderate incremental changes  
-        row.template set<12>(static_cast<int16_t>((segment % 1000) + 0 * 100));
-        row.template set<13>(static_cast<int16_t>((segment % 1000) + 1 * 100));
-        row.template set<14>(static_cast<int16_t>((segment % 1000) + 2 * 100));
-        row.template set<15>(static_cast<int16_t>((segment % 1000) + 3 * 100));
-        row.template set<16>(static_cast<int16_t>((segment % 1000) + 4 * 100));
-        row.template set<17>(static_cast<int16_t>((segment % 1000) + 5 * 100));
-        
-        // int32_t columns - gradual changes
-        row.template set<18>(static_cast<int32_t>(segment * 10 + 0 * 1000));
-        row.template set<19>(static_cast<int32_t>(segment * 10 + 1 * 1000));
-        row.template set<20>(static_cast<int32_t>(segment * 10 + 2 * 1000));
-        row.template set<21>(static_cast<int32_t>(segment * 10 + 3 * 1000));
-        row.template set<22>(static_cast<int32_t>(segment * 10 + 4 * 1000));
-        row.template set<23>(static_cast<int32_t>(segment * 10 + 5 * 1000));
-        
-        // int64_t columns - timestamp-like increments
-        row.template set<24>(static_cast<int64_t>(1640995200000LL + segment * 60000 + 0 * 1000));
-        row.template set<25>(static_cast<int64_t>(1640995200000LL + segment * 60000 + 1 * 1000));
-        row.template set<26>(static_cast<int64_t>(1640995200000LL + segment * 60000 + 2 * 1000));
-        row.template set<27>(static_cast<int64_t>(1640995200000LL + segment * 60000 + 3 * 1000));
-        row.template set<28>(static_cast<int64_t>(1640995200000LL + segment * 60000 + 4 * 1000));
-        row.template set<29>(static_cast<int64_t>(1640995200000LL + segment * 60000 + 5 * 1000));
-        
-        // uint8_t columns - cyclic patterns
-        row.template set<30>(static_cast<uint8_t>((segment + 0 * 20) % 200));
-        row.template set<31>(static_cast<uint8_t>((segment + 1 * 20) % 200));
-        row.template set<32>(static_cast<uint8_t>((segment + 2 * 20) % 200));
-        row.template set<33>(static_cast<uint8_t>((segment + 3 * 20) % 200));
-        row.template set<34>(static_cast<uint8_t>((segment + 4 * 20) % 200));
-        row.template set<35>(static_cast<uint8_t>((segment + 5 * 20) % 200));
-        
-        // uint16_t columns - slow incrementing
-        row.template set<36>(static_cast<uint16_t>((segment % 10000) + 0 * 5000));
-        row.template set<37>(static_cast<uint16_t>((segment % 10000) + 1 * 5000));
-        row.template set<38>(static_cast<uint16_t>((segment % 10000) + 2 * 5000));
-        row.template set<39>(static_cast<uint16_t>((segment % 10000) + 3 * 5000));
-        row.template set<40>(static_cast<uint16_t>((segment % 10000) + 4 * 5000));
-        row.template set<41>(static_cast<uint16_t>((segment % 10000) + 5 * 5000));
-        
-        // uint32_t columns - counter-like
-        row.template set<42>(static_cast<uint32_t>(segment * 100 + 0 * 10000));
-        row.template set<43>(static_cast<uint32_t>(segment * 100 + 1 * 10000));
-        row.template set<44>(static_cast<uint32_t>(segment * 100 + 2 * 10000));
-        row.template set<45>(static_cast<uint32_t>(segment * 100 + 3 * 10000));
-        row.template set<46>(static_cast<uint32_t>(segment * 100 + 4 * 10000));
-        row.template set<47>(static_cast<uint32_t>(segment * 100 + 5 * 10000));
-        
-        // uint64_t columns - large increments
-        row.template set<48>(static_cast<uint64_t>(segment * 1000000ULL + 0 * 1000000000ULL));
-        row.template set<49>(static_cast<uint64_t>(segment * 1000000ULL + 1 * 1000000000ULL));
-        row.template set<50>(static_cast<uint64_t>(segment * 1000000ULL + 2 * 1000000000ULL));
-        row.template set<51>(static_cast<uint64_t>(segment * 1000000ULL + 3 * 1000000000ULL));
-        row.template set<52>(static_cast<uint64_t>(segment * 1000000ULL + 4 * 1000000000ULL));
-        row.template set<53>(static_cast<uint64_t>(segment * 1000000ULL + 5 * 1000000000ULL));
-        
-        // float columns - smooth gradual changes
-        row.template set<54>(static_cast<float>(50.0f + (segment % 100) * 0.5f + 0 * 10.0f));
-        row.template set<55>(static_cast<float>(50.0f + (segment % 100) * 0.5f + 1 * 10.0f));
-        row.template set<56>(static_cast<float>(50.0f + (segment % 100) * 0.5f + 2 * 10.0f));
-        row.template set<57>(static_cast<float>(50.0f + (segment % 100) * 0.5f + 3 * 10.0f));
-        row.template set<58>(static_cast<float>(50.0f + (segment % 100) * 0.5f + 4 * 10.0f));
-        row.template set<59>(static_cast<float>(50.0f + (segment % 100) * 0.5f + 5 * 10.0f));
-        
-        // double columns - sensor-like readings with drift
-        row.template set<60>(static_cast<double>(100.0 + (segment % 500) * 0.1 + 0 * 25.0));
-        row.template set<61>(static_cast<double>(100.0 + (segment % 500) * 0.1 + 1 * 25.0));
-        row.template set<62>(static_cast<double>(100.0 + (segment % 500) * 0.1 + 2 * 25.0));
-        row.template set<63>(static_cast<double>(100.0 + (segment % 500) * 0.1 + 3 * 25.0));
-        row.template set<64>(static_cast<double>(100.0 + (segment % 500) * 0.1 + 4 * 25.0));
-        row.template set<65>(static_cast<double>(100.0 + (segment % 500) * 0.1 + 5 * 25.0));
-        
-        // string columns - repeated categories
-        row.template set<66>(sampleStrings_[(segment / 5 + 0) % sampleStrings_.size()]);
-        row.template set<67>(sampleStrings_[(segment / 5 + 1) % sampleStrings_.size()]);
-        row.template set<68>(sampleStrings_[(segment / 5 + 2) % sampleStrings_.size()]);
-        row.template set<69>(sampleStrings_[(segment / 5 + 3) % sampleStrings_.size()]);
-        row.template set<70>(sampleStrings_[(segment / 5 + 4) % sampleStrings_.size()]);
-        row.template set<71>(sampleStrings_[(segment / 5 + 5) % sampleStrings_.size()]);
-    }
-
-    // Generate test data for a single row
-    struct RowData {
-        std::array<bool, 6> bools;
-        std::array<int8_t, 6> int8s;
-        std::array<int16_t, 6> int16s;
-        std::array<int32_t, 6> int32s;
-        std::array<int64_t, 6> int64s;
-        std::array<uint8_t, 6> uint8s;
-        std::array<uint16_t, 6> uint16s;
-        std::array<uint32_t, 6> uint32s;
-        std::array<uint64_t, 6> uint64s;
-        std::array<float, 6> floats;
-        std::array<double, 6> doubles;
-        std::array<std::string, 6> strings;
-    };
-
-    // Ultra-fast deterministic hash for test data generation
-    // Minimal overhead to avoid dominating benchmark timing
-    static inline uint64_t fastHash(size_t row, size_t col) {
-        return (row * 1000003ULL) ^ (col * 2654435761ULL);
-    }
-    
-    // Generate lightweight deterministic string
-    // Fast pattern-based approach that doesn't allocate per-character
-    static std::string generateDeterministicString(size_t row, size_t col) {
-        // String length categories based on column index
-        size_t maxLen;
-        if (col < 2) maxLen = 9;
-        else if (col < 4) maxLen = 48;
-        else if (col < 5) maxLen = 512;
-        else maxLen = 4096;
-        
-        uint64_t hash = fastHash(row, col);
-        size_t len = (hash % maxLen) + 1;
-        
-        // Use simple repeating pattern - O(n) performance, minimal overhead
-        std::string result;
-        result.resize(len);
-        
-        // Fill with simple pattern derived from hash
-        char baseChar = 'A' + (hash % 26);
-        for (size_t i = 0; i < len; ++i) {
-            result[i] = baseChar + (i % 26);
-        }
-        
-        return result;
-    }
-
-    RowData generateRowData(size_t rowIndex) {
-        RowData data;
-        
-        // Generate deterministic values based on row index and column position
-        // Using fast, simple formulas to minimize overhead
-        for (size_t i = 0; i < 6; ++i) {
-            uint64_t hash = fastHash(rowIndex, i);
-            
-            data.bools[i] = (hash & 1) == 1;
-            data.int8s[i] = static_cast<int8_t>((hash >> 8) & 0xFF);
-            data.int16s[i] = static_cast<int16_t>((hash >> 16) & 0xFFFF);
-            data.int32s[i] = static_cast<int32_t>(hash & 0xFFFFFFFF);
-            data.int64s[i] = static_cast<int64_t>(hash);
-            data.uint8s[i] = static_cast<uint8_t>((hash >> 24) & 0xFF);
-            data.uint16s[i] = static_cast<uint16_t>((hash >> 32) & 0xFFFF);
-            data.uint32s[i] = static_cast<uint32_t>((hash >> 8) & 0xFFFFFFFF);
-            data.uint64s[i] = hash ^ (hash << 13);
-            data.floats[i] = static_cast<float>(static_cast<int32_t>(hash % 2000000) - 1000000) / 1000.0f;
-            data.doubles[i] = static_cast<double>(static_cast<int64_t>(hash % 20000000) - 10000000) / 1000.0;
-            data.strings[i] = generateDeterministicString(rowIndex, i);
-        }
-        
-        return data;
     }
 
     // Create flexible layout
@@ -407,65 +295,106 @@ public:
         return LargeTestLayoutStatic(columnNames);
     }
 
-    // Populate flexible row
-    void populateFlexibleRow(bcsv::Writer<bcsv::Layout>& writer, const RowData& data) {
+    // Helper to populate flexible row directly from TestDataGenerator
+    void populateFlexibleRow(bcsv::Writer<bcsv::Layout>& writer, size_t rowIndex) {
+        auto& row = writer.row();
         size_t colIdx = 0;
         
-        auto& row = writer.row();
-        // Populate all columns in order
-        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.bools[i]);
-        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.int8s[i]);
-        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.int16s[i]);
-        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.int32s[i]);
-        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.int64s[i]);
-        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.uint8s[i]);
-        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.uint16s[i]);
-        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.uint32s[i]);
-        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.uint64s[i]);
-        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.floats[i]);
-        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.doubles[i]);
-        for (size_t i = 0; i < 6; ++i) row.set(colIdx++, data.strings[i]);
+        // Generate and set all columns directly
+        for (size_t i = 0; i < 6; ++i) { bool v; dataGen_.getRandom(rowIndex, colIdx, v); row.set(colIdx++, v); }
+        for (size_t i = 0; i < 6; ++i) { int8_t v; dataGen_.getRandom(rowIndex, colIdx, v); row.set(colIdx++, v); }
+        for (size_t i = 0; i < 6; ++i) { int16_t v; dataGen_.getRandom(rowIndex, colIdx, v); row.set(colIdx++, v); }
+        for (size_t i = 0; i < 6; ++i) { int32_t v; dataGen_.getRandom(rowIndex, colIdx, v); row.set(colIdx++, v); }
+        for (size_t i = 0; i < 6; ++i) { int64_t v; dataGen_.getRandom(rowIndex, colIdx, v); row.set(colIdx++, v); }
+        for (size_t i = 0; i < 6; ++i) { uint8_t v; dataGen_.getRandom(rowIndex, colIdx, v); row.set(colIdx++, v); }
+        for (size_t i = 0; i < 6; ++i) { uint16_t v; dataGen_.getRandom(rowIndex, colIdx, v); row.set(colIdx++, v); }
+        for (size_t i = 0; i < 6; ++i) { uint32_t v; dataGen_.getRandom(rowIndex, colIdx, v); row.set(colIdx++, v); }
+        for (size_t i = 0; i < 6; ++i) { uint64_t v; dataGen_.getRandom(rowIndex, colIdx, v); row.set(colIdx++, v); }
+        for (size_t i = 0; i < 6; ++i) { float v; dataGen_.getRandom(rowIndex, colIdx, v); row.set(colIdx++, v); }
+        for (size_t i = 0; i < 6; ++i) { double v; dataGen_.getRandom(rowIndex, colIdx, v); row.set(colIdx++, v); }
+        for (size_t i = 0; i < 6; ++i) { std::string v; dataGen_.getRandom(rowIndex, colIdx, v); row.set(colIdx++, v); }
     }
 
-    // Populate static row (using template magic)
-    void populateStaticRow(bcsv::Writer<LargeTestLayoutStatic>& writer, const RowData& data) {
+    // Helper to populate static row directly from TestDataGenerator  
+    template<size_t... Is>
+    void populateStaticRowImpl(bcsv::Writer<LargeTestLayoutStatic>& writer, size_t rowIndex, std::index_sequence<Is...>) {
         auto& row = writer.row();
-        // Using template indices for static setting
-        row.set<0>(data.bools[0]); row.set<1>(data.bools[1]); row.set<2>(data.bools[2]); 
-        row.set<3>(data.bools[3]); row.set<4>(data.bools[4]); row.set<5>(data.bools[5]);
-        
-        row.set<6>(data.int8s[0]); row.set<7>(data.int8s[1]); row.set<8>(data.int8s[2]); 
-        row.set<9>(data.int8s[3]); row.set<10>(data.int8s[4]); row.set<11>(data.int8s[5]);
-
-        row.set<12>(data.int16s[0]); row.set<13>(data.int16s[1]); row.set<14>(data.int16s[2]); 
-        row.set<15>(data.int16s[3]); row.set<16>(data.int16s[4]); row.set<17>(data.int16s[5]);
-
-        row.set<18>(data.int32s[0]); row.set<19>(data.int32s[1]); row.set<20>(data.int32s[2]); 
-        row.set<21>(data.int32s[3]); row.set<22>(data.int32s[4]); row.set<23>(data.int32s[5]);
-        
-        row.set<24>(data.int64s[0]); row.set<25>(data.int64s[1]); row.set<26>(data.int64s[2]); 
-        row.set<27>(data.int64s[3]); row.set<28>(data.int64s[4]); row.set<29>(data.int64s[5]);
-        
-        row.set<30>(data.uint8s[0]); row.set<31>(data.uint8s[1]); row.set<32>(data.uint8s[2]); 
-        row.set<33>(data.uint8s[3]); row.set<34>(data.uint8s[4]); row.set<35>(data.uint8s[5]);
-
-        row.set<36>(data.uint16s[0]); row.set<37>(data.uint16s[1]); row.set<38>(data.uint16s[2]); 
-        row.set<39>(data.uint16s[3]); row.set<40>(data.uint16s[4]); row.set<41>(data.uint16s[5]);
-
-        row.set<42>(data.uint32s[0]); row.set<43>(data.uint32s[1]); row.set<44>(data.uint32s[2]); 
-        row.set<45>(data.uint32s[3]); row.set<46>(data.uint32s[4]); row.set<47>(data.uint32s[5]);
-
-        row.set<48>(data.uint64s[0]); row.set<49>(data.uint64s[1]); row.set<50>(data.uint64s[2]); 
-        row.set<51>(data.uint64s[3]); row.set<52>(data.uint64s[4]); row.set<53>(data.uint64s[5]);
-
-        row.set<54>(data.floats[0]); row.set<55>(data.floats[1]); row.set<56>(data.floats[2]); 
-        row.set<57>(data.floats[3]); row.set<58>(data.floats[4]); row.set<59>(data.floats[5]);
-
-        row.set<60>(data.doubles[0]); row.set<61>(data.doubles[1]); row.set<62>(data.doubles[2]); 
-        row.set<63>(data.doubles[3]); row.set<64>(data.doubles[4]); row.set<65>(data.doubles[5]);
-        
-        row.set<66>(data.strings[0]); row.set<67>(data.strings[1]); row.set<68>(data.strings[2]); 
-        row.set<69>(data.strings[3]); row.set<70>(data.strings[4]); row.set<71>(data.strings[5]);
+        // Generate values on the fly based on column index
+        (populateStaticColumn<Is>(row, rowIndex), ...);
+    }
+    
+    template<size_t ColIdx>
+    void populateStaticColumn(auto& row, size_t rowIndex) {
+        if constexpr (ColIdx < 6) { // bool columns 0-5
+            bool v; dataGen_.getRandom(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 12) { // int8 columns 6-11
+            int8_t v; dataGen_.getRandom(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 18) { // int16 columns 12-17
+            int16_t v; dataGen_.getRandom(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 24) { // int32 columns 18-23
+            int32_t v; dataGen_.getRandom(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 30) { // int64 columns 24-29
+            int64_t v; dataGen_.getRandom(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 36) { // uint8 columns 30-35
+            uint8_t v; dataGen_.getRandom(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 42) { // uint16 columns 36-41
+            uint16_t v; dataGen_.getRandom(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 48) { // uint32 columns 42-47
+            uint32_t v; dataGen_.getRandom(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 54) { // uint64 columns 48-53
+            uint64_t v; dataGen_.getRandom(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 60) { // float columns 54-59
+            float v; dataGen_.getRandom(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 66) { // double columns 60-65
+            double v; dataGen_.getRandom(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else { // string columns 66-71
+            std::string v; dataGen_.getRandom(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        }
+    }
+    
+    void populateStaticRow(bcsv::Writer<LargeTestLayoutStatic>& writer, size_t rowIndex) {
+        populateStaticRowImpl(writer, rowIndex, std::make_index_sequence<72>{});
+    }
+    
+    // Helper to populate static row with time-series data for ZoH optimization
+    template<size_t... Is>
+    void populateStaticRowZoHImpl(bcsv::Writer<LargeTestLayoutStatic>& writer, size_t rowIndex, std::index_sequence<Is...>) {
+        auto& row = writer.row();
+        // Generate values on the fly based on column index
+        (populateStaticColumnZoH<Is>(row, rowIndex), ...);
+    }
+    
+    template<size_t ColIdx>
+    void populateStaticColumnZoH(auto& row, size_t rowIndex) {
+        if constexpr (ColIdx < 6) { // bool columns 0-5
+            bool v; dataGen_.getTimeSeries(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 12) { // int8 columns 6-11
+            int8_t v; dataGen_.getTimeSeries(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 18) { // int16 columns 12-17
+            int16_t v; dataGen_.getTimeSeries(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 24) { // int32 columns 18-23
+            int32_t v; dataGen_.getTimeSeries(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 30) { // int64 columns 24-29
+            int64_t v; dataGen_.getTimeSeries(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 36) { // uint8 columns 30-35
+            uint8_t v; dataGen_.getTimeSeries(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 42) { // uint16 columns 36-41
+            uint16_t v; dataGen_.getTimeSeries(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 48) { // uint32 columns 42-47
+            uint32_t v; dataGen_.getTimeSeries(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 54) { // uint64 columns 48-53
+            uint64_t v; dataGen_.getTimeSeries(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 60) { // float columns 54-59
+            float v; dataGen_.getTimeSeries(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else if constexpr (ColIdx < 66) { // double columns 60-65
+            double v; dataGen_.getTimeSeries(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        } else { // string columns 66-71
+            std::string v; dataGen_.getTimeSeries(rowIndex, ColIdx, v); row.template set<ColIdx>(v);
+        }
+    }
+    
+    void populateStaticRowZoH(bcsv::Writer<LargeTestLayoutStatic>& writer, size_t rowIndex) {
+        populateStaticRowZoHImpl(writer, rowIndex, std::make_index_sequence<72>{});
     }
 
     // CSV benchmark
@@ -489,8 +418,6 @@ public:
             
             // Write data
             for (size_t row = 0; row < NUM_ROWS; ++row) {
-                auto data = generateRowData(row);
-                
                 bool first = true;
                 auto writeValue = [&](const auto& val) {
                     if (!first) csv << ",";
@@ -498,19 +425,21 @@ public:
                     csv << val;
                 };
                 
-                for (size_t i = 0; i < 6; ++i) writeValue(data.bools[i] ? "true" : "false");
-                for (size_t i = 0; i < 6; ++i) writeValue(static_cast<int>(data.int8s[i]));
-                for (size_t i = 0; i < 6; ++i) writeValue(data.int16s[i]);
-                for (size_t i = 0; i < 6; ++i) writeValue(data.int32s[i]);
-                for (size_t i = 0; i < 6; ++i) writeValue(data.int64s[i]);
-                for (size_t i = 0; i < 6; ++i) writeValue(static_cast<int>(data.uint8s[i]));
-                for (size_t i = 0; i < 6; ++i) writeValue(data.uint16s[i]);
-                for (size_t i = 0; i < 6; ++i) writeValue(data.uint32s[i]);
-                for (size_t i = 0; i < 6; ++i) writeValue(data.uint64s[i]);
-                for (size_t i = 0; i < 6; ++i) writeValue(data.floats[i]);
-                for (size_t i = 0; i < 6; ++i) writeValue(data.doubles[i]);
+                // Generate values on-the-fly and write directly
+                for (size_t i = 0; i < 6; ++i) { bool v; dataGen_.getRandom(row, i, v); writeValue(v ? "true" : "false"); }
+                for (size_t i = 0; i < 6; ++i) { int8_t v; dataGen_.getRandom(row, i + 6, v); writeValue(static_cast<int>(v)); }
+                for (size_t i = 0; i < 6; ++i) { int16_t v; dataGen_.getRandom(row, i + 12, v); writeValue(v); }
+                for (size_t i = 0; i < 6; ++i) { int32_t v; dataGen_.getRandom(row, i + 18, v); writeValue(v); }
+                for (size_t i = 0; i < 6; ++i) { int64_t v; dataGen_.getRandom(row, i + 24, v); writeValue(v); }
+                for (size_t i = 0; i < 6; ++i) { uint8_t v; dataGen_.getRandom(row, i + 30, v); writeValue(static_cast<int>(v)); }
+                for (size_t i = 0; i < 6; ++i) { uint16_t v; dataGen_.getRandom(row, i + 36, v); writeValue(v); }
+                for (size_t i = 0; i < 6; ++i) { uint32_t v; dataGen_.getRandom(row, i + 42, v); writeValue(v); }
+                for (size_t i = 0; i < 6; ++i) { uint64_t v; dataGen_.getRandom(row, i + 48, v); writeValue(v); }
+                for (size_t i = 0; i < 6; ++i) { float v; dataGen_.getRandom(row, i + 54, v); writeValue(v); }
+                for (size_t i = 0; i < 6; ++i) { double v; dataGen_.getRandom(row, i + 60, v); writeValue(v); }
                 for (size_t i = 0; i < 6; ++i) {
-                    csv << ",\"" << data.strings[i] << "\"";
+                    std::string v; dataGen_.getRandom(row, i + 66, v);
+                    csv << ",\"" << v << "\"";
                 }
                 csv << "\n";
                 
@@ -531,17 +460,18 @@ public:
             
             size_t rowCount = 0;
             while (std::getline(csv, line)) {
-                // Parse columns for fair comparison
+                // Simple parsing simulation
                 std::stringstream ss(line);
                 std::string cell;
-                size_t colIdx = 0;
+                size_t colCount = 0;
                 
-                // Read all columns
-                while (std::getline(ss, cell, ',') && colIdx < 72) {
-                    ++colIdx;
+                while (std::getline(ss, cell, ',') && colCount < 72) {
+                    // Simulate type conversion overhead
+                    volatile int dummy = static_cast<int>(cell.length()); (void)dummy;
+                    ++colCount;
                 }
-                
                 ++rowCount;
+                
                 if (rowCount % 50000 == 0) {
                     std::cout << "  CSV Progress: " << rowCount << "/" << NUM_ROWS << " rows read\n";
                 }
@@ -556,6 +486,208 @@ public:
         return {writeTime, readTime};
     }
 
+    // Write BCSV Flexible file
+    void writeBCSVFlexible(const std::string& filepath, const bcsv::Layout& layout, size_t numberOfRows) {
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        if (!writer.open(filepath, true, 1)) { // Compression level 1, no ZoH flag
+            throw std::runtime_error("Failed to open file for writing: " + filepath + " - " + writer.getErrorMsg());
+        }
+        
+        // Temporary variables to hold generated data
+        bcsv::Row testData(layout);
+        testData.trackChanges(false);
+
+        const size_t colCount = layout.columnCount();
+        for (size_t i = 0; i < numberOfRows; ++i) {
+            auto& row = writer.row();
+            for(size_t k = 0; k < colCount; ++k) {
+                // Generate random data
+                switch(layout.columnType(k)) {
+                    case bcsv::ColumnType::BOOL: {
+                        dataGen_.getRandom(i, k, testData.ref<bool>(k));
+                        row.set(k, testData.get<bool>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::INT8: {
+                        dataGen_.getRandom(i, k, testData.ref<int8_t>(k));
+                        row.set(k, testData.get<int8_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::INT16: {
+                        dataGen_.getRandom(i, k, testData.ref<int16_t>(k));
+                        row.set(k, testData.get<int16_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::INT32: {
+                        dataGen_.getRandom(i, k, testData.ref<int32_t>(k));
+                        row.set(k, testData.get<int32_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::INT64: {
+                        dataGen_.getRandom(i, k, testData.ref<int64_t>(k));
+                        row.set(k, testData.get<int64_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::UINT8: {
+                        dataGen_.getRandom(i, k, testData.ref<uint8_t>(k));
+                        row.set(k, testData.get<uint8_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::UINT16: {
+                        dataGen_.getRandom(i, k, testData.ref<uint16_t>(k));
+                        row.set(k, testData.get<uint16_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::UINT32: {
+                        dataGen_.getRandom(i, k, testData.ref<uint32_t>(k));
+                        row.set(k, testData.get<uint32_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::UINT64: {
+                        dataGen_.getRandom(i, k, testData.ref<uint64_t>(k));
+                        row.set(k, testData.get<uint64_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::FLOAT: {
+                        dataGen_.getRandom(i, k, testData.ref<float>(k));
+                        row.set(k, testData.get<float>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::DOUBLE: {
+                        dataGen_.getRandom(i, k, testData.ref<double>(k));
+                        row.set(k, testData.get<double>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::STRING: {
+                        dataGen_.getRandom(i, k, testData.ref<std::string>(k));
+                        row.set(k, testData.get<std::string>(k));
+                        break;
+                    }
+                    default:
+                        throw std::runtime_error("Unknown column type encountered.");
+                }
+            }
+            writer.writeRow();
+            if (i % 50000 == 0) {
+                std::cout << "  BCSV Flexible Progress: " << i << "/" << numberOfRows << " rows written\n";
+            }
+        }
+        writer.close();
+    }
+    
+    // Read BCSV Flexible file and return number of rows read
+    size_t readBCSVFlexible(const std::string& filepath, const bcsv::Layout& layoutExpected) {
+        bcsv::Reader<bcsv::Layout> reader;
+        if (!reader.open(filepath)) {
+            throw std::runtime_error("Failed to open file for reading: " + filepath + " - " + reader.getErrorMsg());
+        }
+        
+        if(!reader.layout().isCompatible(layoutExpected)) {
+            throw std::runtime_error("Layout mismatch when reading BCSV Flexible file.");
+        }
+
+        // Temporary row to hold data for comparison avoids reallocations
+        bcsv::Row tempRow(reader.layout()); 
+        tempRow.trackChanges(false);
+
+        size_t i = 0;
+        const size_t colCount = reader.layout().columnCount();
+        while (reader.readNext()) {
+            const auto& row = reader.row();
+
+            // Access all columns and validate
+            for (size_t k = 0; k < colCount; ++k) {
+                bool success;
+                switch(reader.layout().columnType(k)) {
+                    case bcsv::ColumnType::BOOL: {
+                        dataGen_.getRandom(i, k, tempRow.ref<bool>(k));
+                        const bool& val_read = row.get<bool>(k);
+                        success = (val_read == tempRow.get<bool>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::INT8: {
+                        dataGen_.getRandom(i, k, tempRow.ref<int8_t>(k));
+                        const int8_t& val_read = row.get<int8_t>(k);
+                        success = (val_read == tempRow.get<int8_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::INT16: {
+                        dataGen_.getRandom(i, k, tempRow.ref<int16_t>(k));
+                        const int16_t& val_read = row.get<int16_t>(k);
+                        success = (val_read == tempRow.get<int16_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::INT32: {
+                        dataGen_.getRandom(i, k, tempRow.ref<int32_t>(k));
+                        const int32_t& val_read = row.get<int32_t>(k);
+                        success = (val_read == tempRow.get<int32_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::INT64: {
+                        dataGen_.getRandom(i, k, tempRow.ref<int64_t>(k));
+                        const int64_t& val_read = row.get<int64_t>(k);
+                        success = (val_read == tempRow.get<int64_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::UINT8: {
+                        dataGen_.getRandom(i, k, tempRow.ref<uint8_t>(k));
+                        const uint8_t& val_read = row.get<uint8_t>(k);
+                        success = (val_read == tempRow.get<uint8_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::UINT16: {
+                        dataGen_.getRandom(i, k, tempRow.ref<uint16_t>(k));
+                        const uint16_t& val_read = row.get<uint16_t>(k);
+                        success = (val_read == tempRow.get<uint16_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::UINT32: {
+                        dataGen_.getRandom(i, k, tempRow.ref<uint32_t>(k));
+                        const uint32_t& val_read = row.get<uint32_t>(k);
+                        success = (val_read == tempRow.get<uint32_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::UINT64: {
+                        dataGen_.getRandom(i, k, tempRow.ref<uint64_t>(k));
+                        const uint64_t& val_read = row.get<uint64_t>(k);
+                        success = (val_read == tempRow.get<uint64_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::FLOAT: {
+                        dataGen_.getRandom(i, k, tempRow.ref<float>(k));
+                        const float& val_read = row.get<float>(k);
+                        success = (val_read == tempRow.get<float>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::DOUBLE: {
+                        dataGen_.getRandom(i, k, tempRow.ref<double>(k));
+                        const double& val_read = row.get<double>(k);
+                        success = (val_read == tempRow.get<double>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::STRING: {
+                        dataGen_.getRandom(i, k, tempRow.ref<std::string>(k));
+                        const std::string& val_read = row.get<std::string>(k);
+                        success = (val_read == tempRow.get<std::string>(k));
+                        break;
+                    }
+                    default:
+                        throw std::runtime_error("Unknown column type encountered.");
+                }
+                if(!success) {
+                    throw std::runtime_error("Data mismatch at row " + std::to_string(i) + ", column " + std::to_string(k));
+                }
+            }
+            ++i;
+            
+            if (i % 50000 == 0) {
+                std::cout << "  BCSV Flexible Progress: " << i << "/" << NUM_ROWS << " rows read\n";
+            }
+        }
+        reader.close();
+        return i;
+    }
+
     // BCSV Flexible benchmark
     std::pair<double, double> benchmarkBCSVFlexible() {
         std::cout << "Benchmarking BCSV Flexible interface...\n";
@@ -563,210 +695,380 @@ public:
         auto layout = createFlexibleLayout();
         
         // Write BCSV Flexible
-        auto writeStart = std::chrono::steady_clock::now();
-        {
-            bcsv::Writer<bcsv::Layout> writer(layout);
-            writer.open(BCSV_FLEXIBLE_FILENAME, true, 1); // Compression level 1
-            
-            for (size_t row = 0; row < NUM_ROWS; ++row) {
-                auto data = generateRowData(row);
-                populateFlexibleRow(writer, data);
-                writer.writeRow();
-                
-                if (row % 50000 == 0) {
-                    std::cout << "  BCSV Flexible Progress: " << row << "/" << NUM_ROWS << " rows written\n";
-                }
-            }
-            writer.close();
-        }
-        auto writeEnd = std::chrono::steady_clock::now();
-        double writeTime = std::chrono::duration<double, std::milli>(writeEnd - writeStart).count();
+        std::chrono::steady_clock::time_point t_start, t_end;
+        t_start = std::chrono::steady_clock::now();
+        writeBCSVFlexible(BCSV_FLEXIBLE_FILENAME, layout, NUM_ROWS);
+        t_end = std::chrono::steady_clock::now();
+        double writeTime = std::chrono::duration<double, std::milli>(t_end - t_start).count();
         
-        // Read BCSV Flexible with lightweight validation
-        auto readStart = std::chrono::steady_clock::now();
-        {
-            bcsv::Reader<bcsv::Layout> reader;
-            reader.open(BCSV_FLEXIBLE_FILENAME);
-            
-            size_t rowCount = 0;
-            
-            while (reader.readNext()) {
-                // Generate expected data (now lightweight)
-                auto expected = generateRowData(rowCount);
-                const auto& row = reader.row();
-                
-                // Sample validation - check first of each type to verify integrity
-                if (row.get<bool>(0) != expected.bools[0]) throw std::runtime_error("Flexible: bool mismatch");
-                if (row.get<int8_t>(6) != expected.int8s[0]) throw std::runtime_error("Flexible: int8 mismatch");
-                if (row.get<int32_t>(18) != expected.int32s[0]) throw std::runtime_error("Flexible: int32 mismatch");
-                if (row.get<int64_t>(24) != expected.int64s[0]) throw std::runtime_error("Flexible: int64 mismatch");
-                if (row.get<uint32_t>(42) != expected.uint32s[0]) throw std::runtime_error("Flexible: uint32 mismatch");
-                if (std::abs(row.get<float>(54) - expected.floats[0]) > 0.001f) throw std::runtime_error("Flexible: float mismatch");
-                if (row.get<std::string>(66) != expected.strings[0]) throw std::runtime_error("Flexible: string mismatch");
-                
-                ++rowCount;
-                if (rowCount % 50000 == 0) {
-                    std::cout << "  BCSV Flexible Progress: " << rowCount << "/" << NUM_ROWS << " rows read\n";
-                }
-            }
-            reader.close();
+        // Validate file was written successfully
+        size_t fileSize = validateFile(BCSV_FLEXIBLE_FILENAME);
+
+        
+        // Read BCSV Flexible
+        t_start = std::chrono::steady_clock::now();
+        size_t rowsRead = readBCSVFlexible(BCSV_FLEXIBLE_FILENAME, layout);
+        t_end = std::chrono::steady_clock::now();
+        double readTime = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+        
+        // Validate row count matches
+        if (rowsRead != NUM_ROWS) {
+            throw std::runtime_error("Row count mismatch: expected " + std::to_string(NUM_ROWS) + 
+                                   " but read " + std::to_string(rowsRead));
         }
-        auto readEnd = std::chrono::steady_clock::now();
-        double readTime = std::chrono::duration<double, std::milli>(readEnd - readStart).count();
         
         std::cout << "  BCSV Flexible Write time: " << std::fixed << std::setprecision(2) << writeTime << " ms\n";
         std::cout << "  BCSV Flexible Read time:  " << std::fixed << std::setprecision(2) << readTime << " ms\n\n";
-        
+        std::cout << "  BCSV Flexible File size:  " << fileSize << " bytes (" << std::fixed << std::setprecision(2) << (fileSize / 1024.0 / 1024.0) << " MB)\n";
         return {writeTime, readTime};
+    }
+
+    // Write BCSV Static file
+    void writeBCSVStatic(const std::string& filepath, size_t numberOfRows) {
+        // For static layouts, create layout with column names directly
+        std::array<std::string, 72> columnNames;
+        const std::vector<std::string> typeNames = {"bool", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64", "float", "double", "string"};
+        
+        size_t idx = 0;
+        for (size_t typeIdx = 0; typeIdx < typeNames.size(); ++typeIdx) {
+            for (size_t colIdx = 0; colIdx < 6; ++colIdx) {
+                columnNames[idx++] = typeNames[typeIdx] + "_" + std::to_string(colIdx);
+            }
+        }
+        
+        LargeTestLayoutStatic layout(columnNames);
+        bcsv::Writer<LargeTestLayoutStatic> writer(layout);
+        if (!writer.open(filepath, true, 1)) { // Compression level 1, no ZoH flag
+            throw std::runtime_error("Failed to open file for writing: " + filepath + " - " + writer.getErrorMsg());
+        }
+        
+        for (size_t i = 0; i < numberOfRows; ++i) {
+            populateStaticRow(writer, i);
+            writer.writeRow();
+            
+            if (i % 50000 == 0) {
+                std::cout << "  BCSV Static Progress: " << i << "/" << numberOfRows << " rows written\n";
+            }
+        }
+        writer.close();
+    }
+    
+    // Read BCSV Static file and return number of rows read with validation
+    size_t readBCSVStatic(const std::string& filepath, const LargeTestLayoutStatic& /*layoutExpected*/) {
+        bcsv::Reader<LargeTestLayoutStatic> reader;
+        // For static layouts, reader automatically uses the compile-time layout
+        // No need to pass layout - it constructs from the file header
+        if (!reader.open(filepath)) {
+            throw std::runtime_error("Failed to open file for reading: " + filepath + " - " + reader.getErrorMsg());
+        }
+
+        size_t i = 0;
+        while (reader.readNext()) {
+            const auto& row = reader.row();
+
+            // Validate all 72 columns using runtime loop
+            for (size_t k = 0; k < 72; ++k) {
+                bool success = false;
+                
+                // Use compile-time column access for validation
+                if (k < 6) { // bool columns 0-5
+                    bool expected; dataGen_.getRandom(i, k, expected);
+                    bool actual = (k == 0) ? row.get<0>() : (k == 1) ? row.get<1>() : (k == 2) ? row.get<2>() : (k == 3) ? row.get<3>() : (k == 4) ? row.get<4>() : row.get<5>();
+                    success = (actual == expected);
+                } else if (k < 12) { // int8 columns 6-11
+                    int8_t expected; dataGen_.getRandom(i, k, expected);
+                    int8_t actual = (k == 6) ? row.get<6>() : (k == 7) ? row.get<7>() : (k == 8) ? row.get<8>() : (k == 9) ? row.get<9>() : (k == 10) ? row.get<10>() : row.get<11>();
+                    success = (actual == expected);
+                } else if (k < 18) { // int16 columns 12-17
+                    int16_t expected; dataGen_.getRandom(i, k, expected);
+                    int16_t actual = (k == 12) ? row.get<12>() : (k == 13) ? row.get<13>() : (k == 14) ? row.get<14>() : (k == 15) ? row.get<15>() : (k == 16) ? row.get<16>() : row.get<17>();
+                    success = (actual == expected);
+                } else if (k < 24) { // int32 columns 18-23
+                    int32_t expected; dataGen_.getRandom(i, k, expected);
+                    int32_t actual = (k == 18) ? row.get<18>() : (k == 19) ? row.get<19>() : (k == 20) ? row.get<20>() : (k == 21) ? row.get<21>() : (k == 22) ? row.get<22>() : row.get<23>();
+                    success = (actual == expected);
+                } else if (k < 30) { // int64 columns 24-29
+                    int64_t expected; dataGen_.getRandom(i, k, expected);
+                    int64_t actual = (k == 24) ? row.get<24>() : (k == 25) ? row.get<25>() : (k == 26) ? row.get<26>() : (k == 27) ? row.get<27>() : (k == 28) ? row.get<28>() : row.get<29>();
+                    success = (actual == expected);
+                } else if (k < 36) { // uint8 columns 30-35
+                    uint8_t expected; dataGen_.getRandom(i, k, expected);
+                    uint8_t actual = (k == 30) ? row.get<30>() : (k == 31) ? row.get<31>() : (k == 32) ? row.get<32>() : (k == 33) ? row.get<33>() : (k == 34) ? row.get<34>() : row.get<35>();
+                    success = (actual == expected);
+                } else if (k < 42) { // uint16 columns 36-41
+                    uint16_t expected; dataGen_.getRandom(i, k, expected);
+                    uint16_t actual = (k == 36) ? row.get<36>() : (k == 37) ? row.get<37>() : (k == 38) ? row.get<38>() : (k == 39) ? row.get<39>() : (k == 40) ? row.get<40>() : row.get<41>();
+                    success = (actual == expected);
+                } else if (k < 48) { // uint32 columns 42-47
+                    uint32_t expected; dataGen_.getRandom(i, k, expected);
+                    uint32_t actual = (k == 42) ? row.get<42>() : (k == 43) ? row.get<43>() : (k == 44) ? row.get<44>() : (k == 45) ? row.get<45>() : (k == 46) ? row.get<46>() : row.get<47>();
+                    success = (actual == expected);
+                } else if (k < 54) { // uint64 columns 48-53
+                    uint64_t expected; dataGen_.getRandom(i, k, expected);
+                    uint64_t actual = (k == 48) ? row.get<48>() : (k == 49) ? row.get<49>() : (k == 50) ? row.get<50>() : (k == 51) ? row.get<51>() : (k == 52) ? row.get<52>() : row.get<53>();
+                    success = (actual == expected);
+                } else if (k < 60) { // float columns 54-59
+                    float expected; dataGen_.getRandom(i, k, expected);
+                    float actual = (k == 54) ? row.get<54>() : (k == 55) ? row.get<55>() : (k == 56) ? row.get<56>() : (k == 57) ? row.get<57>() : (k == 58) ? row.get<58>() : row.get<59>();
+                    success = (actual == expected);
+                } else if (k < 66) { // double columns 60-65
+                    double expected; dataGen_.getRandom(i, k, expected);
+                    double actual = (k == 60) ? row.get<60>() : (k == 61) ? row.get<61>() : (k == 62) ? row.get<62>() : (k == 63) ? row.get<63>() : (k == 64) ? row.get<64>() : row.get<65>();
+                    success = (actual == expected);
+                } else { // string columns 66-71
+                    std::string expected; dataGen_.getRandom(i, k, expected);
+                    const std::string& actual = (k == 66) ? row.get<66>() : (k == 67) ? row.get<67>() : (k == 68) ? row.get<68>() : (k == 69) ? row.get<69>() : (k == 70) ? row.get<70>() : row.get<71>();
+                    success = (actual == expected);
+                }
+                
+                if (!success) {
+                    throw std::runtime_error("Data mismatch at row " + std::to_string(i) + ", column " + std::to_string(k));
+                }
+            }
+            ++i;
+            
+            if (i % 50000 == 0) {
+                std::cout << "  BCSV Static Progress: " << i << "/" << NUM_ROWS << " rows read\n";
+            }
+        }
+        reader.close();
+        return i;
     }
 
     // BCSV Static benchmark
     std::pair<double, double> benchmarkBCSVStatic() {
         std::cout << "Benchmarking BCSV Static interface...\n";
         
+        // Write BCSV Static
+        std::chrono::steady_clock::time_point t_start, t_end;
+        t_start = std::chrono::steady_clock::now();
+        writeBCSVStatic(BCSV_STATIC_FILENAME, NUM_ROWS);
+        t_end = std::chrono::steady_clock::now();
+        double writeTime = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+        
+        // Validate file was written successfully
+        size_t fileSize = validateFile(BCSV_STATIC_FILENAME);
+
         auto layout = createStaticLayout();
         
-        // Write BCSV Static
-        auto writeStart = std::chrono::steady_clock::now();
-        double writeTime = 0.0;
-        {
-            bcsv::Writer<LargeTestLayoutStatic> writer(layout);
-            writer.open(BCSV_STATIC_FILENAME, true, 1); // Compression level 1
-            
-            for (size_t row = 0; row < NUM_ROWS; ++row) {
-                auto data = generateRowData(row);
-                populateStaticRow(writer, data);
-                writer.writeRow();
-                
-                if (row % 50000 == 0) {
-                    std::cout << "  BCSV Static Progress: " << row << "/" << NUM_ROWS << " rows written\n";
-                }
-            }
-            writer.close();
-        }
-        auto writeEnd = std::chrono::steady_clock::now();
-        writeTime = std::chrono::duration<double, std::milli>(writeEnd - writeStart).count();
+        // Read BCSV Static
+        t_start = std::chrono::steady_clock::now();
+        size_t rowsRead = readBCSVStatic(BCSV_STATIC_FILENAME, layout);
+        t_end = std::chrono::steady_clock::now();
+        double readTime = std::chrono::duration<double, std::milli>(t_end - t_start).count();
         
-        // Check if write actually succeeded
-        if (!std::filesystem::exists(BCSV_STATIC_FILENAME)) {
-            std::cerr << "WARNING: BCSV Static file was NOT created despite writer.close() success!\n";
-            std::cerr << "This indicates a bug in BCSV library Static writer.\n";
-            std::cerr << "Skipping Static read benchmark.\n";
-            return {writeTime, 0.0};
+        // Validate row count matches
+        if (rowsRead != NUM_ROWS) {
+            throw std::runtime_error("Row count mismatch: expected " + std::to_string(NUM_ROWS) + 
+                                   " but read " + std::to_string(rowsRead));
         }
-        
-        // Read BCSV Static with lightweight validation
-        auto readStart = std::chrono::steady_clock::now();
-        size_t validationCount = 0;
-        {
-            bcsv::Reader<LargeTestLayoutStatic> reader;
-            reader.open(BCSV_STATIC_FILENAME);
-            
-            size_t rowCount = 0;
-            
-            while (reader.readNext()) {
-                // Generate expected data (now lightweight)
-                auto expected = generateRowData(rowCount);
-                const auto& row = reader.row();
-                
-                // Sample validation
-                if (row.get<0>() != expected.bools[0]) throw std::runtime_error("Static: bool mismatch");
-                if (row.get<6>() != expected.int8s[0]) throw std::runtime_error("Static: int8 mismatch");
-                if (row.get<18>() != expected.int32s[0]) throw std::runtime_error("Static: int32 mismatch");
-                if (row.get<24>() != expected.int64s[0]) throw std::runtime_error("Static: int64 mismatch");
-                if (row.get<42>() != expected.uint32s[0]) throw std::runtime_error("Static: uint32 mismatch");
-                if (std::abs(row.get<54>() - expected.floats[0]) > 0.001f) throw std::runtime_error("Static: float mismatch");
-                if (row.get<66>() != expected.strings[0]) throw std::runtime_error("Static: string mismatch");
-                
-                ++validationCount;
-                ++rowCount;
-                
-                if (rowCount % 50000 == 0) {
-                    std::cout << "  BCSV Static Progress: " << rowCount << "/" << NUM_ROWS << " rows read\n";
-                }
-            }
-            reader.close();
-        }
-        auto readEnd = std::chrono::steady_clock::now();
-        double readTime = std::chrono::duration<double, std::milli>(readEnd - readStart).count();
         
         std::cout << "  BCSV Static Write time: " << std::fixed << std::setprecision(2) << writeTime << " ms\n";
-        std::cout << "  BCSV Static Read time:  " << std::fixed << std::setprecision(2) << readTime << " ms\n";
-        std::cout << "  BCSV Static Validations: " << validationCount << " rows\n\n";
-        
+        std::cout << "  BCSV Static Read time:  " << std::fixed << std::setprecision(2) << readTime << " ms\n\n";
+        std::cout << "  BCSV Static File size:  " << fileSize << " bytes (" << std::fixed << std::setprecision(2) << (fileSize / 1024.0 / 1024.0) << " MB)\n";
         return {writeTime, readTime};
     }
 
-    // Generate ZoH-friendly data for flexible interface
-    void populateFlexibleZoHRow(bcsv::Writer<bcsv::Layout>& writer, size_t rowIndex) {
-        // Create time-series patterns with gradual changes suitable for ZoH compression
-        const size_t changeInterval = 100; // Change values every 100 rows for better compression
-        const size_t segment = rowIndex / changeInterval;
-        
-        auto& row = writer.row();
-        
-        // Boolean columns - alternating patterns
-        for (size_t i = 0; i < 6; ++i) {
-            row.set(i, (segment + i) % 3 == 0);
+    // Write BCSV Flexible ZoH file
+    void writeBCSVFlexibleZoH(const std::string& filepath, const bcsv::Layout& layout, size_t numberOfRows) {
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        if (!writer.open(filepath, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
+            throw std::runtime_error("Failed to open file for writing: " + filepath + " - " + writer.getErrorMsg());
         }
         
-        // int8_t columns - small incremental changes
-        for (size_t i = 0; i < 6; ++i) {
-            row.set(6 + i, static_cast<int8_t>((segment % 50) + i * 10));
+        // Temporary variables to hold generated data
+        bcsv::Row testData(layout);
+        testData.trackChanges(false);
+
+        const size_t colCount = layout.columnCount();
+        for (size_t i = 0; i < numberOfRows; ++i) {
+            auto& row = writer.row();
+            for(size_t k = 0; k < colCount; ++k) {
+                // Pre-fill with time-series data to simulate ZoH patterns
+                switch(layout.columnType(k)) {
+                    case bcsv::ColumnType::BOOL: {
+                        dataGen_.getTimeSeries(i, k, testData.ref<bool>(k));
+                        row.set(k, testData.get<bool>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::INT8: {
+                        dataGen_.getTimeSeries(i, k, testData.ref<int8_t>(k));
+                        row.set(k, testData.get<int8_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::INT16: {
+                        dataGen_.getTimeSeries(i, k, testData.ref<int16_t>(k));
+                        row.set(k, testData.get<int16_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::INT32: {
+                        dataGen_.getTimeSeries(i, k, testData.ref<int32_t>(k));
+                        row.set(k, testData.get<int32_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::INT64: {
+                        dataGen_.getTimeSeries(i, k, testData.ref<int64_t>(k));
+                        row.set(k, testData.get<int64_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::UINT8: {
+                        dataGen_.getTimeSeries(i, k, testData.ref<uint8_t>(k));
+                        row.set(k, testData.get<uint8_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::UINT16: {
+                        dataGen_.getTimeSeries(i, k, testData.ref<uint16_t>(k));
+                        row.set(k, testData.get<uint16_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::UINT32: {
+                        dataGen_.getTimeSeries(i, k, testData.ref<uint32_t>(k));
+                        row.set(k, testData.get<uint32_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::UINT64: {
+                        dataGen_.getTimeSeries(i, k, testData.ref<uint64_t>(k));
+                        row.set(k, testData.get<uint64_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::FLOAT: {
+                        dataGen_.getTimeSeries(i, k, testData.ref<float>(k));
+                        row.set(k, testData.get<float>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::DOUBLE: {
+                        dataGen_.getTimeSeries(i, k, testData.ref<double>(k));
+                        row.set(k, testData.get<double>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::STRING: {
+                        dataGen_.getTimeSeries(i, k, testData.ref<std::string>(k));
+                        row.set(k, testData.get<std::string>(k));
+                        break;
+                    }
+                    default:
+                        throw std::runtime_error("Unknown column type encountered.");
+                }
+            }
+            writer.writeRow();
+            if (i % 50000 == 0) {
+                std::cout << "  BCSV Flexible ZoH Progress: " << i << "/" << numberOfRows << " rows written\n";
+            }
+        }
+        writer.close();
+    }
+    
+    // Read BCSV Flexible ZoH file and return number of rows read
+    size_t readBCSVFlexibleZoH(const std::string& filepath, const bcsv::Layout& layoutExpected) {
+        bcsv::Reader<bcsv::Layout> reader;
+        if (!reader.open(filepath)) {
+            throw std::runtime_error("Failed to open file for reading: " + filepath + " - " + reader.getErrorMsg());
         }
         
-        // int16_t columns - moderate incremental changes  
-        for (size_t i = 0; i < 6; ++i) {
-            row.set(12 + i, static_cast<int16_t>((segment % 1000) + i * 100));
+        if(!reader.layout().isCompatible(layoutExpected)) {
+            throw std::runtime_error("Layout mismatch when reading BCSV Flexible ZoH file.");
         }
-        
-        // int32_t columns - larger incremental changes
-        for (size_t i = 0; i < 6; ++i) {
-            row.set(18 + i, static_cast<int32_t>((segment % 10000) + i * 1000));
+
+        // Temporary row to hold data for comparison avoids reallocations
+        bcsv::Row tempRow(reader.layout()); 
+        tempRow.trackChanges(false);
+
+        size_t i = 0;
+        const size_t colCount = reader.layout().columnCount();
+        while (reader.readNext()) {
+            const auto& row = reader.row();
+
+            // Access all columns to ensure fair comparison - match the actual layout pattern
+            for (size_t k = 0; k < colCount; ++k) {
+                bool success;
+                switch(reader.layout().columnType(k)) {
+                    case bcsv::ColumnType::BOOL: {
+                        dataGen_.getTimeSeries(i, k, tempRow.ref<bool>(k));
+                        const bool& val_read = row.get<bool>(k);
+                        success = (val_read == tempRow.get<bool>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::INT8: {
+                        dataGen_.getTimeSeries(i, k, tempRow.ref<int8_t>(k));
+                        const int8_t& val_read = row.get<int8_t>(k);
+                        success = (val_read == tempRow.get<int8_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::INT16: {
+                        dataGen_.getTimeSeries(i, k, tempRow.ref<int16_t>(k));
+                        const int16_t& val_read = row.get<int16_t>(k);
+                        success = (val_read == tempRow.get<int16_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::INT32: {
+                        dataGen_.getTimeSeries(i, k, tempRow.ref<int32_t>(k));
+                        const int32_t& val_read = row.get<int32_t>(k);
+                        success = (val_read == tempRow.get<int32_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::INT64: {
+                        dataGen_.getTimeSeries(i, k, tempRow.ref<int64_t>(k));
+                        const int64_t& val_read = row.get<int64_t>(k);
+                        success = (val_read == tempRow.get<int64_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::UINT8: {
+                        dataGen_.getTimeSeries(i, k, tempRow.ref<uint8_t>(k));
+                        const uint8_t& val_read = row.get<uint8_t>(k);
+                        success = (val_read == tempRow.get<uint8_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::UINT16: {
+                        dataGen_.getTimeSeries(i, k, tempRow.ref<uint16_t>(k));
+                        const uint16_t& val_read = row.get<uint16_t>(k);
+                        success = (val_read == tempRow.get<uint16_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::UINT32: {
+                        dataGen_.getTimeSeries(i, k, tempRow.ref<uint32_t>(k));
+                        const uint32_t& val_read = row.get<uint32_t>(k);
+                        success = (val_read == tempRow.get<uint32_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::UINT64: {
+                        dataGen_.getTimeSeries(i, k, tempRow.ref<uint64_t>(k));
+                        const uint64_t& val_read = row.get<uint64_t>(k);
+                        success = (val_read == tempRow.get<uint64_t>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::FLOAT: {
+                        dataGen_.getTimeSeries(i, k, tempRow.ref<float>(k));
+                        const float& val_read = row.get<float>(k);
+                        success = (val_read == tempRow.get<float>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::DOUBLE: {
+                        dataGen_.getTimeSeries(i, k, tempRow.ref<double>(k));
+                        const double& val_read = row.get<double>(k);
+                        success = (val_read == tempRow.get<double>(k));
+                        break;
+                    }
+                    case bcsv::ColumnType::STRING: {
+                        dataGen_.getTimeSeries(i, k, tempRow.ref<std::string>(k));
+                        const std::string& val_read = row.get<std::string>(k);
+                        success = (val_read == tempRow.get<std::string>(k));
+                        break;
+                    }
+                    default:
+                        throw std::runtime_error("Unknown column type encountered.");
+                }
+                if(!success) {
+                    throw std::runtime_error("Data mismatch at row " + std::to_string(i) + ", column " + std::to_string(k));
+                }
+            }
+            ++i;
+            
+            if (i % 50000 == 0) {
+                std::cout << "  BCSV Flexible ZoH Progress: " << i << "/" << NUM_ROWS << " rows read\n";
+            }
         }
-        
-        // int64_t columns - very large incremental changes
-        for (size_t i = 0; i < 6; ++i) {
-            row.set(24 + i, static_cast<int64_t>((segment % 100000LL) + i * 10000LL));
-        }
-        
-        // uint8_t columns - small unsigned incremental changes
-        for (size_t i = 0; i < 6; ++i) {
-            row.set(30 + i, static_cast<uint8_t>((segment % 200) + i * 5));
-        }
-        
-        // uint16_t columns - moderate unsigned incremental changes
-        for (size_t i = 0; i < 6; ++i) {
-            row.set(36 + i, static_cast<uint16_t>((segment % 2000) + i * 500));
-        }
-        
-        // uint32_t columns - larger unsigned incremental changes
-        for (size_t i = 0; i < 6; ++i) {
-            row.set(42 + i, static_cast<uint32_t>((segment % 20000) + i * 5000));
-        }
-        
-        // uint64_t columns - very large unsigned incremental changes
-        for (size_t i = 0; i < 6; ++i) {
-            row.set(48 + i, static_cast<uint64_t>((segment % 200000ULL) + i * 50000ULL));
-        }
-        
-        // float columns - floating point with patterns
-        for (size_t i = 0; i < 6; ++i) {
-            row.set(54 + i, static_cast<float>((segment % 1000) + i * 0.5f));
-        }
-        
-        // double columns - double precision with patterns
-        for (size_t i = 0; i < 6; ++i) {
-            row.set(60 + i, static_cast<double>((segment % 1000) + i * 0.25));
-        }
-        
-        // string columns - repetitive patterns optimal for ZoH
-        const std::vector<std::string> zohStrings = {
-            "Pattern0", "Pattern1", "Pattern2", "Pattern3", "Pattern4", "Pattern5"
-        };
-        for (size_t i = 0; i < 6; ++i) {
-            row.set(66 + i, zohStrings[(segment + i) % zohStrings.size()]);
-        }
+        reader.close();
+        return i;
     }
 
     // BCSV Flexible ZoH benchmark
@@ -776,116 +1078,175 @@ public:
         auto layout = createFlexibleLayout();
         
         // Write BCSV Flexible ZoH
-        auto writeStart = std::chrono::steady_clock::now();
-        {
-            bcsv::Writer<bcsv::Layout> writer(layout);
-            writer.open(BCSV_FLEXIBLE_ZOH_FILENAME, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD);
-            
-            for (size_t row = 0; row < NUM_ROWS; ++row) {
-                populateFlexibleZoHRow(writer, row);
-                writer.writeRow();
-                
-                if (row % 50000 == 0) {
-                    std::cout << "  BCSV Flexible ZoH Progress: " << row << "/" << NUM_ROWS << " rows written\n";
-                }
-            }
-            writer.close();
-        }
-        auto writeEnd = std::chrono::steady_clock::now();
-        double writeTime = std::chrono::duration<double, std::milli>(writeEnd - writeStart).count();
+        std::chrono::steady_clock::time_point t_start, t_end;
+        t_start = std::chrono::steady_clock::now();
+        writeBCSVFlexibleZoH(BCSV_FLEXIBLE_ZOH_FILENAME, layout, NUM_ROWS);
+        t_end = std::chrono::steady_clock::now();
+        double writeTime = std::chrono::duration<double, std::milli>(t_end - t_start).count();
         
-        // Read BCSV Flexible ZoH with validation
-        auto readStart = std::chrono::steady_clock::now();
-        {
-            bcsv::Reader<bcsv::Layout> reader;
-            reader.open(BCSV_FLEXIBLE_ZOH_FILENAME);
-            
-            size_t readCount = 0;
-            const size_t changeInterval = 100;
-            
-            while (reader.readNext()) {
-                const auto& row = reader.row();
-                const size_t segment = readCount / changeInterval;
-                
-                // Validate ZoH pattern (lightweight formula-based)
-                if (row.get<bool>(0) != ((segment + 0) % 3 == 0)) throw std::runtime_error("Flex ZoH: bool mismatch");
-                if (row.get<int8_t>(6) != static_cast<int8_t>((segment % 50) + 0 * 10)) throw std::runtime_error("Flex ZoH: int8 mismatch");
-                if (row.get<int32_t>(18) != static_cast<int32_t>((segment % 10000) + 0 * 1000)) throw std::runtime_error("Flex ZoH: int32 mismatch");
-                
-                ++readCount;
-                
-                if (readCount % 50000 == 0) {
-                    std::cout << "  BCSV Flexible ZoH Progress: " << readCount << "/" << NUM_ROWS << " rows read\n";
-                }
-            }
-            reader.close();
+        // Validate file was written successfully
+        size_t fileSize = validateFile(BCSV_FLEXIBLE_ZOH_FILENAME);
+
+        
+        // Read BCSV Flexible ZoH
+        t_start = std::chrono::steady_clock::now();
+        size_t rowsRead = readBCSVFlexibleZoH(BCSV_FLEXIBLE_ZOH_FILENAME, layout);
+        t_end = std::chrono::steady_clock::now();
+        double readTime = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+        
+        // Validate row count matches
+        if (rowsRead != NUM_ROWS) {
+            throw std::runtime_error("Row count mismatch: expected " + std::to_string(NUM_ROWS) + 
+                                   " but read " + std::to_string(rowsRead));
         }
-        auto readEnd = std::chrono::steady_clock::now();
-        double readTime = std::chrono::duration<double, std::milli>(readEnd - readStart).count();
         
         std::cout << "  BCSV Flexible ZoH Write time: " << std::fixed << std::setprecision(2) << writeTime << " ms\n";
         std::cout << "  BCSV Flexible ZoH Read time:  " << std::fixed << std::setprecision(2) << readTime << " ms\n\n";
-        
+        std::cout << "  BCSV Flexible ZoH File size:  " << fileSize << " bytes (" << std::fixed << std::setprecision(2) << (fileSize / 1024.0 / 1024.0) << " MB)\n";
         return {writeTime, readTime};
+    }
+
+    // Write BCSV Static ZoH file
+    void writeBCSVStaticZoH(const std::string& filepath, size_t numberOfRows) {
+        // For static layouts, create layout with column names directly
+        std::array<std::string, 72> columnNames;
+        const std::vector<std::string> typeNames = {"bool", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32", "uint64", "float", "double", "string"};
+        
+        size_t idx = 0;
+        for (size_t typeIdx = 0; typeIdx < typeNames.size(); ++typeIdx) {
+            for (size_t colIdx = 0; colIdx < 6; ++colIdx) {
+                columnNames[idx++] = typeNames[typeIdx] + "_" + std::to_string(colIdx);
+            }
+        }
+        
+        LargeTestLayoutStatic layout(columnNames);
+        bcsv::Writer<LargeTestLayoutStatic> writer(layout);
+        if (!writer.open(filepath, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
+            throw std::runtime_error("Failed to open file for writing: " + filepath + " - " + writer.getErrorMsg());
+        }
+        
+        for (size_t i = 0; i < numberOfRows; ++i) {
+            populateStaticRowZoH(writer, i);
+            writer.writeRow();
+            
+            if (i % 50000 == 0) {
+                std::cout << "  BCSV Static ZoH Progress: " << i << "/" << numberOfRows << " rows written\n";
+            }
+        }
+        writer.close();
+    }
+    
+    // Read BCSV Static ZoH file and return number of rows read with validation
+    size_t readBCSVStaticZoH(const std::string& filepath, const LargeTestLayoutStatic& /*layoutExpected*/) {
+        bcsv::Reader<LargeTestLayoutStatic> reader;
+        if (!reader.open(filepath)) {
+            throw std::runtime_error("Failed to open file for reading: " + filepath + " - " + reader.getErrorMsg());
+        }
+
+        size_t i = 0;
+        while (reader.readNext()) {
+            const auto& row = reader.row();
+
+            // Validate all 72 columns using runtime loop with time-series data
+            for (size_t k = 0; k < 72; ++k) {
+                bool success = false;
+                
+                // Use compile-time column access for validation
+                if (k < 6) { // bool columns 0-5
+                    bool expected; dataGen_.getTimeSeries(i, k, expected);
+                    bool actual = (k == 0) ? row.get<0>() : (k == 1) ? row.get<1>() : (k == 2) ? row.get<2>() : (k == 3) ? row.get<3>() : (k == 4) ? row.get<4>() : row.get<5>();
+                    success = (actual == expected);
+                } else if (k < 12) { // int8 columns 6-11
+                    int8_t expected; dataGen_.getTimeSeries(i, k, expected);
+                    int8_t actual = (k == 6) ? row.get<6>() : (k == 7) ? row.get<7>() : (k == 8) ? row.get<8>() : (k == 9) ? row.get<9>() : (k == 10) ? row.get<10>() : row.get<11>();
+                    success = (actual == expected);
+                } else if (k < 18) { // int16 columns 12-17
+                    int16_t expected; dataGen_.getTimeSeries(i, k, expected);
+                    int16_t actual = (k == 12) ? row.get<12>() : (k == 13) ? row.get<13>() : (k == 14) ? row.get<14>() : (k == 15) ? row.get<15>() : (k == 16) ? row.get<16>() : row.get<17>();
+                    success = (actual == expected);
+                } else if (k < 24) { // int32 columns 18-23
+                    int32_t expected; dataGen_.getTimeSeries(i, k, expected);
+                    int32_t actual = (k == 18) ? row.get<18>() : (k == 19) ? row.get<19>() : (k == 20) ? row.get<20>() : (k == 21) ? row.get<21>() : (k == 22) ? row.get<22>() : row.get<23>();
+                    success = (actual == expected);
+                } else if (k < 30) { // int64 columns 24-29
+                    int64_t expected; dataGen_.getTimeSeries(i, k, expected);
+                    int64_t actual = (k == 24) ? row.get<24>() : (k == 25) ? row.get<25>() : (k == 26) ? row.get<26>() : (k == 27) ? row.get<27>() : (k == 28) ? row.get<28>() : row.get<29>();
+                    success = (actual == expected);
+                } else if (k < 36) { // uint8 columns 30-35
+                    uint8_t expected; dataGen_.getTimeSeries(i, k, expected);
+                    uint8_t actual = (k == 30) ? row.get<30>() : (k == 31) ? row.get<31>() : (k == 32) ? row.get<32>() : (k == 33) ? row.get<33>() : (k == 34) ? row.get<34>() : row.get<35>();
+                    success = (actual == expected);
+                } else if (k < 42) { // uint16 columns 36-41
+                    uint16_t expected; dataGen_.getTimeSeries(i, k, expected);
+                    uint16_t actual = (k == 36) ? row.get<36>() : (k == 37) ? row.get<37>() : (k == 38) ? row.get<38>() : (k == 39) ? row.get<39>() : (k == 40) ? row.get<40>() : row.get<41>();
+                    success = (actual == expected);
+                } else if (k < 48) { // uint32 columns 42-47
+                    uint32_t expected; dataGen_.getTimeSeries(i, k, expected);
+                    uint32_t actual = (k == 42) ? row.get<42>() : (k == 43) ? row.get<43>() : (k == 44) ? row.get<44>() : (k == 45) ? row.get<45>() : (k == 46) ? row.get<46>() : row.get<47>();
+                    success = (actual == expected);
+                } else if (k < 54) { // uint64 columns 48-53
+                    uint64_t expected; dataGen_.getTimeSeries(i, k, expected);
+                    uint64_t actual = (k == 48) ? row.get<48>() : (k == 49) ? row.get<49>() : (k == 50) ? row.get<50>() : (k == 51) ? row.get<51>() : (k == 52) ? row.get<52>() : row.get<53>();
+                    success = (actual == expected);
+                } else if (k < 60) { // float columns 54-59
+                    float expected; dataGen_.getTimeSeries(i, k, expected);
+                    float actual = (k == 54) ? row.get<54>() : (k == 55) ? row.get<55>() : (k == 56) ? row.get<56>() : (k == 57) ? row.get<57>() : (k == 58) ? row.get<58>() : row.get<59>();
+                    success = (actual == expected);
+                } else if (k < 66) { // double columns 60-65
+                    double expected; dataGen_.getTimeSeries(i, k, expected);
+                    double actual = (k == 60) ? row.get<60>() : (k == 61) ? row.get<61>() : (k == 62) ? row.get<62>() : (k == 63) ? row.get<63>() : (k == 64) ? row.get<64>() : row.get<65>();
+                    success = (actual == expected);
+                } else { // string columns 66-71
+                    std::string expected; dataGen_.getTimeSeries(i, k, expected);
+                    const std::string& actual = (k == 66) ? row.get<66>() : (k == 67) ? row.get<67>() : (k == 68) ? row.get<68>() : (k == 69) ? row.get<69>() : (k == 70) ? row.get<70>() : row.get<71>();
+                    success = (actual == expected);
+                }
+                
+                if (!success) {
+                    throw std::runtime_error("Data mismatch at row " + std::to_string(i) + ", column " + std::to_string(k));
+                }
+            }
+            ++i;
+            
+            if (i % 50000 == 0) {
+                std::cout << "  BCSV Static ZoH Progress: " << i << "/" << NUM_ROWS << " rows read\n";
+            }
+        }
+        reader.close();
+        return i;
     }
 
     // BCSV Static ZoH benchmark
     std::pair<double, double> benchmarkBCSVStaticZoH() {
         std::cout << "Benchmarking BCSV Static interface with ZoH...\n";
         
+        // Write BCSV Static ZoH
+        std::chrono::steady_clock::time_point t_start, t_end;
+        t_start = std::chrono::steady_clock::now();
+        writeBCSVStaticZoH(BCSV_STATIC_ZOH_FILENAME, NUM_ROWS);
+        t_end = std::chrono::steady_clock::now();
+        double writeTime = std::chrono::duration<double, std::milli>(t_end - t_start).count();
+        
+        // Validate file was written successfully
+        size_t fileSize = validateFile(BCSV_STATIC_ZOH_FILENAME);
+
         auto layout = createStaticLayout();
         
-        // Write BCSV Static ZoH
-        auto writeStart = std::chrono::steady_clock::now();
-        {
-            bcsv::Writer<LargeTestLayoutStatic> writer(layout);
-            writer.open(BCSV_STATIC_ZOH_FILENAME, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD);
-            
-            for (size_t row = 0; row < NUM_ROWS; ++row) {
-                generateZoHRowData(row, writer.row());
-                writer.writeRow();
-                
-                if (row % 50000 == 0) {
-                    std::cout << "  BCSV Static ZoH Progress: " << row << "/" << NUM_ROWS << " rows written\n";
-                }
-            }
-            writer.close();
-        }
-        auto writeEnd = std::chrono::steady_clock::now();
-        double writeTime = std::chrono::duration<double, std::milli>(writeEnd - writeStart).count();
+        // Read BCSV Static ZoH
+        t_start = std::chrono::steady_clock::now();
+        size_t rowsRead = readBCSVStaticZoH(BCSV_STATIC_ZOH_FILENAME, layout);
+        t_end = std::chrono::steady_clock::now();
+        double readTime = std::chrono::duration<double, std::milli>(t_end - t_start).count();
         
-        // Read BCSV Static ZoH with validation
-        auto readStart = std::chrono::steady_clock::now();
-        {
-            bcsv::Reader<LargeTestLayoutStatic> reader;
-            reader.open(BCSV_STATIC_ZOH_FILENAME);
-            
-            size_t readCount = 0;
-            const size_t changeInterval = 100;
-            
-            while (reader.readNext()) {
-                const auto& row = reader.row();
-                const size_t segment = readCount / changeInterval;
-                
-                // Validate ZoH pattern (lightweight formula-based)
-                if (row.get<0>() != ((segment + 0) % 3 == 0)) throw std::runtime_error("Static ZoH: bool mismatch");
-                if (row.get<6>() != static_cast<int8_t>((segment % 50) + 0 * 10)) throw std::runtime_error("Static ZoH: int8 mismatch");
-                if (row.get<18>() != static_cast<int32_t>((segment % 10000) + 0 * 1000)) throw std::runtime_error("Static ZoH: int32 mismatch");
-                
-                ++readCount;
-                
-                if (readCount % 50000 == 0) {
-                    std::cout << "  BCSV Static ZoH Progress: " << readCount << "/" << NUM_ROWS << " rows read\n";
-                }
-            }
-            reader.close();
+        // Validate row count matches
+        if (rowsRead != NUM_ROWS) {
+            throw std::runtime_error("Row count mismatch: expected " + std::to_string(NUM_ROWS) + 
+                                   " but read " + std::to_string(rowsRead));
         }
-        auto readEnd = std::chrono::steady_clock::now();
-        double readTime = std::chrono::duration<double, std::milli>(readEnd - readStart).count();
         
         std::cout << "  BCSV Static ZoH Write time: " << std::fixed << std::setprecision(2) << writeTime << " ms\n";
         std::cout << "  BCSV Static ZoH Read time:  " << std::fixed << std::setprecision(2) << readTime << " ms\n\n";
-        
+        std::cout << "  BCSV Static ZoH File size:  " << fileSize << " bytes (" << std::fixed << std::setprecision(2) << (fileSize / 1024.0 / 1024.0) << " MB)\n";
         return {writeTime, readTime};
     }
 
@@ -919,8 +1280,8 @@ public:
         
         // Performance comparison table
         std::cout << "Performance Comparison (500,000 rows, 72 columns):\n\n";
-        std::cout << "Format           | Write (ms) | Read (ms)  | Total (ms) | Write MB/s | Read MB/s  | Total MB/s\n";
-        std::cout << "-----------------|------------|------------|------------|------------|------------|------------\n";
+        std::cout << "Format          | Write (ms) | Read (ms)  | Total (ms) | Write MB/s | Read MB/s  | Total MB/s\n";
+        std::cout << "----------------|------------|------------|------------|------------|------------|------------\n";
         
         auto printRow = [&](const std::string& name, double writeTime, double readTime, size_t fileSize) {
             double totalTime = writeTime + readTime;
@@ -929,7 +1290,7 @@ public:
             double readMBps = fileSizeMB / (readTime / 1000.0);
             double totalMBps = fileSizeMB / (totalTime / 1000.0);
             
-            std::cout << std::left << std::setw(16) << name << " | "
+            std::cout << std::left << std::setw(15) << name << " | "
                       << std::right << std::setw(10) << std::fixed << std::setprecision(1) << writeTime << " | "
                       << std::setw(10) << readTime << " | "
                       << std::setw(10) << totalTime << " | "

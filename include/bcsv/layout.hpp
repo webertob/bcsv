@@ -46,6 +46,10 @@ namespace bcsv {
         setColumns(columns);
     }
     
+    inline Layout::Layout(const std::vector<std::string>& columnNames, const std::vector<ColumnType>& columnTypes) {
+        setColumns(columnNames, columnTypes);
+    }
+
     inline void Layout::addColumn(ColumnDefinition column, size_t position) {
         if (columnCount() >= MAX_COLUMN_COUNT) [[unlikely]] {
             throw std::runtime_error("Cannot exceed maximum column count");
@@ -116,12 +120,32 @@ namespace bcsv {
 
         // Prepare storage
         column_index_.reserve(columns.size());
-        column_names_.reserve(columns.size());
-        column_types_.reserve(columns.size());
+        column_names_.resize(columns.size());
+        column_types_.resize(columns.size());
         
         for(size_t i = 0; i < columns.size(); ++i) {
-            this->addColumn(columns[i]);
+            column_names_[i] = columns[i].name;
+            column_types_[i] = columns[i].type;
         }
+        column_index_.build(column_names_); // build index after bulk insertion
+    }
+
+    inline void Layout::setColumns(const std::vector<std::string>& columnNames, const std::vector<ColumnType>& columnTypes) {
+        if (columnNames.size() != columnTypes.size()) {
+            throw std::invalid_argument("Column names and types size mismatch");
+        }
+        clear();
+
+        if (columnNames.size() == 0) {
+            // nothing to do
+            return;
+        }
+
+        // Prepare storage
+        column_index_.reserve(columnNames.size());
+        column_names_ = columnNames; // we can bulk assign names since we know the size in advance, types will be inserted one by one to build the index correctly
+        column_types_ = columnTypes; // we can bulk assign types since we know the size in advance, names will be inserted one by one to build the index correctly
+        column_index_.build(column_names_); // build index after bulk assignment
     }
 
     inline void Layout::setColumnType(size_t index, ColumnType type) {
@@ -214,18 +238,15 @@ namespace bcsv {
 
     template<typename... ColumnTypes>
     template<typename Container>
-    inline bool LayoutStatic<ColumnTypes...>::setColumnNames(const Container& names) {
-        constexpr size_t N = sizeof...(ColumnTypes);        
-        if (names.size() != N) {
-            return false; // size mismatch
+    inline void LayoutStatic<ColumnTypes...>::setColumnNames(const Container& names, size_t offset) {      
+        if (names.size() + offset != columnCount()) {
+            throw std::out_of_range("LayoutStatic<ColumnTypes...>::setColumnNames() out of range");
         }
-
-        for (size_t i = 0; i < N; ++i) {
-            const std::string& name = names[i];
-            setColumnName(i, name); // throws on conflict
+        for(size_t i = 0; i < names.size(); ++i) {
+            column_names_[i + offset] = names[i];
         }
-        return true;
-    }
+        column_index_.build(column_names_); // build index after bulk insertion
+    }   
 
 
     template<typename... ColumnTypes>

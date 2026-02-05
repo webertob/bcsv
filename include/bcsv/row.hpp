@@ -474,6 +474,23 @@ namespace bcsv {
         }
     }
 
+    template<typename T>
+    inline const T& Row::ref(size_t index) const
+    {
+        const T &r = get<T>(index);
+        return r;
+    }
+
+    template<typename T>
+    inline T& Row::ref(size_t index) {
+        const T &r = get<T>(index);
+        // marks column as changed
+        if(tracksChanges()) {
+            changes_.set(index);
+        }
+        return const_cast<T&>(r);
+    } 
+
     /** Set the value at the specified column index, return false if type mismatch */
     template<typename T>
     inline bool Row::set(size_t index, const T& value) {
@@ -1511,6 +1528,24 @@ namespace bcsv {
         return handlers[index](*this, dst);
     }
 
+    template<typename... ColumnTypes>
+    template<typename T>
+    const T& RowStatic<ColumnTypes...>::ref(size_t index) const
+    {
+        const T &r = get<T>(index);
+        return r;
+    }
+
+    template<typename... ColumnTypes>
+    template<typename T>
+    T& RowStatic<ColumnTypes...>::ref(size_t index) {
+        const T &r = get<T>(index);
+        // marks column as changed
+        if(tracksChanges()) {
+            changes_.set(index);
+        }
+        return const_cast<T&>(r);
+    } 
     
     template<typename... ColumnTypes>
     template<size_t Index, typename T>

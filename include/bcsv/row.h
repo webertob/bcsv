@@ -442,6 +442,12 @@ namespace bcsv {
         bool                        get(size_t index, T &dst) const;                        // Flexible: allows type conversions, returns false on failure
 
                                     template<typename T>
+        const T&                    ref(size_t index) const;                                // get a const reference to the internal data (no type conversion, may throw)
+
+                                    template<typename T>
+        T&                          ref(size_t index);                                      // get a mutable reference to the internal data (no type conversion, may throw, marks column as changed)    
+
+                                    template<typename T>
         bool                        set(size_t index, const T& value);
                                     template<typename T>
         void                        set(size_t index, std::span<const T> values);
@@ -577,6 +583,12 @@ namespace bcsv {
                                     template<typename T>
         bool                        get(size_t index, T &dst) const noexcept;               // Flexible: allows type conversions, returns false on failure.
         
+                                    template<typename T>
+        const T&                    ref(size_t index) const;                                // get a const reference to the internal data (no type conversion, may throw)
+
+                                    template<typename T>
+        T&                          ref(size_t index);                                      // get a mutable reference to the internal data (no type conversion, may throw, marks column as changed)   
+
                                     template<size_t Index, typename T>
         void                        set(const T& value);                                    // scalar compile-time indexed access
                                     template<typename T>

@@ -18,6 +18,8 @@
  */
 
 #include <algorithm>
+#include <vector>
+#include "bcsv/definitions.h"
 #include "file_header.h"
 
 namespace bcsv {
@@ -92,7 +94,7 @@ namespace bcsv {
     }
 
     // Specialized version for Layout - modifies the layout to match binary data
-    inline bool FileHeader::readFromBinary(std::istream& stream, Layout& columnLayout) {
+    inline void FileHeader::readFromBinary(std::istream& stream, Layout& columnLayout) {
         try {
             // Clear the layout first to ensure clean state on failure
             columnLayout.clear();
@@ -115,26 +117,23 @@ namespace bcsv {
             }
 
             // Read column data types
-            std::vector<ColumnDefinition> columnDefinitions(constSection_.columnCount);
-            for (uint16_t i = 0; i < constSection_.columnCount; ++i) {
-                uint16_t typeValue;
-                stream.read(reinterpret_cast<char*>(&typeValue), sizeof(typeValue));
-                if (!stream.good()) {
-                    throw std::runtime_error("Failed to read column data type at index " + std::to_string(i));
-                }
-                columnDefinitions[i].type = static_cast<ColumnType>(typeValue);
+            std::vector<ColumnType> columnTypes(constSection_.columnCount);
+            stream.read(reinterpret_cast<char*>(columnTypes.data()), constSection_.columnCount * sizeof(ColumnType));
+            if (stream.gcount() != static_cast<std::streamsize>(constSection_.columnCount * sizeof(ColumnType))) {
+                throw std::runtime_error("Failed to read column data types");
             }
+
 
             // Read column name lengths
             std::vector<uint16_t> nameLengths(constSection_.columnCount);
+            stream.read(reinterpret_cast<char*>(nameLengths.data()), constSection_.columnCount * sizeof(uint16_t));
+            if (stream.gcount() != static_cast<std::streamsize>(constSection_.columnCount * sizeof(uint16_t))) {
+                throw std::runtime_error("Failed to read column name lengths");
+            }
+            
+            // Validate name lengths
             for (uint16_t i = 0; i < constSection_.columnCount; ++i) {
-                stream.read(reinterpret_cast<char*>(&nameLengths[i]), sizeof(uint16_t));
-                if (!stream.good()) {
-                    throw std::runtime_error("Failed to read column name length at index " + std::to_string(i));
-                }
-                
-                // Validate name length
-                if (nameLengths[i] > MAX_STRING_LENGTH) {
+                if (nameLengths[i] > MAX_STRING_LENGTH) [[unlikely]] {
                     throw std::runtime_error("Column name length (" + std::to_string(nameLengths[i]) + 
                                            ") exceeds maximum (" + std::to_string(MAX_STRING_LENGTH) + 
                                            ") at index " + std::to_string(i));
@@ -142,22 +141,22 @@ namespace bcsv {
             }
 
             // Read column names
+            std::vector<std::string> columnNames(constSection_.columnCount);
             for (uint16_t i = 0; i < constSection_.columnCount; ++i) {
-                if (nameLengths[i] > 0) {
-                    std::vector<char> nameBuffer(nameLengths[i]);
-                    stream.read(nameBuffer.data(), nameLengths[i]);
-                    if (!stream.good()) {
+                auto &name = columnNames[i];
+                if (nameLengths[i] > 0) [[likely]] {
+                    name.resize(nameLengths[i]);
+                    stream.read(name.data(), nameLengths[i]);
+                    if (stream.gcount() != static_cast<std::streamsize>(nameLengths[i])) {
                         throw std::runtime_error("Failed to read column name at index " + std::to_string(i));
                     }
-                    columnDefinitions[i].name = std::string(nameBuffer.begin(), nameBuffer.end());
                 } else {
-                    columnDefinitions[i].name = "";
+                    name = "Column_" + std::to_string(i);
                 }
             }
 
             // Populate the layout with the deserialized data
-            columnLayout.setColumns(columnDefinitions);
-            return true;
+            columnLayout.setColumns(columnNames, columnTypes);
             
         } catch (const std::exception&) {
             // Ensure layout is cleared on any failure
@@ -168,96 +167,65 @@ namespace bcsv {
 
     // Specialized version for LayoutStatic - validates that binary matches static definition
     template<typename... ColumnTypes>
-    bool FileHeader::readFromBinary(std::istream& stream, LayoutStatic<ColumnTypes...>& layout) {
+    void FileHeader::readFromBinary(std::istream& stream, LayoutStatic<ColumnTypes...>& layout) {
         // Read fixed header
         stream.read(reinterpret_cast<char*>(&constSection_), sizeof(constSection_));
         if (!stream.good()) {
-            if constexpr (DEBUG_OUTPUTS) {
-                std::cerr << "error: Failed to read BCSV header from stream" << std::endl;
-            }
-            return false;
+            throw std::runtime_error("Failed to read BCSV header from stream");
         }
         
         if (!isValidMagic()) {
-            if constexpr (DEBUG_OUTPUTS) {
-                std::cerr << "error: Invalid magic number in BCSV header. Expected: 0x" << std::hex << BCSV_MAGIC << ", Got: 0x" << std::hex << constSection_.magic << std::endl;
-            }
-            return false;
+            throw std::runtime_error("Invalid magic number in BCSV header. Expected: 0x" + 
+                                   std::to_string(BCSV_MAGIC) + ", Got: 0x" + std::to_string(constSection_.magic));
         }
         
-        // Validate column count matches static definition
+        // Validate column count matches static definition (this also covers MAX_COLUMN_COUNT)
         if (constSection_.columnCount != layout.columnCount()) {
-            if constexpr (DEBUG_OUTPUTS) {
-                std::cerr << "error: Column count mismatch. Static layout expects " << layout.columnCount() << " columns, but binary has " << constSection_.columnCount << " columns" << std::endl;
-            }
-            return false;
+            throw std::runtime_error("Column count mismatch. Static layout expects " + 
+                                   std::to_string(layout.columnCount()) + " columns, but binary has " + 
+                                   std::to_string(constSection_.columnCount) + " columns");
         }
-        if (constSection_.columnCount > MAX_COLUMN_COUNT) {
-            if constexpr (DEBUG_OUTPUTS) {
-                std::cerr << "error: Column count (" << constSection_.columnCount << ") exceeds maximum limit (" << MAX_COLUMN_COUNT << ")" << std::endl;
-            }
-            return false;
-        }   
 
         // Read column data types and validate against static definition
-        for (uint16_t i = 0; i < layout.columnCount(); ++i) {
-            ColumnType type;
-            stream.read(reinterpret_cast<char*>(&type), sizeof(type));
-            if (!stream.good()) {
-                if constexpr (DEBUG_OUTPUTS) {
-                    std::cerr << "error: Failed to read column data type at index " << std::to_string(i) << std::endl;
-                }
-                return false;
-            }
-            if (type != layout.columnType(i)) {
-                if constexpr (DEBUG_OUTPUTS) {
-                    std::cerr << "error: Column type mismatch at index " << std::to_string(i) << 
-                                ". Static layout expects " << toString(layout.columnType(i)) << 
-                                ", but binary has " << toString(type) << std::endl;
-                }
-                return false;
+        std::vector<ColumnType> columnTypes(layout.columnCount());
+        stream.read(reinterpret_cast<char*>(columnTypes.data()), layout.columnCount() * sizeof(ColumnType));
+        if (stream.gcount() != static_cast<std::streamsize>(layout.columnCount() * sizeof(ColumnType))) {
+            throw std::runtime_error("Failed to read column data types");
+        }
+        for (size_t i = 0; i < layout.columnCount(); ++i) {
+            if (columnTypes[i] != layout.columnType(i)) [[unlikely]] {
+                throw std::runtime_error("Column type mismatch at index " + std::to_string(i) + 
+                                       ". Static layout expects " + toString(layout.columnType(i)) + 
+                                       ", but binary has " + toString(columnTypes[i]));
             }
         }
 
         // Read column name lengths (we must read them to advance the stream)
         std::vector<uint16_t> nameLengths(layout.columnCount());
-        for (uint16_t i = 0; i < layout.columnCount(); ++i) {
-            stream.read(reinterpret_cast<char*>(&nameLengths[i]), sizeof(uint16_t));
-            if (!stream.good()) {
-                if constexpr (DEBUG_OUTPUTS) {
-                    std::cerr << "error: Failed to read column name length at index " << std::to_string(i) << std::endl;
-                }
-                return false;
-            }
-            // Validate name length
-            if (nameLengths[i] > MAX_STRING_LENGTH) {
-                if constexpr (DEBUG_OUTPUTS) {
-                    std::cerr << "error: Column name length (" << std::to_string(nameLengths[i]) << 
-                                ") exceeds maximum (" << std::to_string(MAX_STRING_LENGTH) << 
-                                ") at index " << std::to_string(i) << std::endl;
-                }
-                return false;
-            }
+        stream.read(reinterpret_cast<char*>(nameLengths.data()), layout.columnCount() * sizeof(uint16_t));
+        if (stream.gcount() != static_cast<std::streamsize>(layout.columnCount() * sizeof(uint16_t))) {
+            throw std::runtime_error("Failed to read column name lengths");
         }
 
-        // Read column names and optionally validate against static definition
-        std::vector<char> nameBuffer;
-        for (uint16_t i = 0; i < layout.columnCount(); ++i) {
-            if (nameLengths[i] > 0) {
-                nameBuffer.resize(nameLengths[i]);
-                stream.read(nameBuffer.data(), nameLengths[i]);
-                if (!stream.good()) {
-                    if constexpr (DEBUG_OUTPUTS) {
-                        std::cerr << "error: Failed to read column name at index " << std::to_string(i) << std::endl;
-                    }
-                    return false;
+        // Read column names
+        std::vector<std::string> columnNames(layout.columnCount());
+        for (size_t i = 0; i < layout.columnCount(); ++i) {
+            auto &name = columnNames[i];
+            if (nameLengths[i] > MAX_STRING_LENGTH) [[unlikely]] {
+                throw std::runtime_error("Column name length (" + std::to_string(nameLengths[i]) + 
+                                       ") exceeds maximum (" + std::to_string(MAX_STRING_LENGTH) + 
+                                       ") at index " + std::to_string(i));
+            } else if (nameLengths[i] > 0) [[likely]] {
+                name.resize(nameLengths[i]);
+                stream.read(name.data(), nameLengths[i]);
+                if (stream.gcount() != static_cast<std::streamsize>(nameLengths[i])) {
+                    throw std::runtime_error("Failed to read column name at index " + std::to_string(i));
                 }
-                layout.setColumnName(i, std::string(nameBuffer.begin(), nameBuffer.end()));
             } else {
-                layout.setColumnName(i, "Column_" + std::to_string(i));
+                columnNames[i] = "Column_" + std::to_string(i);
             }
         }
-        return true;
+        layout.setColumnNames(columnNames);
     }
 
     template<LayoutConcept LayoutType>
