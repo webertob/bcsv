@@ -20,9 +20,11 @@
 #include "layout.h"
 #include <algorithm>
 #include <array>
+#include <cstring>   // for std::memcmp
 #include <iomanip>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
     
 namespace bcsv {
 
@@ -76,16 +78,13 @@ namespace bcsv {
      */
     template<typename OtherLayout>
     inline bool Layout::isCompatible(const OtherLayout& other) const {
-        if (columnCount() != other.columnCount()) {
+        const size_t count = columnCount();
+        if (count != other.columnCount()) {
             return false;
         }
 
-        for (size_t i = 0; i < columnCount(); ++i) {
-            if (columnType(i) != other.columnType(i)) {
-                return false;
-            }
-        }
-        return true;
+         // Element-wise comparison of column types (names can differ but types must match)
+        return std::memcmp(column_types_.data(), other.columnTypes().data(), count * sizeof(ColumnType)) == 0;
     }
 
     inline void Layout::removeColumn(size_t index) {
@@ -212,18 +211,25 @@ namespace bcsv {
     template<typename... ColumnTypes>
     template<typename OtherLayout>
     inline bool LayoutStatic<ColumnTypes...>::isCompatible(const OtherLayout& other) const {
-        // Check if the number of columns is the same
-        if (sizeof...(ColumnTypes) != other.columnCount()) {
+        constexpr size_t N = sizeof...(ColumnTypes);
+        
+        // Runtime check: different column count means incompatible
+        if (N != other.columnCount()) {
             return false;
         }
 
-        // Check if the column types are the same
-        for (size_t i = 0; i < sizeof...(ColumnTypes); ++i) {
-            if (columnType(i) != other.columnType(i)) {
+        // Compile-time dispatch based on OtherLayout type
+        if constexpr (requires { typename OtherLayout::Types; }) {            
+            // Compile-time optimization: if types are identical, always compatible
+            if constexpr (std::is_same_v<std::tuple<ColumnTypes...>, typename OtherLayout::Types>) {
+                return true;
+            } else {
                 return false;
             }
+        } else {
+            // Types differ: use memcmp for fast comparison of constexpr arrays
+            return std::memcmp(column_types_.data(), OtherLayout::column_types_.data(), N * sizeof(ColumnType)) == 0;
         }
-        return true;
     }
 
     template<typename... ColumnTypes>

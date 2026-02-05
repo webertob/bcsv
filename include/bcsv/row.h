@@ -517,7 +517,7 @@ namespace bcsv {
         static constexpr size_t column_count = LayoutType::columnCount();
         
         template<size_t Index>
-        using column_type = std::tuple_element_t<Index, typename LayoutType::column_types>;
+        using column_type = std::tuple_element_t<Index, typename LayoutType::ColTypes>;
 
         // Helpers defining the layout of the wire format (serialized data)
         // serialized data: lengths/size of each column in [bytes]
@@ -539,7 +539,7 @@ namespace bcsv {
         LayoutType layout_;
 
         // Mutable data
-        LayoutType::column_types        data_;
+        LayoutType::ColTypes        data_;
         bitset<column_count>            changes_;
         bool                            change_tracking_ = false;
 
@@ -632,7 +632,7 @@ namespace bcsv {
         static constexpr size_t column_count = LayoutType::columnCount();
 
         template<size_t Index>
-        using column_type = std::tuple_element_t<Index, typename LayoutType::column_types>;
+        using column_type = std::tuple_element_t<Index, typename LayoutType::ColTypes>;
 
         // Helpers defining the layout of the wire format (serialized data)
         // serialized data: lengths/size of each column in [bytes]

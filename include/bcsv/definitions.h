@@ -88,10 +88,10 @@ namespace bcsv {
         return static_cast<FileFlags>(~static_cast<uint16_t>(flag));
     }
 
-    /** Column data type enumeration (stored as uint16_t in file) 
+    /** Column data type enumeration (stored as uint8_t in file) 
      * Ensure the order matches ValueType variant! As we rely on index() to match note isType()
      */
-    enum class ColumnType : uint16_t {
+    enum class ColumnType : uint8_t {
         BOOL,
         UINT8,
         UINT16,

@@ -31,7 +31,6 @@
 #include <cassert>
 #include <variant>
 #include <type_traits>
-#include "string_addr.h"
 
 namespace bcsv {
 

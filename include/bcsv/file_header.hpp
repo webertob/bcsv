@@ -50,7 +50,7 @@ namespace bcsv {
     template<LayoutConcept LayoutType>
     inline size_t FileHeader::getBinarySize(const LayoutType& layout) {
         size_t size = sizeof(ConstSection);                    // Fixed header
-        size += layout.columnCount() * sizeof(uint16_t);        // Column data types
+        size += layout.columnCount() * sizeof(ColumnType);      // Column data types
         size += layout.columnCount() * sizeof(uint16_t);        // Column name lengths
         for (size_t i = 0; i < layout.columnCount(); ++i) {     // Column names
             size += layout.columnName(i).length();
@@ -59,38 +59,41 @@ namespace bcsv {
     }
 
     template<LayoutConcept LayoutType>
-    inline bool FileHeader::writeToBinary(std::ostream& stream, const LayoutType& layout) {
+    inline void FileHeader::writeToBinary(std::ostream& stream, const LayoutType& layout) {
         // Update header with current column count
         constSection_.columnCount = static_cast<uint16_t>(layout.columnCount());
 
         // Write fixed header
         stream.write(reinterpret_cast<const char*>(&constSection_), sizeof(constSection_));
-        if (!stream.good()) return false;
-
-        // Write column data types
-        for (size_t i = 0; i < layout.columnCount(); ++i) {
-            const uint16_t val = static_cast<uint16_t>(layout.columnType(i));
-            stream.write(reinterpret_cast<const char*>(&val), sizeof(val));
-            if (!stream.good()) return false;
+        if (!stream.good()) {
+            throw std::runtime_error("Failed to write BCSV header to stream");
         }
-
+        
+        // Write column data types
+        const auto& columnTypes = layout.columnTypes();
+        stream.write(reinterpret_cast<const char*>(columnTypes.data()), columnTypes.size() * sizeof(ColumnType));
+        if (!stream.good()) {
+            throw std::runtime_error("Failed to write column data types to stream");
+        }
+        
         // Write column name lengths
+        std::vector<uint16_t> strLength(layout.columnCount());
         for (size_t i = 0; i < layout.columnCount(); ++i) {
-            uint16_t val = static_cast<uint16_t>(layout.columnName(i).length());
-            stream.write(reinterpret_cast<const char*>(&val), sizeof(val));
-            if (!stream.good()) return false;
+            strLength[i] = static_cast<uint16_t>(layout.columnName(i).length());
+        }
+        stream.write(reinterpret_cast<const char*>(strLength.data()), strLength.size() * sizeof(uint16_t));
+        if (!stream.good()) {
+            throw std::runtime_error("Failed to write column name lengths to stream");
         }
 
         // Write column names (without null terminator)
         for (size_t i = 0; i < layout.columnCount(); ++i) {
             const std::string& name = layout.columnName(i);
-            if (!name.empty()) {
-                stream.write(name.c_str(), name.length());
-                if (!stream.good()) return false;
+            stream.write(name.c_str(), name.length());
+            if (!stream.good()) {
+                throw std::runtime_error("Failed to write column name at index " + std::to_string(i));
             }
         }
-
-        return true;
     }
 
     // Specialized version for Layout - modifies the layout to match binary data
@@ -238,9 +241,9 @@ namespace bcsv {
         std::cout << "  Compression: " << static_cast<int>(constSection_.compressionLevel) << " (1 byte)\n";
         std::cout << "  Flags:       0x" << std::hex << constSection_.flags << std::dec << " (2 bytes)\n";
         std::cout << "  Columns:     " << static_cast<uint16_t>(layout.columnCount()) << " (2 bytes)\n";
-        std::cout << "  Column Data Types: " << layout.columnCount() * sizeof(uint16_t) << " bytes\n";
+        std::cout << "  Column Data Types: " << layout.columnCount() * sizeof(ColumnType) << " bytes\n";
         for (size_t i = 0; i < layout.columnCount(); ++i) {
-            std::cout << "    [" << i << "]: " << static_cast<uint16_t>(layout.columnType(i)) << "\n";
+            std::cout << "    [" << i << "]: " << static_cast<int>(layout.columnType(i)) << "\n";
         }
         std::cout << "  Column Name Lengths: " << layout.columnCount() * sizeof(uint16_t) << " bytes\n";
         size_t totalNameBytes = 0;

@@ -21,7 +21,6 @@ namespace bcsv {
     class Layout;
     template<typename... ColumnTypes>
     class LayoutStatic;
-    enum class ColumnType : uint16_t;
 
     /**
      * @brief Represents the file header with controlled memory layout for direct I/O
@@ -59,7 +58,7 @@ namespace bcsv {
      * ```
      * Section              | Size        | Description
      * ---------------------|-------------|----------------------------------------
-     * Column Data Types    | N * 2 bytes | Type enum for each column (uint16)
+     * Column Data Types    | N * 1 byte  | Type enum for each column (uint8)
      * Column Name Lengths  | N * 2 bytes | Length of each column name (uint16)
      * Column Names         | Variable    | Concatenated column names (no null terminators)
      * ```
@@ -75,24 +74,24 @@ namespace bcsv {
      *      │   0x56534342      │ 1  │ 0  │ 0  │ 0  │  0x00   │  0x03   │
      *      └────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┘
      * 
-     * Byte   12   13   14   15   16   17   18   19   20   21   22   23
-     *      ┌────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┐
-     *      │  string │  int64  │  double │ len=4   │ len=3   │ len=6   │
-     *      │   0x0C  │   0x09  │   0x0B  │ 0x04    │ 0x03    │ 0x06    │
-     *      └────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┘
+     * Byte   12   13   14   15   16   17   18   19   20   21
+     *      ┌────┬────┬────┬────┬────┬────┬────┬────┬────┐
+     *      │str │i64 │dbl │ len=4   │ len=3   │ len=6   │
+     *      │0x0B│0x08│0x0A│ 0x04    │ 0x03    │ 0x06    │
+     *      └────┴────┴────┴────┴────┴────┴────┴────┴────┘
      * 
-     * Byte   24   25   26   27   28   29   30   31   32   33   34   35   36
+     * Byte   22   23   24   25   26   27   28   29   30   31   32   33   34
      *      ┌────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┐
      *      │ n  │ a  │ m  │ e  │ a  │ g  │ e  │ s  │ a  │ l  │ a  │ r  │ y  │
      *      │0x6E│0x61│0x6D│0x65│0x61│0x67│0x65│0x73│0x61│0x6C│0x61│0x72│0x79│
      *      └────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┘
      * ```
      * 
-     * Total header size in this example: 37 bytes
+     * Total header size in this example: 35 bytes
      * 
      * @subsection data_types Column Data Type Encoding
      * 
-     * Each column type is encoded as a 16-bit unsigned integer:
+     * Each column type is encoded as an 8-bit unsigned integer:
      * - 0x00: bool
      * - 0x01: uint8
      * - 0x02: uint16
@@ -144,7 +143,7 @@ namespace bcsv {
          * @brief File format constants and limits
          */
         static constexpr size_t FIXED_HEADER_SIZE  = sizeof(ConstSection);  ///< Size of fixed header: 16 bytes
-        static constexpr size_t COLUMN_TYPE_SIZE   = sizeof(uint16_t);      ///< Size per column type: 2 bytes  
+        static constexpr size_t COLUMN_TYPE_SIZE   = sizeof(uint8_t);       ///< Size per column type: 1 byte  
         static constexpr size_t COLUMN_LENGTH_SIZE = sizeof(uint16_t);      ///< Size per name length: 2 bytes
         
         // Constructors
@@ -219,10 +218,10 @@ namespace bcsv {
          * @brief Write complete header to binary stream
          * @param stream Output stream to write to
          * @param columnLayout Column layout to serialize with header
-         * @return true if write was successful, false on error
+         * @throws std::runtime_error on write error
          */
         template<LayoutConcept LayoutType>
-        bool writeToBinary(std::ostream& stream, const LayoutType& columnLayout);
+        void writeToBinary(std::ostream& stream, const LayoutType& columnLayout);
 
         /**
          * @brief Print detailed binary layout information for debugging

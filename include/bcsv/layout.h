@@ -99,6 +99,7 @@ namespace bcsv {
         void                            removeColumn(size_t index);
         void                            setColumnName(size_t index, std::string name);
         void                            setColumnType(size_t index, ColumnType type);
+        const std::vector<ColumnType>&  columnTypes() const noexcept                   { return column_types_; }
         void                            setColumns(const std::vector<ColumnDefinition>& columns);
         void                            setColumns(const std::vector<std::string>& columnNames, const std::vector<ColumnType>& columnTypes);
                                         
@@ -123,10 +124,11 @@ namespace bcsv {
     public:
         using RowType           = RowStatic<ColumnTypes...>;
         using RowViewType       = RowViewStatic<ColumnTypes...>;
-        using column_types      = std::tuple<ColumnTypes...>;
+        using ColTypes          = std::tuple<ColumnTypes...>;
                                   template<size_t Index>
-        using column_type       = std::tuple_element_t<Index, column_types>;
-        static constexpr std::array<ColumnType, sizeof...(ColumnTypes)> types = { toColumnType<ColumnTypes>()...  }; // column --> type
+        using ColType           = std::tuple_element_t<Index, ColTypes>;
+        using ColTypesArray     = std::array<ColumnType, sizeof...(ColumnTypes)>;
+        static constexpr ColTypesArray column_types_ = { toColumnType<ColumnTypes>()...  }; // column --> type
 
         LayoutStatic();
         LayoutStatic(const std::array<std::string, sizeof...(ColumnTypes)>& columnNames);
@@ -140,9 +142,11 @@ namespace bcsv {
         size_t                          columnIndex(const std::string& name) const      { return column_index_[name]; }
         const std::string&              columnName(size_t index) const                  { checkRange(index); return column_names_[index]; }
                                         template<size_t Index>
-        static constexpr ColumnType     columnType()                                    { return types[Index]; }          // compile-time version
+        static constexpr ColumnType     columnType()                                    { return column_types_[Index]; }          // compile-time version
 
-        static ColumnType               columnType(size_t index)                        { if (index >= sizeof...(ColumnTypes)) { throw std::out_of_range("LayoutStatic::columnType: Index out of range"); } return types[index]; } // runtime version
+        static ColumnType               columnType(size_t index)                        { if (index >= sizeof...(ColumnTypes)) { throw std::out_of_range("LayoutStatic::columnType: Index out of range"); } return column_types_[index]; } // runtime version
+        static constexpr const ColTypesArray& 
+                                        columnTypes() noexcept                          { return column_types_; }
         bool                            hasColumn(const std::string& name) const        { return column_index_.contains(name); }
                                         
                                         template<typename OtherLayout>
