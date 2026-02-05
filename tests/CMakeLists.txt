@@ -31,6 +31,7 @@ set(TEST_SOURCES
     lz4_stream_test.cpp
     file_footer_test.cpp
     error_handling_test.cpp
+    layout_sync_test.cpp
 )
 
 if(BCSV_ENABLE_STRESS_TESTS)

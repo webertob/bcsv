@@ -58,7 +58,7 @@ namespace bcsv {
         // if position is past the end or at the end of the current layout we simply append to the end.
         position = std::min(position, columnCount());
 
-        column_index_.applyNameConventionAndInsert(column.name, position);
+        column_index_.insert(column.name, position);
         column_names_.insert(column_names_.begin() + position, std::move(column.name));
         column_types_.insert(column_types_.begin() + position, column.type);
     }
@@ -93,7 +93,7 @@ namespace bcsv {
             throw std::out_of_range("Layout::removeColumn: index " + std::to_string(index) + " out of range");
         }
 
-        column_index_.erase(column_names_[index]);
+        column_index_.remove(column_names_[index]);
         column_names_.erase(column_names_.begin() + index);
         column_types_.erase(column_types_.begin() + index);
     }

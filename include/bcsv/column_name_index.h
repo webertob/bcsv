@@ -105,12 +105,18 @@ namespace bcsv {
         /**
          * @brief Internal comparator for transparent lookups.
          * Allows comparing Entry objects with std::string keys directly.
+         * When names are equal, uses column index as secondary sort key
+         * to keep auto-generated suffixes aligned with original column order.
          */
         struct Comparator {
             using is_transparent = void; 
             bool operator()(const Entry& e, const std::string& k) const { return e.first < k; }
             bool operator()(const std::string& k, const Entry& e) const { return k < e.first; }
-            bool operator()(const Entry& a, const Entry& b) const       { return a.first < b.first; }
+            bool operator()(const Entry& a, const Entry& b) const {
+                // Primary sort by name, secondary sort by column index
+                if (a.first != b.first) return a.first < b.first;
+                return a.second < b.second;
+            }
         };
 
     public:
@@ -120,15 +126,30 @@ namespace bcsv {
         Iterator begin()                { return data_.begin(); }
         ConstIterator begin() const     { return data_.begin(); }
         
-        void build(const ContainerType<std::string>& columnNames) {
-            if constexpr (!IS_FIXED_SIZE) {
-                data_.resize(columnNames.size());
-            }
-            for (size_t i = 0; i < columnNames.size(); ++i) {
-                data_[i] = {columnNames[i], i };
-            }
-            std::sort(data_.begin(), data_.end(), Comparator());
-        }
+        /**
+         * @brief Builds the column name index with automatic conflict resolution.
+         * 
+         * Normalizes names, sorts by name, and resolves conflicts using numeric suffixes.
+         * Conflict resolution: "col", "col" -> "col", "col.1"
+         * 
+         * IMPORTANT: This method modifies the input columnNames container in place to ensure
+         * synchronization between the original column names and the index. After calling build(),
+         * columnNames will contain the conflict-resolved names.
+         * 
+         * The algorithm maintains intuitive suffix numbering: when duplicate names occur at
+         * positions [0, 1, 2], they become "name", "name.1", "name.2" (suffixes match position).
+         * 
+         * Algorithm:
+         * - Parse names into (basename, suffix) pairs
+         * - Sort by (name, column_index) to preserve original order for duplicates
+         * - Single-pass conflict resolution: increment suffix for duplicates
+         * - Maintain sorted order throughout (no final re-sort needed)
+         * 
+         * Complexity: O(n log n) typical case, handles pathological cases efficiently.
+         * 
+         * @param columnNames The source column names to index (modified in place).
+         */
+        void build(ContainerType<std::string>& columnNames);
 
         /**
          * @brief Clears the index.
@@ -147,12 +168,7 @@ namespace bcsv {
         Iterator end()                  { return data_.end(); }
         ConstIterator end()   const     { return data_.end(); }
         
-        /**
-         * @brief Removes a column from the index by name.
-         * Only available for dynamic layouts. Also updates indices of subsequent columns.
-         * @param name Name of the column to remove.
-         */
-        void erase(const std::string& name);
+
 
         /**
          * @brief Inserts a new column into the index.
@@ -160,7 +176,14 @@ namespace bcsv {
          * @param name The name of the new column (may be modified if conflict occurs).
          * @param column The position index of the new column.
          */
-        void applyNameConventionAndInsert(std::string& name, size_t column);
+        void insert(std::string& name, size_t column);
+
+        /**
+         * @brief Removes a column from the index by name.
+         * Only available for dynamic layouts. Also updates indices of subsequent columns.
+         * @param name Name of the column to remove.
+         */
+        void remove(const std::string& name);
 
         /**
          * @brief Renames an existing column.
