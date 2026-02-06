@@ -32,6 +32,7 @@ set(TEST_SOURCES
     file_footer_test.cpp
     error_handling_test.cpp
     layout_sync_test.cpp
+    bitset_test.cpp
 )
 
 if(BCSV_ENABLE_STRESS_TESTS)

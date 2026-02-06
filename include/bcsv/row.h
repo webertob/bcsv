@@ -18,8 +18,8 @@
 
 #include "definitions.h"
 #include "layout.h"
-#include "bitset.hpp"
-#include "bitset_dynamic.hpp"
+#include "bitset_deprecated.hpp"
+#include "bitset_dynamic_deprecated.hpp"
 #include "byte_buffer.h"
 
 namespace bcsv {

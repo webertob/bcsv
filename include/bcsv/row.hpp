@@ -16,8 +16,8 @@
  * This file contains the implementations for the Row and RowStatic classes.
  */
 
-#include "bcsv/bitset.hpp"
-#include "bcsv/bitset_dynamic.hpp"
+#include "bcsv/bitset_deprecated.hpp"
+#include "bcsv/bitset_dynamic_deprecated.hpp"
 #include "bcsv/definitions.h"
 #include "row.h"
 #include "layout.h"
