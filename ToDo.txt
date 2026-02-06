@@ -58,7 +58,7 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     [0] build and test python --> [10]
     [o] build and test C# --> [10]
 
-7. Refactor bitset_dynamic to use full register width instead of narrow bytes. Thus we want to use 64bit types on 64bit platform. Consider alignment.
+[x] 7. Refactor bitset_dynamic to use full register width instead of narrow bytes. Thus we want to use 64bit types on 64bit platform. Consider alignment.
 
 8. Add visit() function to Row, RowStatic, RowView, RowViewStatic enable fast operations on the data 
 
@@ -82,7 +82,6 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     - python based benchmark suite:
         - use the CLI tools
         - Generate reporting --> MatPlot, MarkUps.
-
 
 12. Implement File Flags (raw, stats)
     File Flags to provide information on file layout to switch between different Read / Write approaches. Enables different behaviour based on usecase and platform. 
@@ -132,12 +131,24 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     Bit 6:14 data actual data stored for this variable
 
     Special cases: For small types (1 byte) avoid unnecessary overhead (complexity, runtime, control bits) that won't pay off
+
 14. dictionary encoding for strings
     For strings a low cardinality is expected (many repetitions of the same string) are expected. Thus a dictionary based compression should be implemented. Exploit similar approach as for numerical values.
     Store string at its first occurens and assign ID (simply increment number, within the current packet)
     Other occurences just to reference that number
 
-15. Benchmark and improve random access / random read methods:
+16. Compare against (document and benchmarks):
+        parquet
+        csv
+        arrow
+        influxDb
+        excel
+
+17. Write paper and release/submit
+
+Parking LOT
+18. Create a concept to maintain backward compatibility at least for reading/translating files!
+19. Benchmark and improve random access / random read methods:
     Row row(size_t index) {
         if(index == current_index+1) {
             //fall back to sequential
@@ -149,11 +160,11 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     }
     const auto& cell(size_t rowIndex, size_t colIndex) // To directly access a cell, use RowView as a lightweight abstraction to avoid full deserialization
 
-16. Create sampler function / API to select data based on certain conditions: 
+20. Create sampler function / API to select data based on certain conditions: 
     - Support C++ interface (iterate over individual rows)
     - Support Python interface (iterate over individual rows and block reads (pandas/numpy))
 
-17. CLI tools:
+21. CLI tools:
     - Modify CLI tools to utilize random read functionality to avoid parsing the entire file (when possible):
         - bcsvTail
         - bcsvHead
@@ -166,17 +177,9 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     - create: bcsvIndex     (tool to rebuild index)
     - create: bcsvConvert   (converts from one bcsv file format to another, use to rebuild index or improve compression)
 
-18. Create a concept to maintain backward compatibility at least for reading/translating files!
-19. Compare against (document and benchmarks):
-        parquet
-        csv
-        arrow
-        influxDb
-        excel
+22. Make BCSV eco system to use piping features CLI, compareable to cat, more, sed
 
-20. Write paper and release/submit
-
-21. Implement Column Modifiers
+23. Implement Column Modifiers
     provides hints on what encoding schema to be used for this particular column
     modifiers to consider:
         index:      unique numbers
@@ -184,3 +187,17 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
         monotonic:  apply higher order delta encoding as a "nearly" monotonic (smooth) behaviour is expected
         ordered:    data to fall or grow in ordered fashion 
 
+24. Make Layout class shared between multiple rows
+    - build a parent child relation between layout(parent) and rows
+    - Each row only stores a shared_ptr to its Layout (LayoutData)
+    - Layout to manage a (double linked) list of rows connected --> keep them informed about layout changes
+    - Move recuring functions and information (i.e. WireLayout, offsets, offset_var) from row to layout (reduce memory required, improve cache hits)
+
+25. Improve bitset:
+    - visit()
+    - operate on subsection
+    - BitsetView:
+        - view into a subsection of an existing bitset
+        - viet into a serilized piece of memory
+    - improve chained logic operations, try to reduce temporary objects
+    - introduce LayzyAllocator to avoid initialization costs.
