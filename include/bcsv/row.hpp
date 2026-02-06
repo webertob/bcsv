@@ -16,8 +16,7 @@
  * This file contains the implementations for the Row and RowStatic classes.
  */
 
-#include "bcsv/bitset_deprecated.hpp"
-#include "bcsv/bitset_dynamic_deprecated.hpp"
+#include "bcsv/bitset.h"
 #include "bcsv/definitions.h"
 #include "row.h"
 #include "layout.h"
@@ -39,7 +38,7 @@ namespace bcsv {
     // ========================================================================
 
     inline Row::Row(const Layout &layout, bool trackChangesEnabled)
-        : layout_(layout), offsets_(layout.columnCount()), offset_var_(0), data_(),  changes_()
+        : layout_(layout), offsets_(layout.columnCount()), offset_var_(0), data_(),  changes_(0)
     {
         size_t columnCount = layout.columnCount();
 
@@ -727,7 +726,7 @@ namespace bcsv {
 
 
         // reserve space for rowHeader (bitset) at the begin of the row
-        bitset_dynamic rowHeader = changes_; // make a copy to modify for bools
+        bitset<> rowHeader = changes_; // make a copy to modify for bools
         buffer.resize(buffer.size() + rowHeader.sizeBytes());
 
         // Serialize each element that has changed

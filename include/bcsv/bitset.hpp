@@ -1,3 +1,4 @@
+
 /*
  * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
  * 
@@ -7,8 +8,8 @@
  * for full license information.
  */
 
-// This file contains the implementation details for bitset.h
-// It is included at the end of bitset.h and should not be included directly.
+#pragma once
+#include "bitset.h"
 
 namespace bcsv {
 

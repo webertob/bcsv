@@ -129,7 +129,7 @@ void test_row_api() {
     
     // Test change tracking
     TEST_ASSERT(!bcsv_row_tracks_changes(row), "Change tracking initially disabled");
-    TEST_ASSERT(!bcsv_row_has_any_changes(row), "No changes initially");
+    TEST_ASSERT(bcsv_row_has_any_changes(row), "Without change tracking, we need to conservativly assume changes are present.");
     
     bcsv_row_track_changes(row, true);
     TEST_ASSERT(bcsv_row_tracks_changes(row), "Change tracking enabled");

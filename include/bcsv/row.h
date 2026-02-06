@@ -18,8 +18,7 @@
 
 #include "definitions.h"
 #include "layout.h"
-#include "bitset_deprecated.hpp"
-#include "bitset_dynamic_deprecated.hpp"
+#include "bitset.h"
 #include "byte_buffer.h"
 
 namespace bcsv {
@@ -411,7 +410,7 @@ namespace bcsv {
         
         // Mutable data
         std::vector<std::byte>      data_;        // continuous memory buffer to hold data (Note: We store string objects here too. But strings themselves are allocating additional memory elsewhere for their content.)
-        bitset_dynamic              changes_;     // change tracking
+        bitset<>                    changes_;     // change tracking
         /* change tracking i.e. for Zero-Order-Hold compression
         *  changes_[0:column_count  ] == true   indicates column i has been modified since last reset.
         *  changes_.empty()           == true   indicates change tracking is disabled.

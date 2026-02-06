@@ -14,9 +14,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
-#include <stdexcept>
-#include <algorithm>
-#include <bit>
 #include <string>
 #include <limits>
 #include <ostream>
@@ -159,7 +156,7 @@ public:
         CharT one = CharT('1')) requires(is_fixed);
     
     // Dynamic-size constructors
-    explicit bitset(size_t num_bits) requires(!is_fixed);
+    explicit bitset(size_t num_bits = 0) requires(!is_fixed);
     bitset(size_t num_bits, unsigned long long val) requires(!is_fixed);
     bitset(size_t num_bits, bool value) requires(!is_fixed);
     
