@@ -190,7 +190,9 @@ bitset<N>::bitset(const bitset<M>& other) requires(!is_fixed && M != dynamic_ext
 
 template<size_t N>
 constexpr bool bitset<N>::operator[](size_t pos) const {
-    if (pos >= size()) return false;
+    // No bounds checking for performance (like std::vector::operator[])
+    // Use test() for checked access
+    assert(pos < size() && "bitset::operator[]: index out of range");
     
     const size_t word_idx = bit_to_word_index(pos);
     const size_t bit_idx = bit_to_bit_index(pos);
@@ -200,9 +202,9 @@ constexpr bool bitset<N>::operator[](size_t pos) const {
 
 template<size_t N>
 typename bitset<N>::reference bitset<N>::operator[](size_t pos) {
-    if (pos >= size()) {
-        throw std::out_of_range("bitset::operator[]: index out of range");
-    }
+    // No bounds checking for performance (like std::vector::operator[])
+    // Use test() for checked access  
+    assert(pos < size() && "bitset::operator[]: index out of range");
     
     const size_t word_idx = bit_to_word_index(pos);
     const size_t bit_idx = bit_to_bit_index(pos);
@@ -354,22 +356,25 @@ bool bitset<N>::all() const noexcept {
     const size_t wc = word_count();
     if (wc == 0) return true;
     
-    // Check full words
+    // Check full words - early exit on first zero bit found
     for (size_t i = 0; i < wc - 1; ++i) {
-        if (storage_[i] != ~word_t{0}) {
+        if (~storage_[i]) {  // Has zero bit
             return false;
         }
     }
     
-    // Check last word (may be partial)
+    // Check last word with mask for unused bits
     const word_t mask = last_word_mask(size());
     return (storage_[wc - 1] & mask) == mask;
 }
 
 template<size_t N>
 bool bitset<N>::any() const noexcept {
+    // Simple early exit - fastest for sparse bitsets
     for (size_t i = 0; i < word_count(); ++i) {
-        if (storage_[i] != 0) return true;
+        if (storage_[i]) {
+            return true;
+        }
     }
     return false;
 }
@@ -534,6 +539,20 @@ bitset<N>& bitset<N>::operator^=(const bitset& other) noexcept {
 
 template<size_t N>
 bitset<N> bitset<N>::operator<<(size_t shift_amount) const noexcept {
+    // Early exits
+    if (shift_amount == 0) {
+        return *this;
+    }
+    
+    if (shift_amount >= size()) {
+        if constexpr (is_fixed) {
+            return bitset();
+        } else {
+            return bitset(size());
+        }
+    }
+    
+    // Create zero-initialized result, then copy shifted data into it
     bitset result = [this]() {
         if constexpr (is_fixed) {
             return bitset();
@@ -542,32 +561,32 @@ bitset<N> bitset<N>::operator<<(size_t shift_amount) const noexcept {
         }
     }();
     
-    if (shift_amount >= size()) {
-        return result;
-    }
-    
-    if (shift_amount == 0) {
-        return *this;
-    }
-    
     const size_t word_shift = shift_amount / WORD_BITS;
     const size_t bit_shift = shift_amount % WORD_BITS;
+    const size_t wc = word_count();
     
     if (bit_shift == 0) {
-        // Pure word shift
-        for (size_t i = word_shift; i < word_count(); ++i) {
-            result.storage_[i] = storage_[i - word_shift];
+        // Pure word shift - use memcpy for efficiency (non-overlapping)
+        if (word_shift < wc) {
+            std::memcpy(&result.storage_[word_shift], 
+                       &storage_[0],
+                       (wc - word_shift) * sizeof(word_t));
         }
     } else {
         // Mixed word + bit shift
         const size_t inv_shift = WORD_BITS - bit_shift;
+        const size_t limit = wc - word_shift;
         
-        for (size_t i = word_shift; i < word_count(); ++i) {
-            result.storage_[i] = storage_[i - word_shift] << bit_shift;
-            
-            if (i > word_shift) {
-                result.storage_[i] |= storage_[i - word_shift - 1] >> inv_shift;
-            }
+        // Process from low to high
+        size_t i = 0;
+        
+        // First word: only left shift, no combine
+        result.storage_[word_shift] = storage_[0] << bit_shift;
+        
+        // Main loop: combine two words
+        for (i = 1; i < limit; ++i) {
+            result.storage_[i + word_shift] = (storage_[i] << bit_shift) |
+                                              (storage_[i - 1] >> inv_shift);
         }
     }
     
@@ -577,40 +596,57 @@ bitset<N> bitset<N>::operator<<(size_t shift_amount) const noexcept {
 
 template<size_t N>
 bitset<N> bitset<N>::operator>>(size_t shift_amount) const noexcept {
-    bitset result = [this]() {
+    // Early exits
+    if (shift_amount >= size()) {
         if constexpr (is_fixed) {
             return bitset();
         } else {
             return bitset(size());
         }
-    }();
-    
-    if (shift_amount >= size()) {
-        return result;
     }
     
     if (shift_amount == 0) {
         return *this;
     }
     
+    // Create result and copy data
+    bitset result = *this;
+    
     const size_t word_shift = shift_amount / WORD_BITS;
     const size_t bit_shift = shift_amount % WORD_BITS;
+    const size_t wc = word_count();
     
     if (bit_shift == 0) {
-        // Pure word shift
-        for (size_t i = 0; i < word_count() - word_shift; ++i) {
-            result.storage_[i] = storage_[i + word_shift];
+        // Pure word shift - use memmove for efficiency
+        if (word_shift < wc) {
+            std::memmove(&result.storage_[0],
+                        &result.storage_[word_shift],
+                        (wc - word_shift) * sizeof(word_t));
         }
+        // Zero out upper words
+        std::memset(&result.storage_[wc - word_shift], 0, word_shift * sizeof(word_t));
     } else {
         // Mixed word + bit shift
         const size_t inv_shift = WORD_BITS - bit_shift;
+        const size_t limit = wc - word_shift;
         
-        for (size_t i = 0; i < word_count() - word_shift; ++i) {
+        // Process from low to high, avoiding branch in inner loop
+        size_t i = 0;
+        
+        // Main loop: can always combine two words
+        for (; i + 1 < limit; ++i) {
+            result.storage_[i] = (storage_[i + word_shift] >> bit_shift) |
+                                (storage_[i + word_shift + 1] << inv_shift);
+        }
+        
+        // Last word: only shift, no combine
+        if (i < limit) {
             result.storage_[i] = storage_[i + word_shift] >> bit_shift;
-            
-            if (i + word_shift + 1 < word_count()) {
-                result.storage_[i] |= storage_[i + word_shift + 1] << inv_shift;
-            }
+        }
+        
+        // Zero out upper words
+        for (size_t j = limit; j < wc; ++j) {
+            result.storage_[j] = 0;
         }
     }
     

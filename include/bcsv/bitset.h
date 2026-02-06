@@ -21,6 +21,7 @@
 #include <limits>
 #include <ostream>
 #include <istream>
+#include <cassert>
 
 namespace bcsv {
 
@@ -183,6 +184,8 @@ public:
     explicit bitset(const bitset<M>& other) requires(!is_fixed && M != dynamic_extent);
     
     // ===== Element Access =====
+    // operator[] - Unchecked access (UB if out of bounds, debug assertion only)
+    // test()     - Checked access (throws std::out_of_range if out of bounds)
     
     constexpr bool operator[](size_t pos) const;
     reference operator[](size_t pos);
@@ -196,15 +199,16 @@ public:
     static constexpr bool is_fixed_size() noexcept;
     
     // ===== Modifiers =====
+    // All single-bit modifiers (set/reset/flip with pos) throw std::out_of_range if out of bounds
     
     bitset& set() noexcept;
-    bitset& set(size_t pos, bool val = true);
+    bitset& set(size_t pos, bool val = true);  // Throws if pos >= size()
     
     bitset& reset() noexcept;
-    bitset& reset(size_t pos);
+    bitset& reset(size_t pos);  // Throws if pos >= size()
     
     bitset& flip() noexcept;
-    bitset& flip(size_t pos);
+    bitset& flip(size_t pos);  // Throws if pos >= size()
     
     // Dynamic-only modifiers
     void clear() noexcept requires(!is_fixed);

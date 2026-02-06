@@ -82,5 +82,6 @@ venv/lib64
 venv/pyvenv.cfg
 
 # Ignore experimental scratch directory
+.cache/
 scratch/
-.cache/clangd/index/bcsv_c_api.cpp.BCC33B22167D8BEA.idx
+tmp/
