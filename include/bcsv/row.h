@@ -20,6 +20,7 @@
 #include "layout.h"
 #include "bitset.h"
 #include "byte_buffer.h"
+#include "row_visitors.h"  // Row visitor concepts and helpers
 
 namespace bcsv {
 
@@ -456,6 +457,23 @@ namespace bcsv {
         void                        deserializeFrom(const std::span<const std::byte> buffer);
         void                        deserializeFromZoH(const std::span<const std::byte> buffer);
 
+        /** @brief Visit all columns with read-only access.
+         * Signature: (size_t index, const T& value)
+         * @see row.hpp for detailed documentation and examples
+         * @see row_visitors.h for concepts and helper types
+         */
+                                    template<typename Visitor>  // Const method naturally provides const access
+        void                        visit(Visitor&& visitor) const;
+
+        /** @brief Visit all columns with mutable access and optional change tracking.
+         * Signature (fine-grained): (size_t index, T& value, bool& changed)
+         * Signature (legacy): (size_t index, T& value)
+         * @see row.hpp for detailed documentation and examples
+         * @see row_visitors.h for concepts and helper types
+         */
+                                    template<typename Visitor>  // Accepts both RowMutableVisitor and RowMutableVisitorWithTracking
+        void                        visit(Visitor&& visitor);
+
         Row&                        operator=(const Row& other) noexcept;      // need to implement copy assignment due to string deep-copy
         Row&                        operator=(Row&& other) noexcept = default; // default move assignment (string payload stays in place)
     };
@@ -500,8 +518,21 @@ namespace bcsv {
         bool                        set(size_t index, std::span<const T> src);
                                     template<typename T>
         bool                        set_from(size_t index, const T& value);
-
-
+        
+        /** @brief Visit all columns with read-only access (zero-copy view).
+         * Signature: (size_t index, const T& value)
+         * @see row_visitors.h for concepts and helper types
+         */
+                                    template<typename Visitor>
+        void                        visit(Visitor&& visitor) const;
+        
+        /** @brief Visit all columns with mutable access (primitives only).
+         * Strings are read-only. Change tracking parameter accepted but ignored.
+         * @see row_visitors.h for concepts and helper types
+         */
+                                    template<typename Visitor>
+        void                        visit(Visitor&& visitor);
+        
         RowView& operator=(const RowView& other) noexcept = default; // default copy assignment, as we don't own the buffer
         RowView& operator=(RowView&& other) noexcept = default;      // default move assignment, as we don't own the buffer
     };
@@ -601,6 +632,24 @@ namespace bcsv {
         std::span<std::byte>        serializeToZoH(ByteBuffer& buffer) const;
         void                        deserializeFrom(const std::span<const std::byte> buffer);
         void                        deserializeFromZoH(const std::span<const std::byte> buffer);
+
+        /** @brief Visit all columns with read-only access (compile-time optimized).
+         * Uses fold expressions for zero-overhead iteration.
+         * Signature: (size_t index, const T& value)
+         * @see row.hpp for detailed documentation
+         * @see row_visitors.h for concepts and helper types
+         */
+                                    template<typename Visitor>
+        void                        visit(Visitor&& visitor) const;
+        
+        /** @brief Visit all columns with mutable access and change tracking (compile-time optimized).
+         * Signature (fine-grained): (size_t index, T& value, bool& changed)
+         * Signature (legacy): (size_t index, T& value)
+         * @see row.hpp for detailed documentation
+         * @see row_visitors.h for concepts and helper types
+         */
+                                    template<typename Visitor>
+        void                        visit(Visitor&& visitor);
 
         RowStatic& operator=(const RowStatic& other) noexcept = default; // default copy assignment, tuple manges copying its members including strings
         RowStatic& operator=(RowStatic&& other) noexcept = default;      // default move assignment, tuple manges moving its members including strings
@@ -715,6 +764,21 @@ namespace bcsv {
         // =========================================================================
         RowStatic<ColumnTypes...>   toRow() const;
         bool                        validate() const noexcept;
+
+        /** @brief Visit all columns with read-only access (compile-time, zero-copy).
+         * Combines compile-time optimization with zero-copy string views.
+         * Signature: (size_t index, const T& value)
+         * @see row_visitors.h for concepts and helper types
+         */
+                                    template<typename Visitor>
+        void                        visit(Visitor&& visitor) const;
+        
+        /** @brief Visit all columns with mutable access (compile-time, primitives only).
+         * Strings are read-only. No change tracking.
+         * @see row_visitors.h for concepts and helper types
+         */
+                                    template<typename Visitor>
+        void                        visit(Visitor&& visitor);
 
         RowViewStatic& operator=(const RowViewStatic& other) noexcept = default; // default copy assignment, as we don't own the buffer
         RowViewStatic& operator=(RowViewStatic&& other) noexcept = default;      // default move assignment, as we don't own the buffer

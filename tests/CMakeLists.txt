@@ -33,6 +33,7 @@ set(TEST_SOURCES
     error_handling_test.cpp
     layout_sync_test.cpp
     bitset_test.cpp
+    visit_test.cpp
 )
 
 if(BCSV_ENABLE_STRESS_TESTS)

@@ -141,6 +141,61 @@ TEST_F(FixedBitsetTest, Modifiers_Flip) {
     EXPECT_TRUE(bs8.none());
 }
 
+TEST_F(FixedBitsetTest, Reference_CompoundAssignment) {
+    // Test operator|= (bitwise OR)
+    bs8.reset();
+    bs8.set(0);
+    EXPECT_TRUE(bs8[0]);
+    
+    bs8[0] |= false;  // true |= false => true
+    EXPECT_TRUE(bs8[0]);
+    
+    bs8[1] |= true;   // false |= true => true
+    EXPECT_TRUE(bs8[1]);
+    
+    bs8[1] |= false;  // true |= false => true
+    EXPECT_TRUE(bs8[1]);
+    
+    // Test operator&= (bitwise AND)
+    bs8.set();
+    EXPECT_TRUE(bs8[0]);
+    
+    bs8[0] &= true;   // true &= true => true
+    EXPECT_TRUE(bs8[0]);
+    
+    bs8[0] &= false;  // true &= false => false
+    EXPECT_FALSE(bs8[0]);
+    
+    bs8[1] &= false;  // true &= false => false
+    EXPECT_FALSE(bs8[1]);
+    
+    // Test operator^= (bitwise XOR)
+    bs8.reset();
+    bs8.set(0);
+    
+    bs8[0] ^= false;  // true ^= false => true
+    EXPECT_TRUE(bs8[0]);
+    
+    bs8[0] ^= true;   // true ^= true => false
+    EXPECT_FALSE(bs8[0]);
+    
+    bs8[1] ^= true;   // false ^= true => true
+    EXPECT_TRUE(bs8[1]);
+    
+    bs8[1] ^= false;  // true ^= false => true
+    EXPECT_TRUE(bs8[1]);
+    
+    // Test that it works with variables (like in Row::visit)
+    bs8.reset();
+    bool changed = true;
+    bs8[0] |= changed;
+    EXPECT_TRUE(bs8[0]);
+    
+    changed = false;
+    bs8[1] |= changed;
+    EXPECT_FALSE(bs8[1]);
+}
+
 TEST_F(FixedBitsetTest, Operations_Count) {
     EXPECT_EQ(bs8.count(), 0);
     
@@ -388,6 +443,45 @@ TEST_F(DynamicBitsetTest, Construction_FromFixedBitset) {
     
     EXPECT_EQ(dynamic.size(), 64);
     EXPECT_EQ(dynamic.to_ullong(), 0xABCDEF0123456789ULL);
+}
+
+TEST_F(DynamicBitsetTest, Reference_CompoundAssignment) {
+    // Test operator|= (bitwise OR)
+    bs_small.reset();
+    bs_small.set(0);
+    EXPECT_TRUE(bs_small[0]);
+    
+    bs_small[0] |= false;
+    EXPECT_TRUE(bs_small[0]);
+    
+    bs_small[1] |= true;
+    EXPECT_TRUE(bs_small[1]);
+    
+    // Test operator&= (bitwise AND)
+    bs_small.set();
+    bs_small[0] &= true;
+    EXPECT_TRUE(bs_small[0]);
+    
+    bs_small[0] &= false;
+    EXPECT_FALSE(bs_small[0]);
+    
+    // Test operator^= (bitwise XOR)
+    bs_small.reset();
+    bs_small[0] ^= true;
+    EXPECT_TRUE(bs_small[0]);
+    
+    bs_small[0] ^= true;
+    EXPECT_FALSE(bs_small[0]);
+    
+    // Test with variable (like in Row::visit)
+    bool changed = true;
+    bs_small[2] |= changed;
+    EXPECT_TRUE(bs_small[2]);
+    
+    // Test across word boundaries (bit 64+)
+    bs_medium[64] = false;
+    bs_medium[64] |= true;
+    EXPECT_TRUE(bs_medium[64]);
 }
 
 TEST_F(DynamicBitsetTest, Modifiers_Clear) {

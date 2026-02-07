@@ -113,6 +113,30 @@ typename bitset<N>::reference& bitset<N>::reference::flip() {
     return *this;
 }
 
+template<size_t N>
+typename bitset<N>::reference& bitset<N>::reference::operator|=(bool value) {
+    if (value) {
+        *word_ptr |= (word_t{1} << bit_index);
+    }
+    return *this;
+}
+
+template<size_t N>
+typename bitset<N>::reference& bitset<N>::reference::operator&=(bool value) {
+    if (!value) {
+        *word_ptr &= ~(word_t{1} << bit_index);
+    }
+    return *this;
+}
+
+template<size_t N>
+typename bitset<N>::reference& bitset<N>::reference::operator^=(bool value) {
+    if (value) {
+        *word_ptr ^= (word_t{1} << bit_index);
+    }
+    return *this;
+}
+
 // ===== Constructor Implementations =====
 
 // Fixed-size constructors

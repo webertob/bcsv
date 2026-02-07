@@ -135,6 +135,9 @@ public:
         
         reference& operator=(bool value);
         reference& operator=(const reference& other);
+        reference& operator|=(bool value);
+        reference& operator&=(bool value);
+        reference& operator^=(bool value);
         operator bool() const;
         bool operator~() const;
         reference& flip();

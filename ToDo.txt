@@ -60,7 +60,12 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
 
 [x] 7. Refactor bitset_dynamic to use full register width instead of narrow bytes. Thus we want to use 64bit types on 64bit platform. Consider alignment.
 
-8. Add visit() function to Row, RowStatic, RowView, RowViewStatic enable fast operations on the data 
+[x] 8. Add visit() function to Row, RowStatic, RowView, RowViewStatic enable fast operations on the data 
+
+8.b. Exploit visit function to simply code
+        - visit on single column?
+        - visit on column range?
+        - use for set and get functions?
 
 9. Implement CSV write and read functionality using the BCSV interface
     - CSVLayout(Static) (delimier, decimal, precision, setw, alignment)
@@ -73,7 +78,7 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     update and test C# (Unity)
 
 11. Improve benchmarks (more realistic use cases, better coverage, better insights)
-    - ensure csv code in benchmark_large is comprable quality
+    - ensure csv code in benchmark_large is comprable quality -> not cheating
     - update generic data set for ZoH
     - indroduce official data sets (references)
     - add csv-to-bcsv to large_scale_benchmark
@@ -82,6 +87,7 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     - python based benchmark suite:
         - use the CLI tools
         - Generate reporting --> MatPlot, MarkUps.
+        - compare against: https://github.com/vincentlaucsb/csv-parser
 
 12. Implement File Flags (raw, stats)
     File Flags to provide information on file layout to switch between different Read / Write approaches. Enables different behaviour based on usecase and platform. 
@@ -173,6 +179,9 @@ Parking LOT
     - create: parquet2bcsv
     - create: bcsvInspect   (checks if the file is complet or damaged (i.e. index missing), can repair file/index, prints information on the file content)
     - create: bcsvSampler   (creates an down sampled version, using specific rules provided)
+    - create: bcsvMore
+    - create: bcsvCat
+    - create: bcsvSed
     - create: bcsvCompress  (insepects the file and tries to apply a more agressive compression, using 2-phase inspection and a file wide dictionary)
     - create: bcsvIndex     (tool to rebuild index)
     - create: bcsvConvert   (converts from one bcsv file format to another, use to rebuild index or improve compression)

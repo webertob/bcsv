@@ -58,7 +58,11 @@ target_link_libraries(bcsvHeader PRIVATE bcsv)
 add_executable(c_api_vectorized_example c_api_vectorized_example.c)
 target_link_libraries(c_api_vectorized_example PRIVATE bcsv_c_api bcsv)
 
+# Visitor pattern examples
+add_executable(visitor_examples visitor_examples.cpp)
+target_link_libraries(visitor_examples PRIVATE bcsv)
+
 # Set output directory
-set_target_properties(example example_static example_zoh example_zoh_static csv2bcsv bcsv2csv bcsvHead bcsvTail bcsvHeader c_api_vectorized_example PROPERTIES
+set_target_properties(example example_static example_zoh example_zoh_static csv2bcsv bcsv2csv bcsvHead bcsvTail bcsvHeader c_api_vectorized_example visitor_examples PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )

@@ -37,6 +37,7 @@
 #include "packet_header.h"
 #include "reader.h"
 #include "row.h"
+#include "row_visitors.h"  // Row visitor pattern concepts and helpers
 #include "writer.h"
 
 // Include implementations
