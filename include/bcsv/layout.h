@@ -12,6 +12,7 @@
 #include <array>
 #include <cassert>
 #include <cstddef>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -19,7 +20,7 @@
 #include <vector>
 #include <cstdint>
 #include <iostream>
-
+#include <memory>
 #include "column_name_index.h"
 #include "definitions.h"
 
@@ -65,46 +66,185 @@ namespace bcsv {
     /**
      * @brief Represents the column layout containing column names and types. This defines the common layout for BCSV files.
      * This layout is flexible and can be modified at runtime.
+     * 
+     * Note: This class is NOT thread-safe. External synchronization required for concurrent access.
      */
     class Layout {
+    public:
+        /**
+         * @brief Shared layout data with all layout logic and observer management.
+         * Contains column metadata and maintains consistency between names, indices, and types.
+         * 
+         * Note: NOT thread-safe. External synchronization required for concurrent access.
+         */
+        class Data {
+        public:
+            struct Callbacks {
+                std::function<void(size_t, ColumnType)> addColumn;
+                std::function<void(size_t)> removeColumn;
+                std::function<void(size_t, ColumnType, ColumnType)> changeType;
+            };
+
+        private:
+            std::vector<std::pair<void*, Callbacks>> callbacks_;     // Registered callbacks for layout changes
+            std::vector<std::string>                 column_names_;  // column --> name
+            ColumnNameIndex<0>                       column_index_;  // name --> column
+            std::vector<ColumnType>                  column_types_;  // column --> type
+
+            // Internal helpers
+            void rebuildColumnIndex();
+            void checkRange(size_t index) const;
+
+        public:
+            Data();
+            Data(const Data& other);  // Copy layout data, not observers
+            Data(Data&&) = default;
+            Data& operator=(const Data&) = delete;
+            Data& operator=(Data&&) = delete;
+            ~Data() = default;
+
+            // ============================================================
+            // Read-only accessors
+            // ============================================================
+            size_t columnCount() const noexcept { return column_types_.size(); }
+            size_t columnIndex(const std::string& name) const { return column_index_[name]; }
+            const std::string& columnName(size_t index) const;
+            ColumnType columnType(size_t index) const;
+            const std::vector<ColumnType>& columnTypes() const noexcept { return column_types_; }
+            bool hasColumn(const std::string& name) const { return column_index_.contains(name); }
+            bool isCompatible(const Data& other) const;
+
+            // ============================================================
+            // Layout modification operations (with observer notifications)
+            // ============================================================
+            void addColumn(ColumnDefinition column, size_t position = SIZE_MAX);
+            void clear();
+            void removeColumn(size_t index);
+            void setColumnName(size_t index, std::string name);
+            void setColumnType(size_t index, ColumnType type);
+            void setColumns(const std::vector<ColumnDefinition>& columns);
+            void setColumns(const std::vector<std::string>& columnNames, const std::vector<ColumnType>& columnTypes);
+
+            // ============================================================
+            // Observer management
+            // ============================================================
+            void registerCallback(void* owner, Callbacks callbacks);
+            void unregisterCallback(void* owner);
+
+        private:
+            // Notification methods (called internally after modifications)
+            void notifyAddColumn(size_t index, ColumnType type);
+            void notifyRemoveColumn(size_t index);
+            void notifyChangeType(size_t index, ColumnType oldType, ColumnType newType);
+        };
+
+        using DataPtr = std::shared_ptr<Data>;
+
     private:
-        std::vector<std::string>       column_names_;  // column --> name
-        ColumnNameIndex<0>             column_index_;  // name --> column
-        std::vector<ColumnType>        column_types_;  // column --> type
-    
-    protected:
-        void checkRange(size_t index) const;
+        DataPtr data_;
 
     public:
         using RowType     = Row;
         using RowViewType = RowView;
 
-        Layout() = default;
-        Layout(const Layout& other) = default;
+        // ============================================================
+        // Constructors
+        // ============================================================
+        Layout() : data_(std::make_shared<Data>()) {}
+        explicit Layout(DataPtr data) : data_(std::move(data)) {}
+        Layout(const Layout& other) = default;  // Shallow copy (shares data)
         explicit Layout(const std::vector<ColumnDefinition>& columns);
-        explicit Layout(const std::vector<std::string>& columnNames, const std::vector<ColumnType>& columnTypes);
+        explicit Layout(const std::vector<std::string>& columnNames, 
+                       const std::vector<ColumnType>& columnTypes);
         ~Layout() = default;
 
-                                        // Basic Layout information
-        void                            addColumn(ColumnDefinition column, size_t position = SIZE_MAX);
-        void                            clear();   
-        size_t                          columnCount() const noexcept                    { return column_names_.size(); }
-        size_t                          columnIndex(const std::string& name) const      { return column_index_[name]; }
-        const std::string&              columnName(size_t index) const                  { checkRange(index); return column_names_[index]; }
-        ColumnType                      columnType(size_t index) const                  { checkRange(index); return column_types_[index]; }
-        bool                            hasColumn(const std::string& name) const        { return column_index_.contains(name); }
-                                        
-                                        template<typename OtherLayout>
-        bool                            isCompatible(const OtherLayout& other) const;
-        void                            removeColumn(size_t index);
-        void                            setColumnName(size_t index, std::string name);
-        void                            setColumnType(size_t index, ColumnType type);
-        const std::vector<ColumnType>&  columnTypes() const noexcept                   { return column_types_; }
-        void                            setColumns(const std::vector<ColumnDefinition>& columns);
-        void                            setColumns(const std::vector<std::string>& columnNames, const std::vector<ColumnType>& columnTypes);
-                                        
-                                        template<typename OtherLayout>
-        Layout&                         operator=(const OtherLayout& other);
+        // ============================================================
+        // Data access and sharing
+        // ============================================================
+        Layout clone() const;
+        const DataPtr& data() const { return data_; }
+
+        // ============================================================
+        // Observer management (convenience for Row)
+        // ============================================================
+        void registerCallback(void* owner, Data::Callbacks callbacks) const {
+            data_->registerCallback(owner, std::move(callbacks));
+        }
+
+        void unregisterCallback(void* owner) const {
+            data_->unregisterCallback(owner);
+        }
+
+        // ============================================================
+        // Layout information (facade - delegates to Data)
+        // ============================================================
+        size_t columnCount() const noexcept { 
+            return data_->columnCount(); 
+        }
+        
+        size_t columnIndex(const std::string& name) const { 
+            return data_->columnIndex(name); 
+        }
+        
+        const std::string& columnName(size_t index) const { 
+            return data_->columnName(index); 
+        }
+        
+        ColumnType columnType(size_t index) const { 
+            return data_->columnType(index); 
+        }
+        
+        const std::vector<ColumnType>& columnTypes() const noexcept { 
+            return data_->columnTypes(); 
+        }
+        
+        bool hasColumn(const std::string& name) const { 
+            return data_->hasColumn(name); 
+        }
+
+        // ============================================================
+        // Layout modification (facade - delegates to Data)
+        // ============================================================
+        void addColumn(ColumnDefinition column, size_t position = SIZE_MAX) {
+            data_->addColumn(std::move(column), position);
+        }
+        
+        void removeColumn(size_t index) {
+            data_->removeColumn(index);
+        }
+        
+        void setColumnName(size_t index, std::string name) {
+            data_->setColumnName(index, std::move(name));
+        }
+        
+        void setColumnType(size_t index, ColumnType type) {
+            data_->setColumnType(index, type);
+        }
+        
+        void setColumns(const std::vector<ColumnDefinition>& columns) {
+            data_->setColumns(columns);
+        }
+        
+        void setColumns(const std::vector<std::string>& columnNames, 
+                       const std::vector<ColumnType>& columnTypes) {
+            data_->setColumns(columnNames, columnTypes);
+        }
+        
+        void clear() {
+            data_->clear();
+        }
+
+        // ============================================================
+        // Compatibility and assignment
+        // ============================================================
+        template<typename OtherLayout>
+        bool isCompatible(const OtherLayout& other) const;
+                
+        template<typename OtherLayout>
+        Layout& operator=(const OtherLayout& other);
+
+        template<typename OtherLayout>
+        bool operator==(const OtherLayout& other) const { return isCompatible(*other.data_); }
     };
 
     /**
@@ -113,13 +253,44 @@ namespace bcsv {
      * This layout is defined at compile-time to improve performance and reduce runtime overhead.
      */
     template<typename... ColumnTypes>
-    class LayoutStatic {        
-        std::array<std::string, sizeof...(ColumnTypes)> column_names_;    // column --> name
-        ColumnNameIndex< sizeof...(ColumnTypes) >       column_index_;    // name --> column
-        
+    class LayoutStatic {
+    public:
+        /**
+         * @brief Shared layout data containing column names and name-to-index mapping.
+         * Column types are compile-time constant, so only names need to be shared.
+         */
+        class Data {
+        private:
+            std::array<std::string, sizeof...(ColumnTypes)> column_names_;    // column --> name
+            ColumnNameIndex< sizeof...(ColumnTypes) >       column_index_;    // name --> column
 
-    protected: 
-        constexpr void checkRange(size_t index) const;
+        public:
+            Data();
+            Data(const std::array<std::string, sizeof...(ColumnTypes)>& columnNames);
+            Data(const Data&) = default;
+            Data(Data&&) = default;
+            Data& operator=(const Data&) = default;
+            Data& operator=(Data&&) = default;
+            ~Data() = default;
+
+            void clear();
+            const std::string& columnName(size_t index) const;
+            void setColumnName(size_t index, std::string name);
+            template<typename Container>
+            void setColumnNames(const Container& names, size_t offset = 0);
+            size_t columnIndex(const std::string& name) const { return column_index_[name]; }
+            bool hasColumn(const std::string& name) const { return column_index_.contains(name); }
+            
+            const auto& columnNames() const noexcept { return column_names_; }
+            const auto& columnIndex() const noexcept { return column_index_; }
+        };
+
+        using DataPtr = std::shared_ptr<Data>;
+
+    private:
+        DataPtr data_;
+        
+        void checkRange(size_t index) const;
 
     public:
         using RowType           = RowStatic<ColumnTypes...>;
@@ -131,34 +302,42 @@ namespace bcsv {
         static constexpr ColTypesArray column_types_ = { toColumnType<ColumnTypes>()...  }; // column --> type
 
         LayoutStatic();
+        explicit LayoutStatic(DataPtr data);
         LayoutStatic(const std::array<std::string, sizeof...(ColumnTypes)>& columnNames);
-        LayoutStatic(const LayoutStatic&) = default;
+        LayoutStatic(const LayoutStatic&) = default;  // Shallow copy (shares data)
         LayoutStatic(LayoutStatic&&) = default;
         ~LayoutStatic() = default;
+        
+        // Data access
+        LayoutStatic clone() const;
+        const DataPtr& data() const { return data_; }
 
-                                        // Basic Layout information
-        void                            clear();                                        // clear names to default values
+                                        // Basic Layout information (facade - delegates to Data or static)
+        void                            clear()                                         { data_->clear(); }
         static constexpr size_t         columnCount() noexcept                          { return sizeof...(ColumnTypes); }
-        size_t                          columnIndex(const std::string& name) const      { return column_index_[name]; }
-        const std::string&              columnName(size_t index) const                  { checkRange(index); return column_names_[index]; }
+        size_t                          columnIndex(const std::string& name) const      { return data_->columnIndex(name); }
+        const std::string&              columnName(size_t index) const                  { checkRange(index); return data_->columnName(index); }
                                         template<size_t Index>
         static constexpr ColumnType     columnType()                                    { return column_types_[Index]; }          // compile-time version
 
         static ColumnType               columnType(size_t index)                        { if (index >= sizeof...(ColumnTypes)) { throw std::out_of_range("LayoutStatic::columnType: Index out of range"); } return column_types_[index]; } // runtime version
         static constexpr const ColTypesArray& 
                                         columnTypes() noexcept                          { return column_types_; }
-        bool                            hasColumn(const std::string& name) const        { return column_index_.contains(name); }
+        bool                            hasColumn(const std::string& name) const        { return data_->hasColumn(name); }
                                         
                                         template<typename OtherLayout>
         bool                            isCompatible(const OtherLayout& other) const;
-        void                            setColumnName(size_t index, std::string name);
+        void                            setColumnName(size_t index, std::string name)   { data_->setColumnName(index, std::move(name)); }
                                         template<typename Container>
-        void                            setColumnNames(const Container& names, size_t offset = 0);
+        void                            setColumnNames(const Container& names, size_t offset = 0) { data_->setColumnNames(names, offset); }
                                         
-        LayoutStatic&                   operator=(const LayoutStatic&) = default;      // Copies column names (types are compile-time fixed)
-        LayoutStatic&                   operator=(LayoutStatic&&) = default;           // Moves column names (types are compile-time fixed)
+        LayoutStatic&                   operator=(const LayoutStatic&) = default;      // Shallow copy (shares data)
+        LayoutStatic&                   operator=(LayoutStatic&&) = default;           // Move
                                         template<typename OtherLayout>
         LayoutStatic&                   operator=(const OtherLayout& other);           // Copies column names if layouts are compatible (types must match)
+        
+                                        template<typename OtherLayout>
+        bool                            operator==(const OtherLayout& other) const { return isCompatible(other); }
     };
 
     // Stream operator for Layout - provides human-readable column information

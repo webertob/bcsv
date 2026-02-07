@@ -62,10 +62,29 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
 
 [x] 8. Add visit() function to Row, RowStatic, RowView, RowViewStatic enable fast operations on the data 
 
-8.b. Exploit visit function to simply code
-        - visit on single column?
-        - visit on column range?
-        - use for set and get functions?
+[x] 8.b. Exploit visit function to simplify code [EVALUATED - NO ACTION NEEDED]
+        Analysis completed 2026-02-07. See Implementation_Visit()_Function.MD for details.
+        Conclusions:
+        - visit on single column? 
+          ❌ NOT RECOMMENDED: Current get<T>() is more efficient and clearer
+        - visit on column range? 
+          ⏸️ DEFER TO PHASE 2+: Useful feature but wait for user demand
+          Simple to add later: visit(start_col, end_col, visitor)
+        - Implement get/set via visit()? 
+          ❌ NOT RECOMMENDED: Performance & clarity > DRY principle
+          Switch/case duplication is acceptable for hot-path operations
+        
+        Decision: Keep current implementation. The switch/case in get(), set(), 
+        and visit() serves different performance/API requirements. No changes needed.
+
+8.c. Refeactoring Row, Layout relation ship. 
+    Currently Layout is member (owned by) Row. However we typically have multiple rows that share the same Layout. 
+    This leads to a waste of memory, but also enforces us to check if layouts match between rows, hence slowing down operation between rows, which we most likley need when we do more complex delta encoding.
+    Therefore I would prefere to have row just having a pointer to Layout. Such it would be easy to check if two rows share the same layout and reduces the amount of memory required (hot-cache).
+    However we need to ensure that Layout does not change, as long as rows are alive. Or that rows need to follow relevant changes to the layout structure i.e. setColumnType, addColumn, removeColumn. Name changes are irrelevant.
+    I still like the current API of the BCSV library and would like to maintain the workflow, see examples and benchmark.
+    What are your proposals to that request? Have you seen similar implementations somewhere, what is proper C++ (C++20)?
+
 
 9. Implement CSV write and read functionality using the BCSV interface
     - CSVLayout(Static) (delimier, decimal, precision, setw, alignment)
@@ -79,14 +98,15 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
 
 11. Improve benchmarks (more realistic use cases, better coverage, better insights)
     - ensure csv code in benchmark_large is comprable quality -> not cheating
-    - update generic data set for ZoH
+    - update generic data set for ZoH, to be more represntative
     - indroduce official data sets (references)
     - add csv-to-bcsv to large_scale_benchmark
     - add bcsv-to-csv to large_scale_benchmark
     - add performance metrics to bcsv2csv and csv2bcsv tools
     - python based benchmark suite:
         - use the CLI tools
-        - Generate reporting --> MatPlot, MarkUps.
+        - Generate reporting --> MatPlot, MarkUps. --> Human and machine readable
+        - store reports with data and machine/host information for later reference
         - compare against: https://github.com/vincentlaucsb/csv-parser
 
 12. Implement File Flags (raw, stats)

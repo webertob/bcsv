@@ -404,29 +404,34 @@ namespace bcsv {
     /* Dynamic row with flexible layout (runtime-defined)*/
     class Row {
     private:
-        // Immutable after construction --> We need to protect these members from modification (const would break the move constructor & assignment)
-        Layout                      layout_;      // layout defining column types and order. Can't be changed after construction!
-        std::vector<uint32_t>       offsets_;     // offsets into data_ to access actual data for each column. Considers types alignment requirements.
-        uint32_t                    offset_var_;  // offset into serilized buffer (wire), marking the beginning of variable-length section / size of the fixed section. Naive packed wire format (no alignment/padding).
+        // Immutable after construction
+        Layout                      layout_;               // Shared layout data with observer callbacks
+        std::vector<uint32_t>       offsets_;              // offsets into data_ to access actual data for each column. Considers types alignment requirements.
+        uint32_t                    offset_var_;           // offset into serilized buffer (wire), marking the beginning of variable-length section / size of the fixed section. Naive packed wire format (no alignment/padding).
         
         // Mutable data
-        std::vector<std::byte>      data_;        // continuous memory buffer to hold data (Note: We store string objects here too. But strings themselves are allocating additional memory elsewhere for their content.)
-        bitset<>                    changes_;     // change tracking
+        std::vector<std::byte>      data_;                 // continuous memory buffer to hold data (Note: We store string objects here too. But strings themselves are allocating additional memory elsewhere for their content.)
+        bitset<>                    changes_;              // change tracking
         /* change tracking i.e. for Zero-Order-Hold compression
         *  changes_[0:column_count  ] == true   indicates column i has been modified since last reset.
         *  changes_.empty()           == true   indicates change tracking is disabled.
-        */        
+        */
+
+        // Observer callbacks for layout changes
+        void onAddColumn(size_t index, ColumnType type);
+        void onRemoveColumn(size_t index);
+        void onChangeColumnType(size_t index, ColumnType oldType, ColumnType newType);
     
     public:
         Row() = delete; // no default constructor, we always need a layout
         Row(const Layout& layout, bool trackChangesEnabled = false);
         Row(const Row& other);
-        Row(Row&& other) noexcept = default;
+        Row(Row&& other) noexcept;
         
         ~Row();
 
         void                        clear();
-        const Layout&               layout() const noexcept         { return layout_; }
+        const Layout&               layout() const noexcept { return layout_; }
         bool                        hasAnyChanges() const noexcept  { return !tracksChanges() || changes_.any(); } // defaults to true if change tracking is disabled
         void                        trackChanges(bool enable)       { if (enable) { changes_.resize(layout_.columnCount(), true); } else { changes_.resize(0); } }
         bool                        tracksChanges() const noexcept  { return !changes_.empty(); } 
@@ -474,21 +479,21 @@ namespace bcsv {
                                     template<typename Visitor>  // Accepts both RowMutableVisitor and RowMutableVisitorWithTracking
         void                        visit(Visitor&& visitor);
 
-        Row&                        operator=(const Row& other) noexcept;      // need to implement copy assignment due to string deep-copy
-        Row&                        operator=(Row&& other) noexcept = default; // default move assignment (string payload stays in place)
+        Row&                        operator=(const Row& other);               // Throws std::invalid_argument if layouts incompatible
+        Row&                        operator=(Row&& other) noexcept;
     };
 
     /* RowView provides a direct view into a serilized buffer, partially supporting the row interface. Intended for sparse data access, avoiding costly full deserialization.
        Currently we only support the basic get/set interface for individual columns, into a flat serilized buffer. We do not support ZoH format or more complex encoding schemes.
     */
     class RowView {
-        // Immutable after construction --> We need to protect these members from modification (const wont' work due to assignment & move operators)
-        Layout                layout_;
-        std::vector<uint32_t> offsets_;       // offsets data buffer to access actual data for each column during serialization/deserialization (packed binary format, special handling for strings (variable length types))
-        uint32_t              offset_var_;    // begin of variable section in buffer_     
+        // Immutable after construction
+        Layout                  layout_;  // Shared layout data (no callbacks needed for views)
+        std::vector<uint32_t>   offsets_;                    // offsets data buffer to access actual data for each column during serialization/deserialization (packed binary format, special handling for strings (variable length types))
+        uint32_t                offset_var_;                 // begin of variable section in buffer_     
 
         // Mutable data
-        std::span<std::byte>  buffer_;        // serilized data buffer (fixed + variable section, packed binary format)
+        std::span<std::byte>  buffer_;                     // serilized data buffer (fixed + variable section, packed binary format)
 
     
     public:
@@ -499,7 +504,7 @@ namespace bcsv {
         ~RowView() = default;
 
         const std::span<std::byte>& buffer() const noexcept                                 { return buffer_; }
-        const Layout&               layout() const noexcept                                 { return layout_; }
+        const Layout&               layout() const noexcept                                 { return layout_; } 
         void                        setBuffer(const std::span<std::byte> &buffer) noexcept  { buffer_ = buffer; }
         Row                         toRow() const;
         bool                        validate(bool deepValidation = true) const;
@@ -565,11 +570,11 @@ namespace bcsv {
         static constexpr size_t offset_var_ = (binaryFieldLength<ColumnTypes>() + ... + 0);
 
     private:
-        // Immutable after construction --> We need to protect these members from modification (const wont' work due to assignment & move operators)
-        LayoutType layout_;
+        // Immutable after construction
+        LayoutType layout_; 
 
         // Mutable data
-        LayoutType::ColTypes        data_;
+        typename LayoutType::ColTypes   data_;
         bitset<column_count>            changes_;
         bool                            change_tracking_ = false;
 
@@ -583,7 +588,7 @@ namespace bcsv {
        
                                     template<size_t Index = 0>
         void                        clear();
-        const LayoutType&           layout() const noexcept         { return layout_; }
+        const LayoutType&           layout() const noexcept         { return layout_; }  // Reconstruct facade
         bool                        hasAnyChanges() const noexcept  { if(change_tracking_) { return changes_.any(); } else { return true; } } // defaults to true if change tracking is disabled
         void                        trackChanges(bool enable)       { change_tracking_ = enable; }
         bool                        tracksChanges() const noexcept  { return change_tracking_; }

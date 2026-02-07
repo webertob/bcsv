@@ -29,75 +29,75 @@
 namespace bcsv {
 
     // ========================================================================
-    // Layout Implementation
+    // Layout::Data Implementation
     // ========================================================================
 
-    inline void Layout::checkRange(size_t index) const {
-        assert(column_names_.size() == column_types_.size());
-        assert(column_names_.size() == column_index_.size());
+    inline Layout::Data::Data() {
+        callbacks_.reserve(64);  // Reserve typical capacity to avoid early reallocations
+    }
 
+    inline Layout::Data::Data(const Data& other)
+        : callbacks_()          // Don't copy callbacks - new Data has no observers
+        , column_names_(other.column_names_)
+        , column_index_(other.column_index_)
+        , column_types_(other.column_types_)
+    {
+        callbacks_.reserve(64);
+    }
+
+    inline void Layout::Data::rebuildColumnIndex() {
+        column_index_.clear();
+        column_index_.build(column_names_);
+    }
+
+    inline void Layout::Data::checkRange(size_t index) const {
         if constexpr (RANGE_CHECKING) {
-            if (index >= columnCount()) {
-                throw std::out_of_range("Layout::Column index out of range");
+            if (index >= column_types_.size()) {
+                throw std::out_of_range("Layout::Data::Column index out of range");
             }
         }
     }
 
-    // Implementation included inline for header-only library
-    inline Layout::Layout(const std::vector<ColumnDefinition>& columns) {
-        setColumns(columns);
-    }
-    
-    inline Layout::Layout(const std::vector<std::string>& columnNames, const std::vector<ColumnType>& columnTypes) {
-        setColumns(columnNames, columnTypes);
+    inline const std::string& Layout::Data::columnName(size_t index) const {
+        checkRange(index);
+        return column_names_[index];
     }
 
-    inline void Layout::addColumn(ColumnDefinition column, size_t position) {
-        if (columnCount() >= MAX_COLUMN_COUNT) [[unlikely]] {
+    inline ColumnType Layout::Data::columnType(size_t index) const {
+        checkRange(index);
+        return column_types_[index];
+    }
+
+    inline void Layout::Data::addColumn(ColumnDefinition column, size_t position) {
+        if (column_types_.size() >= MAX_COLUMN_COUNT) [[unlikely]] {
             throw std::runtime_error("Cannot exceed maximum column count");
         }
 
         // if position is past the end or at the end of the current layout we simply append to the end.
-        position = std::min(position, columnCount());
+        position = std::min(position, column_types_.size());
 
         column_index_.insert(column.name, position);
-        column_names_.insert(column_names_.begin() + position, std::move(column.name));
+        column_names_.insert(column_names_.begin() + position, column.name);
         column_types_.insert(column_types_.begin() + position, column.type);
-    }
-    
-    inline void Layout::clear() {
-        column_names_.clear();
-        column_index_.clear();
-        column_types_.clear();
+        
+        // Notify observers
+        notifyAddColumn(position, column.type);
     }
 
-    /**
-     * @brief Check if this layout is compatible with another for data transfer
-     * @param other The other layout to check compatibility with
-     * @return true if data can be safely transferred between layouts
-     */
-    template<typename OtherLayout>
-    inline bool Layout::isCompatible(const OtherLayout& other) const {
-        const size_t count = columnCount();
-        if (count != other.columnCount()) {
-            return false;
-        }
-
-         // Element-wise comparison of column types (names can differ but types must match)
-        return std::memcmp(column_types_.data(), other.columnTypes().data(), count * sizeof(ColumnType)) == 0;
-    }
-
-    inline void Layout::removeColumn(size_t index) {
+    inline void Layout::Data::removeColumn(size_t index) {
         if (index >= column_names_.size()) {
-            throw std::out_of_range("Layout::removeColumn: index " + std::to_string(index) + " out of range");
+            throw std::out_of_range("Layout::Data::removeColumn: index " + std::to_string(index) + " out of range");
         }
 
         column_index_.remove(column_names_[index]);
         column_names_.erase(column_names_.begin() + index);
         column_types_.erase(column_types_.begin() + index);
+        
+        // Notify observers
+        notifyRemoveColumn(index);
     }
 
-    inline void Layout::setColumnName(size_t index, std::string name) {
+    inline void Layout::Data::setColumnName(size_t index, std::string name) {
         checkRange(index);
         if (column_names_[index] == name) {
             // NOP if name is unchanged
@@ -106,14 +106,26 @@ namespace bcsv {
         if(!column_index_.rename(column_names_[index], name)) [[unlikely]] {
             throw std::runtime_error("Column name '" + name + "' already exists or rename failed");
         }
-        column_names_[index] = name;
+        column_names_[index] = std::move(name);
+        // Note: Name changes don't trigger notifications (as per design doc)
     }
 
-    inline void Layout::setColumns(const std::vector<ColumnDefinition>& columns)  {
+    inline void Layout::Data::setColumnType(size_t index, ColumnType type) {
+        checkRange(index);
+        ColumnType oldType = column_types_[index];
+        if (oldType == type) {
+            return;  // No change
+        }
+        column_types_[index] = type;
+        
+        // Notify observers
+        notifyChangeType(index, oldType, type);
+    }
+
+    inline void Layout::Data::setColumns(const std::vector<ColumnDefinition>& columns) {
         clear();
 
         if (columns.size() == 0) {
-            // nothing to do
             return;
         }
 
@@ -126,35 +138,138 @@ namespace bcsv {
             column_names_[i] = columns[i].name;
             column_types_[i] = columns[i].type;
         }
-        column_index_.build(column_names_); // build index after bulk insertion
+        column_index_.build(column_names_);
+        
+        // Note: Bulk setColumns doesn't trigger individual notifications
+        // (too many notifications for initialization)
     }
 
-    inline void Layout::setColumns(const std::vector<std::string>& columnNames, const std::vector<ColumnType>& columnTypes) {
+    inline void Layout::Data::setColumns(const std::vector<std::string>& columnNames, 
+                                         const std::vector<ColumnType>& columnTypes) {
         if (columnNames.size() != columnTypes.size()) {
             throw std::invalid_argument("Column names and types size mismatch");
         }
         clear();
 
         if (columnNames.size() == 0) {
-            // nothing to do
             return;
         }
 
         // Prepare storage
         column_index_.reserve(columnNames.size());
-        column_names_ = columnNames; // we can bulk assign names since we know the size in advance, types will be inserted one by one to build the index correctly
-        column_types_ = columnTypes; // we can bulk assign types since we know the size in advance, names will be inserted one by one to build the index correctly
-        column_index_.build(column_names_); // build index after bulk assignment
+        column_names_ = columnNames;
+        column_types_ = columnTypes;
+        column_index_.build(column_names_);
+        
+        // Note: Bulk setColumns doesn't trigger individual notifications
     }
 
-    inline void Layout::setColumnType(size_t index, ColumnType type) {
-        checkRange(index);
-        column_types_[index] = type;
+    
+    /**
+     * @brief Check if this layout is compatible with another for data transfer
+     * @param other The other layout to check compatibility with
+     * @return true if data can be safely transferred between layouts
+     * 
+     * Supports: Layout, LayoutStatic, Layout::Data, shared_ptr<Layout::Data>
+     */
+    inline bool Layout::Data::isCompatible(const Data& other) const {
+        if (this == &other) {
+            return true;
+        }
+        if (columnCount() != other.columnCount()) {
+            return false;
+        }
+        return std::memcmp(column_types_.data(), other.column_types_.data(), columnCount() * sizeof(ColumnType)) == 0;
+    }
+    
+
+    inline void Layout::Data::clear() {
+        column_names_.clear();
+        column_index_.clear();
+        column_types_.clear();
+        // Note: clear() doesn't trigger notifications
+    }
+
+    inline void Layout::Data::registerCallback(void* owner, Callbacks callbacks) {
+        callbacks_.emplace_back(owner, std::move(callbacks));
+    }
+
+    inline void Layout::Data::unregisterCallback(void* owner) {
+        auto it = std::find_if(callbacks_.begin(), callbacks_.end(),
+            [owner](const auto& p) { return p.first == owner; });
+        if (it != callbacks_.end()) {
+            std::swap(*it, callbacks_.back());
+            callbacks_.pop_back();  // O(1) removal
+        }
+    }
+
+    inline void Layout::Data::notifyAddColumn(size_t index, ColumnType type) {
+        for (auto& [owner, cb] : callbacks_) {
+            if (cb.addColumn) {
+                cb.addColumn(index, type);
+            }
+        }
+    }
+
+    inline void Layout::Data::notifyRemoveColumn(size_t index) {
+        for (auto& [owner, cb] : callbacks_) {
+            if (cb.removeColumn) {
+                cb.removeColumn(index);
+            }
+        }
+    }
+
+    inline void Layout::Data::notifyChangeType(size_t index, ColumnType oldType, ColumnType newType) {
+        for (auto& [owner, cb] : callbacks_) {
+            if (cb.changeType) {
+                cb.changeType(index, oldType, newType);
+            }
+        }
+    }
+
+    // ========================================================================
+    // Layout Implementation
+    // ========================================================================
+
+    // Implementation included inline for header-only library
+    inline Layout::Layout(const std::vector<ColumnDefinition>& columns) 
+        : data_(std::make_shared<Data>()) {
+        data_->setColumns(columns);
+    }
+    
+    inline Layout::Layout(const std::vector<std::string>& columnNames, 
+                         const std::vector<ColumnType>& columnTypes)
+        : data_(std::make_shared<Data>()) {
+        data_->setColumns(columnNames, columnTypes);
+    }
+
+    inline Layout Layout::clone() const {
+        auto new_data = std::make_shared<Data>(*data_);
+        return Layout(new_data);
+    }
+
+    template<typename OtherLayout>
+    inline bool Layout::isCompatible(const OtherLayout& other) const {
+        // Fast path: if other is same Layout type, compare shared_ptr pointers
+        using DecayedType = std::decay_t<OtherLayout>;
+        if constexpr (std::is_same_v<DecayedType, Layout>) {
+            // Pointer equality check - O(1) when sharing same data
+            if (data_ == other.data_) 
+                return true;
+            else
+                return data_->isCompatible(*other.data_);
+        } else if constexpr (requires { other.columnTypes(); }) {
+            if(columnTypes().size() != other.columnTypes().size()) {
+                return false;
+            } 
+            return memcmp(columnTypes().data(), other.columnTypes().data(), columnTypes().size() * sizeof(ColumnType)) == 0;   
+        }
+        return false;
     }
 
     template<typename OtherLayout>
     inline Layout& Layout::operator=(const OtherLayout& other) {
-        clear();
+        data_->clear();
         size_t size = other.columnCount();
         
         // We can reuse setColumns for a bulk import which handles 
@@ -166,8 +281,74 @@ namespace bcsv {
             cols.push_back({other.columnName(i), other.columnType(i)});
         }
         
-        setColumns(cols);
+        data_->setColumns(cols);
         return *this;
+    }
+
+
+
+
+    // ========================================================================
+    // LayoutStatic::Data Implementation
+    // ========================================================================
+
+    template<typename... ColumnTypes>
+    inline LayoutStatic<ColumnTypes...>::Data::Data() {
+        column_index_.clear(); // Initialize with default column names
+        for(auto it = column_index_.begin(); it != column_index_.end(); ++it) {
+            column_names_[it->second] = it->first;
+        }
+    }
+
+    template<typename... ColumnTypes>
+    inline LayoutStatic<ColumnTypes...>::Data::Data(const std::array<std::string, sizeof...(ColumnTypes)>& columnNames) 
+        : column_names_(columnNames)
+    {
+        column_index_.build(column_names_);
+    }
+
+    template<typename... ColumnTypes>
+    inline void LayoutStatic<ColumnTypes...>::Data::clear() {
+        column_index_.clear(); // resets all column names to their default names
+        for(auto it = column_index_.begin(); it != column_index_.end(); ++it) {
+            column_names_[it->second] = it->first;
+        }
+    }
+
+    template<typename... ColumnTypes>
+    inline const std::string& LayoutStatic<ColumnTypes...>::Data::columnName(size_t index) const {
+        if constexpr (RANGE_CHECKING) {
+            if (index >= sizeof...(ColumnTypes)) {
+                throw std::out_of_range("LayoutStatic::Data::columnName: index out of range");
+            }
+        }
+        return column_names_[index];
+    }
+
+    template<typename... ColumnTypes>
+    inline void LayoutStatic<ColumnTypes...>::Data::setColumnName(size_t index, std::string name) {
+        if constexpr (RANGE_CHECKING) {
+            if (index >= sizeof...(ColumnTypes)) {
+                throw std::out_of_range("LayoutStatic::Data::setColumnName: index out of range");
+            }
+        }
+        
+        if(!column_index_.rename(column_names_[index], name)) [[unlikely]] {
+            throw std::runtime_error("Column name '" + name + "' already exists or rename failed");
+        }
+        column_names_[index] = std::move(name);
+    }
+
+    template<typename... ColumnTypes>
+    template<typename Container>
+    inline void LayoutStatic<ColumnTypes...>::Data::setColumnNames(const Container& names, size_t offset) {
+        if (names.size() + offset != sizeof...(ColumnTypes)) {
+            throw std::out_of_range("LayoutStatic::Data::setColumnNames() size mismatch");
+        }
+        for(size_t i = 0; i < names.size(); ++i) {
+            column_names_[i + offset] = names[i];
+        }
+        column_index_.build(column_names_); // build index after bulk insertion
     }
 
     // ========================================================================
@@ -175,7 +356,7 @@ namespace bcsv {
     // ========================================================================
 
     template<typename... ColumnTypes>
-    inline constexpr void LayoutStatic<ColumnTypes...>::checkRange(size_t index) const {
+    inline void LayoutStatic<ColumnTypes...>::checkRange(size_t index) const {
         if constexpr (RANGE_CHECKING) {
             if (index >= sizeof...(ColumnTypes)) {
                 throw std::out_of_range("LayoutStatic::Column index out of range");
@@ -185,29 +366,33 @@ namespace bcsv {
     
     template<typename... ColumnTypes>
     inline LayoutStatic<ColumnTypes...>::LayoutStatic() 
+        : data_(std::make_shared<Data>())
     {
         // we still require that ColumnTypes are part of ValueType
         static_assert((detail::is_in_variant_v<ColumnTypes, ValueType> && ...), "ColumnTypes must be present in bcsv::ValueType.");
-        clear();
+    }
+
+    template<typename... ColumnTypes>
+    inline LayoutStatic<ColumnTypes...>::LayoutStatic(DataPtr data)
+        : data_(std::move(data))
+    {
+        static_assert((detail::is_in_variant_v<ColumnTypes, ValueType> && ...), "ColumnTypes must be present in bcsv::ValueType.");
     }
 
     template<typename... ColumnTypes>
     inline LayoutStatic<ColumnTypes...>::LayoutStatic(const std::array<std::string, sizeof...(ColumnTypes)>& columnNames) 
+        : data_(std::make_shared<Data>(columnNames))
     {
         // we still require that ColumnTypes are part of ValueType
         static_assert((detail::is_in_variant_v<ColumnTypes, ValueType> && ...), "ColumnTypes must be present in bcsv::ValueType.");
-        setColumnNames(columnNames);
     }
 
-    /* column count and types are fixed, simply reset names to default */
     template<typename... ColumnTypes>
-    inline void LayoutStatic<ColumnTypes...>::clear() {
-        column_index_.clear(); // resets all column names to their default names
-        for(auto it = column_index_.begin(); it != column_index_.end(); ++it) {
-            column_names_[it->second] = it->first;
-        }
+    inline LayoutStatic<ColumnTypes...> LayoutStatic<ColumnTypes...>::clone() const {
+        auto new_data = std::make_shared<Data>(*data_);
+        return LayoutStatic(new_data);
     }
-                  
+
     template<typename... ColumnTypes>
     template<typename OtherLayout>
     inline bool LayoutStatic<ColumnTypes...>::isCompatible(const OtherLayout& other) const {
@@ -219,40 +404,20 @@ namespace bcsv {
         }
 
         // Compile-time dispatch based on OtherLayout type
-        if constexpr (requires { typename OtherLayout::Types; }) {            
+        if constexpr (requires { typename OtherLayout::ColTypes; }) {            
             // Compile-time optimization: if types are identical, always compatible
-            if constexpr (std::is_same_v<std::tuple<ColumnTypes...>, typename OtherLayout::Types>) {
+            if constexpr (std::is_same_v<std::tuple<ColumnTypes...>, typename OtherLayout::ColTypes>) {
                 return true;
             } else {
                 return false;
             }
         } else {
-            // Types differ: use memcmp for fast comparison of constexpr arrays
-            return std::memcmp(column_types_.data(), OtherLayout::column_types_.data(), N * sizeof(ColumnType)) == 0;
+            // Types differ: use memcmp for fast comparison
+            const auto& other_types = other.columnTypes();
+            return std::memcmp(column_types_.data(), other_types.data(), N * sizeof(ColumnType)) == 0;
         }
     }
 
-    template<typename... ColumnTypes>
-    inline void LayoutStatic<ColumnTypes...>::setColumnName(size_t index, std::string name) {
-        checkRange(index);
-        
-        if(!column_index_.rename(column_names_[index], name)) [[unlikely]] {
-            throw std::runtime_error("Column name '" + name + "' already exists or rename failed");
-        }
-        column_names_[index] = name;
-    }
-
-    template<typename... ColumnTypes>
-    template<typename Container>
-    inline void LayoutStatic<ColumnTypes...>::setColumnNames(const Container& names, size_t offset) {      
-        if (names.size() + offset != columnCount()) {
-            throw std::out_of_range("LayoutStatic<ColumnTypes...>::setColumnNames() out of range");
-        }
-        for(size_t i = 0; i < names.size(); ++i) {
-            column_names_[i + offset] = names[i];
-        }
-        column_index_.build(column_names_); // build index after bulk insertion
-    }   
 
 
     template<typename... ColumnTypes>
@@ -273,7 +438,7 @@ namespace bcsv {
             for(size_t i = 0; i < N; ++i) {
                 new_names[i] = other.columnName(i);
             }
-            this->setColumnNames(new_names);
+            data_->setColumnNames(new_names);
         }
         return *this;
     }

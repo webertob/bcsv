@@ -37,10 +37,66 @@ namespace bcsv {
     // Row Implementation
     // ========================================================================
 
-    inline Row::Row(const Layout &layout, bool trackChangesEnabled)
-        : layout_(layout), offsets_(layout.columnCount()), offset_var_(0), data_(),  changes_(0)
+    // Helper: Construct default value at memory location based on ColumnType
+    inline void constructDefaultAt(std::byte* ptr, ColumnType type) {
+        switch (type) {
+            case ColumnType::BOOL:
+                new (ptr) bool(defaultValueT<bool>());
+                break;
+            case ColumnType::UINT8:
+                new (ptr) uint8_t(defaultValueT<uint8_t>());
+                break;
+            case ColumnType::UINT16:
+                new (ptr) uint16_t(defaultValueT<uint16_t>());
+                break;
+            case ColumnType::UINT32:
+                new (ptr) uint32_t(defaultValueT<uint32_t>());
+                break;
+            case ColumnType::UINT64:
+                new (ptr) uint64_t(defaultValueT<uint64_t>());
+                break;
+            case ColumnType::INT8:
+                new (ptr) int8_t(defaultValueT<int8_t>());
+                break;
+            case ColumnType::INT16:
+                new (ptr) int16_t(defaultValueT<int16_t>());
+                break;
+            case ColumnType::INT32:
+                new (ptr) int32_t(defaultValueT<int32_t>());
+                break;
+            case ColumnType::INT64:
+                new (ptr) int64_t(defaultValueT<int64_t>());
+                break;
+            case ColumnType::FLOAT:
+                new (ptr) float(defaultValueT<float>());
+                break;
+            case ColumnType::DOUBLE:
+                new (ptr) double(defaultValueT<double>());
+                break;
+            case ColumnType::STRING:
+                new (ptr) std::string(defaultValueT<std::string>());
+                break;
+            default: [[unlikely]]
+                throw std::runtime_error("Unknown column type");
+        }
+    }
+
+    inline Row::Row(const Layout& layout, bool trackChangesEnabled)
+        : layout_(layout)
+        , offsets_(layout.columnCount())
+        , offset_var_(0)
+        , data_()
+        , changes_(0)
     {
-        size_t columnCount = layout.columnCount();
+        // Register as observer for layout changes
+        layout_.registerCallback(this, {
+                [this](size_t i, ColumnType t) { onAddColumn(i, t); },
+                [this](size_t i) { onRemoveColumn(i); },
+                [this](size_t i, ColumnType ot, ColumnType nt) { onChangeColumnType(i, ot, nt); }
+            }
+        );
+
+        size_t columnCount = layout_.columnCount();
 
         // Build row's internal data structures based on layout
         // Calculate offsets considering alignment requirements
@@ -111,50 +167,7 @@ namespace bcsv {
         // construct all types within data_ using their default values
         data_.resize(offset);
         for(size_t i = 0; i < columnCount; ++i) {
-            uint32_t offset = offsets_[i];
-            std::byte* ptr = &data_[offset];
-            ColumnType type = layout_.columnType(i);
-            switch (type) {
-                case ColumnType::BOOL:
-                    new (ptr) bool(defaultValueT<bool>());
-                    break;
-                case ColumnType::UINT8:
-                    new (ptr) uint8_t(defaultValueT<uint8_t>());
-                    break;
-                case ColumnType::UINT16:
-                    new (ptr) uint16_t(defaultValueT<uint16_t>());
-                    break;
-                case ColumnType::UINT32:
-                    new (ptr) uint32_t(defaultValueT<uint32_t>());  
-                    break;
-                case ColumnType::UINT64:
-                    new (ptr) uint64_t(defaultValueT<uint64_t>());
-                    break;
-                case ColumnType::INT8:
-                    new (ptr) int8_t(defaultValueT<int8_t>());
-                    break;
-                case ColumnType::INT16:
-                    new (ptr) int16_t(defaultValueT<int16_t>());
-                    break;
-                case ColumnType::INT32:
-                    new (ptr) int32_t(defaultValueT<int32_t>());
-                    break;
-                case ColumnType::INT64:
-                    new (ptr) int64_t(defaultValueT<int64_t>());
-                    break;
-                case ColumnType::FLOAT:
-                    new (ptr) float(defaultValueT<float>());
-                    break;  
-                case ColumnType::DOUBLE:
-                    new (ptr) double(defaultValueT<double>());
-                    break;  
-                case ColumnType::STRING:
-                    new (ptr) std::string(defaultValueT<std::string>());
-                    break;
-                default: [[unlikely]]
-                    throw std::runtime_error("Unknown column type");
-            }
-            
+            constructDefaultAt(&data_[offsets_[i]], layout_.columnType(i));
         }        
         trackChanges(trackChangesEnabled);
 
@@ -167,12 +180,26 @@ namespace bcsv {
     }
 
     inline Row::Row(const Row& other)
-        : layout_(other.layout_)
+        : layout_(other.layout_)  // Share layout (shallow copy of shared_ptr inside)
         , offsets_(other.offsets_)
         , offset_var_(other.offset_var_)
         , data_(other.data_)
         , changes_(other.changes_)
     {
+        // Register as observer for layout changes (independent from 'other')
+        layout_.registerCallback(this, {
+                [this](size_t i, ColumnType t) { onAddColumn(i, t); },
+                [this](size_t i) { onRemoveColumn(i); },
+                [this](size_t i, ColumnType ot, ColumnType nt) { onChangeColumnType(i, ot, nt); }
+            }
+        );
+
+        // Handle change tracking: if other tracks changes, ensure we do too and mark all changed
+        if (other.tracksChanges()) {
+            trackChanges(true);
+            changes_.set(); // Mark all as changed (conservative for copies)
+        }
+
         // Now we need to perform a deep-copy for strings, as they allocate memory themselves
         for(size_t i = 0; i < layout_.columnCount(); ++i) {
             ColumnType type = layout_.columnType(i);
@@ -185,49 +212,41 @@ namespace bcsv {
         }
     }
 
-    inline Row& Row::operator=(const Row& other) noexcept
+    inline Row::Row(Row&& other) noexcept
+        : layout_(std::move(other.layout_))
+        , offsets_(std::move(other.offsets_))
+        , offset_var_(other.offset_var_)
+        , data_(std::move(other.data_))
+        , changes_(std::move(other.changes_))
     {
-        if (this != &other) {
-            // Destroy existing strings before overwriting data_
-            for(size_t i = 0; i < layout_.columnCount(); ++i) {
-                if(layout_.columnType(i) == ColumnType::STRING) {
-                    std::byte* ptr = &data_[offsets_[i]];
-                    reinterpret_cast<std::string*>(ptr)->~basic_string();
-                }
-            }
-
-            // Copy layout and metadata
-            layout_ = other.layout_;
-            offsets_ = other.offsets_;
-            offset_var_ = other.offset_var_;
-            data_ = other.data_;  // Shallow copy (includes string objects)
-            changes_ = other.changes_;
-
-            // Reconstruct strings for deep copy
-            for(size_t i = 0; i < layout_.columnCount(); ++i) {
-                if(layout_.columnType(i) == ColumnType::STRING) {
-                    std::byte* ptrThis = &data_[offsets_[i]];
-                    const std::byte* ptrOther = &other.data_[offsets_[i]];
-                    new (ptrThis) std::string(*reinterpret_cast<const std::string*>(ptrOther)); // placement new with copy constructor
-                }
-            }
+        // Critical: Must re-register callbacks with new 'this' pointer
+        // The layout was moved, but callbacks still point to &other
+        if (!data_.empty()) {  // Skip if moved-from object
+            other.layout_.unregisterCallback(&other);
+            layout_.registerCallback(this, {
+                [this](size_t i, ColumnType t) { onAddColumn(i, t); },
+                [this](size_t i) { onRemoveColumn(i); },
+                [this](size_t i, ColumnType ot, ColumnType nt) { onChangeColumnType(i, ot, nt); }
+            });
         }
-        return *this;
     }
 
-    inline Row::~Row()
+        inline Row::~Row()
     {
-        // Safety check for moved-from objects (data_ is empty after move)
-        if(data_.empty()) 
+        // Check if this is a moved-from object
+        if (data_.empty()) {
             return;
+        }
 
-        // Manually call destructors for those types that need it (e.g. strings as they allocate memory themselves)
+        // Unregister from layout callbacks
+        layout_.unregisterCallback(this);
+
+        // Manually call destructors for strings (they allocate memory)
         for(size_t i = 0; i < layout_.columnCount(); ++i) {
             uint32_t offset = offsets_[i];
             std::byte* ptr = &data_[offset];
             ColumnType type = layout_.columnType(i);
             if(type == ColumnType::STRING) {
-                // Strings need destructor called
                 reinterpret_cast<std::string*>(ptr)->~string();
             }
         }
@@ -236,55 +255,17 @@ namespace bcsv {
     /** Clear the row to its default state (default values) */
     inline void Row::clear()
     {
-        for(size_t i = 0; i < layout_.columnCount(); ++i) {
-            uint32_t offset = offsets_[i];
-            std::byte* ptr = &data_[offset];
-            ColumnType type = layout_.columnType(i);
-            switch (type) {
-                case ColumnType::BOOL:
-                    *reinterpret_cast<bool*>(ptr) = defaultValueT<bool>();
-                    break;
-                case ColumnType::UINT8:
-                    *reinterpret_cast<uint8_t*>(ptr) = defaultValueT<uint8_t>();
-                    break;
-                case ColumnType::UINT16:
-                    *reinterpret_cast<uint16_t*>(ptr) = defaultValueT<uint16_t>();
-                    break;
-                case ColumnType::UINT32:
-                    *reinterpret_cast<uint32_t*>(ptr) = defaultValueT<uint32_t>();  
-                    break;
-                case ColumnType::UINT64:
-                    *reinterpret_cast<uint64_t*>(ptr) = defaultValueT<uint64_t>();
-                    break;
-                case ColumnType::INT8:
-                    *reinterpret_cast<int8_t*>(ptr) = defaultValueT<int8_t>();
-                    break;
-                case ColumnType::INT16:
-                    *reinterpret_cast<int16_t*>(ptr) = defaultValueT<int16_t>();
-                    break;
-                case ColumnType::INT32:
-                    *reinterpret_cast<int32_t*>(ptr) = defaultValueT<int32_t>();
-                    break;
-                case ColumnType::INT64:
-                    *reinterpret_cast<int64_t*>(ptr) = defaultValueT<int64_t>();
-                    break;
-                case ColumnType::FLOAT:
-                    *reinterpret_cast<float*>(ptr) = defaultValueT<float>();
-                    break;  
-                case ColumnType::DOUBLE:
-                    *reinterpret_cast<double*>(ptr) = defaultValueT<double>();
-                    break;  
-                case ColumnType::STRING:
-                    *reinterpret_cast<std::string*>(ptr) = defaultValueT<std::string>();
-                    break;
-                default: [[unlikely]]
-                    throw std::runtime_error("Unknown column type");
-            }
-        }
-        if(tracksChanges()) {
-            changes_.set(); // mark everything as changed
-        }
+        // Use visitor to set all columns to their default values
+        visit([](size_t, auto& value) {
+            using T = std::decay_t<decltype(value)>;
+            value = defaultValueT<T>();
+        });
+        
+        // Visitor marks all as changed, which is correct for clear()
     }
+
+
+
     
     // =========================================================================
     // 1. RAW POINTER ACCESS (caller must ensure type safety)
@@ -1036,6 +1017,170 @@ namespace bcsv {
         }
     }
 
+    // ========================================================================
+    // Observer Callbacks (Layout Mutation Notifications)
+    // ========================================================================
+
+    inline void Row::onAddColumn([[maybe_unused]] size_t index, [[maybe_unused]] ColumnType type) {
+        // Column added to layout - need to resize offsets and data
+        // This is a structural change that invalidates current data layout
+        
+        // 1. Destroy existing string objects
+        for(size_t i = 0; i < offsets_.size(); ++i) {
+            if(layout_.columnType(i) == ColumnType::STRING) {
+                reinterpret_cast<std::string*>(&data_[offsets_[i]])->~string();
+            }
+        }
+        
+        // 2. Rebuild offsets based on new layout
+        offsets_.resize(layout_.columnCount());
+        offset_var_ = 0;
+        for(size_t i = 0; i < layout_.columnCount(); ++i) {
+            offsets_[i] = offset_var_;
+            offset_var_ += binaryFieldLength(layout_.columnType(i));
+        }
+        
+        // 3. Resize data buffer
+        data_.resize(offset_var_);
+        
+        // 4. Construct new objects with placement new
+        for(size_t i = 0; i < layout_.columnCount(); ++i) {
+            constructDefaultAt(&data_[offsets_[i]], layout_.columnType(i));
+        }
+        
+        // 5. Mark all as changed if tracking
+        if(tracksChanges()) {
+            changes_.set();
+        }
+    }
+
+    inline void Row::onRemoveColumn([[maybe_unused]] size_t index) {
+        // Column removed from layout - need to rebuild structure
+        
+        // 1. Destroy existing string objects
+        for(size_t i = 0; i < offsets_.size(); ++i) {
+            if(layout_.columnType(i) == ColumnType::STRING) {
+                reinterpret_cast<std::string*>(&data_[offsets_[i]])->~string();
+            }
+        }
+        
+        // 2. Rebuild offsets based on new layout
+        offsets_.resize(layout_.columnCount());
+        offset_var_ = 0;
+        for(size_t i = 0; i < layout_.columnCount(); ++i) {
+            offsets_[i] = offset_var_;
+            offset_var_ += binaryFieldLength(layout_.columnType(i));
+        }
+        
+        // 3. Resize data buffer
+        data_.resize(offset_var_);
+        
+        // 4. Construct new objects with placement new
+        for(size_t i = 0; i < layout_.columnCount(); ++i) {
+            constructDefaultAt(&data_[offsets_[i]], layout_.columnType(i));
+        }
+        
+        // 5. Mark all as changed if tracking
+        if(tracksChanges()) {
+            changes_.set();
+        }
+    }
+
+    inline void Row::onChangeColumnType([[maybe_unused]] size_t index, [[maybe_unused]] ColumnType oldType, [[maybe_unused]] ColumnType newType) {
+        // Column type changed - need to rebuild everything
+        
+        // 1. Destroy existing string objects
+        for(size_t i = 0; i < offsets_.size(); ++i) {
+            if(layout_.columnType(i) == ColumnType::STRING) {
+                reinterpret_cast<std::string*>(&data_[offsets_[i]])->~string();
+            }
+        }
+        
+        // 2. Rebuild offsets based on new layout
+        offsets_.resize(layout_.columnCount());
+        offset_var_ = 0;
+        for(size_t i = 0; i < layout_.columnCount(); ++i) {
+            offsets_[i] = offset_var_;
+            offset_var_ += binaryFieldLength(layout_.columnType(i));
+        }
+        
+        // 3. Resize data buffer
+        data_.resize(offset_var_);
+        
+        // 4. Construct new objects with placement new
+        for(size_t i = 0; i < layout_.columnCount(); ++i) {
+            constructDefaultAt(&data_[offsets_[i]], layout_.columnType(i));
+        }
+        
+        // 5. Mark all as changed if tracking
+        if(tracksChanges()) {
+            changes_.set();
+        }
+    }
+
+    inline Row& Row::operator=(const Row& other)
+    {
+        if(this == &other) {
+            return *this; // self-assignment check
+        }
+
+        // Require compatible layouts - incompatible assignments not supported
+        if(!layout_.isCompatible(other.layout())) [[unlikely]] {
+            throw std::invalid_argument(
+                "Row::operator=: Cannot assign between incompatible layouts. "
+                "Layouts must have the same column types in the same order."
+            );
+        }
+        
+        // Use visitor to copy values and detect actual changes
+        other.visit([this](size_t i, const auto& newValue) {
+            using T = std::decay_t<decltype(newValue)>;
+            
+            // Get current value for comparison
+            const T& currentValue = this->get<T>(i);
+            
+            // Check if value actually changed
+            if(currentValue != newValue) {
+                // Assign new value (works for all types including strings)
+                *reinterpret_cast<T*>(&data_[offsets_[i]]) = newValue;
+                if (tracksChanges()) {
+                    changes_[i] = true; // Mark this column as changed
+                }
+            } 
+        });
+        
+        return *this;
+    }
+
+    inline Row& Row::operator=(Row&& other) noexcept 
+    {
+        if (this == &other) return *this;
+        
+        // Clean up current state
+        layout_.unregisterCallback(this);
+        for(size_t i = 0; i < layout_.columnCount(); ++i) {
+            if(layout_.columnType(i) == ColumnType::STRING) {
+                reinterpret_cast<std::string*>(&data_[offsets_[i]])->~string();
+            }
+        }
+        
+        // Move other's data
+        layout_ = std::move(other.layout_);
+        offsets_ = std::move(other.offsets_);
+        offset_var_ = other.offset_var_;
+        data_ = std::move(other.data_);
+        changes_ = std::move(other.changes_);
+        
+        // Re-register with new this pointer
+        other.layout_.unregisterCallback(&other);
+        layout_.registerCallback(this, {
+            [this](size_t i, ColumnType t) { onAddColumn(i, t); },
+            [this](size_t i) { onRemoveColumn(i); },
+            [this](size_t i, ColumnType ot, ColumnType nt) { onChangeColumnType(i, ot, nt); }
+        });
+        
+        return *this;
+    }
 
     // ========================================================================
     // RowView Implementation
@@ -1470,7 +1615,7 @@ namespace bcsv {
 
     inline Row RowView::toRow() const
     {
-        Row row(layout_);
+        Row row(layout());
         try {
             row.deserializeFrom(buffer_);
         } catch (const std::exception& e) {
