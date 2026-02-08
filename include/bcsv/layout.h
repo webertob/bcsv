@@ -79,10 +79,15 @@ namespace bcsv {
          */
         class Data {
         public:
+            // Describes a single column transformation during layout update
+            struct Change {
+                uint16_t   index;     // Column index (post-transformation position for adds)
+                ColumnType oldType;   // Type before change (nullopt if column is being added)
+                ColumnType newType;   // Type after change (nullopt if column is being removed)
+            };
+
             struct Callbacks {
-                std::function<void(size_t, ColumnType)> addColumn;
-                std::function<void(size_t)> removeColumn;
-                std::function<void(size_t, ColumnType, ColumnType)> changeType;
+                std::function<void(const std::vector<Change>&)> update;  // Called BEFORE layout updates
             };
 
         private:
@@ -105,7 +110,7 @@ namespace bcsv {
 
             // ============================================================
             // Read-only accessors
-            // ============================================================
+            // ============================================================           
             size_t columnCount() const noexcept { return column_types_.size(); }
             size_t columnIndex(const std::string& name) const { return column_index_[name]; }
             const std::string& columnName(size_t index) const;
@@ -132,10 +137,8 @@ namespace bcsv {
             void unregisterCallback(void* owner);
 
         private:
-            // Notification methods (called internally after modifications)
-            void notifyAddColumn(size_t index, ColumnType type);
-            void notifyRemoveColumn(size_t index);
-            void notifyChangeType(size_t index, ColumnType oldType, ColumnType newType);
+            // Notification method (called internally before modifications)
+            void notifyUpdate(const std::vector<Change>& changes);
         };
 
         using DataPtr = std::shared_ptr<Data>;
@@ -177,7 +180,7 @@ namespace bcsv {
 
         // ============================================================
         // Layout information (facade - delegates to Data)
-        // ============================================================
+        // ============================================================        
         size_t columnCount() const noexcept { 
             return data_->columnCount(); 
         }

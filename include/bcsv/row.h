@@ -20,7 +20,6 @@
 #include "layout.h"
 #include "bitset.h"
 #include "byte_buffer.h"
-#include "row_visitors.h"  // Row visitor concepts and helpers
 
 namespace bcsv {
 
@@ -406,22 +405,23 @@ namespace bcsv {
     private:
         // Immutable after construction
         Layout                      layout_;               // Shared layout data with observer callbacks
-        std::vector<uint32_t>       offsets_;              // offsets into data_ to access actual data for each column. Considers types alignment requirements.
-        uint32_t                    offset_var_;           // offset into serilized buffer (wire), marking the beginning of variable-length section / size of the fixed section. Naive packed wire format (no alignment/padding).
-        
+         
         // Mutable data
         std::vector<std::byte>      data_;                 // continuous memory buffer to hold data (Note: We store string objects here too. But strings themselves are allocating additional memory elsewhere for their content.)
+        std::vector<std::byte*>     ptr_;                  // pointers into data_ for each column, set up according to layout and updated on layout changes (for efficient access without recalculating offsets every time)
         bitset<>                    changes_;              // change tracking
         /* change tracking i.e. for Zero-Order-Hold compression
         *  changes_[0:column_count  ] == true   indicates column i has been modified since last reset.
         *  changes_.empty()           == true   indicates change tracking is disabled.
         */
 
-        // Observer callbacks for layout changes
-        void onAddColumn(size_t index, ColumnType type);
-        void onRemoveColumn(size_t index);
-        void onChangeColumnType(size_t index, ColumnType oldType, ColumnType newType);
-    
+        // Observer callback for layout changes
+        void onLayoutUpdate(const std::vector<Layout::Data::Change>& changes);
+ 
+        //Depreceated: we are going to remove this in the next future, when moving to Serializer/Deserializer classes, as the Row class should be only responsible for in-memory data management, not serialization details. But for now we keep it here for simplicity.
+        std::vector<uint32_t>       offsets_;              // offsets into data_ to access actual data for each column. Considers types alignment requirements.
+        uint32_t                    offset_var_;           // offset into serilized buffer (wire), marking the beginning of variable-length section / size of the fixed section. Naive packed wire format (no alignment/padding).
+ 
     public:
         Row() = delete; // no default constructor, we always need a layout
         Row(const Layout& layout, bool trackChangesEnabled = false);
@@ -431,7 +431,7 @@ namespace bcsv {
         ~Row();
 
         void                        clear();
-        const Layout&               layout() const noexcept { return layout_; }
+        const Layout&               layout() const noexcept         { return layout_; }
         bool                        hasAnyChanges() const noexcept  { return !tracksChanges() || changes_.any(); } // defaults to true if change tracking is disabled
         void                        trackChanges(bool enable)       { if (enable) { changes_.resize(layout_.columnCount(), true); } else { changes_.resize(0); } }
         bool                        tracksChanges() const noexcept  { return !changes_.empty(); } 
@@ -462,21 +462,20 @@ namespace bcsv {
         void                        deserializeFrom(const std::span<const std::byte> buffer);
         void                        deserializeFromZoH(const std::span<const std::byte> buffer);
 
-        /** @brief Visit all columns with read-only access.
-         * Signature: (size_t index, const T& value)
-         * @see row.hpp for detailed documentation and examples
-         * @see row_visitors.h for concepts and helper types
-         */
-                                    template<typename Visitor>  // Const method naturally provides const access
+        /** @brief Visit columns with read-only access. @see row.hpp */
+                                    template<typename Visitor>
+        void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
+
+        /** @brief Visit all columns with read-only access. @see row.hpp */
+                                    template<typename Visitor>
         void                        visit(Visitor&& visitor) const;
 
-        /** @brief Visit all columns with mutable access and optional change tracking.
-         * Signature (fine-grained): (size_t index, T& value, bool& changed)
-         * Signature (legacy): (size_t index, T& value)
-         * @see row.hpp for detailed documentation and examples
-         * @see row_visitors.h for concepts and helper types
-         */
-                                    template<typename Visitor>  // Accepts both RowMutableVisitor and RowMutableVisitorWithTracking
+        /** @brief Visit columns with mutable access and change tracking. @see row.hpp */
+                                    template<typename Visitor>
+        void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1);
+
+        /** @brief Visit all columns with mutable access and change tracking. @see row.hpp */
+                                    template<typename Visitor>
         void                        visit(Visitor&& visitor);
 
         Row&                        operator=(const Row& other);               // Throws std::invalid_argument if layouts incompatible
@@ -488,12 +487,12 @@ namespace bcsv {
     */
     class RowView {
         // Immutable after construction
-        Layout                  layout_;  // Shared layout data (no callbacks needed for views)
-        std::vector<uint32_t>   offsets_;                    // offsets data buffer to access actual data for each column during serialization/deserialization (packed binary format, special handling for strings (variable length types))
-        uint32_t                offset_var_;                 // begin of variable section in buffer_     
+        Layout                  layout_;        // Shared layout data (no callbacks needed for views)
+        std::vector<uint32_t>   offsets_;       // offsets data buffer to access actual data for each column during serialization/deserialization (packed binary format, special handling for strings (variable length types))
+        uint32_t                offset_var_;    // begin of variable section in buffer_     
 
         // Mutable data
-        std::span<std::byte>  buffer_;                     // serilized data buffer (fixed + variable section, packed binary format)
+        std::span<std::byte>    buffer_;        // serilized data buffer (fixed + variable section, packed binary format)
 
     
     public:
@@ -524,17 +523,19 @@ namespace bcsv {
                                     template<typename T>
         bool                        set_from(size_t index, const T& value);
         
-        /** @brief Visit all columns with read-only access (zero-copy view).
-         * Signature: (size_t index, const T& value)
-         * @see row_visitors.h for concepts and helper types
-         */
+        /** @brief Visit columns with read-only access (zero-copy). @see row.hpp */
+                                    template<typename Visitor>
+        void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
+
+        /** @brief Visit all columns with read-only access (zero-copy). @see row.hpp */
                                     template<typename Visitor>
         void                        visit(Visitor&& visitor) const;
         
-        /** @brief Visit all columns with mutable access (primitives only).
-         * Strings are read-only. Change tracking parameter accepted but ignored.
-         * @see row_visitors.h for concepts and helper types
-         */
+        /** @brief Visit columns with mutable access (primitives only). @see row.hpp */
+                                    template<typename Visitor>
+        void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1);
+
+        /** @brief Visit all columns with mutable access (primitives only). @see row.hpp */
                                     template<typename Visitor>
         void                        visit(Visitor&& visitor);
         
@@ -556,18 +557,18 @@ namespace bcsv {
 
         // Helpers defining the layout of the wire format (serialized data)
         // serialized data: lengths/size of each column in [bytes]
-        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_lengths = { binaryFieldLength<ColumnTypes>()... };
+        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_lengths = { wireSizeOf<ColumnTypes>()... };
        
         // serialized data: offsets of each column in [bytes]
         static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_offsets = []() {
             size_t off = 0; 
             return std::array<size_t, sizeof...(ColumnTypes)>{ 
-                std::exchange(off, off + binaryFieldLength<ColumnTypes>())... 
+                std::exchange(off, off + wireSizeOf<ColumnTypes>())... 
             }; 
         }();
         
         // serialized data: offset to beginning of variable-length section in [bytes]
-        static constexpr size_t offset_var_ = (binaryFieldLength<ColumnTypes>() + ... + 0);
+        static constexpr size_t offset_var_ = (wireSizeOf<ColumnTypes>() + ... + 0);
 
     private:
         // Immutable after construction
@@ -638,21 +639,19 @@ namespace bcsv {
         void                        deserializeFrom(const std::span<const std::byte> buffer);
         void                        deserializeFromZoH(const std::span<const std::byte> buffer);
 
-        /** @brief Visit all columns with read-only access (compile-time optimized).
-         * Uses fold expressions for zero-overhead iteration.
-         * Signature: (size_t index, const T& value)
-         * @see row.hpp for detailed documentation
-         * @see row_visitors.h for concepts and helper types
-         */
+        /** @brief Visit columns with read-only access (compile-time). @see row.hpp */
+                                    template<typename Visitor>
+        void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
+
+        /** @brief Visit all columns with read-only access (compile-time). @see row.hpp */
                                     template<typename Visitor>
         void                        visit(Visitor&& visitor) const;
         
-        /** @brief Visit all columns with mutable access and change tracking (compile-time optimized).
-         * Signature (fine-grained): (size_t index, T& value, bool& changed)
-         * Signature (legacy): (size_t index, T& value)
-         * @see row.hpp for detailed documentation
-         * @see row_visitors.h for concepts and helper types
-         */
+        /** @brief Visit columns with mutable access and tracking (compile-time). @see row.hpp */
+                                    template<typename Visitor>
+        void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1);
+
+        /** @brief Visit all columns with mutable access and tracking (compile-time). @see row.hpp */
                                     template<typename Visitor>
         void                        visit(Visitor&& visitor);
 
@@ -689,18 +688,18 @@ namespace bcsv {
 
         // Helpers defining the layout of the wire format (serialized data)
         // serialized data: lengths/size of each column in [bytes]
-        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_lengths = { binaryFieldLength<ColumnTypes>()... };
+        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_lengths = { wireSizeOf<ColumnTypes>()... };
        
         // serialized data: offsets of each column in [bytes]
         static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_offsets = []() {
             size_t off = 0; 
             return std::array<size_t, sizeof...(ColumnTypes)>{ 
-                std::exchange(off, off + binaryFieldLength<ColumnTypes>())... 
+                std::exchange(off, off + wireSizeOf<ColumnTypes>())... 
             }; 
         }();
         
         // serialized data: offset to beginning of variable-length section in [bytes]
-        static constexpr size_t offset_var_ = (binaryFieldLength<ColumnTypes>() + ... + 0);
+        static constexpr size_t offset_var_ = (wireSizeOf<ColumnTypes>() + ... + 0);
 
 
     private:
@@ -770,18 +769,19 @@ namespace bcsv {
         RowStatic<ColumnTypes...>   toRow() const;
         bool                        validate() const noexcept;
 
-        /** @brief Visit all columns with read-only access (compile-time, zero-copy).
-         * Combines compile-time optimization with zero-copy string views.
-         * Signature: (size_t index, const T& value)
-         * @see row_visitors.h for concepts and helper types
-         */
+        /** @brief Visit columns with read-only access (compile-time, zero-copy). @see row.hpp */
+                                    template<typename Visitor>
+        void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
+
+        /** @brief Visit all columns with read-only access (compile-time, zero-copy). @see row.hpp */
                                     template<typename Visitor>
         void                        visit(Visitor&& visitor) const;
         
-        /** @brief Visit all columns with mutable access (compile-time, primitives only).
-         * Strings are read-only. No change tracking.
-         * @see row_visitors.h for concepts and helper types
-         */
+        /** @brief Visit columns with mutable access (compile-time, primitives only). @see row.hpp */
+                                    template<typename Visitor>
+        void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1);
+
+        /** @brief Visit all columns with mutable access (compile-time, primitives only). @see row.hpp */
                                     template<typename Visitor>
         void                        visit(Visitor&& visitor);
 

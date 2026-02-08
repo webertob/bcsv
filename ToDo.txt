@@ -62,7 +62,7 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
 
 [x] 8. Add visit() function to Row, RowStatic, RowView, RowViewStatic enable fast operations on the data 
 
-[x] 8.b. Exploit visit function to simplify code [EVALUATED - NO ACTION NEEDED]
+[x] 8.b: Exploit visit function to simplify code [EVALUATED - NO ACTION NEEDED]
         Analysis completed 2026-02-07. See Implementation_Visit()_Function.MD for details.
         Conclusions:
         - visit on single column? 
@@ -77,26 +77,62 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
         Decision: Keep current implementation. The switch/case in get(), set(), 
         and visit() serves different performance/API requirements. No changes needed.
 
-8.c. Refeactoring Row, Layout relation ship. 
+[x] 8.c: Refeactoring Row, Layout relation ship. 
     Currently Layout is member (owned by) Row. However we typically have multiple rows that share the same Layout. 
     This leads to a waste of memory, but also enforces us to check if layouts match between rows, hence slowing down operation between rows, which we most likley need when we do more complex delta encoding.
     Therefore I would prefere to have row just having a pointer to Layout. Such it would be easy to check if two rows share the same layout and reduces the amount of memory required (hot-cache).
-    However we need to ensure that Layout does not change, as long as rows are alive. Or that rows need to follow relevant changes to the layout structure i.e. setColumnType, addColumn, removeColumn. Name changes are irrelevant.
+    However we need to ensure that Layout does not change, as long as rows are alive or that they follow relevant changes to the layout structure i.e. setColumnType, addColumn, removeColumn. Name changes are irrelevant.
     I still like the current API of the BCSV library and would like to maintain the workflow, see examples and benchmark.
-    What are your proposals to that request? Have you seen similar implementations somewhere, what is proper C++ (C++20)?
+8.d:Finalize Row::onAddColumn, Row::onChangeColumnType, Row::onRemoveColumn
 
+9.  Restructure Row <-> Reader/Writer collaboration, introduce Serializer / Deserializier API
+        - serializer and deserailizer functionalities are current tightly integrated with row:
+            - makes row heavier than required (memory) as it stores data required for serilization/deserialization, specifically offsets_ and offset_var_, 
+              which in many cases not needed and limits rows ability to be used as lightweight facility to collect and transfer information in an application.
+            - duplication and distribution of offset_ and offset_var_ over many rows, reduces cache-locality and increases cache-misses (performance)
+              Consider that we are preapring for delta encoding, that means we are going to have more than one row active during serialization/deserialization.
+            - Row implementation grows complex --> currently ~3000 lines of code in row.hpp
+        - Create Serializer<Layout, Row> and Deserailizier<Layout, Row> Base interface
+            outline: 
+                Serializer/Deserializer operate on uncompressed data. Thus, it is callers job to manage compression.
+                serializer/Deserializer operate on a single row (per call). Thus, it is callers job to manage packets. 
+            proposal:
+                Serializer<Layout, Row> {
+                    bool do(const Row& row, ByteBuffer &buffer);
+                    setup?
+                    reset?
+                    stats?
+                }
+                Deserializer<Layout, Row> {
+                    bool do(Row& row, std::span<std::byte> buffer);
+                    setup?
+                    reset?
+                    stats?
+                }
+        - Create Serilizer/Deserializer for Flat and ZoH encoding --> dense columns (Row, RowStatic)
+        - Create Serilizer/Deserializer for Flat and ZoH encoding --> sparse columns (RowView, RowViewStatic)
+        - Transfer Row, RowView, RowStatic, RowViewStatic serializer and deserializer functions to the new Classes
+        - Modify Reader/Writer to use the new serializer
+        - Check that we have maintained current bcsv API
+            - run&pass tests
+            - run&pass benchmarks
+            - build examples and CLI tools
 
-9. Implement CSV write and read functionality using the BCSV interface
-    - CSVLayout(Static) (delimier, decimal, precision, setw, alignment)
-    - Row(Static), RowView(Static) serializeCSV(), deserializeCSV()
-    - Reader::readCSV, Writer::writeCSV
-
-10. Update Tools and Libraries to use new API
-    update and test CLI to use new API tools-tools
-    update and test python libraries
-    update and test C# (Unity)
-
-11. Improve benchmarks (more realistic use cases, better coverage, better insights)
+10. Implement CSV write and read functionality using the BCSV interface
+    10.a: Restructure BCSV Reader/ Writer API
+        - Create a ReadAPI and WriterAPI class that defined the basic functionality each Reader and Writer needs to support.
+        - Prepare for spars rows (RowView and direct access)
+            Reader<Layout, Row> --> Reader<Layout, RowView>
+            - row()
+        - Make it easier to write your own Reader/Writer, while using the BCSV ecosystem:
+            - Layout and Row interface --> continue using the CLI tools
+    10.b: Develop LayoutCSV, ReaderCSV and WriterCSV
+        - add tests csv-to-csv, csv-to-bcsv, bcsv-to-csv
+        - add tests, different delimiters, different comma/decimal characters
+    10.c: Update CLI tools csv-to-bcsv and bcsv2csv to use new CSV Reader/Writer
+    10.b: Update Benchmarks to use new CSV Reader/Writer
+        
+10. Improve benchmarks (more realistic use cases, better coverage, better insights)
     - ensure csv code in benchmark_large is comprable quality -> not cheating
     - update generic data set for ZoH, to be more represntative
     - indroduce official data sets (references)
@@ -109,12 +145,11 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
         - store reports with data and machine/host information for later reference
         - compare against: https://github.com/vincentlaucsb/csv-parser
 
-12. Implement File Flags (raw, stats)
-    File Flags to provide information on file layout to switch between different Read / Write approaches. Enables different behaviour based on usecase and platform. 
-    Flags to consider: 
-        raw:        omit all the complex variable length encoding to save compute --> standard flat encoding schema
-        stream:     omit packet structue and fileindex. also to save compute on constraint architecture, expected to come with significant performance constrains for random read. -> convert to Normal (packet bases) file structure in that case.
- [park] statistics: packet header to contain stasticical values on data included in each column, !min!, !max!, mean, median, std
+11. Update Tools and Libraries to use new API
+    update and test CLI to use new API tools-tools
+    update and test python libraries
+    update and test C# (Unity)
+
 
 13. Implement new row encoding schema, using variable length encoding for float and integer values
     Main usage of bcsv is the handling of time-series data. Thus we expect many rcurring or constantly falling or raising values and values that are similar to previouse values. In many cases the full extend of a variable type is not required to encode the actual value.
@@ -161,7 +196,7 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
 14. dictionary encoding for strings
     For strings a low cardinality is expected (many repetitions of the same string) are expected. Thus a dictionary based compression should be implemented. Exploit similar approach as for numerical values.
     Store string at its first occurens and assign ID (simply increment number, within the current packet)
-    Other occurences just to reference that number
+    Other occurences just to reference that number. Run dedicated dicts per row, to balance speed and compression ratio. Block wide compression may come at a later point.
 
 16. Compare against (document and benchmarks):
         parquet
@@ -172,25 +207,30 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
 
 17. Write paper and release/submit
 
-Parking LOT
+Parking LOT:
 18. Create a concept to maintain backward compatibility at least for reading/translating files!
-19. Benchmark and improve random access / random read methods:
-    Row row(size_t index) {
-        if(index == current_index+1) {
-            //fall back to sequential
-            readNext();
-            return row_;
-        }
-        //check if row is in current packet, if not read packet required, build an file wide index if needed
-        // use specific heuristics for ZoH, i.e. traverse several rows back and for to avoid complex reads
-    }
-    const auto& cell(size_t rowIndex, size_t colIndex) // To directly access a cell, use RowView as a lightweight abstraction to avoid full deserialization
+19. Implement File Flags (raw, stats)
+    File Flags to provide information on file layout to switch between different Read / Write approaches. Enables different behaviour based on usecase and platform. 
+    Flags to consider: 
+        raw:        omit all the complex variable length encoding to save compute --> standard flat encoding schema
+        stream:     omit packet structue and fileindex. also to save compute on constraint architecture, expected to come with significant performance constrains for random read. -> convert to Normal (packet bases) file structure in that case.
+ [park] statistics: packet header to contain stasticical values on data included in each column, !min!, !max!, mean, median, std
 
-20. Create sampler function / API to select data based on certain conditions: 
+20. Develop Direct Access Reader / Sparse Reader
+        1.[sparse rows, dense columns]: Read fully populated row at specific predfined row indices, includes reading sequentialy within a row segment (row_start:row_end)
+        2.[sparse rows, sparse columns]: Read a few columns per row, at specific predefined row indices, includes reading sequentialy within a row segment (row_start:row_end)
+        3.[dense rows, spares columns]: Read a few columns per row, going over the entire file.
+    
+        Some thoughts:
+            - use RowView to avoid deserilizing all columns if not needed
+            - consider constraining string dictionary encoding to individual columns (lets do that as default, make blockwide (multi column) dictionary compression a future feature)
+            - use Template parameters to "punch out" inividual columns
+
+21. Create sampler function / API to select data based on certain conditions: 
     - Support C++ interface (iterate over individual rows)
     - Support Python interface (iterate over individual rows and block reads (pandas/numpy))
 
-21. CLI tools:
+22. CLI tools:
     - Modify CLI tools to utilize random read functionality to avoid parsing the entire file (when possible):
         - bcsvTail
         - bcsvHead
@@ -206,7 +246,7 @@ Parking LOT
     - create: bcsvIndex     (tool to rebuild index)
     - create: bcsvConvert   (converts from one bcsv file format to another, use to rebuild index or improve compression)
 
-22. Make BCSV eco system to use piping features CLI, compareable to cat, more, sed
+23. Make BCSV eco system to use piping features CLI, compareable to cat, more, sed
 
 23. Implement Column Modifiers
     provides hints on what encoding schema to be used for this particular column
@@ -215,12 +255,6 @@ Parking LOT
         volatile:   numbers are scattered, do not apply delta encoding
         monotonic:  apply higher order delta encoding as a "nearly" monotonic (smooth) behaviour is expected
         ordered:    data to fall or grow in ordered fashion 
-
-24. Make Layout class shared between multiple rows
-    - build a parent child relation between layout(parent) and rows
-    - Each row only stores a shared_ptr to its Layout (LayoutData)
-    - Layout to manage a (double linked) list of rows connected --> keep them informed about layout changes
-    - Move recuring functions and information (i.e. WireLayout, offsets, offset_var) from row to layout (reduce memory required, improve cache hits)
 
 25. Improve bitset:
     - visit()

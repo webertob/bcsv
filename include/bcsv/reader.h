@@ -30,7 +30,6 @@ namespace bcsv {
     class Reader {
     protected:
         using RowType           = typename LayoutType::RowType;
-        using RowViewType       = typename LayoutType::RowViewType;
         using FilePath          = std::filesystem::path;
 
         std::string             errMsg_;                // last error message description
@@ -85,7 +84,6 @@ namespace bcsv {
     protected:
         using Base              = Reader<LayoutType>;
         using RowType           = typename LayoutType::RowType;
-        using RowViewType       = typename LayoutType::RowViewType;
         using FilePath          = std::filesystem::path;
 
         FileFooter  fileFooter_;

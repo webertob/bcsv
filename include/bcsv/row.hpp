@@ -81,18 +81,20 @@ namespace bcsv {
         }
     }
 
+
+
     inline Row::Row(const Layout& layout, bool trackChangesEnabled)
         : layout_(layout)
-        , offsets_(layout.columnCount())
-        , offset_var_(0)
         , data_()
+        , ptr_(layout.columnCount(), nullptr)
         , changes_(0)
+        // deprceated:
+        , offsets_()
+        , offset_var_(0)
     {
         // Register as observer for layout changes
         layout_.registerCallback(this, {
-                [this](size_t i, ColumnType t) { onAddColumn(i, t); },
-                [this](size_t i) { onRemoveColumn(i); },
-                [this](size_t i, ColumnType ot, ColumnType nt) { onChangeColumnType(i, ot, nt); }
+               [this](const std::vector<Layout::Data::Change>& changes) { onLayoutUpdate(changes); }
             }
         );
 
@@ -101,172 +103,112 @@ namespace bcsv {
         // Build row's internal data structures based on layout
         // Calculate offsets considering alignment requirements
         uint32_t offset = 0;
+        std::vector<uint32_t> offsets(columnCount);
         for(size_t i = 0; i < columnCount; ++i) {
-            size_t length= 0;
-            size_t alignment = 0;
-            ColumnType type = layout_.columnType(i);
-            switch(type) {
-                case ColumnType::BOOL:
-                    length = sizeof(bool);    
-                    alignment = alignof(bool);
-                    break;
-                case ColumnType::UINT8:
-                    length = sizeof(uint8_t);    
-                    alignment = alignof(uint8_t);
-                    break;
-                case ColumnType::UINT16:
-                    length = sizeof(uint16_t);
-                    alignment = alignof(uint16_t);
-                    break;
-                case ColumnType::UINT32:
-                    length = sizeof(uint32_t);
-                    alignment = alignof(uint32_t);
-                    break;
-                case ColumnType::UINT64:
-                    length = sizeof(uint64_t);
-                    alignment = alignof(uint64_t);
-                    break;
-                case ColumnType::INT8:
-                    length = sizeof(int8_t);
-                    alignment = alignof(int8_t);
-                    break;
-                case ColumnType::INT16:
-                    length = sizeof(int16_t);
-                    alignment = alignof(int16_t);
-                    break;
-                case ColumnType::INT32:
-                    length = sizeof(int32_t);
-                    alignment = alignof(int32_t);
-                    break;
-                case ColumnType::INT64:
-                    length = sizeof(int64_t);
-                    alignment = alignof(int64_t);
-                    break;
-                case ColumnType::FLOAT:
-                    length = sizeof(float);
-                    alignment = alignof(float);
-                    break;
-                case ColumnType::DOUBLE:
-                    length = sizeof(double);
-                    alignment = alignof(double);
-                    break;
-                case ColumnType::STRING:
-                    length = sizeof(std::string);
-                    alignment = alignof(std::string);
-                    break;
-                default: [[unlikely]]
-                    throw std::runtime_error("Unknown column type");
-            }
+            ColumnType type  = layout_.columnType(i);
+            size_t alignment = alignOf(type);
             // align offset to match type's alignment requirement
             // Assumes alignment is a power of 2, which is true for all standard types
             offset = (offset + (alignment - 1)) & ~(alignment - 1);
-            offsets_[i] = offset;
-            offset += length; //advance offset for next column
+            offsets[i] = offset;
+            offset += sizeOf(type); //advance offset for next column
         }
 
         // construct all types within data_ using their default values
         data_.resize(offset);
         for(size_t i = 0; i < columnCount; ++i) {
-            constructDefaultAt(&data_[offsets_[i]], layout_.columnType(i));
+            ptr_[i] = &data_[offsets[i]];
+            constructDefaultAt(ptr_[i], layout_.columnType(i));
         }        
         trackChanges(trackChangesEnabled);
 
-        // calculate offset_var_ (wire format) to accelerate serialization
+        // deprecated offsets_ - convert vector<size_t> to vector<uint32_t>
+        offsets_ = std::move(offsets);
         offset_var_ = 0; // start of variable section (string content), within flat binary buffer
         for(size_t i = 0; i < columnCount; ++i) {
             ColumnType type = layout_.columnType(i);
-            offset_var_ += binaryFieldLength(type);
+            offset_var_ += wireSizeOf(type);
         }
     }
 
     inline Row::Row(const Row& other)
         : layout_(other.layout_)  // Share layout (shallow copy of shared_ptr inside)
+        , data_(other.data_) // Allocate our own data buffer
+        , ptr_(other.ptr_.size(), nullptr) // We will set up our own pointers
+        , changes_(other.changes_)
+        // deprceated:
         , offsets_(other.offsets_)
         , offset_var_(other.offset_var_)
-        , data_(other.data_)
-        , changes_(other.changes_)
     {
+        // update our pointers, as they point into our own data buffer, not other's
+        size_t columnCount = layout_.columnCount();
+        for(size_t i = 0; i < columnCount; ++i) {
+            size_t offset = other.ptr_[i] - other.data_.data();
+            assert(offset < data_.size() && "Row copy constructor: calculated offset should be within our data_ buffer");
+            ptr_[i] = data_.data() + offset;
+        }
+
+        // deep copy strings, as they manage their own memory and we want independent rows
+        for(size_t i = 0; i < columnCount; ++i) {
+            if(layout_.columnType(i) == ColumnType::STRING) {
+                new (ptr_[i]) std::string(*reinterpret_cast<const std::string*>(other.ptr_[i])); // placement new with copy constructor
+            }
+        }
+
         // Register as observer for layout changes (independent from 'other')
         layout_.registerCallback(this, {
-                [this](size_t i, ColumnType t) { onAddColumn(i, t); },
-                [this](size_t i) { onRemoveColumn(i); },
-                [this](size_t i, ColumnType ot, ColumnType nt) { onChangeColumnType(i, ot, nt); }
+               [this](const std::vector<Layout::Data::Change>& changes) { onLayoutUpdate(changes); }
             }
         );
-
-        // Handle change tracking: if other tracks changes, ensure we do too and mark all changed
-        if (other.tracksChanges()) {
-            trackChanges(true);
-            changes_.set(); // Mark all as changed (conservative for copies)
-        }
-
-        // Now we need to perform a deep-copy for strings, as they allocate memory themselves
-        for(size_t i = 0; i < layout_.columnCount(); ++i) {
-            ColumnType type = layout_.columnType(i);
-            if(type == ColumnType::STRING) {
-                // Strings need deep copy
-                std::byte* ptrThis = &data_[offsets_[i]];
-                const std::byte* ptrOther = &other.data_[offsets_[i]];
-                new (ptrThis) std::string(*reinterpret_cast<const std::string*>(ptrOther)); // placement new with copy constructor
-            }
-        }
     }
 
     inline Row::Row(Row&& other) noexcept
-        : layout_(std::move(other.layout_))
+        : layout_(other.layout_)
+        , data_(std::move(other.data_))     // ✓ Transfers heap buffer ownership -> zero-copy move, data stays in place
+        , ptr_(std::move(other.ptr_))       // ✓ Pointers remain valid!
+        , changes_(std::move(other.changes_))
+        // deprceated:
         , offsets_(std::move(other.offsets_))
         , offset_var_(other.offset_var_)
-        , data_(std::move(other.data_))
-        , changes_(std::move(other.changes_))
     {
-        // Critical: Must re-register callbacks with new 'this' pointer
-        // The layout was moved, but callbacks still point to &other
-        if (!data_.empty()) {  // Skip if moved-from object
-            other.layout_.unregisterCallback(&other);
-            layout_.registerCallback(this, {
-                [this](size_t i, ColumnType t) { onAddColumn(i, t); },
-                [this](size_t i) { onRemoveColumn(i); },
-                [this](size_t i, ColumnType ot, ColumnType nt) { onChangeColumnType(i, ot, nt); }
-            });
-        }
+        layout_.registerCallback(this, {
+            [this](const std::vector<Layout::Data::Change>& changes) { onLayoutUpdate(changes); }
+        });
     }
 
-        inline Row::~Row()
+    inline Row::~Row()
     {
-        // Check if this is a moved-from object
-        if (data_.empty()) {
-            return;
-        }
-
         // Unregister from layout callbacks
         layout_.unregisterCallback(this);
 
-        // Manually call destructors for strings (they allocate memory)
-        for(size_t i = 0; i < layout_.columnCount(); ++i) {
-            uint32_t offset = offsets_[i];
-            std::byte* ptr = &data_[offset];
-            ColumnType type = layout_.columnType(i);
+        if(ptr_.empty()) {
+            return; // Nothing to clean up
+        }
+
+        // Ensure pointer are still valid and point into our data buffer (they should, as we moved the vector which owns the buffer)
+        size_t columnCount = layout_.columnCount();
+        for(size_t i = 0; i < columnCount; ++i) {
+            auto type = layout_.columnType(i);
+            auto offset = ptr_[i] - data_.data();
+            assert((offset + sizeOf(type)) <= data_.size() && "Row move constructor: ptr_ should point into data_ buffer");
             if(type == ColumnType::STRING) {
-                reinterpret_cast<std::string*>(ptr)->~string();
+                // Manually call destructor for string, as it manages its own memory
+                reinterpret_cast<std::string*>(ptr_[i])->~string();
             }
         }
     }
 
     /** Clear the row to its default state (default values) */
     inline void Row::clear()
-    {
+    {        
         // Use visitor to set all columns to their default values
         visit([](size_t, auto& value) {
             using T = std::decay_t<decltype(value)>;
             value = defaultValueT<T>();
         });
-        
         // Visitor marks all as changed, which is correct for clear()
     }
 
-
-
-    
     // =========================================================================
     // 1. RAW POINTER ACCESS (caller must ensure type safety)
     // =========================================================================
@@ -278,35 +220,8 @@ namespace bcsv {
         } else {
             assert(index < layout_.columnCount() && "Row::get(index): Index out of bounds");
         }
-        size_t offset = offsets_[index];
-        const void* ptr = &data_[offset];
-
-        // Debug checks for safety
-#ifndef NDEBUG
-        ColumnType type = layout_.columnType(index);
-        size_t size  = 1;
-        size_t align = 1;
-
-        switch(type) {
-            case ColumnType::BOOL:   size = sizeof(bool); align = alignof(bool); break;
-            case ColumnType::UINT8:  size = sizeof(uint8_t); align = alignof(uint8_t); break;
-            case ColumnType::UINT16: size = sizeof(uint16_t); align = alignof(uint16_t); break;
-            case ColumnType::UINT32: size = sizeof(uint32_t); align = alignof(uint32_t); break;
-            case ColumnType::UINT64: size = sizeof(uint64_t); align = alignof(uint64_t); break;
-            case ColumnType::INT8:   size = sizeof(int8_t); align = alignof(int8_t); break;
-            case ColumnType::INT16:  size = sizeof(int16_t); align = alignof(int16_t); break;
-            case ColumnType::INT32:  size = sizeof(int32_t); align = alignof(int32_t); break;
-            case ColumnType::INT64:  size = sizeof(int64_t); align = alignof(int64_t); break;
-            case ColumnType::FLOAT:  size = sizeof(float); align = alignof(float); break;
-            case ColumnType::DOUBLE: size = sizeof(double); align = alignof(double); break;
-            case ColumnType::STRING: size = sizeof(std::string); align = alignof(std::string); break;
-            default: break;
-        }
-
-        assert(offset + size <= data_.size() && "Buffer overflow");
-        assert(reinterpret_cast<uintptr_t>(ptr) % align == 0 && "Alignment violation");
-#endif
-
+        auto ptr = ptr_[index];
+        assert( (ptr - data_.data() + sizeOf(layout_.columnType(index)) <= data_.size()) && "Row::get(index): ptr_ should point into data_ buffer");
         return ptr;
     }
    
@@ -327,37 +242,28 @@ namespace bcsv {
             "Row::get<T>: Type T must be either trivially copyable (primitives) or string-related (std::string, std::string_view, std::span<const char>)"
         );
         
-        // Use void* get for bounds check
-        const void* ptr = get(index); 
-        if (!ptr) {
-            throw std::out_of_range("Row::get: Invalid column index " + std::to_string(index));
+        // Use visitor pattern for type-safe access
+        const T* result = nullptr;
+        
+        visit(index, [&result](size_t, const auto& value) {
+            using ValueType = std::decay_t<decltype(value)>;
+            
+            // Type must match exactly (compile-time check via if constexpr)
+            if constexpr (std::is_same_v<T, ValueType>) {
+                result = &value;
+            } else {
+                // Type mismatch - will throw below
+            }
+        });
+        
+        if (!result) [[unlikely]] {
+            throw std::runtime_error(
+                "Row::get<T>: Type mismatch at index " + std::to_string(index) + 
+                ". Requested: " + std::string(toString(toColumnType<T>())) + 
+                ", Actual: " + std::string(toString(layout_.columnType(index))));
         }
         
-        // Strict Type Check - Branch on compile-time type T first for better optimization
-        ColumnType actualType = layout_.columnType(index);
-        
-        if constexpr (std::is_same_v<T, std::string> || 
-                      std::is_same_v<T, std::string_view> || 
-                      std::is_same_v<T, std::span<const char>>) {
-            // String type requested
-            if (actualType != ColumnType::STRING) [[unlikely]] {
-                throw std::runtime_error(
-                    "Row::get<T>: Type mismatch at index " + std::to_string(index) + 
-                    ". Requested: string type, Actual: " + std::string(toString(actualType)));
-            }
-        } else {
-            // Primitive type requested
-            constexpr ColumnType requestedType = toColumnType<T>();
-            if (requestedType != actualType) [[unlikely]] {
-                throw std::runtime_error(
-                    "Row::get<T>: Type mismatch at index " + std::to_string(index) + 
-                    ". Requested: " + std::string(toString(requestedType)) + 
-                    ", Actual: " + std::string(toString(actualType)));
-            }
-        }
-
-        // Safe strict aliasing because we constructed the object at this address
-        return *reinterpret_cast<const T*>(ptr);
+        return *result;
     }
 
     /** Vectorized access to multiple columns of same type - STRICT.
@@ -372,9 +278,8 @@ namespace bcsv {
 
         if (RANGE_CHECKING) {
             // combined range (touch each column) and type check
-            for (size_t i = 0; i < dst.size(); ++i) {
-                const ColumnType &sourceType = layout_.columnType(index + i);
-                if (targetType != sourceType) [[unlikely]]{
+            for (size_t i = index; i < index+dst.size(); ++i) {
+                if (targetType != layout_.columnType(i)) [[unlikely]]{
                     throw std::runtime_error("vectorized get() types must match exactly");
                 }
             }
@@ -382,7 +287,8 @@ namespace bcsv {
 
         // All type checks passed, safe to get values
         // Exploit the fact that types are aligned within the row data_ and that we don't have to expect padding bytes between the values. Thus we can do a fast copy.
-        memcpy(dst.data(), &data_[offsets_[index]], dst.size() * sizeof(T));
+        assert(ptr_[index] >= data_.data() && ptr_[index] + dst.size() * sizeof(T) <= data_.data() + data_.size() && "Row::get(span): ptr_ should point into data_ buffer");
+        memcpy(dst.data(), ptr_[index], dst.size() * sizeof(T));
     }
 
     // =========================================================================
@@ -393,64 +299,35 @@ namespace bcsv {
     // =========================================================================
     template<typename T>
     inline bool Row::get(size_t index, T &dst) const {
-        const void* ptr = get(index);
-        if (!ptr) [[unlikely]] {
-             return false;
-        }
-
-        // Functor to check compatibility and assign.
-        auto try_assign = [&]<typename SrcType>() -> bool {
+        // Use visitor pattern for flexible type conversion
+        bool success = false;
+        
+        visit(index, [&dst, &success](size_t, const auto& value) {
+            using SrcType = std::decay_t<decltype(value)>;
+            
             // Check if C++ allows assignment (e.g. int = int8_t)
             if constexpr (std::is_assignable_v<T&, SrcType>) {
-                // Validate Alignment (Debug only)
-#ifndef NDEBUG
-                assert(reinterpret_cast<uintptr_t>(ptr) % alignof(SrcType) == 0 && "Memory alignment violation");
-#endif
-                // Read source type and assign to destination (implicit C++ conversion)
-                dst = *reinterpret_cast<const SrcType*>(ptr); 
-                return true;
-            } else {
-                return false;
-            }
-        };
-
-        ColumnType type = layout_.columnType(index);
-        switch(type) {
-            case ColumnType::BOOL:   return try_assign.template operator()<bool>();
-            case ColumnType::UINT8:  return try_assign.template operator()<uint8_t>();
-            case ColumnType::UINT16: return try_assign.template operator()<uint16_t>();
-            case ColumnType::UINT32: return try_assign.template operator()<uint32_t>();
-            case ColumnType::UINT64: return try_assign.template operator()<uint64_t>();
-            case ColumnType::INT8:   return try_assign.template operator()<int8_t>();
-            case ColumnType::INT16:  return try_assign.template operator()<int16_t>();
-            case ColumnType::INT32:  return try_assign.template operator()<int32_t>();
-            case ColumnType::INT64:  return try_assign.template operator()<int64_t>();
-            case ColumnType::FLOAT:  return try_assign.template operator()<float>();
-            case ColumnType::DOUBLE: return try_assign.template operator()<double>();
-            
-            case ColumnType::STRING: {
-                // String objects are constructed in place in data_
-                const std::string& str = *reinterpret_cast<const std::string*>(ptr);
-                
+                dst = value;
+                success = true;
+            } else if constexpr (std::is_same_v<SrcType, std::string>) {
+                // Special string conversions
                 if constexpr (std::is_same_v<T, std::string>) {
-                    dst = str; // deep copy
-                    return true;
+                    dst = value; // deep copy
+                    success = true;
                 } else if constexpr (std::is_same_v<T, std::string_view>) {
-                    dst = std::string_view(str); // zero-copy view (careful with lifetime!)
-                    return true;
+                    dst = std::string_view(value); // zero-copy view
+                    success = true;
                 } else if constexpr (std::is_same_v<T, std::span<const char>>) {
-                    dst = std::span<const char>(str); // zero-copy span
-                    return true;
+                    dst = std::span<const char>(value); // zero-copy span
+                    success = true;
                 } else if constexpr (std::is_assignable_v<T&, std::string>) {
-                     dst = str; // fallback for other assignable types (e.g. std::filesystem::path)
-                     return true;
-                } else {
-                    return false;
+                    dst = value; // fallback for other assignable types
+                    success = true;
                 }
             }
-            default:
-                return false;
-        }
+        });
+        
+        return success;
     }
 
     template<typename T>
@@ -495,7 +372,8 @@ namespace bcsv {
         }
 
         ColumnType type = layout_.columnType(index);
-        std::byte* ptr = &data_[offsets_[index]];
+        std::byte* ptr = ptr_[index];
+        assert(ptr >= data_.data() && ptr + sizeOf(type) <= data_.data() + data_.size() && "Row::set(index): ptr_ should point into data_ buffer");
 
         // Specific handling for STRING to support truncation and arithmetic conversion
         if (type == ColumnType::STRING) {
@@ -546,38 +424,20 @@ namespace bcsv {
             return false;
         }
 
-        // Generic handler for arithmetic types
-        auto try_assign = [&]<typename ColType>() -> bool {
-             if constexpr (std::is_assignable_v<ColType&, const DecayedT&>) {
-                ColType* dst = reinterpret_cast<ColType*>(ptr);
-                // Cast value to ColType before comparison to prevent false positives 
-                // in change tracking due to type mismatch (e.g. 5 vs 5.1)
-                // Note: We use static_cast for arithmetic types which is safe here 
-                // because is_assignable checked compatibility.
-                if (*dst != static_cast<ColType>(value)) {
-                    // only assign if value has changed
-                    *dst = static_cast<ColType>(value);
-                    if(tracksChanges()) changes_.set(index);
-                 }
-                 return true;
-             }
-             return false;
-        };
-
-        switch(type) {
-            case ColumnType::BOOL:   return try_assign.template operator()<bool>();
-            case ColumnType::UINT8:  return try_assign.template operator()<uint8_t>();
-            case ColumnType::UINT16: return try_assign.template operator()<uint16_t>();
-            case ColumnType::UINT32: return try_assign.template operator()<uint32_t>();
-            case ColumnType::UINT64: return try_assign.template operator()<uint64_t>();
-            case ColumnType::INT8:   return try_assign.template operator()<int8_t>();
-            case ColumnType::INT16:  return try_assign.template operator()<int16_t>();
-            case ColumnType::INT32:  return try_assign.template operator()<int32_t>();
-            case ColumnType::INT64:  return try_assign.template operator()<int64_t>();
-            case ColumnType::FLOAT:  return try_assign.template operator()<float>();
-            case ColumnType::DOUBLE: return try_assign.template operator()<double>();
-            default: return false;
-        }
+        // Use visitor pattern for primitive types (strings already handled above)
+        bool success = false;
+        visit(index, [&value, &success](size_t, auto& currentValue) {
+            using ColType = std::decay_t<decltype(currentValue)>;
+            using DecayedT = std::decay_t<decltype(value)>;
+            
+            // Only allow arithmetic-to-arithmetic assignment (target is guaranteed non-string from STRING block above)
+            if constexpr (std::is_arithmetic_v<DecayedT> && std::is_arithmetic_v<ColType>) {
+                currentValue = static_cast<ColType>(value);
+                success = true;
+            }
+        });
+        
+        return success;
     }
 
     /** Vectorized set of multiple columns of same type */
@@ -596,8 +456,10 @@ namespace bcsv {
             }
         }
 
-        // Alignment of data is guaranteed by Row Constructor and Row layout (immutable layout for row's lifetime)
-        auto dst = reinterpret_cast<T*>(&data_[offsets_[index]]);
+        T* dst = reinterpret_cast<T*>(ptr_[index]);
+        assert(reinterpret_cast<std::byte*>(dst) >= data_.data() && 
+               reinterpret_cast<std::byte*>(dst + values.size()) <= data_.data() + data_.size() && 
+               "Row::set(span): ptr_ should point into data_ buffer");
         if(tracksChanges()) {
             // Element-wise check and set to track changes precisely
             for (size_t i = 0; i < values.size(); ++i) {
@@ -625,10 +487,11 @@ namespace bcsv {
         size_t count = layout_.columnCount();
         for(size_t i=0; i<count; ++i) {
             ColumnType type = layout_.columnType(i);
-            const std::byte* ptr = &data_[offsets_[i]];
-            
+            const std::byte* ptr = ptr_[i];
+            assert(ptr >= data_.data() && ptr + sizeOf(type) <= data_.data() + data_.size() && "Row::serializeTo: ptr_ should point into data_ buffer");
+
             if (type == ColumnType::STRING) {
-                const std::string& str = *reinterpret_cast<const std::string*>(&data_[offsets_[i]]);               
+                const std::string& str = *reinterpret_cast<const std::string*>(ptr);               
                 // Create StringAddr pointing to string data in variable section, handles truncation
                 StringAddr strAddr(off_var, str.length());
                 
@@ -644,7 +507,7 @@ namespace bcsv {
                 }
                 
             } else {
-                size_t len = binaryFieldLength(type);
+                size_t len = wireSizeOf(type);
                 std::memcpy(&buffer[off_fix], ptr, len);
                 off_fix += len; // advance fixed offset
             }
@@ -664,25 +527,29 @@ namespace bcsv {
         
         size_t count = layout_.columnCount();
         for(size_t i = 0; i < count; ++i) {
-            ColumnType          type    = layout_.columnType(i);            
+            ColumnType type = layout_.columnType(i);
+            std::byte* ptr = ptr_[i];
+            assert(ptr >= data_.data() && ptr + sizeOf(type) <= data_.data() + data_.size() && "Row::deserializeFrom: ptr_ should point into data_ buffer");
+            
             if (type == ColumnType::STRING) {
                 StringAddr strAddr;
-                assert(binaryFieldLength(type) == sizeof(strAddr));
+                assert(wireSizeOf(type) == sizeof(strAddr));
                 std::memcpy(&strAddr, &buffer[off_fix], sizeof(strAddr));                
                 if (strAddr.offset() + strAddr.length() > buffer.size()) {
                     throw std::runtime_error("Row::deserializeFrom String payload extends beyond buffer");
                 }
                 
-                std::string& str = *reinterpret_cast<std::string*>(&data_[offsets_[i]]);
+                std::string& str = *reinterpret_cast<std::string*>(ptr);
                 if (strAddr.length() > 0) {
                     str.assign(reinterpret_cast<const char*>(&buffer[strAddr.offset()]), strAddr.length());
                 } else {
                     str.clear();
                 }
             } else {
-                 std::memcpy(&data_[offsets_[i]], &buffer[off_fix], binaryFieldLength(type));
+                assert(wireSizeOf(type) == sizeOf(type));
+                std::memcpy(ptr, &buffer[off_fix], wireSizeOf(type));
             }
-            off_fix += binaryFieldLength(type); // advance fixed offset
+            off_fix += wireSizeOf(type); // advance fixed offset
         }
     }
 
@@ -712,17 +579,19 @@ namespace bcsv {
 
         // Serialize each element that has changed
         for(size_t i = 0; i < layout_.columnCount(); ++i) {
-            ColumnType type = layout_.columnType(i);           
+            ColumnType type = layout_.columnType(i);
+            const std::byte* ptr = ptr_[i];
+            assert(ptr >= data_.data() && ptr + sizeOf(type) <= data_.data() + data_.size() && "Row::serializeToZoH: ptr_ should point into data_ buffer");      
             if (type == ColumnType::BOOL) {
                 // Special handling for bools: always serialize to single bit in the rowHeader
-                bool val = *reinterpret_cast<const bool*>(&data_[offsets_[i]]);
-                rowHeader.set(i, val);
+                bool val = *reinterpret_cast<const bool*>(ptr);
+                rowHeader[i] = val; // set bit in rowHeader to represent bool value
             } else if (changes_.test(i)) {
                 size_t off = buffer.size();
                 if(type == ColumnType::STRING) {
                     // Special handling for strings - encoding in ZoH mode happens in place
                     // Indices in string vector
-                    const std::string& str = *reinterpret_cast<const std::string*>(&data_[offsets_[i]]);
+                    const std::string& str = *reinterpret_cast<const std::string*>(ptr);
                     uint16_t strLength = static_cast<uint16_t>(std::min(str.size(), MAX_STRING_LENGTH));
                     buffer.resize(buffer.size() + sizeof(strLength) + strLength);
                     std::memcpy(&buffer[off], &strLength, sizeof(strLength));
@@ -730,9 +599,10 @@ namespace bcsv {
                         std::memcpy(&buffer[off + sizeof(strLength)], str.data(), strLength);
                     }
                 } else {
-                    size_t len = binaryFieldLength(type);
+                    size_t len = wireSizeOf(type);
+                    assert(len == sizeOf(type));
                     buffer.resize(buffer.size() + len);
-                    std::memcpy(&buffer[off], &data_[offsets_[i]], len);
+                    std::memcpy(&buffer[off], ptr, len);
                 }
             }
         }
@@ -756,9 +626,10 @@ namespace bcsv {
         size_t offset = changes_.sizeBytes();
         for(size_t i = 0; i < layout_.columnCount(); ++i) {
             ColumnType type = layout_.columnType(i);
+            std::byte* ptr = ptr_[i];
             if (type == ColumnType::BOOL) {
                 // always deserialize bools from bitset
-                *reinterpret_cast<bool*>(&data_[offsets_[i]]) = changes_.test(i);
+                *reinterpret_cast<bool*>(ptr) = changes_[i];
             
             } else if (changes_.test(i)) {
                 // deserilialize other types only if they have changed
@@ -774,7 +645,7 @@ namespace bcsv {
                     // read string data
                     if (offset + strLength > buffer.size()) [[unlikely]]
                         throw std::runtime_error("buffer too small");
-                    std::string& str = *reinterpret_cast<std::string*>(&data_[offsets_[i]]);
+                    std::string& str = *reinterpret_cast<std::string*>(ptr);
                     if (strLength > 0) {
                         str.assign(reinterpret_cast<const char*>(&buffer[offset]), strLength);
                     } else {
@@ -782,13 +653,101 @@ namespace bcsv {
                     }
                     offset += strLength;
                 } else {
-                    size_t len = binaryFieldLength(type);
+                    size_t len = wireSizeOf(type);
                     if (offset + len > buffer.size()) [[unlikely]]
                         throw std::runtime_error("buffer too small");
                     
-                    std::memcpy(&data_[offsets_[i]], &buffer[offset], len);
+                    std::memcpy(ptr, &buffer[offset], len);
                     offset += len;
                 }
+            }
+        }
+    }
+
+    /** @brief Visit a range of columns with read-only access
+     * 
+     * Invokes the visitor callable for columns in range [startIndex, startIndex + count).
+     * 
+     * @tparam Visitor Callable type
+     * @param startIndex First column index to visit
+     * @param visitor Callable accepting `(size_t index, const T& value)`
+     * @param count Number of columns to visit (default: 1 for single column, 0 visits nothing)
+     * 
+     * @par Example - Visit single column
+     * @code
+     * row.visit(2, [](size_t idx, const auto& value) {
+     *     std::cout << "Column " << idx << ": " << value << std::endl;
+     * });  // Default count=1
+     * @endcode
+     * 
+     * @par Example - Visit multiple columns
+     * @code
+     * row.visit(3, [](size_t idx, const auto& value) {
+     *     std::cout << value << " ";
+     * }, 5);  // Visit columns 3-7
+     * @endcode
+     * 
+     * @see Row::visit(Visitor&&) const for visiting all columns
+     */
+    template<typename Visitor>
+    inline void Row::visit(size_t startIndex, Visitor&& visitor, size_t count) const {
+        if (count == 0) return;  // Nothing to visit
+        
+        size_t endIndex = std::min(startIndex + count, layout_.columnCount());
+        
+        if constexpr (RANGE_CHECKING) {
+            if (startIndex >= layout_.columnCount()) {
+                throw std::out_of_range("Row::visit: Invalid start index " + std::to_string(startIndex));
+            }
+        } else {
+            assert(startIndex < layout_.columnCount() && "Row::visit: Start index out of bounds");
+        }
+        
+        // Core implementation: iterate and dispatch for each column
+        for (size_t i = startIndex; i < endIndex; ++i) {
+            ColumnType type = layout_.columnType(i);
+            const std::byte* ptr = ptr_[i];
+            
+            // Dispatch based on column type
+            switch(type) {
+                case ColumnType::BOOL:
+                    visitor(i, *reinterpret_cast<const bool*>(ptr));
+                    break;
+                case ColumnType::INT8:
+                    visitor(i, *reinterpret_cast<const int8_t*>(ptr));
+                    break;
+                case ColumnType::INT16:
+                    visitor(i, *reinterpret_cast<const int16_t*>(ptr));
+                    break;
+                case ColumnType::INT32:
+                    visitor(i, *reinterpret_cast<const int32_t*>(ptr));
+                    break;
+                case ColumnType::INT64:
+                    visitor(i, *reinterpret_cast<const int64_t*>(ptr));
+                    break;
+                case ColumnType::UINT8:
+                    visitor(i, *reinterpret_cast<const uint8_t*>(ptr));
+                    break;
+                case ColumnType::UINT16:
+                    visitor(i, *reinterpret_cast<const uint16_t*>(ptr));
+                    break;
+                case ColumnType::UINT32:
+                    visitor(i, *reinterpret_cast<const uint32_t*>(ptr));
+                    break;
+                case ColumnType::UINT64:
+                    visitor(i, *reinterpret_cast<const uint64_t*>(ptr));
+                    break;
+                case ColumnType::FLOAT:
+                    visitor(i, *reinterpret_cast<const float*>(ptr));
+                    break;
+                case ColumnType::DOUBLE:
+                    visitor(i, *reinterpret_cast<const double*>(ptr));
+                    break;
+                case ColumnType::STRING:
+                    visitor(i, *reinterpret_cast<const std::string*>(ptr));
+                    break;
+                default: [[unlikely]]
+                    throw std::runtime_error("Row::visit() unsupported column type");
             }
         }
     }
@@ -832,51 +791,116 @@ namespace bcsv {
      * 
      * @see row_visitors.h for concepts, helper types, and more examples
      * @see Row::visit(Visitor&&) for mutable version
+     * @see Row::visit(size_t, Visitor&&, size_t) const for visiting a range or single column
      */
     template<typename Visitor>
     inline void Row::visit(Visitor&& visitor) const {
-        // Runtime dispatch: iterate through columns and invoke visitor for each
-        for (size_t i = 0; i < layout_.columnCount(); ++i) {
+        // Delegate to range-based visitor for all columns
+        visit(0, std::forward<Visitor>(visitor), layout_.columnCount());
+    }
+
+    /** @brief Visit a range of columns with mutable access and change tracking
+     * 
+     * Invokes the visitor callable for columns in range [startIndex, startIndex + count).
+     * 
+     * @tparam Visitor Callable type
+     * @param startIndex First column index to visit
+     * @param visitor Callable accepting `(size_t index, T& value[, bool& changed])`
+     * @param count Number of columns to visit (default: 1 for single column, 0 visits nothing)
+     * 
+     * @par Example - Modify single column
+     * @code
+     * row.visit(2, [](size_t idx, auto& value, bool& changed) {
+     *     auto old = value;
+     *     value *= 2;
+     *     changed = (value != old);
+     * });  // Default count=1
+     * @endcode
+     * 
+     * @par Example - Modify multiple columns
+     * @code
+     * row.visit(3, [](size_t idx, auto& value) {
+     *     value = 0;  // Reset to zero
+     * }, 5);  // Visit columns 3-7
+     * @endcode
+     * 
+     * @see Row::visit(Visitor&&) for visiting all columns
+     */
+    template<typename Visitor>
+    inline void Row::visit(size_t startIndex, Visitor&& visitor, size_t count) {
+        if (count == 0) return;  // Nothing to visit
+        
+        size_t endIndex = std::min(startIndex + count, layout_.columnCount());
+        
+        if constexpr (RANGE_CHECKING) {
+            if (endIndex > layout_.columnCount()) {
+                throw std::out_of_range("Row::visit: Invalid start index " + std::to_string(startIndex));
+            }
+        } else {
+            assert(endIndex <= layout_.columnCount() && "Row::visit: Start index out of bounds");
+        }
+        
+        // Core implementation: iterate and dispatch for each column
+        for (size_t i = startIndex; i < endIndex; ++i) {
             ColumnType type = layout_.columnType(i);
-            const void*  ptr = &data_[offsets_[i]];
+            std::byte* ptr = ptr_[i];
+            assert( (ptr >= data_.data()) && (ptr -data_.data() + sizeOf(type) <= data_.size()) && "Row::visit(index, visitor): ptr_ should point into data_ buffer");
             
-            // Dispatch based on actual column type
+            // Helper lambda to invoke visitor with optional change tracking
+            auto invoke_visitor = [&]<typename T>(T* value_ptr) {
+                if constexpr (std::is_invocable_v<Visitor, size_t, T&, bool&>) {
+                    // Visitor accepts change flag - fine-grained tracking
+                    bool changed = true;  // Default: assume changed (safe, conservative)
+                    visitor(i, *value_ptr, changed);
+                    if (tracksChanges()) {
+                        changes_[i] |= changed;
+                    }
+                } else {
+                    // Legacy 2-parameter visitor - mark as changed
+                    visitor(i, *value_ptr);
+                    if (tracksChanges()) {
+                        changes_[i] = true;
+                    }
+                }
+            };
+            
+            // Dispatch based on column type
             switch(type) {
                 case ColumnType::BOOL:
-                    visitor(i, *static_cast<const bool*>(ptr));
+                    invoke_visitor(reinterpret_cast<bool*>(ptr));
                     break;
                 case ColumnType::INT8:
-                    visitor(i, *static_cast<const int8_t*>(ptr));
+                    invoke_visitor(reinterpret_cast<int8_t*>(ptr));
                     break;
                 case ColumnType::INT16:
-                    visitor(i, *static_cast<const int16_t*>(ptr));
+                    invoke_visitor(reinterpret_cast<int16_t*>(ptr));
                     break;
                 case ColumnType::INT32:
-                    visitor(i, *static_cast<const int32_t*>(ptr));
+                    invoke_visitor(reinterpret_cast<int32_t*>(ptr));
                     break;
                 case ColumnType::INT64:
-                    visitor(i, *static_cast<const int64_t*>(ptr));
+                    invoke_visitor(reinterpret_cast<int64_t*>(ptr));
                     break;
                 case ColumnType::UINT8:
-                    visitor(i, *static_cast<const uint8_t*>(ptr));
+                    invoke_visitor(reinterpret_cast<uint8_t*>(ptr));
                     break;
                 case ColumnType::UINT16:
-                    visitor(i, *static_cast<const uint16_t*>(ptr));
+                    invoke_visitor(reinterpret_cast<uint16_t*>(ptr));
                     break;
                 case ColumnType::UINT32:
-                    visitor(i, *static_cast<const uint32_t*>(ptr));
+                    invoke_visitor(reinterpret_cast<uint32_t*>(ptr));
                     break;
                 case ColumnType::UINT64:
-                    visitor(i, *static_cast<const uint64_t*>(ptr));
+                    invoke_visitor(reinterpret_cast<uint64_t*>(ptr));
                     break;
                 case ColumnType::FLOAT:
-                    visitor(i, *static_cast<const float*>(ptr));
+                    invoke_visitor(reinterpret_cast<float*>(ptr));
                     break;
                 case ColumnType::DOUBLE:
-                    visitor(i, *static_cast<const double*>(ptr));
+                    invoke_visitor(reinterpret_cast<double*>(ptr));
                     break;
                 case ColumnType::STRING:
-                    visitor(i, *static_cast<const std::string*>(ptr));
+                    invoke_visitor(reinterpret_cast<std::string*>(ptr));
                     break;
                 default: [[unlikely]]
                     throw std::runtime_error("Row::visit() unsupported column type");
@@ -943,178 +967,87 @@ namespace bcsv {
      * 
      * @see row_visitors.h for concepts, helper types, and more examples
      * @see Row::visit(Visitor&&) const for read-only version
+     * @see Row::visit(size_t, Visitor&&, size_t) for visiting a range or single column
      * @see Row::trackChanges() to enable/disable change tracking
      * @see Row::hasAnyChanges() to check if any columns were modified
      */
     template<typename Visitor>
     inline void Row::visit(Visitor&& visitor) {
-        // Mutable visit: iterate through columns and invoke visitor with mutable references
-        // Visitor can optionally accept 3rd parameter (bool& changed) for fine-grained change tracking
-        
-        for (size_t i = 0; i < layout_.columnCount(); ++i) {
-            ColumnType type = layout_.columnType(i);
-            void* ptr = &data_[offsets_[i]];
-            
-            // Helper lambda to invoke visitor with optional change tracking parameter
-            auto invoke_visitor = [&]<typename T>(T* value_ptr) {
-                if constexpr (std::is_invocable_v<Visitor, size_t, T&, bool&>) {
-                    // Visitor accepts change flag - fine-grained tracking for this column
-                    bool changed = true;  // Default: assume changed (safe, conservative)
-                    visitor(i, *value_ptr, changed);
-                    if (tracksChanges()) {
-                        changes_[i] |= changed;
-                    }
-                } else {
-                    // Legacy 2-parameter visitor - mark this column as changed immediately
-                    visitor(i, *value_ptr);
-                    if (tracksChanges()) {
-                        changes_[i] = true;
-                    }
-                }
-            };
-            
-            // Dispatch based on actual column type
-            switch(type) {
-                case ColumnType::BOOL:
-                    invoke_visitor(static_cast<bool*>(ptr));
-                    break;
-                case ColumnType::INT8:
-                    invoke_visitor(static_cast<int8_t*>(ptr));
-                    break;
-                case ColumnType::INT16:
-                    invoke_visitor(static_cast<int16_t*>(ptr));
-                    break;
-                case ColumnType::INT32:
-                    invoke_visitor(static_cast<int32_t*>(ptr));
-                    break;
-                case ColumnType::INT64:
-                    invoke_visitor(static_cast<int64_t*>(ptr));
-                    break;
-                case ColumnType::UINT8:
-                    invoke_visitor(static_cast<uint8_t*>(ptr));
-                    break;
-                case ColumnType::UINT16:
-                    invoke_visitor(static_cast<uint16_t*>(ptr));
-                    break;
-                case ColumnType::UINT32:
-                    invoke_visitor(static_cast<uint32_t*>(ptr));
-                    break;
-                case ColumnType::UINT64:
-                    invoke_visitor(static_cast<uint64_t*>(ptr));
-                    break;
-                case ColumnType::FLOAT:
-                    invoke_visitor(static_cast<float*>(ptr));
-                    break;
-                case ColumnType::DOUBLE:
-                    invoke_visitor(static_cast<double*>(ptr));
-                    break;
-                case ColumnType::STRING:
-                    invoke_visitor(static_cast<std::string*>(ptr));
-                    break;
-                default: [[unlikely]]
-                    throw std::runtime_error("Row::visit() unsupported column type");
-            }
-        }
+        // Delegate to range-based visitor for all columns
+        visit(0, std::forward<Visitor>(visitor), layout_.columnCount());
     }
 
     // ========================================================================
     // Observer Callbacks (Layout Mutation Notifications)
     // ========================================================================
 
-    inline void Row::onAddColumn([[maybe_unused]] size_t index, [[maybe_unused]] ColumnType type) {
-        // Column added to layout - need to resize offsets and data
-        // This is a structural change that invalidates current data layout
-        
-        // 1. Destroy existing string objects
-        for(size_t i = 0; i < offsets_.size(); ++i) {
-            if(layout_.columnType(i) == ColumnType::STRING) {
-                reinterpret_cast<std::string*>(&data_[offsets_[i]])->~string();
-            }
+    inline void Row::onLayoutUpdate(const std::vector<Layout::Data::Change>& changes) {
+        // Handle empty changes (no-op)
+        if (changes.empty()) {
+            return;
         }
-        
-        // 2. Rebuild offsets based on new layout
-        offsets_.resize(layout_.columnCount());
-        offset_var_ = 0;
-        for(size_t i = 0; i < layout_.columnCount(); ++i) {
-            offsets_[i] = offset_var_;
-            offset_var_ += binaryFieldLength(layout_.columnType(i));
-        }
-        
-        // 3. Resize data buffer
-        data_.resize(offset_var_);
-        
-        // 4. Construct new objects with placement new
-        for(size_t i = 0; i < layout_.columnCount(); ++i) {
-            constructDefaultAt(&data_[offsets_[i]], layout_.columnType(i));
-        }
-        
-        // 5. Mark all as changed if tracking
-        if(tracksChanges()) {
-            changes_.set();
-        }
-    }
 
-    inline void Row::onRemoveColumn([[maybe_unused]] size_t index) {
-        // Column removed from layout - need to rebuild structure
-        
-        // 1. Destroy existing string objects
-        for(size_t i = 0; i < offsets_.size(); ++i) {
-            if(layout_.columnType(i) == ColumnType::STRING) {
-                reinterpret_cast<std::string*>(&data_[offsets_[i]])->~string();
+        // safe old data
+        std::vector<std::byte> oldData = std::move(data_);
+        std::vector<std::byte*> oldPtr = std::move(ptr_);
+        size_t oldColumnCount = layout_.columnCount();
+        assert(oldPtr.size() == oldColumnCount);
+        for(size_t i = 0; i < oldColumnCount; ++i) {
+            auto ptr = oldPtr[i];
+            auto offset = ptr - oldData.data();
+            auto oldType = layout_.columnType(i);
+            auto size = sizeOf(oldType);
+            assert(offset + size <= oldData.size() && "Row::onLayoutUpdate: ptr should point into oldData buffer");
+            // for now we simply scrap the old data --> call destructors
+            if(oldType == ColumnType::STRING) {
+                reinterpret_cast<std::string*>(ptr)->~string();
             }
         }
-        
-        // 2. Rebuild offsets based on new layout
-        offsets_.resize(layout_.columnCount());
-        offset_var_ = 0;
-        for(size_t i = 0; i < layout_.columnCount(); ++i) {
-            offsets_[i] = offset_var_;
-            offset_var_ += binaryFieldLength(layout_.columnType(i));
-        }
-        
-        // 3. Resize data buffer
-        data_.resize(offset_var_);
-        
-        // 4. Construct new objects with placement new
-        for(size_t i = 0; i < layout_.columnCount(); ++i) {
-            constructDefaultAt(&data_[offsets_[i]], layout_.columnType(i));
-        }
-        
-        // 5. Mark all as changed if tracking
-        if(tracksChanges()) {
-            changes_.set();
-        }
-    }
 
-    inline void Row::onChangeColumnType([[maybe_unused]] size_t index, [[maybe_unused]] ColumnType oldType, [[maybe_unused]] ColumnType newType) {
-        // Column type changed - need to rebuild everything
+
+
         
-        // 1. Destroy existing string objects
-        for(size_t i = 0; i < offsets_.size(); ++i) {
-            if(layout_.columnType(i) == ColumnType::STRING) {
-                reinterpret_cast<std::string*>(&data_[offsets_[i]])->~string();
+        // For simplicity, we will rebuild the entire row based on the new layout.
+        std::vector<ColumnType> newTypes;
+        for (const auto& change : changes) {
+            if (change.newType != ColumnType::VOID) {
+                newTypes.push_back(change.newType);
             }
         }
         
-        // 2. Rebuild offsets based on new layout
-        offsets_.resize(layout_.columnCount());
+        // Calculate new offsets
+        uint32_t offset = 0;
+        size_t newColumnCount = newTypes.size();
+        std::vector<uint32_t> newOffsets(newColumnCount);
+        for (size_t i = 0; i < newColumnCount; ++i) {
+            uint32_t alignment = alignOf(newTypes[i]);
+            offset = (offset + (alignment - 1)) & ~(alignment - 1);
+            newOffsets[i] = offset;
+            offset += sizeOf(newTypes[i]);
+        }
+        
+        // Rebuild storage
+        data_.clear();
+        data_.resize(offset);
+        ptr_.resize(newColumnCount);
+        
+        // Initialize all columns with default values
+        for (size_t i = 0; i < newColumnCount; ++i) {
+            ptr_[i] = &data_[newOffsets[i]];
+            constructDefaultAt(ptr_[i], newTypes[i]);
+        }
+        
+        // Reset change tracking
+        if (tracksChanges()) {
+            changes_.resize(newColumnCount);
+            changes_.set();  // Mark all as changed
+        }
+        
+        // Update deprecated offsets_ and offset_var_
+        offsets_ = std::move(newOffsets);
         offset_var_ = 0;
-        for(size_t i = 0; i < layout_.columnCount(); ++i) {
-            offsets_[i] = offset_var_;
-            offset_var_ += binaryFieldLength(layout_.columnType(i));
-        }
-        
-        // 3. Resize data buffer
-        data_.resize(offset_var_);
-        
-        // 4. Construct new objects with placement new
-        for(size_t i = 0; i < layout_.columnCount(); ++i) {
-            constructDefaultAt(&data_[offsets_[i]], layout_.columnType(i));
-        }
-        
-        // 5. Mark all as changed if tracking
-        if(tracksChanges()) {
-            changes_.set();
+        for (size_t i = 0; i < newColumnCount; ++i) {
+            offset_var_ += wireSizeOf(newTypes[i]);
         }
     }
 
@@ -1142,7 +1075,7 @@ namespace bcsv {
             // Check if value actually changed
             if(currentValue != newValue) {
                 // Assign new value (works for all types including strings)
-                *reinterpret_cast<T*>(&data_[offsets_[i]]) = newValue;
+                *reinterpret_cast<T*>(ptr_[i]) = newValue;
                 if (tracksChanges()) {
                     changes_[i] = true; // Mark this column as changed
                 }
@@ -1154,31 +1087,33 @@ namespace bcsv {
 
     inline Row& Row::operator=(Row&& other) noexcept 
     {
-        if (this == &other) return *this;
+        if (this == &other) 
+            return *this;
         
         // Clean up current state
         layout_.unregisterCallback(this);
-        for(size_t i = 0; i < layout_.columnCount(); ++i) {
-            if(layout_.columnType(i) == ColumnType::STRING) {
-                reinterpret_cast<std::string*>(&data_[offsets_[i]])->~string();
+        if(!ptr_.empty()) {
+            for(size_t i = 0; i < layout_.columnCount(); ++i) {
+                if(layout_.columnType(i) == ColumnType::STRING) {
+                    reinterpret_cast<std::string*>(ptr_[i])->~string();
+                }
             }
         }
         
         // Move other's data
-        layout_ = std::move(other.layout_);
-        offsets_ = std::move(other.offsets_);
-        offset_var_ = other.offset_var_;
-        data_ = std::move(other.data_);
+        layout_ = other.layout_;
+        data_ = std::move(other.data_);     // Transfers heap buffer ownership -> zero-copy move
+        ptr_  = std::move(other.ptr_);       // Pointers remain valid (point into same heap buffer now owned by this->data_)
         changes_ = std::move(other.changes_);
         
         // Re-register with new this pointer
-        other.layout_.unregisterCallback(&other);
         layout_.registerCallback(this, {
-            [this](size_t i, ColumnType t) { onAddColumn(i, t); },
-            [this](size_t i) { onRemoveColumn(i); },
-            [this](size_t i, ColumnType ot, ColumnType nt) { onChangeColumnType(i, ot, nt); }
+            [this](const std::vector<Layout::Data::Change>& changes) { onLayoutUpdate(changes); }
         });
         
+        // dependency: offsets_ and offset_var_ are derived from layout and data, so we need to reconstruct them based on the new layout and data after move
+        offsets_ = std::move(other.offsets_);
+        offset_var_ = other.offset_var_;
         return *this;
     }
 
@@ -1192,7 +1127,7 @@ namespace bcsv {
         for(size_t i = 0; i < layout_.columnCount(); ++i) {
             offsets_[i] = offset_var_;
             ColumnType type = layout_.columnType(i);
-            offset_var_ += binaryFieldLength(type);
+            offset_var_ += wireSizeOf(type);
         }
     }
 
@@ -1219,7 +1154,7 @@ namespace bcsv {
         // 3. Cache checks variables (Access vector only once)
         uint32_t offset = offsets_[index];
         ColumnType type = layout_.columnType(index);
-        size_t fieldLen = binaryFieldLength(type);
+        size_t fieldLen = wireSizeOf(type);
 
 
         // 4. Validate Fixed Section Bounds
@@ -1293,90 +1228,65 @@ namespace bcsv {
     template<typename T>
     inline T RowView::get(size_t index) const {
         // Compile-time check: std::string types must only be used with STRING columns (checked at runtime)
-        // For non-STRING columns requesting std::string, this will fail at compile time
         static_assert(
             std::is_trivially_copyable_v<T> || 
             std::is_same_v<T, std::string> || 
             std::is_same_v<T, std::string_view> || 
             std::is_same_v<T, std::span<const char>>,
-            "RowView::get<T>: Type T must be either trivially copyable (primitives) or string-related (std::string, std::string_view, std::span<const char>)"
+            "RowView::get<T>: Type T must be either trivially copyable (primitives) or string-related"
         );
         
-        // Bounds check: configurable via RANGE_CHECKING
-        if constexpr (RANGE_CHECKING) {
-            // Runtime check in both debug and release builds
-            if (index >= layout_.columnCount()) {
-                throw std::out_of_range("RowView::get<T>: Invalid column index " + std::to_string(index) + 
-                                        " (column count: " + std::to_string(layout_.columnCount()) + ")");
+        // Use visitor pattern for type-safe access with strict type matching
+        T result;
+        bool found = false;
+        
+        visit(index, [&](size_t, auto&& value) {
+            using ValueType = std::decay_t<decltype(value)>;
+            
+            // String type handling
+            if constexpr (std::is_same_v<T, std::string> || 
+                          std::is_same_v<T, std::string_view> || 
+                          std::is_same_v<T, std::span<const char>>) {
+                if constexpr (std::is_same_v<ValueType, std::string_view>) {
+                    // String type requested and column is STRING
+                    if constexpr (std::is_same_v<T, std::string_view>) {
+                        result = value;
+                    } else if constexpr (std::is_same_v<T, std::span<const char>>) {
+                        result = std::span<const char>(value.data(), value.size());
+                    } else { // std::string
+                        result = std::string(value);
+                    }
+                    found = true;
+                } else {
+                    // String type requested but column is not STRING - error
+                }
+            } else {
+                // Primitive type requested
+                if constexpr (std::is_same_v<ValueType, std::string_view>) {
+                    // Primitive type requested but column is STRING - error
+                } else if constexpr (std::is_same_v<T, ValueType>) {
+                    // Exact type match
+                    result = value;
+                    found = true;
+                }
             }
-        } else {
-            // Debug-only check (zero cost in release builds)
-            assert(index < layout_.columnCount() && "RowView::get<T> index out of bounds");
+        }, 1);
+        
+        if (!found) {
+            // Type mismatch occurred
+            ColumnType actualType = layout_.columnType(index);
+            ColumnType requestedType = std::is_same_v<T, std::string> || 
+                                        std::is_same_v<T, std::string_view> || 
+                                        std::is_same_v<T, std::span<const char>> 
+                                        ? ColumnType::STRING 
+                                        : toColumnType<T>();
+            throw std::runtime_error("RowView::get<T>: Type mismatch at index " + 
+                                     std::to_string(index) + 
+                                     ". Requested: " + std::string(toString(requestedType)) + 
+                                     ", Actual: " + std::string(toString(actualType)));
         }
         
-        assert(layout_.columnCount() == offsets_.size());
-
-        // 1. Get Column Info, offset, length (includes bounds check via layout_)
-        ColumnType type = layout_.columnType(index);
-        size_t offset = offsets_[index];
-        size_t length = binaryFieldLength(type);
-
-        // 2. Check Buffer Access
-        if (buffer_.data() == nullptr || offset + length > buffer_.size()) {
-            throw std::out_of_range("RowView::get<T>: Buffer access out of range at index " + 
-                                    std::to_string(index) + 
-                                    " (offset: " + std::to_string(offset) + 
-                                    ", required: " + std::to_string(offset + length) + 
-                                    ", available: " + std::to_string(buffer_.size()) + ")");
-        }
-
-        // 3. Type Check - Branch on compile-time type T first for better optimization
-        if constexpr (std::is_same_v<T, std::string> || 
-                      std::is_same_v<T, std::string_view> || 
-                      std::is_same_v<T, std::span<const char>>) {
-            // String type requested - verify column is actually STRING
-            if (type != ColumnType::STRING) {
-                std::string msg = "RowView::get<T>: Type mismatch at index " + std::to_string(index) + 
-                                  ". Requested: string type, Actual: " + std::string(toString(type));
-                throw std::runtime_error(msg);
-            }
-            
-            // Unpack string address and validate bounds
-            StringAddr addr;
-            std::memcpy(&addr, &buffer_[offset], sizeof(addr));            
-            // Validate string bounds for payload
-            if (addr.offset() + addr.length() > buffer_.size()) {
-                throw std::out_of_range("String payload out of bounds");
-            }
-
-            // Return appropriate string type
-            if constexpr (std::is_same_v<T, std::string_view>) {
-                return std::string_view(reinterpret_cast<const char*>(&buffer_[addr.offset()]), addr.length());
-            } else if constexpr (std::is_same_v<T, std::span<const char>>) {
-                return std::span<const char>(reinterpret_cast<const char*>(&buffer_[addr.offset()]), addr.length());
-            } else { // std::string
-                return std::string(reinterpret_cast<const char*>(&buffer_[addr.offset()]), addr.length());
-            }
-        } else {
-            // Primitive type requested - verify column is NOT STRING
-            if (type == ColumnType::STRING) {
-                throw std::runtime_error("RowView::get<T>: Type mismatch at index " + std::to_string(index) + 
-                                         ". Cannot read primitive type from STRING column");
-            }
-            
-            // Type must match exactly for primitives
-            ColumnType requestedType = toColumnType<T>();
-            if (requestedType != type) {
-                std::string msg = "RowView::get<T>: Type mismatch at index " + std::to_string(index) + 
-                                  ". Requested: " + std::string(toString(requestedType)) + 
-                                  ", Actual: " + std::string(toString(type));
-                throw std::runtime_error(msg);
-            }
-            
-            T val;
-            std::memcpy(&val, &buffer_[offset], sizeof(T));
-            return val;
-        }
+        return result;
     }
 
     /** Flexible access with type conversions - FLEXIBLE.
@@ -1386,78 +1296,39 @@ namespace bcsv {
      */
     template<typename T>
     inline bool RowView::get(size_t index, T &dst) const {
-        assert(layout_.columnCount() == offsets_.size());
-
-        // 1. Get Column Info, offset, length (includes bounds check via layout_)
-        ColumnType type = layout_.columnType(index);
-        size_t offset = offsets_[index];
-        size_t length = binaryFieldLength(type);
-
-        // 2. Check Buffer Access
-        if (buffer_.data() == nullptr || offset + length > buffer_.size() || index >= layout_.columnCount()) {
-            assert(false && "RowView::get_as buffer access failed");
+        // Use visitor pattern for flexible type conversions
+        bool success = false;
+        
+        try {
+            visit(index, [&](size_t, auto&& value) {
+                using ValueType = std::decay_t<decltype(value)>;
+                
+                // Try to assign value to dst (compiler handles implicit conversions)
+                if constexpr (std::is_assignable_v<T&, ValueType>) {
+                    dst = value;
+                    success = true;
+                } else if constexpr (std::is_same_v<ValueType, std::string_view>) {
+                    // Special handling for string types
+                    if constexpr (std::is_same_v<T, std::string>) {
+                        dst.assign(value.data(), value.size());
+                        success = true;
+                    } else if constexpr (std::is_same_v<T, std::string_view>) {
+                        dst = value;
+                        success = true;
+                    } else if constexpr (std::is_same_v<T, std::span<const char>>) {
+                        dst = std::span<const char>(value.data(), value.size());
+                        success = true;
+                    } else if constexpr (std::is_assignable_v<T&, std::string_view>) {
+                        dst = value;
+                        success = true;
+                    }
+                }
+            }, 1);
+        } catch (...) {
             return false;
         }
-
-        // 3. Functor to check compatibility and assign.
-        // Uses 'if constexpr' to ensure only valid assignments are compiled.
-        auto try_read = [&]<typename SrcType>() -> bool {
-             if constexpr (std::is_assignable_v<T&, SrcType>) {
-                // SAFELY READ UNALIGNED DATA
-                // RowView buffer data is packed and potentially unaligned.
-                // We must read into a local aligned variable first using memcpy.
-                SrcType tempVal;
-                assert(length == sizeof(SrcType) && "Mismatched length for SrcType");
-                std::memcpy(&tempVal, &buffer_[offset], length);
-                dst = tempVal; // Implicit conversion/assignment (e.g. int8 -> int)
-                return true;
-            }
-            return false;
-        };
-
-        // 4. Dispatch based on actual column type
-        switch(type) {
-            case ColumnType::BOOL:   return try_read.template operator()<bool>();
-            case ColumnType::UINT8:  return try_read.template operator()<uint8_t>();
-            case ColumnType::UINT16: return try_read.template operator()<uint16_t>();
-            case ColumnType::UINT32: return try_read.template operator()<uint32_t>();
-            case ColumnType::UINT64: return try_read.template operator()<uint64_t>();
-            case ColumnType::INT8:   return try_read.template operator()<int8_t>();
-            case ColumnType::INT16:  return try_read.template operator()<int16_t>();
-            case ColumnType::INT32:  return try_read.template operator()<int32_t>();
-            case ColumnType::INT64:  return try_read.template operator()<int64_t>();
-            case ColumnType::FLOAT:  return try_read.template operator()<float>();
-            case ColumnType::DOUBLE: return try_read.template operator()<double>();
-            
-            // Special handling for STRING type, as it requires unpacking the StringAddr
-            case ColumnType::STRING: {
-                StringAddr addr;
-                memcpy(&addr, &buffer_[offset], sizeof(addr));
-                if (addr.offset() + addr.length() > buffer_.size()) {
-                    assert(false && "RowView::get_as string payload out of bounds");
-                    return false; // string data out of bounds
-                }
-             
-                if constexpr (std::is_same_v<T, std::string>) {
-                    dst.assign(reinterpret_cast<const char*>(&buffer_[addr.offset()]), addr.length()); // deep copy
-                    return true;
-                } else if constexpr (std::is_same_v<T, std::string_view>) {
-                    dst = std::string_view(reinterpret_cast<const char*>(&buffer_[addr.offset()]), addr.length()); // zero-copy view (careful with lifetime!)
-                    return true;
-                } else if constexpr (std::is_same_v<T, std::span<const char>>) {
-                    dst = std::span<const char>(reinterpret_cast<const char*>(&buffer_[addr.offset()]), addr.length()); // zero-copy span
-                    return true;
-                } else if constexpr (std::is_assignable_v<T&, std::string>) {
-                    // fallback for other assignable types (e.g. std::filesystem::path)
-                    dst = std::string_view(reinterpret_cast<const char*>(&buffer_[addr.offset()]), addr.length());
-                    return true;
-                } else {
-                    return false;
-                }
-            }
-            default:
-                return false;
-        }
+        
+        return success;
     }
 
     /** Sets the value at the specified column index. Types must match exactly. 
@@ -1467,36 +1338,24 @@ namespace bcsv {
         using DecayedT = std::decay_t<T>;
         static_assert(std::is_arithmetic_v<DecayedT>, "RowView::set<T> supports primitive arithmetic types and bool only");
         
-        // 1. Explicit Bounds Check
-        if (index >= layout_.columnCount()) [[unlikely]] {
+        // Use visitor pattern for strict type-matched write
+        bool success = false;
+        
+        try {
+            visit(index, [&](size_t, auto& colValue) {
+                using ColType = std::decay_t<decltype(colValue)>;
+                
+                // Strict type match required
+                if constexpr (std::is_same_v<DecayedT, ColType>) {
+                    colValue = value;
+                    success = true;
+                }
+            }, 1);
+        } catch (...) {
             return false;
         }
-
-        // 2. Strict Type Match
-        auto type = layout_.columnType(index);
-        if (toColumnType<DecayedT>() != type) [[unlikely]] {
-            return false; // type mismatch
-        }
-
-        // 3. Buffer Validation
-        auto data = buffer_.data();
-        auto size = buffer_.size();
-        if(data == nullptr) [[unlikely]] {
-            return false;
-        }
-
-        // 4. Offset/Length Check
-        // offsets_ is resized in constructor, safe to access after index check
-        auto offset = offsets_[index];
-        if(offset + sizeof(T) > size) [[unlikely]] {
-            return false; // out of bounds
-        }
-
-        // 5. Unaligned Write Safety
-        // RowView points to packed data; a direct assignment (*cast = val) is unsafe.
-        // memcpy handles the unaligned write efficiently.
-        memcpy(data + offset, &value, sizeof(T));
-        return true;
+        
+        return success;
     }
 
 
@@ -1505,63 +1364,29 @@ namespace bcsv {
     */
     template<typename T>
     inline bool RowView::set_from(size_t index, const T& value) {
-
         // Strict compile-time check: only allow arithmetic types (int, float, bool, etc.)
         using DecayedT = std::decay_t<T>;
         static_assert(std::is_arithmetic_v<DecayedT>, 
             "RowView::set_from supports primitive arithmetic types and bool only");
 
-        // Runtime bounds check
-        if(index >= layout_.columnCount()) [[unlikely]] return false;
-
-        ColumnType type = layout_.columnType(index);
+        // Use visitor pattern for flexible write with type conversions
+        bool success = false;
         
-        auto data = buffer_.data();
-        auto size = buffer_.size();
-        // Basic buffer integrity check (offset_var_ implicitly validates fixed section size)
-        if(data == nullptr) [[unlikely]] {
-            return false;
-        }
-
-        auto offset = offsets_[index];
-        auto ptr = data + offset;
-
-        // Primitive Types Converter Helper
-        auto try_assign = [&]<typename ColType>() -> bool {
-            // Check if value is convertible/assignable to target column type (e.g. double -> int)
-            if constexpr (std::is_assignable_v<ColType&, const DecayedT&>) {
+        try {
+            visit(index, [&](size_t, auto& colValue) {
+                using ColType = std::decay_t<decltype(colValue)>;
                 
-                // Strict Bounds check for the specific column size
-                if (offset + sizeof(ColType) > size) [[unlikely]] {
-                    return false; 
+                // Try assignment with implicit conversion
+                if constexpr (std::is_assignable_v<ColType&, const DecayedT&>) {
+                    colValue = static_cast<ColType>(value);
+                    success = true;
                 }
-
-                // 1. Convert to target type (handled by static_cast based on is_assignable)
-                ColType tempVal = static_cast<ColType>(value);
-                
-                // 2. Safe Unaligned Write (using memcpy)
-                std::memcpy(ptr, &tempVal, sizeof(ColType));
-                return true;
-            }
+            }, 1);
+        } catch (...) {
             return false;
-        };
-
-        switch(type) {
-            case ColumnType::BOOL:   return try_assign.template operator()<bool>();
-            case ColumnType::UINT8:  return try_assign.template operator()<uint8_t>();
-            case ColumnType::UINT16: return try_assign.template operator()<uint16_t>();
-            case ColumnType::UINT32: return try_assign.template operator()<uint32_t>();
-            case ColumnType::UINT64: return try_assign.template operator()<uint64_t>();
-            case ColumnType::INT8:   return try_assign.template operator()<int8_t>();
-            case ColumnType::INT16:  return try_assign.template operator()<int16_t>();
-            case ColumnType::INT32:  return try_assign.template operator()<int32_t>();
-            case ColumnType::INT64:  return try_assign.template operator()<int64_t>();
-            case ColumnType::FLOAT:  return try_assign.template operator()<float>();
-            case ColumnType::DOUBLE: return try_assign.template operator()<double>();
-            
-            // Strings are strictly unsupported (return false at runtime if column is STRING)
-            default: return false;
         }
+        
+        return success;
     }
 
     /** Vectorized set of multiple columns of same type */
@@ -1655,10 +1480,42 @@ namespace bcsv {
         return true;
     }
 
+    /** @brief Visit a range of columns with read-only access (zero-copy view)
+     * 
+     * Provides zero-copy access to serialized data through string_view for strings
+     * and value copies for primitives. No deserialization overhead for strings.
+     * 
+     * @tparam Visitor Callable type
+     * @param startIndex First column index to visit
+     * @param visitor Callable accepting `(size_t index, const T& value)` where T is the column type or string_view for strings
+     * @param count Number of columns to visit (default: 1 for single column, 0 visits nothing)
+     * 
+     * @par Example - Zero-copy string access
+     * @code
+     * rowView.visit(1, [](size_t idx, std::string_view str) {
+     *     std::cout << str;  // No string copy, direct buffer access
+     * });
+     * @endcode
+     * 
+     * @see row_visitors.h for concepts and helper types
+     * @see RowView::visit(Visitor&&) const for visiting all columns
+     */
     template<typename Visitor>
-    inline void RowView::visit(Visitor&& visitor) const {
-        // Runtime dispatch through serialized buffer
-        for (size_t i = 0; i < layout_.columnCount(); ++i) {
+    inline void RowView::visit(size_t startIndex, Visitor&& visitor, size_t count) const {
+        if (count == 0) return;  // Nothing to visit
+        
+        size_t endIndex = std::min(startIndex + count, layout_.columnCount());
+        
+        if constexpr (RANGE_CHECKING) {
+            if (startIndex >= layout_.columnCount()) {
+                throw std::out_of_range("RowView::visit: Invalid start index " + std::to_string(startIndex));
+            }
+        } else {
+            assert(startIndex < layout_.columnCount() && "RowView::visit: Start index out of bounds");
+        }
+        
+        // Core implementation: iterate and dispatch for each column
+        for (size_t i = startIndex; i < endIndex; ++i) {
             ColumnType type = layout_.columnType(i);
             uint32_t offset = offsets_[i];
             
@@ -1764,11 +1621,73 @@ namespace bcsv {
         }
     }
 
+    /** @brief Visit all columns with read-only access (zero-copy view)
+     * 
+     * Efficient iteration through serialized data with zero-copy string views.
+     * Primitives are copied, strings are accessed via std::string_view into buffer.
+     * 
+     * @tparam Visitor Callable accepting `(size_t index, const T& value)` - T varies by column
+     * 
+     * @par Example - Mixed type processing
+     * @code
+     * rowView.visit([](size_t idx, const auto& value) {
+     *     using T = std::decay_t<decltype(value)>;
+     *     if constexpr (std::is_same_v<T, std::string_view>) {
+     *         // Zero-copy string access
+     *     } else {
+     *         // Primitive value copy
+     *     }
+     * });
+     * @endcode
+     * 
+     * @see row_visitors.h for concepts and helper types
+     * @see RowView::visit(size_t, Visitor&&, size_t) const for range access
+     */
     template<typename Visitor>
-    inline void RowView::visit(Visitor&& visitor) {
-        // Mutable visit: can only mutate primitives in-place (strings cannot be resized)
-        // Visitor can optionally accept 3rd parameter (bool& changed) for consistency with Row API
-        for (size_t i = 0; i < layout_.columnCount(); ++i) {
+    inline void RowView::visit(Visitor&& visitor) const {
+        // Delegate to range-based visitor for all columns
+        visit(0, std::forward<Visitor>(visitor), layout_.columnCount());
+    }
+
+    /** @brief Visit a range of columns with mutable access (primitives only)
+     * 
+     * Allows in-place modification of primitives in the serialized buffer.
+     * Strings are READ-ONLY - cannot resize buffer. Change tracking parameter
+     * is accepted but ignored (always treated as changed).
+     * 
+     * @tparam Visitor Callable accepting `(size_t index, T& value[, bool& changed])`
+     * @param startIndex First column index to visit
+     * @param visitor Callable for in-place modification
+     * @param count Number of columns to visit
+     * 
+     * @par Example - Modify primitives in-place
+     * @code
+     * rowView.visit(0, [](size_t idx, auto& value) {
+     *     if constexpr (std::is_arithmetic_v<decltype(value)>) {
+     *         value *= 2;  // In-place modification
+     *     }
+     * }, 5);
+     * @endcode
+     * 
+     * @warning Strings cannot be modified through RowView (buffer size fixed)
+     * @see row_visitors.h for concepts and helper types
+     */
+    template<typename Visitor>
+    inline void RowView::visit(size_t startIndex, Visitor&& visitor, size_t count) {
+        if (count == 0) return;  // Nothing to visit
+        
+        size_t endIndex = std::min(startIndex + count, layout_.columnCount());
+        
+        if constexpr (RANGE_CHECKING) {
+            if (startIndex >= layout_.columnCount()) {
+                throw std::out_of_range("RowView::visit: Invalid start index " + std::to_string(startIndex));
+            }
+        } else {
+            assert(startIndex < layout_.columnCount() && "RowView::visit: Start index out of bounds");
+        }
+        
+        // Core implementation: iterate and dispatch for each column
+        for (size_t i = startIndex; i < endIndex; ++i) {
             ColumnType type = layout_.columnType(i);
             uint32_t offset = offsets_[i];
             
@@ -1853,6 +1772,23 @@ namespace bcsv {
                     throw std::runtime_error("RowView::visit() unsupported column type");
             }
         }
+    }
+
+    /** @brief Visit all columns with mutable access (primitives only)
+     * 
+     * Iterate through all columns allowing primitive modification.
+     * Strings remain read-only. No change tracking.
+     * 
+     * @tparam Visitor Callable accepting `(size_t index, T& value[, bool& changed])`
+     * 
+     * @note Both 2-param and 3-param signatures are accepted, change flag is ignored
+     * @see row_visitors.h for concepts and helper types
+     * @see RowView::visit(size_t, Visitor&&, size_t) for range access
+     */
+    template<typename Visitor>
+    inline void RowView::visit(Visitor&& visitor) {
+        // Delegate to range-based visitor for all columns
+        visit(0, std::forward<Visitor>(visitor), layout_.columnCount());
     }
 
     // ========================================================================
@@ -2049,50 +1985,37 @@ namespace bcsv {
     template<typename... ColumnTypes>
     template<typename T>
     bool RowStatic<ColumnTypes...>::get(size_t index, T& dst) const noexcept {
-        // 1. Bounds Check
-        if (index >= column_count) [[unlikely]] {
+        // Use visitor pattern for flexible type conversions
+        bool success = false;
+        
+        try {
+            visit(index, [&](size_t, const auto& value) {
+                using SrcType = std::decay_t<decltype(value)>;
+                
+                // Try to assign value to dst (compiler handles implicit conversions)
+                if constexpr (std::is_assignable_v<T&, const SrcType&>) {
+                    if constexpr (std::is_arithmetic_v<T> && std::is_arithmetic_v<SrcType>) {
+                        dst = static_cast<T>(value);
+                    } else {
+                        dst = value;
+                    }
+                    success = true;
+                } else if constexpr (std::is_same_v<SrcType, std::string>) {
+                    // Special handling for string types
+                    if constexpr (std::is_same_v<T, std::string_view>) {
+                        dst = std::string_view(value);
+                        success = true;
+                    } else if constexpr (std::is_same_v<T, std::span<const char>>) {
+                        dst = std::span<const char>(value.data(), value.size());
+                        success = true;
+                    }
+                }
+            }, 1);
+        } catch (...) {
             return false;
         }
-
-        // 2. Define Function Ptr Type
-        using HandlerFunc = bool (*)(const RowStatic&, T&);
-
-        // 3. Create the Jump Table (static constexpr means computed once at compile-time)
-        // We use a lambda to immediately invoke and return the populated array 
-        static constexpr auto handlers = []<size_t... I>(std::index_sequence<I...>) {
-            return std::array<HandlerFunc, column_count>{
-                // Unary '+' forces generic lambda to function pointer conversion
-                +[](const RowStatic& self, T& target) -> bool {
-                    const auto& srcVal = std::get<I>(self.data_);
-                    using SrcType = std::decay_t<decltype(srcVal)>;
-
-                    // --- Exact same logic as before, now isolated per column ---
-                    if constexpr (std::is_assignable_v<T&, const SrcType&>) {
-                         if constexpr (std::is_arithmetic_v<T> && std::is_arithmetic_v<SrcType>) {
-                             target = static_cast<T>(srcVal);
-                         } else {
-                             target = srcVal;
-                         }
-                         return true;
-                    }
-                    else if constexpr (std::is_same_v<SrcType, std::string>) {
-                        if constexpr (std::is_same_v<T, std::string_view>) {
-                            target = std::string_view(srcVal);
-                            return true;
-                        }
-                        else if constexpr (std::is_same_v<T, std::span<const char>>) {
-                            target = std::span<const char>(srcVal);
-                            return true;
-                        }
-                    }
-                    return false; 
-                }... // Pack expansion populates the array
-            };
-        }(std::make_index_sequence<column_count>{});
-
-        // 4. O(1) Execution
-        // No loops, no if-else chains. Direct jump to the correct code block.
-        return handlers[index](*this, dst);
+        
+        return success;
     }
 
     template<typename... ColumnTypes>
@@ -2190,27 +2113,26 @@ namespace bcsv {
     template<typename... ColumnTypes>
     template<typename T>
     void RowStatic<ColumnTypes...>::set(size_t index, const T& value)  {
-        // 1. Bounds Check (Runtime)
-        if constexpr (RANGE_CHECKING) {
-            if (index >= column_count) [[unlikely]] {
-                throw std::out_of_range("RowStatic::set(): Invalid column index");
+        // Use visitor pattern for runtime-indexed write
+        visit(index, [&](size_t, auto& colValue) {
+            using ColType = std::decay_t<decltype(colValue)>;
+            using DecayedT = std::decay_t<T>;
+            
+            // Delegate to compile-time set which handles type conversions
+            // This is necessary because the visitor gives us the actual column type
+            // but we need to forward the user's value type to the compile-time version
+            // which has all the conversion logic
+            if constexpr (std::is_assignable_v<ColType&, const DecayedT&> || 
+                          detail::is_variant_v<DecayedT> ||
+                          std::is_same_v<DecayedT, std::span<char>> ||
+                          std::is_same_v<DecayedT, std::span<const char>>) {
+                colValue = value;  // Direct assignment or implicit conversion
+            } else if constexpr (std::is_same_v<DecayedT, std::string_view> && std::is_same_v<ColType, std::string>) {
+                colValue = std::string(value);
+            } else {
+                throw std::runtime_error("RowStatic::set: Type mismatch or unsupported conversion");
             }
-        }
-
-        // 2. Define Function Pointer Signature
-        using SetterFunc = void (*)(RowStatic&, const T&);
-        
-        // 3. Generate Jump Table (Static Constexpr), using lambda to populate array
-        static constexpr auto handlers = []<size_t... I>(std::index_sequence<I...>) {
-            return std::array<SetterFunc, column_count>{
-                +[](RowStatic& self, const T& v) {
-                    self.template set<I>(v); 
-                }...
-            };
-        }(std::make_index_sequence<column_count>{});
-
-        // 4. O(1) Dispatch
-        handlers[index](*this, value);
+        }, 1);
     }
 
     /** Vectorized static set (Compile-Time) */
@@ -2372,7 +2294,7 @@ namespace bcsv {
     void RowStatic<ColumnTypes...>::deserializeElements(const std::span<const std::byte> &buffer) 
     {
         if constexpr (Index < column_count) {
-            constexpr size_t len = binaryFieldLength<column_type<Index> >();
+            constexpr size_t len = wireSizeOf<column_type<Index>>();
             constexpr size_t off = column_offsets[Index];
 
             if (off + len > buffer.size()) {
@@ -2459,42 +2381,183 @@ namespace bcsv {
         }
     }
 
+    /** @brief Visit a range of columns with read-only access (compile-time optimized)
+     * 
+     * Compile-time type dispatch with runtime index iteration.
+     * Zero overhead when compiler can optimize away the fold expression.
+     * 
+     * @tparam Visitor Callable type
+     * @param startIndex First column index to visit
+     * @param visitor Callable accepting `(size_t index, const T& value)` where T is determined at compile-time
+     * @param count Number of columns to visit
+     * 
+     * @par Example - Type-safe iteration
+     * @code
+     * RowStatic<int32_t, double, std::string> row{layout};
+     * row.visit(0, [](size_t idx, const auto& value) {
+     *     std::cout << "Column " << idx << ": " << value << std::endl;
+     * }, 2);
+     * @endcode
+     * 
+     * @see row_visitors.h for concepts and helper types
+     * @see RowStatic::visit(Visitor&&) const for visiting all columns
+     */
+    template<typename... ColumnTypes>
+    template<typename Visitor>
+    void RowStatic<ColumnTypes...>::visit(size_t startIndex, Visitor&& visitor, size_t count) const {
+        if (count == 0) return;  // Nothing to visit
+        
+        size_t endIndex = std::min(startIndex + count, column_count);
+        
+        if constexpr (RANGE_CHECKING) {
+            if (startIndex >= column_count) {
+                throw std::out_of_range("RowStatic::visit: Invalid start index " + std::to_string(startIndex));
+            }
+        } else {
+            assert(startIndex < column_count && "RowStatic::visit: Start index out of bounds");
+        }
+        
+        // Runtime loop with compile-time type dispatch
+        for (size_t i = startIndex; i < endIndex; ++i) {
+            // Use fold expression to dispatch to correct tuple element at runtime
+            [&]<size_t... I>(std::index_sequence<I...>) {
+                ((I == i ? (visitor(I, std::get<I>(data_)), true) : false) || ...);
+            }(std::make_index_sequence<column_count>{});
+        }
+    }
+
+    /** @brief Visit all columns with read-only access (compile-time optimized)
+     * 
+     * Compile-time type-safe iteration through tuple-based storage.
+     * Uses fold expressions for optimal code generation.
+     * 
+     * @tparam Visitor Callable accepting `(size_t index, const T& value)`
+     * 
+     * @par Example - Compile-time type dispatch
+     * @code
+     * RowStatic<int, double, std::string> row{layout};
+     * row.visit([](size_t idx, const auto& value) {
+     *     using T = std::decay_t<decltype(value)>;
+     *     if constexpr (std::is_integral_v<T>) {
+     *         // Integer processing (compile-time branch)
+     *     } else if constexpr (std::is_floating_point_v<T>) {
+     *         // Float processing (compile-time branch)
+     *     } else {
+     *         // String processing
+     *     }
+     * });
+     * @endcode
+     * 
+     * @see row_visitors.h for concepts and helper types
+     * @see RowStatic::visit(size_t, Visitor&&, size_t) const for range access
+     */
     template<typename... ColumnTypes>
     template<typename Visitor>
     void RowStatic<ColumnTypes...>::visit(Visitor&& visitor) const {
-        // Use fold expression to iterate over all columns at compile time
-        // For each index I, invoke visitor with the index and the value at that position
-        [&]<size_t... I>(std::index_sequence<I...>) {
-            (visitor(I, std::get<I>(data_)), ...);
-        }(std::make_index_sequence<column_count>{});
+        // Delegate to range-based visitor for all columns
+        visit(0, std::forward<Visitor>(visitor), column_count);
     }
 
+    /** @brief Visit a range of columns with mutable access and change tracking (compile-time optimized)
+     * 
+     * Compile-time type dispatch with fine-grained change tracking support.
+     * Optimal code generation through fold expressions and type-safe tuple access.
+     * 
+     * @tparam Visitor Callable accepting `(size_t index, T& value[, bool& changed])`
+     * @param startIndex First column index to visit
+     * @param visitor Callable for modification with optional change tracking
+     * @param count Number of columns to visit
+     * 
+     * @par Example - Fine-grained tracking
+     * @code
+     * RowStatic<int, double, std::string> row{layout};
+     * row.trackChanges(true);
+     * row.visit(0, [](size_t idx, auto& value, bool& changed) {
+     *     auto old = value;
+     *     value = process(value);
+     *     changed = (value != old);  // Fine-grained per-column tracking
+     * }, 2);
+     * @endcode
+     * 
+     * @see row_visitors.h for concepts and helper types
+     * @see RowStatic::trackChanges() to enable/disable tracking
+     */
+    template<typename... ColumnTypes>
+    template<typename Visitor>
+    void RowStatic<ColumnTypes...>::visit(size_t startIndex, Visitor&& visitor, size_t count) {
+        if (count == 0) return;  // Nothing to visit
+        
+        size_t endIndex = std::min(startIndex + count, column_count);
+        
+        if constexpr (RANGE_CHECKING) {
+            if (startIndex >= column_count) {
+                throw std::out_of_range("RowStatic::visit: Invalid start index " + std::to_string(startIndex));
+            }
+        } else {
+            assert(startIndex < column_count && "RowStatic::visit: Start index out of bounds");
+        }
+        
+        // Runtime loop with compile-time type dispatch and change tracking
+        for (size_t i = startIndex; i < endIndex; ++i) {
+            // Use fold expression to dispatch to correct tuple element at runtime
+            [&]<size_t... I>(std::index_sequence<I...>) {
+                ([&] {
+                    if (I == i) {
+                        // Check if visitor accepts change tracking parameter
+                        if constexpr (std::is_invocable_v<Visitor, size_t, decltype(std::get<I>(data_))&, bool&>) {
+                            bool changed = true;
+                            visitor(I, std::get<I>(data_), changed);
+                            if (change_tracking_) {
+                                changes_[I] |= changed;
+                            }
+                        } else {
+                            visitor(I, std::get<I>(data_));
+                            if (change_tracking_) {
+                                changes_[I] = true;
+                            }
+                        }
+                    }
+                }(), ...);
+            }(std::make_index_sequence<column_count>{});
+        }
+    }
+
+    /** @brief Visit all columns with mutable access and change tracking (compile-time optimized)
+     * 
+     * Type-safe iteration with compile-time optimization and optional change tracking.
+     * Supports both 2-param and 3-param visitor signatures.
+     * 
+     * @tparam Visitor Callable accepting `(size_t index, T& value[, bool& changed])`
+     * 
+     * @par Visitor Signatures
+     * 
+     * **Fine-grained (3 params):** `(size_t index, T& value, bool& changed)`
+     * **Legacy (2 params):** `(size_t index, T& value)` - marks all as changed
+     * 
+     * @par Example - Mixed signature visitor
+     * @code
+     * RowStatic<int, double, std::string> row{layout};
+     * row.visit([](size_t idx, auto& value, bool& changed) {
+     *     using T = std::decay_t<decltype(value)>;
+     *     if constexpr (std::is_arithmetic_v<T>) {
+     *         auto old = value;
+     *         value *= 2;
+     *         changed = (value != old);  // Track arithmetic changes
+     *     } else {
+     *         changed = false;  // Don't track string changes
+     *     }
+     * });
+     * @endcode
+     * 
+     * @see row_visitors.h for concepts and helper types
+     * @see RowStatic::visit(size_t, Visitor&&, size_t) for range access
+     * @see RowStatic::trackChanges() to enable/disable tracking
+     */
     template<typename... ColumnTypes>
     template<typename Visitor>
     void RowStatic<ColumnTypes...>::visit(Visitor&& visitor) {
-        // Mutable visit: iterate over all columns at compile time with mutable references
-        // Visitor can optionally accept 3rd parameter (bool& changed) for fine-grained change tracking
-        [&]<size_t... I>(std::index_sequence<I...>) {
-            // Check if visitor accepts change tracking parameter
-            if constexpr ((std::is_invocable_v<Visitor, decltype(I), decltype(std::get<I>(data_))&, bool&> && ...)) {
-                // Fine-grained tracking: invoke with change flag for each column
-                ([&] {
-                    bool changed = true;
-                    visitor(I, std::get<I>(data_), changed);
-                    if (change_tracking_) {
-                        changes_[I] |= changed;
-                    }
-                }(), ...);
-            } else {
-                // Legacy 2-parameter visitor: mark all as changed
-                ([&] {
-                    visitor(I, std::get<I>(data_));
-                    if (change_tracking_) {
-                        changes_[I] = true;
-                    }
-                }(), ...);
-            }
-        }(std::make_index_sequence<column_count>{});
+        // Delegate to range-based visitor for all columns
+        visit(0, std::forward<Visitor>(visitor), column_count);
     }
 
 
@@ -2664,7 +2727,7 @@ namespace bcsv {
 
         // 4. check buffer size for last column
         const size_t offset = column_offsets[index];
-        const size_t length = binaryFieldLength(dstType) * dst.size();
+        const size_t length = wireSizeOf(dstType) * dst.size();
         assert(length == sizeof(T) * dst.size());
         if (offset + length > buffer_.size()) [[unlikely]] {
             return false;
@@ -2683,48 +2746,39 @@ namespace bcsv {
     template<typename... ColumnTypes>
     template<typename T>
     bool RowViewStatic<ColumnTypes...>::get(size_t index, T& dst) const noexcept {
-        // 1. Bounds Check (Runtime)
-        if constexpr (RANGE_CHECKING) {
-            assert(index < column_count && "RowViewStatic<ColumnTypes...>::get(index): Index out of bounds");
-            if (index >= column_count) [[unlikely]] 
-                return false;
-        }
-
-        // 2. Empty Buffer Check
-        if (buffer_.empty()) 
+        // Use visitor pattern for flexible type conversions
+        bool success = false;
+        
+        try {
+            visit(index, [&](size_t, const auto& value) {
+                using ColType = std::decay_t<decltype(value)>;
+                
+                // String handling
+                if constexpr (std::is_same_v<ColType, std::string_view>) {
+                    if constexpr (std::is_same_v<T, std::string_view>) {
+                        dst = value;
+                        success = true;
+                    } else if constexpr (std::is_same_v<T, std::string>) {
+                        dst = std::string(value);
+                        success = true;
+                    }
+                }
+                // Arithmetic conversion
+                else if constexpr (std::is_arithmetic_v<ColType> && std::is_arithmetic_v<T>) {
+                    dst = static_cast<T>(value);
+                    success = true;
+                }
+                // Direct assignment
+                else if constexpr (std::is_assignable_v<T&, const ColType&>) {
+                    dst = value;
+                    success = true;
+                }
+            }, 1);
+        } catch (...) {
             return false;
-
-        // 3. Define Function Pointer Signature
-        using GetterFunc = bool (*)(const RowViewStatic&, T&);
-
-        // 4. Generate Jump Table (Static Constexpr)
-        static constexpr auto handlers = []<size_t... I>(std::index_sequence<I...>) {
-            return std::array<GetterFunc, column_count>{
-                +[](const RowViewStatic& self, T& target) -> bool {
-                    using ColT = column_type<I>; 
-                    
-                    // Case A: String handling
-                    if constexpr (std::is_same_v<ColT, std::string>) {
-                         if constexpr (std::is_same_v<T, std::string_view>) {
-                             try { target = self.template get<I>(); return true; } catch(...) {}
-                         } else if constexpr (std::is_same_v<T, std::string>) {
-                             try { target = std::string(self.template get<I>()); return true; } catch(...) {} 
-                         }
-                    }
-                    // Case B: Arithmetic conversion
-                    else if constexpr (std::is_arithmetic_v<ColT> && std::is_arithmetic_v<T>) {
-                         try {
-                             target = static_cast<T>(self.template get<I>()); 
-                             return true;
-                         } catch (...) {}
-                    }
-                    return false;
-                }...
-            };
-        }(std::make_index_sequence<column_count>{});
-
-        // 5. O(1) Dispatch
-        return handlers[index](*this, dst);
+        }
+        
+        return success;
     }
 
     /* Scalar static set (Compile-Time) */
@@ -2764,30 +2818,19 @@ namespace bcsv {
     void RowViewStatic<ColumnTypes...>::set(size_t index, const T& value) noexcept {
         static_assert(std::is_arithmetic_v<T>, "RowViewStatic::set supports primitives only");
 
-        // 1. Bounds Check (Runtime)
-        if constexpr (RANGE_CHECKING) {
-            assert(index < column_count && "RowViewStatic::set(): Index out of bounds");
-            if (index >= column_count) 
-                return;
+        // Use visitor pattern for runtime-indexed write
+        try {
+            visit(index, [&](size_t, auto& colValue) {
+                using ColType = std::decay_t<decltype(colValue)>;
+                
+                // Only allow exact type match for primitives
+                if constexpr (std::is_same_v<ColType, T>) {
+                    colValue = value;
+                }
+            }, 1);
+        } catch (...) {
+            // Silently fail on error (noexcept contract)
         }
-        
-        // 2. Define Function Pointer Signature
-        using SetterFunc = void (*)(RowViewStatic&, const T&);
-
-        // 3. Generate Jump Table (Static Constexpr)
-        static constexpr auto handlers = []<size_t... I>(std::index_sequence<I...>) {
-            return std::array<SetterFunc, column_count>{
-                +[](RowViewStatic& self, const T& v) {
-                    using ColT = column_type<I>;
-                    if constexpr (std::is_same_v<ColT, T>) {
-                        self.template set<I>(v);
-                    }
-                }...
-            };
-        }(std::make_index_sequence<column_count>{});
-
-        // 4. O(1) Dispatch
-        handlers[index](*this, value);
     }
     
     template<typename... ColumnTypes>
@@ -2849,51 +2892,188 @@ namespace bcsv {
         }
     }
 
+    /** @brief Visit a range of columns with read-only access (compile-time, zero-copy)
+     * 
+     * Combines compile-time type safety with zero-copy string access.
+     * Optimal for sparse column access in serialized data with static layout.
+     * 
+     * @tparam Visitor Callable type
+     * @param startIndex First column index to visit
+     * @param visitor Callable accepting `(size_t index, const T& value)` where T is compile-time determined
+     * @param count Number of columns to visit
+     * 
+     * @par Example - Compile-time zero-copy access
+     * @code
+     * RowViewStatic<int, std::string, double> view{layout, buffer};
+     * view.visit(1, [](size_t idx, std::string_view str) {
+     *     // Zero-copy string access, compile-time type dispatch
+     *     std::cout << str;
+     * });
+     * @endcode
+     * 
+     * @note Strings are accessed as std::string_view (zero-copy)
+     * @see row_visitors.h for concepts and helper types
+     */
+    template<typename... ColumnTypes>
+    template<typename Visitor>
+    void RowViewStatic<ColumnTypes...>::visit(size_t startIndex, Visitor&& visitor, size_t count) const {
+        if (count == 0) return;  // Nothing to visit
+        
+        size_t endIndex = std::min(startIndex + count, column_count);
+        
+        if constexpr (RANGE_CHECKING) {
+            if (startIndex >= column_count) {
+                throw std::out_of_range("RowViewStatic::visit: Invalid start index " + std::to_string(startIndex));
+            }
+        } else {
+            assert(startIndex < column_count && "RowViewStatic::visit: Start index out of bounds");
+        }
+        
+        // Runtime loop with compile-time type dispatch
+        for (size_t i = startIndex; i < endIndex; ++i) {
+            // Use fold expression to dispatch to correct column at runtime
+            [&]<size_t... I>(std::index_sequence<I...>) {
+                ((I == i ? (visitor(I, get<I>()), true) : false) || ...);
+            }(std::make_index_sequence<column_count>{});
+        }
+    }
+
+    /** @brief Visit all columns with read-only access (compile-time, zero-copy)
+     * 
+     * Optimal iteration combining compile-time optimization with zero-copy access.
+     * Perfect for serialized data inspection without deserialization overhead.
+     * 
+     * @tparam Visitor Callable accepting `(size_t index, const T& value)`
+     * 
+     * @par Example - Type-aware processing
+     * @code
+     * RowViewStatic<int, std::string, double> view{layout, buffer};
+     * view.visit([](size_t idx, const auto& value) {
+     *     using T = std::decay_t<decltype(value)>;
+     *     if constexpr (std::is_same_v<T, std::string_view>) {
+     *         // Zero-copy string access (compile-time specialization)
+     *     } else {
+     *         // Primitive value (compile-time optimized)
+     *     }
+     * });
+     * @endcode
+     * 
+     * @see row_visitors.h for concepts and helper types
+     */
     template<typename... ColumnTypes>
     template<typename Visitor>
     void RowViewStatic<ColumnTypes...>::visit(Visitor&& visitor) const {
-        // Use fold expression to iterate over all columns at compile time
-        // For each index I, we extract the value from the buffer and invoke visitor
-        [&]<size_t... I>(std::index_sequence<I...>) {
-            // For each column, call get<I>() to extract value from buffer
-            (visitor(I, get<I>()), ...);
-        }(std::make_index_sequence<column_count>{});
+        // Delegate to range-based visitor for all columns
+        visit(0, std::forward<Visitor>(visitor), column_count);
     }
 
+    /** @brief Visit a range of columns with mutable access (compile-time, primitives only)
+     * 
+     * In-place primitive modification with compile-time type safety.
+     * Strings are read-only (std::string_view) - cannot resize buffer.
+     * 
+     * @tparam Visitor Callable accepting `(size_t index, T& value[, bool& changed])`
+     * @param startIndex First column index to visit
+     * @param visitor Callable for modification
+     * @param count Number of columns to visit
+     * 
+     * @par Example - Modify primitives, read strings
+     * @code
+     * RowViewStatic<int, std::string, double> view{layout, buffer};
+     * view.visit(0, [](size_t idx, auto& value) {
+     *     using T = std::decay_t<decltype(value)>;
+     *     if constexpr (std::is_arithmetic_v<T>) {
+     *         value *= 2;  // In-place primitive modification
+     *     }
+     *     // Strings passed as string_view (read-only)
+     * }, 3);
+     * @endcode
+     * 
+     * @warning Strings cannot be modified (buffer size is fixed)
+     * @note Change tracking parameter accepted but has no effect
+     * @see row_visitors.h for concepts and helper types
+     */
+    template<typename... ColumnTypes>
+    template<typename Visitor>
+    void RowViewStatic<ColumnTypes...>::visit(size_t startIndex, Visitor&& visitor, size_t count) {
+        if (count == 0) return;  // Nothing to visit
+        
+        size_t endIndex = std::min(startIndex + count, column_count);
+        
+        if constexpr (RANGE_CHECKING) {
+            if (startIndex >= column_count) {
+                throw std::out_of_range("RowViewStatic::visit: Invalid start index " + std::to_string(startIndex));
+            }
+        } else {
+            assert(startIndex < column_count && "RowViewStatic::visit: Start index out of bounds");
+        }
+        
+        // Runtime loop with compile-time type dispatch and change tracking
+        for (size_t i = startIndex; i < endIndex; ++i) {
+            // Use fold expression to dispatch to correct column at runtime
+            [&]<size_t... I>(std::index_sequence<I...>) {
+                ([&] {
+                    if (I == i) {
+                        using ColType = column_type<I>;
+                        bool changed = true;  // Default: assume changed
+                        
+                        if constexpr (std::is_arithmetic_v<ColType> || std::is_same_v<ColType, bool>) {
+                            // Primitives: get mutable reference and pass to visitor
+                            constexpr size_t offset = column_offsets[I];
+                            ColType& value = *reinterpret_cast<ColType*>(buffer_.data() + offset);
+                            
+                            if constexpr (std::is_invocable_v<Visitor, size_t, ColType&, bool&>) {
+                                visitor(I, value, changed);
+                            } else {
+                                visitor(I, value);
+                            }
+                        } else if constexpr (std::is_same_v<ColType, std::string>) {
+                            // Strings: read-only (cannot resize buffer), pass string_view
+                            auto str_view = get<I>();
+                            
+                            if constexpr (std::is_invocable_v<Visitor, size_t, decltype(str_view), bool&>) {
+                                visitor(I, str_view, changed);
+                            } else {
+                                visitor(I, str_view);
+                            }
+                        }
+                    }
+                }(), ...);
+            }(std::make_index_sequence<column_count>{});
+        }
+    }
+
+    /** @brief Visit all columns with mutable access (compile-time, primitives only)
+     * 
+     * Type-safe iteration with in-place primitive modification.
+     * Strings remain read-only. No change tracking.
+     * 
+     * @tparam Visitor Callable accepting `(size_t index, T& value[, bool& changed])`
+     * 
+     * @par Example - Conditional modification
+     * @code
+     * RowViewStatic<int, std::string, double> view{layout, buffer};
+     * view.visit([](size_t idx, auto& value, bool& changed) {
+     *     using T = std::decay_t<decltype(value)>;
+     *     if constexpr (std::is_arithmetic_v<T>) {
+     *         auto old = value;
+     *         value = process(value);  // Modify primitives
+     *         changed = (value != old);
+     *     } else {
+     *         // String: read-only std::string_view
+     *         changed = false;
+     *     }
+     * });
+     * @endcode
+     * 
+     * @note Change parameter accepted but not tracked
+     * @see row_visitors.h for concepts and helper types
+     */
     template<typename... ColumnTypes>
     template<typename Visitor>
     void RowViewStatic<ColumnTypes...>::visit(Visitor&& visitor) {
-        // Mutable visit: can only mutate primitives in-place (strings cannot be resized)
-        // Visitor can optionally accept 3rd parameter (bool& changed) for consistency with Row API
-        [&]<size_t... I>(std::index_sequence<I...>) {
-            ([&] {
-                using ColType = column_type<I>;
-                bool changed = true;  // Default: assume changed
-                
-                if constexpr (std::is_arithmetic_v<ColType> || std::is_same_v<ColType, bool>) {
-                    // Primitives: get mutable reference and pass to visitor
-                    constexpr size_t offset = column_offsets[I];
-                    if constexpr (sizeof(ColType) > 0) {
-                        ColType& value = *reinterpret_cast<ColType*>(buffer_.data() + offset);
-                        
-                        if constexpr (std::is_invocable_v<Visitor, decltype(I), ColType&, bool&>) {
-                            visitor(I, value, changed);
-                        } else {
-                            visitor(I, value);
-                        }
-                    }
-                } else if constexpr (std::is_same_v<ColType, std::string>) {
-                    // Strings: read-only (cannot resize buffer), pass string_view
-                    auto str_view = get<I>();
-                    
-                    if constexpr (std::is_invocable_v<Visitor, decltype(I), decltype(str_view), bool&>) {
-                        visitor(I, str_view, changed);
-                    } else {
-                        visitor(I, str_view);
-                    }
-                }
-            }(), ...);
-        }(std::make_index_sequence<column_count>{});
+        // Delegate to range-based visitor for all columns
+        visit(0, std::forward<Visitor>(visitor), column_count);
     }
 
 } // namespace bcsv

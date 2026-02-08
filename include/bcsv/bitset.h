@@ -214,6 +214,7 @@ public:
     void clear() noexcept requires(!is_fixed);
     void reserve(size_t bit_capacity) requires(!is_fixed);
     void resize(size_t new_size, bool value = false) requires(!is_fixed);
+    void insert(size_t pos, bool value = false) requires(!is_fixed);  // Insert bit at pos, shifting subsequent bits right
     void shrink_to_fit() requires(!is_fixed);
     
     // ===== Operations =====

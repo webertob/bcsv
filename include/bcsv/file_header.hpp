@@ -198,8 +198,8 @@ namespace bcsv {
         for (size_t i = 0; i < layout.columnCount(); ++i) {
             if (columnTypes[i] != layout.columnType(i)) [[unlikely]] {
                 throw std::runtime_error("Column type mismatch at index " + std::to_string(i) + 
-                                       ". Static layout expects " + toString(layout.columnType(i)) + 
-                                       ", but binary has " + toString(columnTypes[i]));
+                                       ". Static layout expects " + std::string(toString(layout.columnType(i))) + 
+                                       ", but binary has " + std::string(toString(columnTypes[i])));
             }
         }
 

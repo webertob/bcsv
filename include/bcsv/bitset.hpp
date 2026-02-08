@@ -1,4 +1,3 @@
-
 /*
  * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
  * 
@@ -367,6 +366,54 @@ void bitset<N>::resize(size_t new_size, bool value) requires(!is_fixed) {
     }
     
     clear_unused_bits();
+}
+
+template<size_t N>
+void bitset<N>::insert(size_t pos, bool value) requires(!is_fixed) {
+    if (pos > size()) {
+        throw std::out_of_range("bitset::insert: position out of range");
+    }
+    
+    const size_t old_size = size();
+    
+    // Early exit if inserting at the end
+    if (pos == old_size) {
+        resize(old_size + 1, value);
+        return;
+    }
+    
+    // Resize to make room for one more bit
+    resize(old_size + 1, false);
+    
+    // Shift all bits from [pos, old_size) one position to the right
+    // Use word-level operations for efficiency
+    const size_t pos_word = bit_to_word_index(pos);
+    const size_t pos_bit = bit_to_bit_index(pos);
+    const size_t last_word = bit_to_word_index(old_size - 1);
+    
+    // Work backwards from the last word to avoid overwriting data we need
+    for (size_t w = last_word; w > pos_word; --w) {
+        // Shift current word left by 1 bit
+        storage_[w] = (storage_[w] << 1) | (storage_[w - 1] >> (WORD_BITS - 1));
+    }
+    
+    // Handle the word containing position pos
+    if (pos_bit == 0) {
+        // Insertion at word boundary - just shift this word
+        storage_[pos_word] <<= 1;
+    } else {
+        // Split word at pos_bit:
+        // - Lower bits [0, pos_bit) stay in place
+        // - Upper bits [pos_bit, WORD_BITS) shift left by 1
+        const word_t lower_mask = (word_t{1} << pos_bit) - 1;
+        const word_t lower_bits = storage_[pos_word] & lower_mask;
+        const word_t upper_bits = storage_[pos_word] & ~lower_mask;
+        
+        storage_[pos_word] = lower_bits | (upper_bits << 1);
+    }
+    
+    // Set the inserted bit at position pos
+    set(pos, value);
 }
 
 template<size_t N>

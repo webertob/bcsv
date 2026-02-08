@@ -76,12 +76,16 @@ namespace bcsv {
         // if position is past the end or at the end of the current layout we simply append to the end.
         position = std::min(position, column_types_.size());
 
+        // Build change notification (post-insert semantics: index is where column will be)
+        std::vector<Change> changes = {{static_cast<uint16_t>(position), ColumnType::VOID, column.type}};
+        
+        // Notify observers BEFORE making changes
+        notifyUpdate(changes);
+        
+        // Now update the layout
         column_index_.insert(column.name, position);
         column_names_.insert(column_names_.begin() + position, column.name);
         column_types_.insert(column_types_.begin() + position, column.type);
-        
-        // Notify observers
-        notifyAddColumn(position, column.type);
     }
 
     inline void Layout::Data::removeColumn(size_t index) {
@@ -89,12 +93,16 @@ namespace bcsv {
             throw std::out_of_range("Layout::Data::removeColumn: index " + std::to_string(index) + " out of range");
         }
 
+        // Build change notification (removing column at index)
+        std::vector<Change> changes = {{static_cast<uint16_t>(index), column_types_[index], ColumnType::VOID}};
+        
+        // Notify observers BEFORE making changes
+        notifyUpdate(changes);
+        
+        // Now update the layout
         column_index_.remove(column_names_[index]);
         column_names_.erase(column_names_.begin() + index);
         column_types_.erase(column_types_.begin() + index);
-        
-        // Notify observers
-        notifyRemoveColumn(index);
     }
 
     inline void Layout::Data::setColumnName(size_t index, std::string name) {
@@ -116,13 +124,36 @@ namespace bcsv {
         if (oldType == type) {
             return;  // No change
         }
-        column_types_[index] = type;
         
-        // Notify observers
-        notifyChangeType(index, oldType, type);
+        // Build change notification (type change at index)
+        std::vector<Change> changes = {{static_cast<uint16_t>(index), oldType, type}};
+        
+        // Notify observers BEFORE changing type (so they can query current state)
+        notifyUpdate(changes);
+        
+        // Now change the type
+        column_types_[index] = type;
     }
 
     inline void Layout::Data::setColumns(const std::vector<ColumnDefinition>& columns) {
+        // Build full replacement change list (compare old vs new at each index)
+        const size_t oldSize = column_types_.size();
+        const size_t newSize = columns.size();
+        const size_t maxSize = std::max(oldSize, newSize);
+        
+        std::vector<Change> changes;
+        changes.reserve(maxSize);
+        
+        for (uint16_t i = 0; i < maxSize; ++i) {
+            ColumnType oldType = (i < oldSize) ? column_types_[i] : ColumnType::VOID;
+            ColumnType newType = (i < newSize) ? columns[i].type : ColumnType::VOID;
+            changes.push_back({i, oldType, newType});
+        }
+        
+        // Notify observers BEFORE making changes (they can query old layout)
+        notifyUpdate(changes);
+        
+        // Now update the layout
         clear();
 
         if (columns.size() == 0) {
@@ -139,9 +170,6 @@ namespace bcsv {
             column_types_[i] = columns[i].type;
         }
         column_index_.build(column_names_);
-        
-        // Note: Bulk setColumns doesn't trigger individual notifications
-        // (too many notifications for initialization)
     }
 
     inline void Layout::Data::setColumns(const std::vector<std::string>& columnNames, 
@@ -203,26 +231,10 @@ namespace bcsv {
         }
     }
 
-    inline void Layout::Data::notifyAddColumn(size_t index, ColumnType type) {
+    inline void Layout::Data::notifyUpdate(const std::vector<Change>& changes) {
         for (auto& [owner, cb] : callbacks_) {
-            if (cb.addColumn) {
-                cb.addColumn(index, type);
-            }
-        }
-    }
-
-    inline void Layout::Data::notifyRemoveColumn(size_t index) {
-        for (auto& [owner, cb] : callbacks_) {
-            if (cb.removeColumn) {
-                cb.removeColumn(index);
-            }
-        }
-    }
-
-    inline void Layout::Data::notifyChangeType(size_t index, ColumnType oldType, ColumnType newType) {
-        for (auto& [owner, cb] : callbacks_) {
-            if (cb.changeType) {
-                cb.changeType(index, oldType, newType);
+            if (cb.update) {
+                cb.update(changes);
             }
         }
     }

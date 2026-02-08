@@ -29,7 +29,6 @@ namespace bcsv {
     template<LayoutConcept LayoutType>
     class Writer {
         using RowType           = typename LayoutType::RowType;
-        using RowViewType       = typename LayoutType::RowViewType;
         using FilePath          = std::filesystem::path;
 
         std::string             errMsg_;                    // last error message description

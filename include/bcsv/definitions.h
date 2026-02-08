@@ -103,7 +103,8 @@ namespace bcsv {
         INT64,
         FLOAT,
         DOUBLE,
-        STRING
+        STRING,
+        VOID = 255
     };
     using std::string;
 
@@ -165,7 +166,7 @@ namespace bcsv {
     template<> struct getTypeT< ColumnType::DOUBLE > { using type = double;   };
     template<> struct getTypeT< ColumnType::STRING > { using type = string;   };  
 
-    inline ColumnType toColumnType(const ValueType& value) {
+    inline constexpr ColumnType toColumnType(const ValueType& value) {
         return std::visit([](auto&& arg) -> ColumnType {
             using T = std::decay_t<decltype(arg)>;
             return toColumnType<T>();
@@ -173,7 +174,7 @@ namespace bcsv {
     }
 
     // Helper functions for type conversion
-    inline ColumnType toColumnType(const std::string& typeString) {
+    inline constexpr ColumnType toColumnType(const std::string& typeString) {
         if (typeString == "bool")   return ColumnType::BOOL;
         if (typeString == "uint8")  return ColumnType::UINT8;
         if (typeString == "uint16") return ColumnType::UINT16;
@@ -188,7 +189,43 @@ namespace bcsv {
         return ColumnType::STRING; // default
     }
 
-    inline std::string toString(ColumnType type) {
+    inline constexpr size_t alignOf(ColumnType type) {
+        switch (type) {
+            case ColumnType::BOOL:   return alignof(bool);
+            case ColumnType::UINT8:  return alignof(uint8_t);
+            case ColumnType::UINT16: return alignof(uint16_t);
+            case ColumnType::UINT32: return alignof(uint32_t);
+            case ColumnType::UINT64: return alignof(uint64_t);
+            case ColumnType::INT8:   return alignof(int8_t);
+            case ColumnType::INT16:  return alignof(int16_t);
+            case ColumnType::INT32:  return alignof(int32_t);
+            case ColumnType::INT64:  return alignof(int64_t);
+            case ColumnType::FLOAT:  return alignof(float);
+            case ColumnType::DOUBLE: return alignof(double);
+            case ColumnType::STRING: return alignof(std::string);
+            default: return 1; // Default to 1 for unknown types
+        }
+    }
+
+    inline constexpr size_t sizeOf(ColumnType type) {
+        switch (type) {
+            case ColumnType::BOOL:   return sizeof(bool);
+            case ColumnType::UINT8:  return sizeof(uint8_t);
+            case ColumnType::UINT16: return sizeof(uint16_t);
+            case ColumnType::UINT32: return sizeof(uint32_t);
+            case ColumnType::UINT64: return sizeof(uint64_t);
+            case ColumnType::INT8:   return sizeof(int8_t);
+            case ColumnType::INT16:  return sizeof(int16_t);
+            case ColumnType::INT32:  return sizeof(int32_t);
+            case ColumnType::INT64:  return sizeof(int64_t);
+            case ColumnType::FLOAT:  return sizeof(float);
+            case ColumnType::DOUBLE: return sizeof(double);
+            case ColumnType::STRING: return sizeof(std::string);
+            default: return 0; // Default to 0 for unknown types
+        }
+    }
+
+    inline constexpr std::string_view toString(ColumnType type) {
         switch (type) {
             case ColumnType::BOOL:   return "bool";
             case ColumnType::UINT8:  return "uint8";
@@ -216,7 +253,7 @@ namespace bcsv {
      * @param type The column data type
      * @return Default ValueType for the specified type
      */
-    inline ValueType defaultValue(ColumnType type) {
+    constexpr ValueType defaultValue(ColumnType type) {
         switch (type) {
             case ColumnType::BOOL:   return ValueType{bool{false}};
             case ColumnType::UINT8:  return ValueType{uint8_t{0} };
@@ -266,7 +303,7 @@ namespace bcsv {
     }
         
     template<typename T>
-    constexpr uint8_t binaryFieldLength() {
+    constexpr uint8_t wireSizeOf() {
         if      constexpr (std::is_same_v<T, bool>    ) return sizeof(bool);
         else if constexpr (std::is_same_v<T, uint8_t> ) return sizeof(uint8_t);
         else if constexpr (std::is_same_v<T, uint16_t>) return sizeof(uint16_t);
@@ -283,7 +320,7 @@ namespace bcsv {
     }
 
     // Helper function to get size for each column type
-    constexpr uint8_t binaryFieldLength(ColumnType type) {
+    constexpr uint8_t wireSizeOf(ColumnType type) {
         switch (type) {
             case ColumnType::BOOL:   return sizeof(bool);
             case ColumnType::UINT8:  return sizeof(uint8_t);

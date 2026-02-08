@@ -33,7 +33,8 @@ namespace bcsv {
 
     template<LayoutConcept LayoutType>
     Writer<LayoutType>::Writer(const LayoutType& layout) 
-    : fileHeader_(layout.columnCount(), 1), row_(layout)
+        : fileHeader_(layout.columnCount(), 1)
+        , row_(layout)
     {
     }
 
