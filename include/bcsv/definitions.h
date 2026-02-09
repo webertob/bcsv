@@ -15,6 +15,7 @@
 #include <cstddef>
 #include <variant>
 #include <limits>
+#include <span>
 #include "string_addr.h"
 
 // Include auto-generated version information
@@ -143,6 +144,7 @@ namespace bcsv {
         else if constexpr (std::is_same_v<T, float>)    return ColumnType::FLOAT;
         else if constexpr (std::is_same_v<T, double>)   return ColumnType::DOUBLE;
         else if constexpr (std::is_same_v<T, string>)   return ColumnType::STRING;
+        else if constexpr (std::is_same_v<T, std::string_view>) return ColumnType::STRING;
         else static_assert(always_false<T>, "Unsupported type");
     };
 
@@ -186,7 +188,10 @@ namespace bcsv {
         if (typeString == "int64")  return ColumnType::INT64;
         if (typeString == "float")  return ColumnType::FLOAT;
         if (typeString == "double") return ColumnType::DOUBLE;
-        return ColumnType::STRING; // default
+        if (typeString == "string") return ColumnType::STRING;
+        if (typeString == "void" || typeString.empty())  return ColumnType::VOID;
+        throw std::invalid_argument("Unknown type: " + typeString);  // Fail loud
+        return ColumnType::VOID; // default
     }
 
     inline constexpr size_t alignOf(ColumnType type) {
@@ -458,7 +463,44 @@ namespace bcsv {
 
         template <typename T, typename Variant>
         constexpr bool is_in_variant_v = is_in_variant<T, Variant>::value;
-    }
-    
+
+        // Helper to check if a type is supported by BCSV (primitive types only, no string)
+        template<typename T>
+        struct is_primitive : std::false_type {};
+
+        template<> struct is_primitive<bool>     : std::true_type {};
+        template<> struct is_primitive<int8_t>   : std::true_type {};
+        template<> struct is_primitive<int16_t>  : std::true_type {};
+        template<> struct is_primitive<int32_t>  : std::true_type {};
+        template<> struct is_primitive<int64_t>  : std::true_type {};
+        template<> struct is_primitive<uint8_t>  : std::true_type {};
+        template<> struct is_primitive<uint16_t> : std::true_type {};
+        template<> struct is_primitive<uint32_t> : std::true_type {};
+        template<> struct is_primitive<uint64_t> : std::true_type {};
+        template<> struct is_primitive<float>    : std::true_type {};
+        template<> struct is_primitive<double>   : std::true_type {};
+
+        template<typename T>
+        inline constexpr bool is_primitive_v = is_primitive<T>::value;
+
+        // Helper to check if a type is a string-like type
+        template<typename T>
+        struct is_string_like : std::false_type {};
+
+        template<> struct is_string_like<std::string> : std::true_type {};
+        template<> struct is_string_like<std::string_view> : std::true_type {};
+        //template<> struct is_string_like<const char*> : std::true_type {};
+
+        template<typename T>
+        inline constexpr bool is_string_like_v = is_string_like<T>::value;
+
+        // C++20 Concept: Types that can be assigned to BCSV columns
+        // Must be defined AFTER the helper traits it uses
+        template<typename T>
+        concept BcsvAssignable = 
+            is_primitive_v<std::decay_t<T>> ||
+            is_string_like_v<std::decay_t<T>> ||
+            (std::is_convertible_v<std::decay_t<T>, bool> && !std::is_arithmetic_v<std::decay_t<T>>);  // For std::_Bit_reference
+    }    
     
 } // namespace bcsv

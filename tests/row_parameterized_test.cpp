@@ -157,12 +157,9 @@ TYPED_TEST(RowTypedTest, GetSetScalar) {
     T val3 = TypeTraits<T>::test_value_3();
     
     // Set values
-    ASSERT_TRUE(row.set(0, val1)) 
-        << "Failed to set column 0 with type " << this->GetTypeName();
-    ASSERT_TRUE(row.set(1, val2)) 
-        << "Failed to set column 1 with type " << this->GetTypeName();
-    ASSERT_TRUE(row.set(2, val3)) 
-        << "Failed to set column 2 with type " << this->GetTypeName();
+    row.set(0, val1);
+    row.set(1, val2);
+    row.set(2, val3);
     
     // Get and verify values
     if constexpr (std::is_floating_point_v<T>) {
@@ -304,10 +301,8 @@ TYPED_TEST(RowTypedTest, BoundaryValues) {
         T min_val = std::numeric_limits<T>::min();
         T max_val = std::numeric_limits<T>::max();
         
-        ASSERT_TRUE(row.set(0, min_val))
-            << "Failed to set min value for type " << this->GetTypeName();
-        ASSERT_TRUE(row.set(1, max_val))
-            << "Failed to set max value for type " << this->GetTypeName();
+        row.set(0, min_val);
+        row.set(1, max_val);
         
         EXPECT_EQ(min_val, row.get<T>(0))
             << "Min value not preserved for type " << this->GetTypeName();
@@ -361,8 +356,7 @@ TEST(RowEdgeCases, StringWithEmbeddedNulls) {
     
     // String with embedded null bytes
     std::string with_null("hello\0world", 11);
-    ASSERT_TRUE(row.set(0, with_null))
-        << "Failed to set string with embedded nulls";
+    row.set(0, with_null);
     
     std::string retrieved = row.get<std::string>(0);
     EXPECT_EQ(11, retrieved.size())
@@ -383,8 +377,7 @@ TEST(RowEdgeCases, EmptyStringVsDefault) {
         << "Default string value should be empty";
     
     // Set empty string explicitly
-    ASSERT_TRUE(row.set(0, std::string("")))
-        << "Failed to set empty string";
+    row.set(0, std::string(""));
     
     std::string retrieved = row.get<std::string>(0);
     EXPECT_TRUE(retrieved.empty())

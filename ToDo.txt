@@ -83,9 +83,13 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     Therefore I would prefere to have row just having a pointer to Layout. Such it would be easy to check if two rows share the same layout and reduces the amount of memory required (hot-cache).
     However we need to ensure that Layout does not change, as long as rows are alive or that they follow relevant changes to the layout structure i.e. setColumnType, addColumn, removeColumn. Name changes are irrelevant.
     I still like the current API of the BCSV library and would like to maintain the workflow, see examples and benchmark.
-8.d:Finalize Row::onAddColumn, Row::onChangeColumnType, Row::onRemoveColumn
+[x] 8.d: Finalize Row::onAddColumn, Row::onChangeColumnType, Row::onRemoveColumn
+[x] 8.e: debug large column count bools
+    8.f: Add tests for concepts (Row & Vistors)
+    8.f: Add test for bitset insert
 
-9.  Restructure Row <-> Reader/Writer collaboration, introduce Serializer / Deserializier API
+
+9.a Restructure Row <-> Reader/Writer collaboration, introduce Serializer / Deserializier API
         - serializer and deserailizer functionalities are current tightly integrated with row:
             - makes row heavier than required (memory) as it stores data required for serilization/deserialization, specifically offsets_ and offset_var_, 
               which in many cases not needed and limits rows ability to be used as lightweight facility to collect and transfer information in an application.
@@ -118,6 +122,12 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
             - run&pass benchmarks
             - build examples and CLI tools
 
+9.b: Restructure Row object to not use ptr_. Issue: pointers are basically the same size or bigger than the data we store (std::string, the only exception). 
+     Thus, we are not gaining any meory benefit from using ptr_ indirection but suffer a performance peanlty and higher complexity. 
+     Idea: use std::vector<uint64_t> data_; to store content directly using casts on all primitives i.e. static_cast<bool>(data_[i]) (i=columnindex) to access/manipulate the data. 
+           Just for std::string we need to provide a dedicated solution introducting std::vector<std::string> str_ access to string is str[data_[i]]. Thus data_ simply contains the index into the str_ vector.
+           Gain: Custom memory management not required anymore, reducing complexity. Easier to insert/remove columns. Smaller memory footprint. Faster access (less indirection for all primitives)
+
 10. Implement CSV write and read functionality using the BCSV interface
     10.a: Restructure BCSV Reader/ Writer API
         - Create a ReadAPI and WriterAPI class that defined the basic functionality each Reader and Writer needs to support.
@@ -149,7 +159,6 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     update and test CLI to use new API tools-tools
     update and test python libraries
     update and test C# (Unity)
-
 
 13. Implement new row encoding schema, using variable length encoding for float and integer values
     Main usage of bcsv is the handling of time-series data. Thus we expect many rcurring or constantly falling or raising values and values that are similar to previouse values. In many cases the full extend of a variable type is not required to encode the actual value.

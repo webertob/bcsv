@@ -36,7 +36,7 @@ TEST(VisitTest, RowBasicIteration) {
     
     // Visit and collect values
     std::vector<std::string> visited;
-    row.visit([&](size_t index, const auto& value) {
+    row.visitConst([&](size_t index, const auto& value) {
         std::ostringstream oss;
         oss << "col[" << index << "]=";
         if constexpr (std::is_same_v<std::decay_t<decltype(value)>, std::string>) {
@@ -74,7 +74,7 @@ TEST(VisitTest, RowStatisticsAggregation) {
     double sum = 0.0;
     size_t numericCount = 0;
     
-    row.visit([&](size_t, const auto& value) {
+    row.visitConst([&](size_t, const auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             sum += static_cast<double>(value);
@@ -102,7 +102,7 @@ TEST(VisitTest, RowStaticBasicIteration) {
     
     // Visit and verify
     std::vector<std::string> visited;
-    row.visit([&](auto index, const auto& value) {
+    row.visitConst([&](auto index, const auto& value) {
         std::ostringstream oss;
         oss << "col[" << index << "]=";
         if constexpr (std::is_same_v<std::decay_t<decltype(value)>, std::string>) {
@@ -135,7 +135,7 @@ TEST(VisitTest, RowStaticCompileTimeIndex) {
     std::vector<size_t> indices;
     std::vector<int32_t> values;
     
-    row.visit([&](auto index, const auto& value) {
+    row.visitConst([&](auto index, const auto& value) {
         // index is a compile-time constant here
         indices.push_back(index);
         values.push_back(value);
@@ -176,7 +176,7 @@ TEST(VisitTest, RowViewBasicIteration) {
     
     // Visit and verify
     std::vector<std::string> visited;
-    rowView.visit([&](size_t index, const auto& value) {
+    rowView.visitConst([&](size_t index, const auto& value) {
         std::ostringstream oss;
         oss << index << ":";
         if constexpr (std::is_same_v<std::decay_t<decltype(value)>, bool>) {
@@ -212,7 +212,7 @@ TEST(VisitTest, RowViewStringHandling) {
     
     // Verify strings are accessed as string_view (zero-copy)
     std::vector<std::string> strings;
-    rowView.visit([&](size_t, const auto& value) {
+    rowView.visitConst([&](size_t, const auto& value) {
         if constexpr (std::is_same_v<std::decay_t<decltype(value)>, std::string_view>) {
             strings.push_back(std::string(value));
         }
@@ -243,7 +243,7 @@ TEST(VisitTest, RowViewStaticBasicIteration) {
     
     // Visit and verify using runtime comparison
     std::vector<std::string> visited;
-    rowView.visit([&](auto index, const auto& val) {
+    rowView.visitConst([&](auto index, const auto& val) {
         std::ostringstream oss;
         oss << "col[" << index << "]=";
         if constexpr (std::is_same_v<std::decay_t<decltype(val)>, bool>) {
@@ -280,7 +280,7 @@ TEST(VisitTest, CSVOutputExample) {
     std::ostringstream csv;
     bool first = true;
     
-    row.visit([&](size_t, const auto& value) {
+    row.visitConst([&](size_t, const auto& value) {
         if (!first) csv << ",";
         first = false;
         
@@ -305,7 +305,7 @@ TEST(VisitTest, HashComputationExample) {
     
     // Compute simple hash
     size_t hash = 0;
-    row.visit([&](auto index, const auto& value) {
+    row.visitConst([&](auto index, const auto& value) {
         hash ^= std::hash<int32_t>{}(value) << index;
     });
     
@@ -323,7 +323,7 @@ TEST(VisitTest, EmptyLayout) {
     Row row(layout);
     
     size_t visitCount = 0;
-    row.visit([&](size_t, const auto&) {
+    row.visitConst([&](size_t, const auto&) {
         visitCount++;
     });
     
@@ -336,7 +336,7 @@ TEST(VisitTest, SingleColumn) {
     row.set(0, int32_t(42));
     
     int32_t value = 0;
-    row.visit([&](size_t index, const auto& v) {
+    row.visitConst([&](size_t index, const auto& v) {
         EXPECT_EQ(index, 0);
         if constexpr (std::is_same_v<std::decay_t<decltype(v)>, int32_t>) {
             value = v;
@@ -375,7 +375,7 @@ TEST(VisitTest, AllPrimitiveTypes) {
     row.set(10, 10.0);
     
     size_t visitCount = 0;
-    row.visit([&](size_t, const auto&) {
+    row.visitConst([&](size_t, const auto&) {
         visitCount++;
     });
     
@@ -399,7 +399,7 @@ TEST(VisitTest, RowMutableVisit) {
     row.set(2, 30.0f);
     
     // Mutable visit: multiply all values by 2
-    row.visit([&](size_t, auto& value) {
+    row.visit([&](size_t, auto& value, bool&) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             value *= 2;
@@ -428,7 +428,7 @@ TEST(VisitTest, RowMutableVisitWithChangeTracking) {
     EXPECT_FALSE(row.hasAnyChanges());
     
     // Mutable visit should mark all columns as changed
-    row.visit([&](size_t, auto& value) {
+    row.visit([&](size_t, auto& value, bool&) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             value += 5;
@@ -452,7 +452,7 @@ TEST(VisitTest, RowMutableVisitStrings) {
     row.set(1, int32_t(10));
     
     // Mutable visit: can modify strings
-    row.visit([&](size_t, auto& value) {
+    row.visit([&](size_t, auto& value, bool&) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, std::string>) {
             value += " Smith";
@@ -475,8 +475,11 @@ TEST(VisitTest, RowStaticMutableVisit) {
     row.set<2>(15.0f);
     
     // Mutable visit with compile-time indices
-    row.visit([&](auto, auto& value) {
-        value *= 3;
+    row.visit([&](auto, auto& value, bool&) {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
+            value *= 3;
+        }
     });
     
     EXPECT_EQ(row.get<0>(), 15);
@@ -497,8 +500,11 @@ TEST(VisitTest, RowStaticMutableVisitWithTracking) {
     EXPECT_FALSE(row.hasAnyChanges());
     
     // Mutable visit should mark all as changed
-    row.visit([&](auto, auto& value) {
-        value += 50;
+    row.visit([&](auto, auto& value, bool&) {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
+            value += 50;
+        }
     });
     
     EXPECT_TRUE(row.hasAnyChanges());
@@ -524,7 +530,7 @@ TEST(VisitTest, RowViewMutableVisitPrimitives) {
     RowView rowView(layout, std::span<std::byte>(serialized));
     
     // Mutable visit: modify primitives in buffer
-    rowView.visit([&](size_t, auto& value) {
+    rowView.visit([&](size_t, auto& value, bool& change) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, int32_t>) {
             value = 100;
@@ -532,6 +538,8 @@ TEST(VisitTest, RowViewMutableVisitPrimitives) {
             value = 2.718;
         } else if constexpr (std::is_same_v<T, bool>) {
             value = false;
+        } else {
+            change = false;
         }
     });
     
@@ -558,13 +566,15 @@ TEST(VisitTest, RowViewMutableVisitStringsReadOnly) {
     
     // Mutable visit: strings are read-only, primitives are mutable
     std::string capturedName;
-    rowView.visit([&](size_t, auto& value) {
+    rowView.visit([&](size_t, auto& value, bool& change) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, std::string_view>) {
             // String passed as const (read-only)
             capturedName = std::string(value);
         } else if constexpr (std::is_same_v<T, int32_t>) {
             value = 30;  // Can modify primitive
+        } else {
+            change = false;
         }
     });
     
@@ -587,12 +597,14 @@ TEST(VisitTest, RowViewStaticMutableVisit) {
     RowViewStatic<int32_t, double, bool> rowView(layout, std::span<std::byte>(serialized));
     
     // Mutable visit: modify primitives in buffer
-    rowView.visit([&](auto, auto& value) {
+    rowView.visit([&](auto, auto& value, bool& change) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             value *= 2;
         } else if constexpr (std::is_same_v<T, bool>) {
             value = false;
+        } else {
+            change = false;
         }
     });
     
@@ -616,7 +628,7 @@ TEST(VisitTest, MutableVisitNormalization) {
     
     // Calculate magnitude (sqrt(x^2 + y^2 + z^2))
     double magnitude = 0.0;
-    row.visit([&](size_t, const auto& value) {
+    row.visitConst([&](size_t, const auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             magnitude += value * value;
@@ -625,16 +637,18 @@ TEST(VisitTest, MutableVisitNormalization) {
     magnitude = std::sqrt(magnitude);
     
     // Normalize vector using mutable visit
-    row.visit([&](size_t, auto& value) {
+    row.visit([&](size_t, auto& value, bool& change) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             value /= magnitude;
+        } else {
+            change = false;
         }
     });
     
     // Verify normalized (magnitude should be 1.0)
     double normalized_mag = 0.0;
-    row.visit([&](size_t, const auto& value) {
+    row.visitConst([&](size_t, const auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             normalized_mag += value * value;
@@ -702,9 +716,14 @@ TEST(VisitTest, FineGrainedChangeTrackingRowStatic) {
     
     // Conditional modification with fine-grained tracking
     row.visit([&](auto, auto& value, bool& changed) {
-        if (value % 10 == 5) {  // Only modify values ending in 5
-            value *= 2;
-            changed = true;
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
+            if (value % 10 == 5) {  // Only modify values ending in 5
+                value *= 2;
+                changed = true;
+            } else {
+                changed = false;
+            }
         } else {
             changed = false;
         }
@@ -719,7 +738,7 @@ TEST(VisitTest, FineGrainedChangeTrackingRowStatic) {
     EXPECT_TRUE(row.hasAnyChanges());
 }
 
-TEST(VisitTest, BackwardCompatibilityWithoutChangeFlag) {
+TEST(VisitTest, IgnoringChangeFlagParameter) {
     Layout layout({
         {"x", ColumnType::INT32},
         {"y", ColumnType::INT32}
@@ -730,8 +749,8 @@ TEST(VisitTest, BackwardCompatibilityWithoutChangeFlag) {
     row.set(1, 20);
     row.resetChanges();
     
-    // Legacy 2-parameter visitor still works - marks all as changed
-    row.visit([&](size_t, auto& value) {
+    // Visitor with unnamed 3rd parameter - still marks all as changed
+    row.visit([&](size_t, auto& value, bool&) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             value *= 2;

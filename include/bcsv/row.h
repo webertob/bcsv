@@ -400,6 +400,44 @@ namespace bcsv {
  * =============================================================================
  */
 
+
+
+    // Mutable visitor concept: requires (size_t, T&, bool&) signature
+    // Uses || (OR) to check if visitor accepts the pattern with at least one BCSV type
+    // Generic lambdas with auto& will satisfy this constraint
+    template<typename V>
+    concept RowVisitor = 
+        std::is_invocable_v<V, size_t, bool&, bool&> ||
+        std::is_invocable_v<V, size_t, int8_t&, bool&> ||
+        std::is_invocable_v<V, size_t, int16_t&, bool&> ||
+        std::is_invocable_v<V, size_t, int32_t&, bool&> ||
+        std::is_invocable_v<V, size_t, int64_t&, bool&> ||
+        std::is_invocable_v<V, size_t, uint8_t&, bool&> ||
+        std::is_invocable_v<V, size_t, uint16_t&, bool&> ||
+        std::is_invocable_v<V, size_t, uint32_t&, bool&> ||
+        std::is_invocable_v<V, size_t, uint64_t&, bool&> ||
+        std::is_invocable_v<V, size_t, float&, bool&> ||
+        std::is_invocable_v<V, size_t, double&, bool&> ||
+        std::is_invocable_v<V, size_t, std::string&, bool&>;
+
+    // Const visitor concept: accepts (size_t, const T&)  
+    // Uses || (OR) to check if visitor accepts the pattern with at least one BCSV type
+    // Generic lambdas with const auto& will satisfy this constraint
+    template<typename V>
+    concept RowVisitorConst = 
+        std::is_invocable_v<V, size_t, const bool&> ||
+        std::is_invocable_v<V, size_t, const int8_t&> ||
+        std::is_invocable_v<V, size_t, const int16_t&> ||
+        std::is_invocable_v<V, size_t, const int32_t&> ||
+        std::is_invocable_v<V, size_t, const int64_t&> ||
+        std::is_invocable_v<V, size_t, const uint8_t&> ||
+        std::is_invocable_v<V, size_t, const uint16_t&> ||
+        std::is_invocable_v<V, size_t, const uint32_t&> ||
+        std::is_invocable_v<V, size_t, const uint64_t&> ||
+        std::is_invocable_v<V, size_t, const float&> ||
+        std::is_invocable_v<V, size_t, const double&> ||
+        std::is_invocable_v<V, size_t, const std::string&>;
+        
     /* Dynamic row with flexible layout (runtime-defined)*/
     class Row {
     private:
@@ -432,50 +470,51 @@ namespace bcsv {
 
         void                        clear();
         const Layout&               layout() const noexcept         { return layout_; }
-        bool                        hasAnyChanges() const noexcept  { return !tracksChanges() || changes_.any(); } // defaults to true if change tracking is disabled
+        [[nodiscard]] bool          hasAnyChanges() const noexcept  { return !tracksChanges() || changes_.any(); } // defaults to true if change tracking is disabled
         void                        trackChanges(bool enable)       { if (enable) { changes_.resize(layout_.columnCount(), true); } else { changes_.resize(0); } }
-        bool                        tracksChanges() const noexcept  { return !changes_.empty(); } 
+        [[nodiscard]] bool          tracksChanges() const noexcept  { return !changes_.empty(); } 
         void                        setChanges() noexcept           { changes_.set(); }     // mark everything as changed
         void                        resetChanges() noexcept         { changes_.reset(); }   // mark everything as unchanged
 
-        const void*                 get(size_t index) const;
+        [[nodiscard]] const void*   get(size_t index) const;
                                     template<typename T>
-        const T&                    get(size_t index) const;
+        [[nodiscard]] const T&      get(size_t index) const;
                                     template<typename T>
         void                        get(size_t index, std::span<T> &dst) const;
                                     template<typename T>
-        bool                        get(size_t index, T &dst) const;                        // Flexible: allows type conversions, returns false on failure
+        [[nodiscard]] bool          get(size_t index, T &dst) const;                        // Flexible: allows type conversions, returns false on failure
 
                                     template<typename T>
-        const T&                    ref(size_t index) const;                                // get a const reference to the internal data (no type conversion, may throw)
+        [[nodiscard]] const T&      ref(size_t index) const;                                // get a const reference to the internal data (no type conversion, may throw)
 
                                     template<typename T>
-        T&                          ref(size_t index);                                      // get a mutable reference to the internal data (no type conversion, may throw, marks column as changed)    
+        [[nodiscard]] T&            ref(size_t index);                                      // get a mutable reference to the internal data (no type conversion, may throw, marks column as changed)    
 
-                                    template<typename T>
-        bool                        set(size_t index, const T& value);
+                                    template<detail::BcsvAssignable T>
+        void                        set(size_t index, const T& value);
+        void                        set(size_t index, const char* value)        { set<std::string_view>(index, value); } // Convenience overload for C-style strings, forwarding to std::string_view version
                                     template<typename T>
         void                        set(size_t index, std::span<const T> values);
 
-        std::span<std::byte>        serializeTo(ByteBuffer& buffer) const;
-        std::span<std::byte>        serializeToZoH(ByteBuffer& buffer) const;
+        [[nodiscard]] std::span<std::byte>        serializeTo(ByteBuffer& buffer) const;
+        [[nodiscard]] std::span<std::byte>        serializeToZoH(ByteBuffer& buffer) const;
         void                        deserializeFrom(const std::span<const std::byte> buffer);
         void                        deserializeFromZoH(const std::span<const std::byte> buffer);
 
         /** @brief Visit columns with read-only access. @see row.hpp */
-                                    template<typename Visitor>
-        void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
+                                    template<RowVisitorConst Visitor>
+        void                        visitConst(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
 
         /** @brief Visit all columns with read-only access. @see row.hpp */
-                                    template<typename Visitor>
-        void                        visit(Visitor&& visitor) const;
+                                    template<RowVisitorConst Visitor>
+        void                        visitConst(Visitor&& visitor) const;
 
         /** @brief Visit columns with mutable access and change tracking. @see row.hpp */
-                                    template<typename Visitor>
+                                    template<RowVisitor Visitor>
         void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1);
 
         /** @brief Visit all columns with mutable access and change tracking. @see row.hpp */
-                                    template<typename Visitor>
+                                    template<RowVisitor Visitor>
         void                        visit(Visitor&& visitor);
 
         Row&                        operator=(const Row& other);               // Throws std::invalid_argument if layouts incompatible
@@ -502,41 +541,39 @@ namespace bcsv {
         RowView(RowView&& other) noexcept = default;    // default move constructor, as we don't own the buffer
         ~RowView() = default;
 
-        const std::span<std::byte>& buffer() const noexcept                                 { return buffer_; }
-        const Layout&               layout() const noexcept                                 { return layout_; } 
+        [[nodiscard]] const std::span<std::byte>& buffer() const noexcept                   { return buffer_; }
+        const Layout&               layout() const noexcept                                 { return layout_; }
         void                        setBuffer(const std::span<std::byte> &buffer) noexcept  { buffer_ = buffer; }
-        Row                         toRow() const;
-        bool                        validate(bool deepValidation = true) const;
+        [[nodiscard]] Row           toRow() const;
+        [[nodiscard]] bool          validate(bool deepValidation = true) const;
 
-        std::span<const std::byte>  get(size_t index) const;
+        [[nodiscard]] std::span<const std::byte>  get(size_t index) const;
                                     template<typename T>
-        T                           get(size_t index) const;
+        [[nodiscard]] T             get(size_t index) const;
                                     template<typename T>
-        bool                        get(size_t index, std::span<T> &dst) const;
+        [[nodiscard]] bool          get(size_t index, std::span<T> &dst) const;
                                     template<typename T>
-        bool                        get(size_t index, T &dst) const;                        // Flexible: allows type conversions, returns false on failure
+        [[nodiscard]] bool          get(size_t index, T &dst) const;                        // Flexible: allows type conversions, returns false on failure
                 
                                     template<typename T>
-        bool                        set(size_t index, const T& value);
+        [[nodiscard]] bool          set(size_t index, const T& value);
                                     template<typename T>
-        bool                        set(size_t index, std::span<const T> src);
-                                    template<typename T>
-        bool                        set_from(size_t index, const T& value);
+        [[nodiscard]] bool          set(size_t index, std::span<const T> src);
         
         /** @brief Visit columns with read-only access (zero-copy). @see row.hpp */
-                                    template<typename Visitor>
-        void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
+                                    template<RowVisitorConst Visitor>
+        void                        visitConst(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
 
         /** @brief Visit all columns with read-only access (zero-copy). @see row.hpp */
-                                    template<typename Visitor>
-        void                        visit(Visitor&& visitor) const;
+                                    template<RowVisitorConst Visitor>
+        void                        visitConst(Visitor&& visitor) const;
         
         /** @brief Visit columns with mutable access (primitives only). @see row.hpp */
-                                    template<typename Visitor>
+                                    template<RowVisitor Visitor>
         void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1);
 
         /** @brief Visit all columns with mutable access (primitives only). @see row.hpp */
-                                    template<typename Visitor>
+                                    template<RowVisitor Visitor>
         void                        visit(Visitor&& visitor);
         
         RowView& operator=(const RowView& other) noexcept = default; // default copy assignment, as we don't own the buffer
@@ -590,9 +627,9 @@ namespace bcsv {
                                     template<size_t Index = 0>
         void                        clear();
         const LayoutType&           layout() const noexcept         { return layout_; }  // Reconstruct facade
-        bool                        hasAnyChanges() const noexcept  { if(change_tracking_) { return changes_.any(); } else { return true; } } // defaults to true if change tracking is disabled
+        [[nodiscard]] bool          hasAnyChanges() const noexcept  { if(change_tracking_) { return changes_.any(); } else { return true; } } // defaults to true if change tracking is disabled
         void                        trackChanges(bool enable)       { change_tracking_ = enable; }
-        bool                        tracksChanges() const noexcept  { return change_tracking_; }
+        [[nodiscard]] bool          tracksChanges() const noexcept  { return change_tracking_; }
         void                        setChanges() noexcept           { if(change_tracking_) changes_.set(); }     // mark everything as changed
         void                        resetChanges() noexcept         { if(change_tracking_) changes_.reset(); }   // mark everything as unchanged
 
@@ -600,7 +637,7 @@ namespace bcsv {
         // 1. Static Access (Compile-Time Index) - Zero Overhead
         // =========================================================================
                                     template<size_t Index>
-        const auto&                 get() const noexcept;                                   // Direct reference to column data. No overhead.
+        [[nodiscard]] const auto&   get() const noexcept;                                   // Direct reference to column data. No overhead.
 
                                     template<size_t StartIndex, typename T, size_t Extent>
         void                        get(std::span<T, Extent> &dst) const;                   // Vectorized: exact match fast path, conversions if needed
@@ -608,22 +645,22 @@ namespace bcsv {
         // =========================================================================
         // 2. Dynamic Access (Runtime Index) - Branching Overhead
         // =========================================================================
-        const void*                 get(size_t index) const noexcept;                       // Get raw pointer (void*). returns nullptr if index invalid.
+        [[nodiscard]] const void*   get(size_t index) const noexcept;                       // Get raw pointer (void*). returns nullptr if index invalid.
 
                                     template<typename T>
-        const T&                    get(size_t index) const;                                // Scalar runtime access. Throws on type/index mismatch.
+        [[nodiscard]] const T&      get(size_t index) const;                                // Scalar runtime access. Throws on type/index mismatch.
         
                                     template<typename T, size_t Extent = std::dynamic_extent> 
         void                        get(size_t index, std::span<T, Extent> &dst) const;     // Strict: vectorized runtime access. Throws on type/index mismatch.
 
                                     template<typename T>
-        bool                        get(size_t index, T &dst) const noexcept;               // Flexible: allows type conversions, returns false on failure.
+        [[nodiscard]] bool          get(size_t index, T &dst) const noexcept;               // Flexible: allows type conversions, returns false on failure.
         
                                     template<typename T>
-        const T&                    ref(size_t index) const;                                // get a const reference to the internal data (no type conversion, may throw)
+        [[nodiscard]] const T&      ref(size_t index) const;                                // get a const reference to the internal data (no type conversion, may throw)
 
                                     template<typename T>
-        T&                          ref(size_t index);                                      // get a mutable reference to the internal data (no type conversion, may throw, marks column as changed)   
+        [[nodiscard]] T&            ref(size_t index);                                      // get a mutable reference to the internal data (no type conversion, may throw, marks column as changed)   
 
                                     template<size_t Index, typename T>
         void                        set(const T& value);                                    // scalar compile-time indexed access
@@ -634,25 +671,25 @@ namespace bcsv {
                                     template<typename T, size_t Extent = std::dynamic_extent>
         void                        set(size_t index, std::span<const T, Extent> values);   // vectorized runtime indexed access
 
-        std::span<std::byte>        serializeTo(ByteBuffer& buffer) const;
-        std::span<std::byte>        serializeToZoH(ByteBuffer& buffer) const;
+        [[nodiscard]] std::span<std::byte>        serializeTo(ByteBuffer& buffer) const;
+        [[nodiscard]] std::span<std::byte>        serializeToZoH(ByteBuffer& buffer) const;
         void                        deserializeFrom(const std::span<const std::byte> buffer);
         void                        deserializeFromZoH(const std::span<const std::byte> buffer);
 
         /** @brief Visit columns with read-only access (compile-time). @see row.hpp */
-                                    template<typename Visitor>
-        void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
+                                    template<RowVisitorConst Visitor>
+        void                        visitConst(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
 
         /** @brief Visit all columns with read-only access (compile-time). @see row.hpp */
-                                    template<typename Visitor>
-        void                        visit(Visitor&& visitor) const;
+                                    template<RowVisitorConst Visitor>
+        void                        visitConst(Visitor&& visitor) const;
         
         /** @brief Visit columns with mutable access and tracking (compile-time). @see row.hpp */
-                                    template<typename Visitor>
+                                    template<RowVisitor Visitor>
         void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1);
 
         /** @brief Visit all columns with mutable access and tracking (compile-time). @see row.hpp */
-                                    template<typename Visitor>
+                                    template<RowVisitor Visitor>
         void                        visit(Visitor&& visitor);
 
         RowStatic& operator=(const RowStatic& other) noexcept = default; // default copy assignment, tuple manges copying its members including strings
@@ -730,7 +767,7 @@ namespace bcsv {
          *  for Strings:    Returns std::string_view pointing into buffer (Zero Copy).
          */
                                     template<size_t Index>
-        auto                        get() const;                                                    // scalar static access (const)
+        [[nodiscard]] auto          get() const;                                                    // scalar static access (const)
 
                                     template<size_t StartIndex, typename T, size_t Extent>
         void                        get(std::span<T, Extent> &dst) const;                            // Vectorized: exact match fast path, conversions if needed
@@ -749,13 +786,13 @@ namespace bcsv {
         // =========================================================================
         // 2. Dynamic Access (Runtime Index)
         // =========================================================================
-        std::span<const std::byte>  get(size_t index) const noexcept;                               // returns empty if index invalid
+        [[nodiscard]] std::span<const std::byte>  get(size_t index) const noexcept;                 // returns empty if index invalid
 
                                     template<typename T, size_t Extent>
-        bool                        get(size_t index, std::span<T, Extent>& dst) const noexcept;    // Strict: vectorized runtime access
+        [[nodiscard]] bool          get(size_t index, std::span<T, Extent>& dst) const noexcept;    // Strict: vectorized runtime access
 
                                     template<typename T>
-        bool                        get(size_t index, T& dst) const noexcept;                       // Flexible: allows type conversions
+        [[nodiscard]] bool          get(size_t index, T& dst) const noexcept;                       // Flexible: allows type conversions
 
                                     template<typename T>
         void                        set(size_t index, const T& value) noexcept;                     // scalar runtime access
@@ -766,23 +803,23 @@ namespace bcsv {
         // =========================================================================
         // 3. Conversion / Validation
         // =========================================================================
-        RowStatic<ColumnTypes...>   toRow() const;
-        bool                        validate() const noexcept;
+        [[nodiscard]] RowStatic<ColumnTypes...>   toRow() const;
+        [[nodiscard]] bool          validate() const noexcept;
 
         /** @brief Visit columns with read-only access (compile-time, zero-copy). @see row.hpp */
-                                    template<typename Visitor>
-        void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
+                                    template<RowVisitorConst Visitor>
+        void                        visitConst(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
 
         /** @brief Visit all columns with read-only access (compile-time, zero-copy). @see row.hpp */
-                                    template<typename Visitor>
-        void                        visit(Visitor&& visitor) const;
+                                    template<RowVisitorConst Visitor>
+        void                        visitConst(Visitor&& visitor) const;
         
         /** @brief Visit columns with mutable access (compile-time, primitives only). @see row.hpp */
-                                    template<typename Visitor>
+                                    template<RowVisitor Visitor>
         void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1);
 
         /** @brief Visit all columns with mutable access (compile-time, primitives only). @see row.hpp */
-                                    template<typename Visitor>
+                                    template<RowVisitor Visitor>
         void                        visit(Visitor&& visitor);
 
         RowViewStatic& operator=(const RowViewStatic& other) noexcept = default; // default copy assignment, as we don't own the buffer
