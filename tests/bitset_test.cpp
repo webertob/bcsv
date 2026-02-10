@@ -24,9 +24,260 @@
 
 #include <gtest/gtest.h>
 #include <bcsv/bitset.h>
+#include <bitset>
+#include <algorithm>
 #include <sstream>
+#include <vector>
+#include <utility>
+#include <cstddef>
 
 using namespace bcsv;
+
+namespace {
+
+enum class PatternKind {
+    Zeros,
+    Ones,
+    Alternating,
+    EveryThird,
+    SingleMid
+};
+
+std::vector<bool> MakePattern(size_t size, PatternKind kind) {
+    std::vector<bool> pattern(size, false);
+    switch (kind) {
+        case PatternKind::Zeros:
+            break;
+        case PatternKind::Ones:
+            std::fill(pattern.begin(), pattern.end(), true);
+            break;
+        case PatternKind::Alternating:
+            for (size_t i = 0; i < size; ++i) {
+                pattern[i] = (i % 2 == 0);
+            }
+            break;
+        case PatternKind::EveryThird:
+            for (size_t i = 0; i < size; ++i) {
+                pattern[i] = (i % 3 == 0);
+            }
+            break;
+        case PatternKind::SingleMid:
+            if (size > 0) {
+                pattern[size / 2] = true;
+            }
+            break;
+    }
+    return pattern;
+}
+
+std::string ModelToString(const std::vector<bool>& model) {
+    std::string result;
+    result.reserve(model.size());
+    for (size_t i = model.size(); i > 0; --i) {
+        result += model[i - 1] ? '1' : '0';
+    }
+    return result;
+}
+
+std::vector<bool> ModelAnd(const std::vector<bool>& lhs, const std::vector<bool>& rhs) {
+    const size_t size = lhs.size();
+    std::vector<bool> result(size, false);
+    for (size_t i = 0; i < size; ++i) {
+        const bool a = i < lhs.size() ? lhs[i] : false;
+        const bool b = i < rhs.size() ? rhs[i] : false;
+        result[i] = a & b;
+    }
+    return result;
+}
+
+std::vector<bool> ModelOr(const std::vector<bool>& lhs, const std::vector<bool>& rhs) {
+    const size_t size = lhs.size();
+    std::vector<bool> result(size, false);
+    for (size_t i = 0; i < size; ++i) {
+        const bool a = i < lhs.size() ? lhs[i] : false;
+        const bool b = i < rhs.size() ? rhs[i] : false;
+        result[i] = a | b;
+    }
+    return result;
+}
+
+std::vector<bool> ModelXor(const std::vector<bool>& lhs, const std::vector<bool>& rhs) {
+    const size_t size = lhs.size();
+    std::vector<bool> result(size, false);
+    for (size_t i = 0; i < size; ++i) {
+        const bool a = i < lhs.size() ? lhs[i] : false;
+        const bool b = i < rhs.size() ? rhs[i] : false;
+        result[i] = a ^ b;
+    }
+    return result;
+}
+
+template<size_t N>
+bitset<N> MakeFixedBitset(const std::vector<bool>& pattern) {
+    bitset<N> bs;
+    for (size_t i = 0; i < N; ++i) {
+        if (pattern[i]) {
+            bs.set(i);
+        }
+    }
+    return bs;
+}
+
+bitset<> MakeDynamicBitset(size_t size, const std::vector<bool>& pattern) {
+    bitset<> bs(size);
+    for (size_t i = 0; i < size; ++i) {
+        if (pattern[i]) {
+            bs.set(i);
+        }
+    }
+    return bs;
+}
+
+template<size_t N>
+std::bitset<N> MakeStdBitset(const std::vector<bool>& pattern) {
+    std::bitset<N> bs;
+    for (size_t i = 0; i < N; ++i) {
+        if (pattern[i]) {
+            bs.set(i);
+        }
+    }
+    return bs;
+}
+
+template<size_t N>
+void ExpectParityFixed(const bitset<N>& bcsv_bs, const std::bitset<N>& std_bs) {
+    EXPECT_EQ(bcsv_bs.count(), std_bs.count());
+    EXPECT_EQ(bcsv_bs.any(), std_bs.any());
+    EXPECT_EQ(bcsv_bs.all(), std_bs.all());
+    EXPECT_EQ(bcsv_bs.none(), std_bs.none());
+    EXPECT_EQ(bcsv_bs.to_string(), std_bs.to_string());
+    for (size_t i = 0; i < N; ++i) {
+        EXPECT_EQ(bcsv_bs[i], std_bs.test(i));
+    }
+}
+
+template<size_t N>
+void ExpectParityDynamic(const bitset<>& bcsv_bs, const std::bitset<N>& std_bs) {
+    EXPECT_EQ(bcsv_bs.size(), N);
+    EXPECT_EQ(bcsv_bs.count(), std_bs.count());
+    EXPECT_EQ(bcsv_bs.any(), std_bs.any());
+    EXPECT_EQ(bcsv_bs.all(), std_bs.all());
+    EXPECT_EQ(bcsv_bs.none(), std_bs.none());
+    EXPECT_EQ(bcsv_bs.to_string(), std_bs.to_string());
+    for (size_t i = 0; i < N; ++i) {
+        EXPECT_EQ(bcsv_bs[i], std_bs.test(i));
+    }
+}
+
+void ExpectMatchesModel(const bitset<>& bcsv_bs, const std::vector<bool>& model) {
+    EXPECT_EQ(bcsv_bs.size(), model.size());
+    size_t expected_count = 0;
+    for (size_t i = 0; i < model.size(); ++i) {
+        if (model[i]) {
+            ++expected_count;
+        }
+        EXPECT_EQ(bcsv_bs[i], model[i]);
+    }
+    EXPECT_EQ(bcsv_bs.count(), expected_count);
+    EXPECT_EQ(bcsv_bs.any(), expected_count > 0);
+    EXPECT_EQ(bcsv_bs.none(), expected_count == 0);
+    const bool expected_all = (model.size() == 0) || (expected_count == model.size());
+    EXPECT_EQ(bcsv_bs.all(), expected_all);
+    EXPECT_EQ(bcsv_bs.to_string(), ModelToString(model));
+}
+
+template<size_t N>
+void RunParityForSize() {
+    const auto pattern_zero = MakePattern(N, PatternKind::Zeros);
+    const auto pattern_one = MakePattern(N, PatternKind::Ones);
+    const auto pattern_a = MakePattern(N, PatternKind::Alternating);
+    const auto pattern_b = MakePattern(N, PatternKind::EveryThird);
+    const auto pattern_mid = MakePattern(N, PatternKind::SingleMid);
+
+    const auto fixed_zero = MakeFixedBitset<N>(pattern_zero);
+    const auto std_zero = MakeStdBitset<N>(pattern_zero);
+    ExpectParityFixed(fixed_zero, std_zero);
+
+    const auto fixed_one = MakeFixedBitset<N>(pattern_one);
+    const auto std_one = MakeStdBitset<N>(pattern_one);
+    ExpectParityFixed(fixed_one, std_one);
+
+    const auto fixed_a = MakeFixedBitset<N>(pattern_a);
+    const auto fixed_b = MakeFixedBitset<N>(pattern_b);
+    const auto fixed_mid = MakeFixedBitset<N>(pattern_mid);
+    const auto std_a = MakeStdBitset<N>(pattern_a);
+    const auto std_b = MakeStdBitset<N>(pattern_b);
+    const auto std_mid = MakeStdBitset<N>(pattern_mid);
+
+    ExpectParityFixed(fixed_a, std_a);
+    ExpectParityFixed(fixed_mid, std_mid);
+
+    ExpectParityFixed(fixed_a & fixed_b, std_a & std_b);
+    ExpectParityFixed(fixed_a | fixed_b, std_a | std_b);
+    ExpectParityFixed(fixed_a ^ fixed_b, std_a ^ std_b);
+    ExpectParityFixed(~fixed_a, ~std_a);
+
+    std::vector<size_t> shifts = {0, 1, 2, 3, 7, 8, 15, 31, 63, 64, 65};
+    if (N > 0) {
+        shifts.push_back(N - 1);
+    }
+    shifts.push_back(N);
+    shifts.push_back(N + 1);
+    std::sort(shifts.begin(), shifts.end());
+    shifts.erase(std::unique(shifts.begin(), shifts.end()), shifts.end());
+
+    for (size_t shift : shifts) {
+        ExpectParityFixed(fixed_a << shift, std_a << shift);
+        ExpectParityFixed(fixed_a >> shift, std_a >> shift);
+
+        auto fixed_left = fixed_a;
+        auto std_left = std_a;
+        fixed_left <<= shift;
+        std_left <<= shift;
+        ExpectParityFixed(fixed_left, std_left);
+
+        auto fixed_right = fixed_a;
+        auto std_right = std_a;
+        fixed_right >>= shift;
+        std_right >>= shift;
+        ExpectParityFixed(fixed_right, std_right);
+    }
+
+    const auto dynamic_a = MakeDynamicBitset(N, pattern_a);
+    const auto dynamic_b = MakeDynamicBitset(N, pattern_b);
+    const auto dynamic_mid = MakeDynamicBitset(N, pattern_mid);
+
+    ExpectParityDynamic(dynamic_a, std_a);
+    ExpectParityDynamic(dynamic_mid, std_mid);
+    ExpectParityDynamic(dynamic_a & dynamic_b, std_a & std_b);
+    ExpectParityDynamic(dynamic_a | dynamic_b, std_a | std_b);
+    ExpectParityDynamic(dynamic_a ^ dynamic_b, std_a ^ std_b);
+    ExpectParityDynamic(~dynamic_a, ~std_a);
+
+    for (size_t shift : shifts) {
+        ExpectParityDynamic(dynamic_a << shift, std_a << shift);
+        ExpectParityDynamic(dynamic_a >> shift, std_a >> shift);
+
+        auto dyn_left = dynamic_a;
+        auto std_left = std_a;
+        dyn_left <<= shift;
+        std_left <<= shift;
+        ExpectParityDynamic(dyn_left, std_left);
+
+        auto dyn_right = dynamic_a;
+        auto std_right = std_a;
+        dyn_right >>= shift;
+        std_right >>= shift;
+        ExpectParityDynamic(dyn_right, std_right);
+    }
+}
+
+template<size_t... Ns>
+void RunParitySweep(std::index_sequence<Ns...>) {
+    (RunParityForSize<Ns>(), ...);
+}
+
+}  // namespace
 
 // ============================================================================
 // Fixed-Size Bitset Tests
@@ -598,6 +849,48 @@ TEST_F(DynamicBitsetTest, Modifiers_ShrinkToFit) {
     EXPECT_EQ(bs.size(), 64);  // Size unchanged
 }
 
+TEST_F(DynamicBitsetTest, Modifiers_Insert_EmptyToGrown) {
+    bitset<> bs(0);
+    std::vector<bool> model;
+
+    auto insert_and_check = [&](size_t pos, bool value) {
+        bs.insert(pos, value);
+        model.insert(model.begin() + static_cast<std::ptrdiff_t>(pos), value);
+        ExpectMatchesModel(bs, model);
+    };
+
+    insert_and_check(0, true);
+    insert_and_check(1, false);
+    insert_and_check(1, true);
+    insert_and_check(0, false);
+    insert_and_check(bs.size(), true);
+}
+
+TEST_F(DynamicBitsetTest, Modifiers_Insert_BoundariesAndMiddle) {
+    bitset<> bs(63);
+    std::vector<bool> model(63, false);
+
+    bs.set(0);
+    bs.set(31);
+    bs.set(62);
+    model[0] = true;
+    model[31] = true;
+    model[62] = true;
+
+    ExpectMatchesModel(bs, model);
+
+    auto insert_and_check = [&](size_t pos, bool value) {
+        bs.insert(pos, value);
+        model.insert(model.begin() + static_cast<std::ptrdiff_t>(pos), value);
+        ExpectMatchesModel(bs, model);
+    };
+
+    insert_and_check(0, true);
+    insert_and_check(32, false);
+    insert_and_check(64, true);
+    insert_and_check(bs.size() / 2, true);
+}
+
 TEST_F(DynamicBitsetTest, Operations_AllowSameAsFixed) {
     // Verify dynamic bitsets support all operations that fixed bitsets do
     bitset<> bs(64, 0xABCDEF0123456789ULL);
@@ -640,6 +933,213 @@ TEST_F(DynamicBitsetTest, Comparison_Equality) {
     EXPECT_EQ(a, b);
     EXPECT_NE(a, c);
     EXPECT_NE(a, d);  // Different sizes
+}
+
+TEST(BitsetParityTest, FixedAndDynamicMatchStd_ZeroTo130) {
+    RunParitySweep(std::make_index_sequence<131>{});
+}
+
+TEST(BitsetCombinedOpsTest, FixedAndDynamicCombinedExpressions) {
+    constexpr size_t kFixedSize = 64;
+    const auto pattern_a = MakePattern(kFixedSize, PatternKind::Alternating);
+    const auto pattern_b = MakePattern(kFixedSize, PatternKind::EveryThird);
+    const auto pattern_c = MakePattern(kFixedSize, PatternKind::SingleMid);
+    const auto pattern_d = MakePattern(kFixedSize, PatternKind::Ones);
+
+    auto a = MakeFixedBitset<kFixedSize>(pattern_a);
+    auto b = MakeFixedBitset<kFixedSize>(pattern_b);
+    auto c = MakeFixedBitset<kFixedSize>(pattern_c);
+    auto d = MakeFixedBitset<kFixedSize>(pattern_d);
+
+    auto std_a = MakeStdBitset<kFixedSize>(pattern_a);
+    auto std_b = MakeStdBitset<kFixedSize>(pattern_b);
+    auto std_c = MakeStdBitset<kFixedSize>(pattern_c);
+    auto std_d = MakeStdBitset<kFixedSize>(pattern_d);
+
+    c |= (a & ~b) | d;
+    std_c |= (std_a & ~std_b) | std_d;
+    ExpectParityFixed(c, std_c);
+
+    constexpr size_t kDynamicSize = 100;
+    const auto dyn_a = MakeDynamicBitset(kDynamicSize, MakePattern(kDynamicSize, PatternKind::Alternating));
+    const auto dyn_b = MakeDynamicBitset(kDynamicSize, MakePattern(kDynamicSize, PatternKind::EveryThird));
+    auto dyn_c = MakeDynamicBitset(kDynamicSize, MakePattern(kDynamicSize, PatternKind::SingleMid));
+    const auto dyn_d = MakeDynamicBitset(kDynamicSize, MakePattern(kDynamicSize, PatternKind::Ones));
+
+    auto std_dyn_a = MakeStdBitset<kDynamicSize>(MakePattern(kDynamicSize, PatternKind::Alternating));
+    auto std_dyn_b = MakeStdBitset<kDynamicSize>(MakePattern(kDynamicSize, PatternKind::EveryThird));
+    auto std_dyn_c = MakeStdBitset<kDynamicSize>(MakePattern(kDynamicSize, PatternKind::SingleMid));
+    auto std_dyn_d = MakeStdBitset<kDynamicSize>(MakePattern(kDynamicSize, PatternKind::Ones));
+
+    dyn_c |= (dyn_a & ~dyn_b) | dyn_d;
+    std_dyn_c |= (std_dyn_a & ~std_dyn_b) | std_dyn_d;
+    ExpectParityDynamic(dyn_c, std_dyn_c);
+}
+
+TEST(BitsetSizeMismatchTest, DynamicBitwiseTruncatesToLhsSize) {
+    const auto model_a = MakePattern(10, PatternKind::Alternating);
+    const auto model_b = MakePattern(64, PatternKind::EveryThird);
+    const auto model_c = MakePattern(96, PatternKind::SingleMid);
+
+    const auto a = MakeDynamicBitset(model_a.size(), model_a);
+    const auto b = MakeDynamicBitset(model_b.size(), model_b);
+    const auto c = MakeDynamicBitset(model_c.size(), model_c);
+
+    const auto expected_and = ModelAnd(model_a, model_b);
+    const auto expected_or = ModelOr(model_a, model_b);
+    const auto expected_xor = ModelXor(model_a, model_b);
+
+    ExpectMatchesModel(a & b, expected_and);
+    ExpectMatchesModel(a | b, expected_or);
+    ExpectMatchesModel(a ^ b, expected_xor);
+
+    auto lhs_or = a;
+    lhs_or |= b;
+    ExpectMatchesModel(lhs_or, expected_or);
+
+    auto lhs_xor = a;
+    lhs_xor ^= b;
+    ExpectMatchesModel(lhs_xor, expected_xor);
+
+    auto lhs_and = b;
+    lhs_and &= c;
+    ExpectMatchesModel(lhs_and, ModelAnd(model_b, model_c));
+}
+
+TEST(BitsetMaskOpsTest, FixedAndDynamicMaskedQueries) {
+    bitset<64> fixed_a;
+    bitset<64> fixed_mask;
+
+    fixed_a.reset();
+    fixed_mask.reset();
+    fixed_mask.set(1);
+    fixed_mask.set(5);
+    fixed_mask.set(63);
+
+    fixed_a.set(1);
+    fixed_a.set(5);
+    fixed_a.set(63);
+
+    EXPECT_TRUE(fixed_a.any(fixed_mask));
+    EXPECT_TRUE(fixed_a.all(fixed_mask));
+
+    fixed_a.reset(5);
+    EXPECT_TRUE(fixed_a.any(fixed_mask));
+    EXPECT_FALSE(fixed_a.all(fixed_mask));
+
+    bitset<> dyn_a(64);
+    dyn_a.reset();
+    dyn_a.set(2);
+    dyn_a.set(7);
+
+    bitset<> dyn_mask_same(64);
+    dyn_mask_same.reset();
+    dyn_mask_same.set(2);
+    dyn_mask_same.set(7);
+
+    EXPECT_TRUE(dyn_a.any(dyn_mask_same));
+    EXPECT_TRUE(dyn_a.all(dyn_mask_same));
+
+    bitset<> dyn_mask_small(23);
+    dyn_mask_small.reset();
+    dyn_mask_small.set(2);
+    dyn_mask_small.set(7);
+
+    EXPECT_TRUE(dyn_a.any(dyn_mask_small));
+    EXPECT_TRUE(dyn_a.all(dyn_mask_small));
+
+    bitset<> dyn_mask_large(96);
+    dyn_mask_large.reset();
+    dyn_mask_large.set(2);
+    dyn_mask_large.set(7);
+    dyn_mask_large.set(80);
+
+    EXPECT_TRUE(dyn_a.any(dyn_mask_large));
+    EXPECT_TRUE(dyn_a.all(dyn_mask_large));
+
+    dyn_a.reset(7);
+    EXPECT_TRUE(dyn_a.any(dyn_mask_small));
+    EXPECT_FALSE(dyn_a.all(dyn_mask_small));
+    EXPECT_TRUE(dyn_a.any(dyn_mask_large));
+    EXPECT_FALSE(dyn_a.all(dyn_mask_large));
+}
+
+TEST(BitsetSliceTest, FixedSliceReadWrite) {
+    bitset<16> bs;
+    bs.reset();
+    bs.set(4);
+    bs.set(7);
+
+    auto slice = bs.slice(4, 6);
+    EXPECT_EQ(slice.size(), 6u);
+    EXPECT_TRUE(slice[0]);
+    EXPECT_TRUE(slice[3]);
+
+    slice.reset(0);
+    slice.set(1, true);
+    EXPECT_FALSE(bs[4]);
+    EXPECT_TRUE(bs[5]);
+}
+
+TEST(BitsetSliceTest, DynamicSliceOpsAndMasking) {
+    bitset<> bs(16);
+    bs.reset();
+    bs.set(4);
+    bs.set(8);
+    bs.set(9);
+
+    auto slice = bs.slice(4, 6);
+    EXPECT_TRUE(slice.any());
+    EXPECT_FALSE(slice.all());
+
+    bitset<> mask_same(6);
+    mask_same.reset();
+    mask_same.set(0);
+    mask_same.set(4);
+    EXPECT_TRUE(slice.any(mask_same));
+    EXPECT_TRUE(slice.all(mask_same));
+
+    bitset<> mask_small(3);
+    mask_small.reset();
+    mask_small.set(0);
+    EXPECT_TRUE(slice.any(mask_small));
+    EXPECT_TRUE(slice.all(mask_small));
+
+    bitset<> mask_large(12);
+    mask_large.reset();
+    mask_large.set(0);
+    mask_large.set(4);
+    mask_large.set(10);  // ignored
+    EXPECT_TRUE(slice.any(mask_large));
+    EXPECT_TRUE(slice.all(mask_large));
+
+    bitset<> rhs(6);
+    rhs.reset();
+    rhs.set(1);
+    rhs.set(4);
+    slice &= rhs;
+    EXPECT_FALSE(bs[4]);
+    EXPECT_TRUE(bs[8]);
+    EXPECT_FALSE(bs[9]);
+
+    slice.reset();
+    slice.set(0, true);
+    slice.set(1, true);
+    slice <<= 2;
+    EXPECT_FALSE(bs[4]);
+    EXPECT_FALSE(bs[5]);
+    EXPECT_TRUE(bs[6]);
+    EXPECT_TRUE(bs[7]);
+
+    auto compact = slice.to_bitset();
+    EXPECT_EQ(compact.size(), 6u);
+    EXPECT_TRUE(compact[2]);
+    EXPECT_TRUE(compact[3]);
+
+    auto shifted_left = slice.shifted_left(1);
+    EXPECT_EQ(shifted_left.size(), 6u);
+    EXPECT_TRUE(shifted_left[3]);
+    EXPECT_TRUE(shifted_left[4]);
 }
 
 // ============================================================================
@@ -774,6 +1274,23 @@ TEST(BitsetEdgeCasesTest, Size_WordBoundary_63_64_65) {
     EXPECT_EQ(bs65.count(), 65);
 }
 
+TEST(BitsetEdgeCasesTest, Size_WordBoundary_127_128_129) {
+    bitset<127> bs127;
+    bs127.set();
+    EXPECT_EQ(bs127.count(), 127);
+    EXPECT_TRUE(bs127.all());
+
+    bitset<128> bs128;
+    bs128.set();
+    EXPECT_EQ(bs128.count(), 128);
+    EXPECT_TRUE(bs128.all());
+
+    bitset<129> bs129;
+    bs129.set();
+    EXPECT_EQ(bs129.count(), 129);
+    EXPECT_TRUE(bs129.all());
+}
+
 TEST(BitsetEdgeCasesTest, OutOfRange_Access) {
     bitset<8> bs;
     EXPECT_THROW(bs.test(8), std::out_of_range);
@@ -859,8 +1376,9 @@ TEST(BitsetSummaryTest, AllSizesWork) {
     std::cout << "✓ Bitwise operators: &, |, ^, ~, <<, >>\n";
     std::cout << "✓ Conversions: to_ulong, to_ullong, to_string, to_fixed\n";
     std::cout << "✓ I/O operations: data, readFrom, writeTo\n";
-    std::cout << "✓ Dynamic operations: resize, reserve, clear, shrink_to_fit\n";
+    std::cout << "✓ Dynamic operations: resize, reserve, clear, shrink_to_fit, insert\n";
     std::cout << "✓ Edge cases: word boundaries, partial words, out of range\n";
+    std::cout << "✓ Std::bitset parity: sizes 0-130, shifts, bitwise ops\n";
     std::cout << "✓ Interoperability: fixed ↔ dynamic conversions\n";
     std::cout << "============================\n\n";
     

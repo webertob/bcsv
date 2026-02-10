@@ -16,6 +16,7 @@
 #include <cstring>
 #include <string>
 #include <limits>
+#include <algorithm>
 #include <ostream>
 #include <istream>
 #include <cassert>
@@ -142,6 +143,85 @@ public:
         bool operator~() const;
         reference& flip();
     };
+
+    /**
+     * @brief Read-only view into a contiguous range of bits
+     */
+    class const_slice_view {
+    public:
+        const_slice_view(const bitset* owner, size_t start, size_t length);
+
+        size_t size() const noexcept;
+        bool empty() const noexcept;
+
+        bool operator[](size_t pos) const;
+        bool test(size_t pos) const;
+
+        bool all() const noexcept;
+        bool any() const noexcept;
+        bool none() const noexcept;
+        size_t count() const noexcept;
+
+        bool all(const bitset& mask) const noexcept;
+        bool any(const bitset& mask) const noexcept;
+
+        bitset operator<<(size_t shift_amount) const noexcept;
+        bitset operator>>(size_t shift_amount) const noexcept;
+
+        bitset<> to_bitset() const;
+        bitset<> shifted_left(size_t shift_amount) const;
+        bitset<> shifted_right(size_t shift_amount) const;
+
+    protected:
+        const bitset* owner_;
+        size_t start_;
+        size_t length_;
+
+        struct slice_meta {
+            size_t start_word;
+            size_t start_bit;
+            size_t word_count;
+            size_t tail_bits;
+            word_t tail_mask;
+        };
+
+        slice_meta meta() const noexcept;
+        word_t load_word(size_t index, const slice_meta& meta) const noexcept;
+    };
+
+    /**
+     * @brief Mutable view into a contiguous range of bits
+     */
+    class slice_view : public const_slice_view {
+    public:
+        slice_view(bitset* owner, size_t start, size_t length);
+
+        reference operator[](size_t pos);
+
+        slice_view& set() noexcept;
+        slice_view& set(size_t pos, bool val = true);
+
+        slice_view& reset() noexcept;
+        slice_view& reset(size_t pos);
+
+        slice_view& flip() noexcept;
+        slice_view& flip(size_t pos);
+
+        slice_view& operator&=(const bitset& other) noexcept;
+        slice_view& operator|=(const bitset& other) noexcept;
+        slice_view& operator^=(const bitset& other) noexcept;
+
+        slice_view& operator&=(const const_slice_view& other) noexcept;
+        slice_view& operator|=(const const_slice_view& other) noexcept;
+        slice_view& operator^=(const const_slice_view& other) noexcept;
+
+        slice_view& operator<<=(size_t shift_amount) noexcept;
+        slice_view& operator>>=(size_t shift_amount) noexcept;
+
+    private:
+        using slice_meta = typename const_slice_view::slice_meta;
+        void store_word(size_t index, word_t value, word_t slice_mask, const slice_meta& meta) noexcept;
+    };
     
     // ===== Constructors and Assignment =====
     
@@ -197,6 +277,11 @@ public:
     constexpr size_t sizeBytes() const noexcept;
     constexpr bool empty() const noexcept;
     static constexpr bool is_fixed_size() noexcept;
+
+    // ===== Views =====
+    // Throws std::out_of_range if the range exceeds the bitset size.
+    slice_view slice(size_t start, size_t length);
+    const_slice_view slice(size_t start, size_t length) const;
     
     // ===== Modifiers =====
     // All single-bit modifiers (set/reset/flip with pos) throw std::out_of_range if out of bounds
@@ -223,6 +308,11 @@ public:
     bool any() const noexcept;
     size_t count() const noexcept;
     bool none() const noexcept;
+
+    // Masked queries (avoid temporary bitsets)
+    // Mask is truncated to this bitset's size; extra mask bits are ignored.
+    bool all(const bitset& mask) const noexcept;
+    bool any(const bitset& mask) const noexcept;
     
     // ===== Conversions =====
     
@@ -243,6 +333,7 @@ public:
     void writeTo(void* dst, size_t capacity) const;
     
     // ===== Bitwise Operators =====
+    // For dynamic bitsets, compound ops truncate to this bitset's size.
     
     bitset operator~() const noexcept;
     

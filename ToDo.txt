@@ -86,7 +86,7 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
 [x] 8.d: Finalize Row::onAddColumn, Row::onChangeColumnType, Row::onRemoveColumn
 [x] 8.e: debug large column count bools
     8.f: Add tests for concepts (Row & Vistors)
-    8.f: Add test for bitset insert
+[x] 8.g: Add test for bitset insert
 
 
 9.a Restructure Row <-> Reader/Writer collaboration, introduce Serializer / Deserializier API

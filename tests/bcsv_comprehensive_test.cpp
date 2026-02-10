@@ -1860,7 +1860,7 @@ TEST_F(BCSVTestSuite, EdgeCase_MixedEmptyOperations) {
                                 }
                                 break;
                             case bcsv::ColumnType::STRING:
-                                row.get<std::string>(col);
+                                (void)row.get<std::string>(col);
                                 break;
                             default:
                                 break;

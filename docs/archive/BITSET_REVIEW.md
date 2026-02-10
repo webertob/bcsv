@@ -13,7 +13,7 @@ The new unified bitset implementation successfully achieves all primary design g
 - ✅ **Word-aligned storage**: Platform-native uint64_t (64-bit) or uint32_t (32-bit)
 - ✅ **Zero overhead**: Fixed-size bitsets have no size member penalty
 - ✅ **STL best practices**: Bounds checking matches std::vector/std::bitset
-- ✅ **Comprehensive tests**: 57 test cases, 774 lines of test code
+- ✅ **Comprehensive tests**: Expanded coverage incl. parity sweep (0-130), insert, masked queries
 - ✅ **Performance optimizations**: any/all/none operations **60-70x faster** on large bitsets
 - ✅ **Comprehensive benchmarks**: 345 test combinations validating performance across all sizes
 
@@ -94,8 +94,8 @@ The new unified bitset implementation successfully achieves all primary design g
 
 ### ✅ EXCELLENT - Comprehensive Test Suite
 
-**File**: `tests/bitset_test.cpp` (774 lines)
-**Test Cases**: 57 across 6 test suites
+**File**: `tests/bitset_test.cpp` (expanded)
+**Test Cases**: Expanded across multiple test suites
 **Execution Time**: < 1ms (all tests)
 
 ### Test Suite Breakdown
@@ -148,6 +148,7 @@ The new unified bitset implementation successfully achieves all primary design g
 - ✅ All constructors (7 different constructor forms)
 - ✅ All modifiers (set, reset, flip, resize, reserve, clear)
 - ✅ All accessors (operator[], test(), count(), any(), all(), none())
+- ✅ Masked queries (any(mask), all(mask))
 - ✅ All operators (bitwise &|^~, shift <<>>, comparison ==!=)
 - ✅ All conversions (to_ulong, to_ullong, to_string, to_fixed)
 - ✅ All I/O operations (data, readFrom, writeTo, streams)
@@ -168,6 +169,7 @@ The new unified bitset implementation successfully achieves all primary design g
 - ✅ Out-of-bounds access
 - ✅ Overflow scenarios
 - ✅ Zero-size operations
+- ✅ Masked queries with smaller/larger masks
 
 ### Coverage Metrics (Estimated)
 
@@ -179,6 +181,47 @@ The new unified bitset implementation successfully achieves all primary design g
 - ⚠️ Exotic platforms (only x64/ARM tested)
 - ⚠️ Concurrent access (not thread-safe by design, not tested)
 - ⚠️ Move semantics (compiler-generated, not explicitly tested)
+
+### Behavior Notes (Post-Review Updates)
+
+- Masked queries `any(mask)` and `all(mask)` truncate the mask to the left-hand bitset size; extra mask bits are ignored.
+- Dynamic bitwise compound ops (`&=`, `|=`, `^=`) truncate to the left-hand size and do not resize.
+- Slice views (`slice(start, length)`) are non-owning and operate directly on the underlying bitset.
+- `to_bitset()` and `shifted_left/right()` return compact dynamic bitsets for a slice (avoid full parent copies).
+
+Slice API (non-owning views):
+```cpp
+bitset<16> fixed;
+fixed.reset();
+fixed.set(4);
+fixed.set(7);
+
+auto view = fixed.slice(4, 6); // bits 4..9
+view.reset(0);                 // clears fixed[4]
+view.set(1, true);             // sets fixed[5]
+
+bitset<> dynamic(16);
+dynamic.reset();
+dynamic.set(4);
+dynamic.set(9);
+
+auto dview = dynamic.slice(4, 6);
+bitset<> mask(12);
+mask.set(0);
+mask.set(5);
+mask.set(10); // ignored (outside slice length)
+
+bool any = dview.any(mask); // true
+bool all = dview.all(mask); // true
+```
+
+Example (dynamic sizes):
+```cpp
+bitset<> a(8);
+bitset<> mask(16);
+// mask bit 12 is ignored when evaluating a & mask
+auto b = a & mask;  // b.size() == 8
+```
 
 ---
 
