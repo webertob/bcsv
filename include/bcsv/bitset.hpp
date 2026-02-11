@@ -45,7 +45,7 @@ constexpr bool bitset<N>::uses_inline() const noexcept {
 template<size_t N>
 constexpr typename bitset<N>::word_t* bitset<N>::word_data() noexcept {
     if constexpr (is_fixed) {
-        return this->storage_.data();
+        return this->storage_base::data_.data();
     } else {
         if (uses_inline()) {
             return reinterpret_cast<word_t*>(&data_);
@@ -57,7 +57,7 @@ constexpr typename bitset<N>::word_t* bitset<N>::word_data() noexcept {
 template<size_t N>
 constexpr const typename bitset<N>::word_t* bitset<N>::word_data() const noexcept {
     if constexpr (is_fixed) {
-        return this->storage_.data();
+        return this->storage_base::data_.data();
     } else {
         if (uses_inline()) {
             return reinterpret_cast<const word_t*>(&data_);
@@ -330,7 +330,7 @@ bitset<N>::bitset(const bitset<M>& other) requires(!is_fixed && M != dynamic_ext
 template<size_t N>
 bitset<N>::bitset(const bitset& other) {
     if constexpr (is_fixed) {
-        this->storage_ = other.storage_;
+        this->storage_base::data_ = other.storage_base::data_;
     } else {
         size_ = other.size_;
         data_ = 0;
@@ -344,7 +344,7 @@ bitset<N>::bitset(const bitset& other) {
 template<size_t N>
 bitset<N>::bitset(bitset&& other) noexcept {
     if constexpr (is_fixed) {
-        this->storage_ = std::move(other.storage_);
+        this->storage_base::data_ = std::move(other.storage_base::data_);
     } else {
         size_ = other.size_;
         data_ = other.data_;
@@ -363,7 +363,7 @@ bitset<N>& bitset<N>::operator=(const bitset& other) {
         return *this;
     }
     if constexpr (is_fixed) {
-        this->storage_ = other.storage_;
+        this->storage_base::data_ = other.storage_base::data_;
     } else {
         release_heap();
         size_ = other.size_;
@@ -382,7 +382,7 @@ bitset<N>& bitset<N>::operator=(bitset&& other) noexcept {
         return *this;
     }
     if constexpr (is_fixed) {
-        this->storage_ = std::move(other.storage_);
+        this->storage_base::data_ = std::move(other.storage_base::data_);
     } else {
         release_heap();
         size_ = other.size_;
