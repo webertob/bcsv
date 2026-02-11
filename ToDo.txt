@@ -85,11 +85,37 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     I still like the current API of the BCSV library and would like to maintain the workflow, see examples and benchmark.
 [x] 8.d: Finalize Row::onAddColumn, Row::onChangeColumnType, Row::onRemoveColumn
 [x] 8.e: debug large column count bools
-    8.f: Add tests for concepts (Row & Vistors)
-[x] 8.g: Add test for bitset insert
+[x] 8.f: Add test for bitset insert
+    8.g: Optimize memory allocation and layout for dynamic bitset (Small Object / Small String Optimization)
+        8.g.1:  create a _dedicated_ benchmark suite to compare std::bitset and bcsv::bitset<dynamic> and bcsv::bitset<static> for differet sizes, N=2, 4, 8, 16, 32, 64,  ..., 65535 and N= 2-1, 4-1 ..... 65535-1. Make a proper report (markdown and charts), also have a small block that explain on the versional changes / reason we've run the test for. Safe the report persitently name should include date_time.  compare:
+                a. performance on typical usages: all(), none(), any(), shifts, operators (&, &=, |, |=), 3 way operations a |= (a&b|c), make sure you run enough repetitions to get stable performane indicators
+                b. compare memory allocation
+        8.g.2: Draft a new memory layout for bcsv::bitset dynamic that exploits small "string" optimization. 
+               Goal: We want to exploit the fact that we constrain size of the bitset to 2^16 bits. We want to reduce the amount of heap allocation and improve cache locality by avoiding std::vector in cases its possible.
+               Memory layout:   For bcsv::bitset dynamic we always allocate 2 words of type uintptr (32bit / 4 bytes on 32bit systems, 8bytes on 64bit systems), lets name them size_ and data_, thus bcsv::bitset<dynamic> members are: uintptr_t size_, data_;
+                                The acutal bitset size (N) is always encoded as uint16_t at the very begining of the first word. i.e. size() { static_cast<uint16_t>(w1) }.
+                                But depending on the number of bits (bitset.size or N): We assign different meaning to the remaining available storage (on 64bit systems, it is 64*2bits raw capacity - 16bits size = 112 usable capacity)
+                                N < sizeof(word)*8 bits, store bits in data_
+                                N > sizeof(word)*8 and <= sizeof(2*word)*8-16, also store the first bits into data_, but put the reminder (i.e. bits 65 to 112) to the upper part of size_, which is not used to encode size.
+                                N > sizeof(2*word)*8-16, allocate the number of words required, data_ to hold the pointer to the actuall data_ used by the bitset.
+                Ask questions if you have. Present and discuss your concepts. Consider performance and maintainability.
+        8.g.3: Make a plan to implement the new design of bcsv::bitset. We want to maintain the exisiting API!
+        8.g.4: Implement the new design and keep on iterating until all tests confirm the exiting API is supported and we see the expected benefits of a small bitset optimization.
+        8.g.5: Scrutinize and clean up the code, add comments/documentation, validate its correctnes and performance, make a report out.
 
 
-9.a Restructure Row <-> Reader/Writer collaboration, introduce Serializer / Deserializier API
+
+
+        
+
+    8.h: Add tests for concepts (Row & Vistors)
+    8.i: Restructure Row object to not use ptr_. Issue: pointers are basically the same size or bigger than the data we store (std::string, the only exception). 
+     Thus, we are not gaining any meory benefit from using ptr_ indirection but suffer a performance peanlty and higher complexity. 
+     Idea: use std::vector<uint64_t> data_; to store content directly using casts on all primitives i.e. static_cast<bool>(data_[i]) (i=columnindex) to access/manipulate the data. 
+           Just for std::string we need to provide a dedicated solution introducting std::vector<std::string> str_ access to string is str[data_[i]]. Thus data_ simply contains the index into the str_ vector.
+           Gain: Custom memory management not required anymore, reducing complexity. Easier to insert/remove columns. Smaller memory footprint. Faster access (less indirection for all primitives)
+
+9 Restructure Row <-> Reader/Writer collaboration, introduce Serializer / Deserializier API
         - serializer and deserailizer functionalities are current tightly integrated with row:
             - makes row heavier than required (memory) as it stores data required for serilization/deserialization, specifically offsets_ and offset_var_, 
               which in many cases not needed and limits rows ability to be used as lightweight facility to collect and transfer information in an application.
@@ -122,12 +148,6 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
             - run&pass benchmarks
             - build examples and CLI tools
 
-9.b: Restructure Row object to not use ptr_. Issue: pointers are basically the same size or bigger than the data we store (std::string, the only exception). 
-     Thus, we are not gaining any meory benefit from using ptr_ indirection but suffer a performance peanlty and higher complexity. 
-     Idea: use std::vector<uint64_t> data_; to store content directly using casts on all primitives i.e. static_cast<bool>(data_[i]) (i=columnindex) to access/manipulate the data. 
-           Just for std::string we need to provide a dedicated solution introducting std::vector<std::string> str_ access to string is str[data_[i]]. Thus data_ simply contains the index into the str_ vector.
-           Gain: Custom memory management not required anymore, reducing complexity. Easier to insert/remove columns. Smaller memory footprint. Faster access (less indirection for all primitives)
-
 10. Implement CSV write and read functionality using the BCSV interface
     10.a: Restructure BCSV Reader/ Writer API
         - Create a ReadAPI and WriterAPI class that defined the basic functionality each Reader and Writer needs to support.
@@ -155,11 +175,14 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
         - store reports with data and machine/host information for later reference
         - compare against: https://github.com/vincentlaucsb/csv-parser
 
+Samstag
 11. Update Tools and Libraries to use new API
     update and test CLI to use new API tools-tools
     update and test python libraries
     update and test C# (Unity)
 
+Sonntag API freez
+Sonntag: Switch Gears Dr
 13. Implement new row encoding schema, using variable length encoding for float and integer values
     Main usage of bcsv is the handling of time-series data. Thus we expect many rcurring or constantly falling or raising values and values that are similar to previouse values. In many cases the full extend of a variable type is not required to encode the actual value.
     This feature is working on a per row level, not only a single cell/value as the current vle_encode / vle_decode functions do. It tries to provide a better balance between computational effort and compression and takes advantange on previouse data (time-series).

@@ -165,23 +165,35 @@ bitset<N>::bitset(
 // Dynamic-size constructors
 template<size_t N>
 bitset<N>::bitset(size_t num_bits) requires(!is_fixed)
-    : storage_(bits_to_words(num_bits), 0)
-    , bit_count_(num_bits) {}
+    : storage_() {
+    const size_t words = bits_to_words(num_bits);
+    if (words > 0) {
+        storage_.resize(words, 0);
+    }
+    storage_.set_bit_count(num_bits);
+}
 
 template<size_t N>
 bitset<N>::bitset(size_t num_bits, unsigned long long val) requires(!is_fixed)
-    : storage_(bits_to_words(num_bits), 0)
-    , bit_count_(num_bits) 
+    : storage_()
 { 
+    const size_t words = bits_to_words(num_bits);
+    if (words > 0) {
+        storage_.resize(words, 0);
+    }
+    storage_.set_bit_count(num_bits);
     set_from_value(val); 
 }
 
 template<size_t N>
 bitset<N>::bitset(size_t num_bits, bool value) requires(!is_fixed)
-    : storage_(bits_to_words(num_bits), 
-               value ? ~word_t{0} : 0)
-    , bit_count_(num_bits) 
+    : storage_()
 {
+    const size_t words = bits_to_words(num_bits);
+    if (words > 0) {
+        storage_.resize(words, value ? ~word_t{0} : 0);
+    }
+    storage_.set_bit_count(num_bits);
     if (value) clear_unused_bits();
 }
 
@@ -194,9 +206,13 @@ bitset<N>::bitset(
     typename std::basic_string<CharT, Traits, Allocator>::size_type n,
     CharT zero,
     CharT one) requires(!is_fixed)
-    : storage_(bits_to_words(num_bits), 0)
-    , bit_count_(num_bits) 
+    : storage_()
 {
+    const size_t words = bits_to_words(num_bits);
+    if (words > 0) {
+        storage_.resize(words, 0);
+    }
+    storage_.set_bit_count(num_bits);
     set_from_string(str, pos, n, zero, one);
 }
 
@@ -204,9 +220,13 @@ bitset<N>::bitset(
 template<size_t N>
 template<size_t M>
 bitset<N>::bitset(const bitset<M>& other) requires(!is_fixed && M != dynamic_extent)
-    : storage_(bits_to_words(M), 0)
-    , bit_count_(M)
+    : storage_()
 {
+    const size_t words = bits_to_words(M);
+    if (words > 0) {
+        storage_.resize(words, 0);
+    }
+    storage_.set_bit_count(M);
     std::memcpy(data(), other.data(), other.sizeBytes());
 }
 
@@ -251,7 +271,7 @@ constexpr size_t bitset<N>::size() const noexcept {
     if constexpr (is_fixed) {
         return N;
     } else {
-        return bit_count_;
+        return storage_.bit_count();
     }
 }
 
@@ -1036,7 +1056,6 @@ bitset<N>& bitset<N>::flip(size_t pos) {
 // Dynamic-only modifiers
 template<size_t N>
 void bitset<N>::clear() noexcept requires(!is_fixed) {
-    bit_count_ = 0;
     storage_.clear();
 }
 
@@ -1047,10 +1066,10 @@ void bitset<N>::reserve(size_t bit_capacity) requires(!is_fixed) {
 
 template<size_t N>
 void bitset<N>::resize(size_t new_size, bool value) requires(!is_fixed) {
-    const size_t old_size = bit_count_;
+    const size_t old_size = storage_.bit_count();
     const size_t new_word_count = bits_to_words(new_size);
     
-    bit_count_ = new_size;
+    storage_.set_bit_count(new_size);
     storage_.resize(new_word_count, value ? ~word_t{0} : 0);
     
     // If growing with value=true, set bits in partially-filled last old word
