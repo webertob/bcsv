@@ -160,25 +160,16 @@ class bitset {
             bitset operator<<(size_t shift_amount) const noexcept;
             bitset operator>>(size_t shift_amount) const noexcept;
 
-            bitset<> to_bitset() const;
-            bitset<> shifted_left(size_t shift_amount) const;
-            bitset<> shifted_right(size_t shift_amount) const;
+            bitset<> toBitset() const;
+            bitset<> shiftedLeft(size_t shift_amount) const;
+            bitset<> shiftedRight(size_t shift_amount) const;
 
         protected:
             const bitset* owner_;
             size_t start_;
             size_t length_;
 
-            struct slice_meta {
-                size_t start_word_;
-                size_t start_bit_;
-                size_t word_count_;
-                size_t tail_bits_;
-                word_t tail_mask_;
-            };
-
-            slice_meta meta() const noexcept;
-            word_t load_word(size_t index, const slice_meta& meta) const noexcept;
+            word_t loadWord(size_t index) const noexcept;
         };
 
         class slice_view : public const_slice_view {
@@ -208,8 +199,7 @@ class bitset {
             slice_view& operator>>=(size_t shift_amount) noexcept;
 
         private:
-            using slice_meta = typename const_slice_view::slice_meta;
-            void store_word(size_t index, word_t value, word_t slice_mask, const slice_meta& meta) noexcept;
+            void storeWord(size_t index, word_t value, word_t slice_mask) noexcept;
         };
     
     // ===== Constructors and Assignment =====
@@ -266,7 +256,7 @@ class bitset {
     constexpr size_t sizeBytes() const noexcept;
     constexpr bool empty() const noexcept;
     constexpr size_t capacity() const noexcept;
-    static constexpr bool is_fixed_size() noexcept;
+    static constexpr bool isFixedSize() noexcept;
 
     // ===== Views =====
     // Throws std::out_of_range if the range exceeds the bitset size.
@@ -290,7 +280,7 @@ class bitset {
     void reserve(size_t bit_capacity) requires(!IS_FIXED);
     void resize(size_t new_size, bool value = false) requires(!IS_FIXED);
     void insert(size_t pos, bool value = false) requires(!IS_FIXED);  // Insert bit at pos, shifting subsequent bits right
-    void shrink_to_fit() requires(!IS_FIXED);
+    void shrinkToFit() requires(!IS_FIXED);
     
     // ===== Operations =====
     
@@ -306,13 +296,13 @@ class bitset {
     
     // ===== Conversions =====
     
-    unsigned long to_ulong() const;
-    unsigned long long to_ullong() const;
-    std::string to_string(char zero = '0', char one = '1') const;
+    unsigned long toUlong() const;
+    unsigned long long toUllong() const;
+    std::string toString(char zero = '0', char one = '1') const;
     
     // Dynamic → Fixed conversion (with validation)
     template<size_t M>
-    bitset<M> to_fixed() const requires(!IS_FIXED);
+    bitset<M> toFixed() const requires(!IS_FIXED);
     
     // ===== I/O and Binary Compatibility =====
     

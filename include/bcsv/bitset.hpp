@@ -471,29 +471,23 @@ bool bitset<N>::const_slice_view::empty() const noexcept {
 }
 
 template<size_t N>
-typename bitset<N>::const_slice_view::slice_meta
-bitset<N>::const_slice_view::meta() const noexcept {
-    slice_meta info{};
-    info.start_word_ = start_ / WORD_BITS;
-    info.start_bit_ = start_ % WORD_BITS;
-    info.word_count_ = (length_ + WORD_BITS - 1) / WORD_BITS;
-    info.tail_bits_ = length_ % WORD_BITS;
-    info.tail_mask_ = info.tail_bits_ == 0 ? ~word_t{0} : (word_t{1} << info.tail_bits_) - 1;
-    return info;
-}
-
-template<size_t N>
 typename bitset<N>::word_t
-bitset<N>::const_slice_view::load_word(size_t index, const slice_meta& meta) const noexcept {
-    const size_t base = meta.start_word_ + index;
-    word_t low = owner_->wordData()[base] >> meta.start_bit_;
+bitset<N>::const_slice_view::loadWord(size_t index) const noexcept {
+    const size_t start_word = start_ / WORD_BITS;
+    const size_t start_bit = start_ % WORD_BITS;
+    const size_t word_count = (length_ + WORD_BITS - 1) / WORD_BITS;
+    const size_t tail_bits = length_ % WORD_BITS;
+    const word_t tail_mask = tail_bits == 0 ? ~word_t{0} : (word_t{1} << tail_bits) - 1;
+
+    const size_t base = start_word + index;
+    word_t low = owner_->wordData()[base] >> start_bit;
     word_t high = 0;
-    if (meta.start_bit_ != 0 && base + 1 < owner_->wordCount()) {
-        high = owner_->wordData()[base + 1] << (WORD_BITS - meta.start_bit_);
+    if (start_bit != 0 && base + 1 < owner_->wordCount()) {
+        high = owner_->wordData()[base + 1] << (WORD_BITS - start_bit);
     }
     word_t value = low | high;
-    if (index + 1 == meta.word_count_ && meta.tail_bits_ != 0) {
-        value &= meta.tail_mask_;
+    if (index + 1 == word_count && tail_bits != 0) {
+        value &= tail_mask;
     }
     return value;
 }
@@ -672,30 +666,30 @@ bitset<N> bitset<N>::const_slice_view::operator>>(size_t shift_amount) const noe
 }
 
 template<size_t N>
-bitset<> bitset<N>::const_slice_view::to_bitset() const {
+bitset<> bitset<N>::const_slice_view::toBitset() const {
     bitset<> result(length_);
     if (length_ == 0) {
         return result;
     }
 
-    const auto info = meta();
-    for (size_t i = 0; i < info.word_count_; ++i) {
-        result.wordData()[i] = load_word(i, info);
+    const size_t word_count = (length_ + WORD_BITS - 1) / WORD_BITS;
+    for (size_t i = 0; i < word_count; ++i) {
+        result.wordData()[i] = loadWord(i);
     }
     result.clearUnusedBits();
     return result;
 }
 
 template<size_t N>
-bitset<> bitset<N>::const_slice_view::shifted_left(size_t shift_amount) const {
-    bitset<> result = to_bitset();
+bitset<> bitset<N>::const_slice_view::shiftedLeft(size_t shift_amount) const {
+    bitset<> result = toBitset();
     result <<= shift_amount;
     return result;
 }
 
 template<size_t N>
-bitset<> bitset<N>::const_slice_view::shifted_right(size_t shift_amount) const {
-    bitset<> result = to_bitset();
+bitset<> bitset<N>::const_slice_view::shiftedRight(size_t shift_amount) const {
+    bitset<> result = toBitset();
     result >>= shift_amount;
     return result;
 }
@@ -705,23 +699,24 @@ bitset<N>::slice_view::slice_view(bitset* owner, size_t start, size_t length)
     : const_slice_view(owner, start, length) {}
 
 template<size_t N>
-void bitset<N>::slice_view::store_word(
+void bitset<N>::slice_view::storeWord(
     size_t index,
     word_t value,
-    word_t slice_mask,
-    const typename bitset<N>::const_slice_view::slice_meta& meta) noexcept
+    word_t slice_mask) noexcept
 {
-    const size_t base = meta.start_word_ + index;
+    const size_t start_word = this->start_ / WORD_BITS;
+    const size_t start_bit = this->start_ % WORD_BITS;
+    const size_t base = start_word + index;
     word_t masked_value = value & slice_mask;
-    word_t low_mask = slice_mask << meta.start_bit_;
-    word_t low_bits = masked_value << meta.start_bit_;
+    word_t low_mask = slice_mask << start_bit;
+    word_t low_bits = masked_value << start_bit;
     word_t* owner_data = (*const_cast<bitset*>(this->owner_)).wordData();
     owner_data[base] = (owner_data[base] & ~low_mask) | low_bits;
 
-    if (meta.start_bit_ != 0 && base + 1 < this->owner_->wordCount()) {
-        word_t high_mask = slice_mask >> (WORD_BITS - meta.start_bit_);
+    if (start_bit != 0 && base + 1 < this->owner_->wordCount()) {
+        word_t high_mask = slice_mask >> (WORD_BITS - start_bit);
         if (high_mask != 0) {
-            word_t high_bits = masked_value >> (WORD_BITS - meta.start_bit_);
+            word_t high_bits = masked_value >> (WORD_BITS - start_bit);
             owner_data[base + 1] = (owner_data[base + 1] & ~high_mask) | high_bits;
         }
     }
@@ -871,12 +866,15 @@ template<size_t N>
 typename bitset<N>::slice_view& bitset<N>::slice_view::operator&=(const bitset& other) noexcept {
     const size_t start_bit = this->start_ % WORD_BITS;
     if (start_bit != 0) {
-        const auto info = this->meta();
-        for (size_t i = 0; i < info.word_count_; ++i) {
+        const size_t word_count = (this->length_ + WORD_BITS - 1) / WORD_BITS;
+        const size_t tail_bits = this->length_ % WORD_BITS;
+        const word_t tail_mask = tail_bits == 0 ? ~word_t{0} : (word_t{1} << tail_bits) - 1;
+
+        for (size_t i = 0; i < word_count; ++i) {
             const word_t other_word = (i < other.wordCount()) ? other.wordData()[i] : word_t{0};
-            const word_t slice_mask = (i + 1 == info.word_count_ && info.tail_bits_ != 0) ? info.tail_mask_ : ~word_t{0};
-            const word_t updated = this->load_word(i, info) & other_word;
-            store_word(i, updated, slice_mask, info);
+            const word_t slice_mask = (i + 1 == word_count && tail_bits != 0) ? tail_mask : ~word_t{0};
+            const word_t updated = this->loadWord(i) & other_word;
+            storeWord(i, updated, slice_mask);
         }
         return *this;
     }
@@ -906,12 +904,15 @@ template<size_t N>
 typename bitset<N>::slice_view& bitset<N>::slice_view::operator|=(const bitset& other) noexcept {
     const size_t start_bit = this->start_ % WORD_BITS;
     if (start_bit != 0) {
-        const auto info = this->meta();
-        for (size_t i = 0; i < info.word_count_; ++i) {
+        const size_t word_count = (this->length_ + WORD_BITS - 1) / WORD_BITS;
+        const size_t tail_bits = this->length_ % WORD_BITS;
+        const word_t tail_mask = tail_bits == 0 ? ~word_t{0} : (word_t{1} << tail_bits) - 1;
+
+        for (size_t i = 0; i < word_count; ++i) {
             const word_t other_word = (i < other.wordCount()) ? other.wordData()[i] : word_t{0};
-            const word_t slice_mask = (i + 1 == info.word_count_ && info.tail_bits_ != 0) ? info.tail_mask_ : ~word_t{0};
-            const word_t updated = this->load_word(i, info) | other_word;
-            store_word(i, updated, slice_mask, info);
+            const word_t slice_mask = (i + 1 == word_count && tail_bits != 0) ? tail_mask : ~word_t{0};
+            const word_t updated = this->loadWord(i) | other_word;
+            storeWord(i, updated, slice_mask);
         }
         return *this;
     }
@@ -941,12 +942,15 @@ template<size_t N>
 typename bitset<N>::slice_view& bitset<N>::slice_view::operator^=(const bitset& other) noexcept {
     const size_t start_bit = this->start_ % WORD_BITS;
     if (start_bit != 0) {
-        const auto info = this->meta();
-        for (size_t i = 0; i < info.word_count_; ++i) {
+        const size_t word_count = (this->length_ + WORD_BITS - 1) / WORD_BITS;
+        const size_t tail_bits = this->length_ % WORD_BITS;
+        const word_t tail_mask = tail_bits == 0 ? ~word_t{0} : (word_t{1} << tail_bits) - 1;
+
+        for (size_t i = 0; i < word_count; ++i) {
             const word_t other_word = (i < other.wordCount()) ? other.wordData()[i] : word_t{0};
-            const word_t slice_mask = (i + 1 == info.word_count_ && info.tail_bits_ != 0) ? info.tail_mask_ : ~word_t{0};
-            const word_t updated = this->load_word(i, info) ^ other_word;
-            store_word(i, updated, slice_mask, info);
+            const word_t slice_mask = (i + 1 == word_count && tail_bits != 0) ? tail_mask : ~word_t{0};
+            const word_t updated = this->loadWord(i) ^ other_word;
+            storeWord(i, updated, slice_mask);
         }
         return *this;
     }
@@ -1020,22 +1024,24 @@ typename bitset<N>::slice_view& bitset<N>::slice_view::operator<<=(size_t shift_
 
     const size_t start_bit = this->start_ % WORD_BITS;
     if (start_bit != 0) {
-        const auto info = this->meta();
+        const size_t word_count = (this->length_ + WORD_BITS - 1) / WORD_BITS;
+        const size_t tail_bits = this->length_ % WORD_BITS;
+        const word_t tail_mask = tail_bits == 0 ? ~word_t{0} : (word_t{1} << tail_bits) - 1;
         const size_t word_shift = shift_amount / WORD_BITS;
         const size_t bit_shift = shift_amount % WORD_BITS;
 
-        for (size_t w = info.word_count_; w-- > 0;) {
+        for (size_t w = word_count; w-- > 0;) {
             word_t value = 0;
             if (w >= word_shift) {
                 const size_t src = w - word_shift;
-                word_t src_word = this->load_word(src, info);
+                word_t src_word = this->loadWord(src);
                 value = src_word << bit_shift;
                 if (bit_shift != 0 && src > 0) {
-                    value |= this->load_word(src - 1, info) >> (WORD_BITS - bit_shift);
+                    value |= this->loadWord(src - 1) >> (WORD_BITS - bit_shift);
                 }
             }
-            const word_t slice_mask = (w + 1 == info.word_count_ && info.tail_bits_ != 0) ? info.tail_mask_ : ~word_t{0};
-            store_word(w, value, slice_mask, info);
+            const word_t slice_mask = (w + 1 == word_count && tail_bits != 0) ? tail_mask : ~word_t{0};
+            storeWord(w, value, slice_mask);
         }
         return *this;
     }
@@ -1083,22 +1089,24 @@ typename bitset<N>::slice_view& bitset<N>::slice_view::operator>>=(size_t shift_
 
     const size_t start_bit = this->start_ % WORD_BITS;
     if (start_bit != 0) {
-        const auto info = this->meta();
+        const size_t word_count = (this->length_ + WORD_BITS - 1) / WORD_BITS;
+        const size_t tail_bits = this->length_ % WORD_BITS;
+        const word_t tail_mask = tail_bits == 0 ? ~word_t{0} : (word_t{1} << tail_bits) - 1;
         const size_t word_shift = shift_amount / WORD_BITS;
         const size_t bit_shift = shift_amount % WORD_BITS;
 
-        for (size_t w = 0; w < info.word_count_; ++w) {
+        for (size_t w = 0; w < word_count; ++w) {
             word_t value = 0;
             const size_t src = w + word_shift;
-            if (src < info.word_count_) {
-                word_t src_word = this->load_word(src, info);
+            if (src < word_count) {
+                word_t src_word = this->loadWord(src);
                 value = src_word >> bit_shift;
-                if (bit_shift != 0 && src + 1 < info.word_count_) {
-                    value |= this->load_word(src + 1, info) << (WORD_BITS - bit_shift);
+                if (bit_shift != 0 && src + 1 < word_count) {
+                    value |= this->loadWord(src + 1) << (WORD_BITS - bit_shift);
                 }
             }
-            const word_t slice_mask = (w + 1 == info.word_count_ && info.tail_bits_ != 0) ? info.tail_mask_ : ~word_t{0};
-            store_word(w, value, slice_mask, info);
+            const word_t slice_mask = (w + 1 == word_count && tail_bits != 0) ? tail_mask : ~word_t{0};
+            storeWord(w, value, slice_mask);
         }
         return *this;
     }
@@ -1138,7 +1146,7 @@ typename bitset<N>::slice_view& bitset<N>::slice_view::operator>>=(size_t shift_
 }
 
 template<size_t N>
-constexpr bool bitset<N>::is_fixed_size() noexcept {
+constexpr bool bitset<N>::isFixedSize() noexcept {
     return IS_FIXED;
 }
 
@@ -1301,7 +1309,7 @@ void bitset<N>::insert(size_t pos, bool value) requires(!IS_FIXED) {
 }
 
 template<size_t N>
-void bitset<N>::shrink_to_fit() requires(!IS_FIXED) {
+void bitset<N>::shrinkToFit() requires(!IS_FIXED) {
     if (size_ <= WORD_BITS) {
         resizeStorage(size_, size_, 0);
         return;
@@ -1403,11 +1411,11 @@ bool bitset<N>::none() const noexcept {
 // ===== Conversion Implementations =====
 
 template<size_t N>
-unsigned long bitset<N>::to_ulong() const {
+unsigned long bitset<N>::toUlong() const {
     if (size() > 32) {
         for (size_t i = 32; i < size(); ++i) {
             if ((*this)[i]) {
-                throw std::overflow_error("bitset::to_ulong: value too large");
+                throw std::overflow_error("bitset::toUlong: value too large");
             }
         }
     }
@@ -1426,11 +1434,11 @@ unsigned long bitset<N>::to_ulong() const {
 }
 
 template<size_t N>
-unsigned long long bitset<N>::to_ullong() const {
+unsigned long long bitset<N>::toUllong() const {
     if (size() > 64) {
         for (size_t i = 64; i < size(); ++i) {
             if ((*this)[i]) {
-                throw std::overflow_error("bitset::to_ullong: value too large");
+                throw std::overflow_error("bitset::toUllong: value too large");
             }
         }
     }
@@ -1449,7 +1457,7 @@ unsigned long long bitset<N>::to_ullong() const {
 }
 
 template<size_t N>
-std::string bitset<N>::to_string(char zero, char one) const {
+std::string bitset<N>::toString(char zero, char one) const {
     std::string result;
     result.reserve(size());
     
@@ -1462,10 +1470,10 @@ std::string bitset<N>::to_string(char zero, char one) const {
 
 template<size_t N>
 template<size_t M>
-bitset<M> bitset<N>::to_fixed() const requires(!IS_FIXED) {
+bitset<M> bitset<N>::toFixed() const requires(!IS_FIXED) {
     if (size() != M) {
         throw std::invalid_argument(
-            "bitset::to_fixed: size mismatch (expected " + 
+            "bitset::toFixed: size mismatch (expected " + 
             std::to_string(M) + ", got " + std::to_string(size()) + ")"
         );
     }
@@ -1727,7 +1735,7 @@ std::basic_ostream<CharT, Traits>& operator<<(
     std::basic_ostream<CharT, Traits>& os, 
     const bitset<N>& x) 
 {
-    return os << x.to_string(CharT('0'), CharT('1'));
+    return os << x.toString(CharT('0'), CharT('1'));
 }
 
 template<class CharT, class Traits, size_t N>

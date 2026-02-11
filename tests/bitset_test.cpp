@@ -17,7 +17,7 @@
  * - Small (1-8 bits), medium (64-256), large (1024-8192), very large (65536) sizes
  * - All operations: set, reset, flip, count, any, all, none
  * - Bitwise operators: &, |, ^, ~, <<, >>
- * - Conversions: to_ulong, to_ullong, to_string
+ * - Conversions: toUlong, toUllong, toString
  * - I/O: readFrom, writeTo, data access
  * - Dynamic-only: resize, reserve, clear
  */
@@ -150,7 +150,7 @@ void ExpectParityFixed(const bitset<N>& bcsv_bs, const std::bitset<N>& std_bs) {
     EXPECT_EQ(bcsv_bs.any(), std_bs.any());
     EXPECT_EQ(bcsv_bs.all(), std_bs.all());
     EXPECT_EQ(bcsv_bs.none(), std_bs.none());
-    EXPECT_EQ(bcsv_bs.to_string(), std_bs.to_string());
+    EXPECT_EQ(bcsv_bs.toString(), std_bs.to_string());
     for (size_t i = 0; i < N; ++i) {
         EXPECT_EQ(bcsv_bs[i], std_bs.test(i));
     }
@@ -163,7 +163,7 @@ void ExpectParityDynamic(const bitset<>& bcsv_bs, const std::bitset<N>& std_bs) 
     EXPECT_EQ(bcsv_bs.any(), std_bs.any());
     EXPECT_EQ(bcsv_bs.all(), std_bs.all());
     EXPECT_EQ(bcsv_bs.none(), std_bs.none());
-    EXPECT_EQ(bcsv_bs.to_string(), std_bs.to_string());
+    EXPECT_EQ(bcsv_bs.toString(), std_bs.to_string());
     for (size_t i = 0; i < N; ++i) {
         EXPECT_EQ(bcsv_bs[i], std_bs.test(i));
     }
@@ -183,7 +183,7 @@ void ExpectMatchesModel(const bitset<>& bcsv_bs, const std::vector<bool>& model)
     EXPECT_EQ(bcsv_bs.none(), expected_count == 0);
     const bool expected_all = (model.size() == 0) || (expected_count == model.size());
     EXPECT_EQ(bcsv_bs.all(), expected_all);
-    EXPECT_EQ(bcsv_bs.to_string(), ModelToString(model));
+    EXPECT_EQ(bcsv_bs.toString(), ModelToString(model));
 }
 
 template<size_t N>
@@ -482,10 +482,10 @@ TEST_F(FixedBitsetTest, BitwiseOperators_AND) {
     bitset<8> b(0b11001100);
     bitset<8> result = a & b;
     
-    EXPECT_EQ(result.to_ulong(), 0b11000000);
+    EXPECT_EQ(result.toUlong(), 0b11000000);
     
     a &= b;
-    EXPECT_EQ(a.to_ulong(), 0b11000000);
+    EXPECT_EQ(a.toUlong(), 0b11000000);
 }
 
 TEST_F(FixedBitsetTest, BitwiseOperators_OR) {
@@ -493,10 +493,10 @@ TEST_F(FixedBitsetTest, BitwiseOperators_OR) {
     bitset<8> b(0b11001100);
     bitset<8> result = a | b;
     
-    EXPECT_EQ(result.to_ulong(), 0b11111100);
+    EXPECT_EQ(result.toUlong(), 0b11111100);
     
     a |= b;
-    EXPECT_EQ(a.to_ulong(), 0b11111100);
+    EXPECT_EQ(a.toUlong(), 0b11111100);
 }
 
 TEST_F(FixedBitsetTest, BitwiseOperators_XOR) {
@@ -504,27 +504,27 @@ TEST_F(FixedBitsetTest, BitwiseOperators_XOR) {
     bitset<8> b(0b11001100);
     bitset<8> result = a ^ b;
     
-    EXPECT_EQ(result.to_ulong(), 0b00111100);
+    EXPECT_EQ(result.toUlong(), 0b00111100);
     
     a ^= b;
-    EXPECT_EQ(a.to_ulong(), 0b00111100);
+    EXPECT_EQ(a.toUlong(), 0b00111100);
 }
 
 TEST_F(FixedBitsetTest, BitwiseOperators_NOT) {
     bitset<8> a(0b11110000);
     bitset<8> result = ~a;
     
-    EXPECT_EQ(result.to_ulong(), 0b00001111);
+    EXPECT_EQ(result.toUlong(), 0b00001111);
 }
 
 TEST_F(FixedBitsetTest, ShiftOperators_Left) {
     bitset<8> a(0b00001111);
     
     bitset<8> result = a << 2;
-    EXPECT_EQ(result.to_ulong(), 0b00111100);
+    EXPECT_EQ(result.toUlong(), 0b00111100);
     
     result = a << 4;
-    EXPECT_EQ(result.to_ulong(), 0b11110000);
+    EXPECT_EQ(result.toUlong(), 0b11110000);
     
     result = a << 8;  // Shift all bits out
     EXPECT_TRUE(result.none());
@@ -534,10 +534,10 @@ TEST_F(FixedBitsetTest, ShiftOperators_Right) {
     bitset<8> a(0b11110000);
     
     bitset<8> result = a >> 2;
-    EXPECT_EQ(result.to_ulong(), 0b00111100);
+    EXPECT_EQ(result.toUlong(), 0b00111100);
     
     result = a >> 4;
-    EXPECT_EQ(result.to_ulong(), 0b00001111);
+    EXPECT_EQ(result.toUlong(), 0b00001111);
     
     result = a >> 8;  // Shift all bits out
     EXPECT_TRUE(result.none());
@@ -562,24 +562,24 @@ TEST_F(FixedBitsetTest, ShiftOperators_WordBoundary) {
 
 TEST_F(FixedBitsetTest, Conversions_ToUlong) {
     bitset<8> bs(0xAB);
-    EXPECT_EQ(bs.to_ulong(), 0xABUL);
+    EXPECT_EQ(bs.toUlong(), 0xABUL);
     
     bitset<32> bs32(0x12345678UL);
-    EXPECT_EQ(bs32.to_ulong(), 0x12345678UL);
+    EXPECT_EQ(bs32.toUlong(), 0x12345678UL);
 }
 
 TEST_F(FixedBitsetTest, Conversions_ToUllong) {
     bitset<64> bs(0xABCDEF0123456789ULL);
-    EXPECT_EQ(bs.to_ullong(), 0xABCDEF0123456789ULL);
+    EXPECT_EQ(bs.toUllong(), 0xABCDEF0123456789ULL);
 }
 
 TEST_F(FixedBitsetTest, Conversions_ToString) {
     bitset<8> bs(0b10101011);
-    std::string str = bs.to_string();
+    std::string str = bs.toString();
     EXPECT_EQ(str, "10101011");  // MSB first
     
     // Custom chars
-    str = bs.to_string('.', 'X');
+    str = bs.toString('.', 'X');
     EXPECT_EQ(str, "X.X.X.XX");
 }
 
@@ -587,12 +587,12 @@ TEST_F(FixedBitsetTest, Conversions_Overflow) {
     bitset<64> bs;
     bs.set();  // All bits = 1
     
-    // to_ulong should throw if bits beyond position 31 are set
-    EXPECT_THROW(bs.to_ulong(), std::overflow_error);
+    // toUlong should throw if bits beyond position 31 are set
+    EXPECT_THROW(bs.toUlong(), std::overflow_error);
     
     // Should succeed if we clear upper bits
     for (size_t i = 32; i < 64; ++i) bs.reset(i);
-    EXPECT_NO_THROW(bs.to_ulong());
+    EXPECT_NO_THROW(bs.toUlong());
 }
 
 TEST_F(FixedBitsetTest, IO_DataAccess) {
@@ -616,7 +616,7 @@ TEST_F(FixedBitsetTest, IO_ReadWrite) {
     bs2.readFrom(buffer.data(), buffer.size());
     
     EXPECT_EQ(bs1, bs2);
-    EXPECT_EQ(bs2.to_ullong(), 0xABCDEF0123456789ULL);
+    EXPECT_EQ(bs2.toUllong(), 0xABCDEF0123456789ULL);
 }
 
 TEST_F(FixedBitsetTest, Comparison_Equality) {
@@ -659,7 +659,7 @@ TEST_F(DynamicBitsetTest, Construction_Default) {
     bitset<> bs(128);
     EXPECT_EQ(bs.size(), 128);
     EXPECT_TRUE(bs.none());
-    EXPECT_FALSE(bs.is_fixed_size());
+    EXPECT_FALSE(bs.isFixedSize());
 }
 
 TEST_F(DynamicBitsetTest, Construction_FromValue) {
@@ -685,7 +685,7 @@ TEST_F(DynamicBitsetTest, Construction_FromString) {
     bitset<> bs(8, bits);
     EXPECT_EQ(bs.size(), 8);
     EXPECT_EQ(bs.count(), 4);
-    EXPECT_EQ(bs.to_string(), bits);
+    EXPECT_EQ(bs.toString(), bits);
 }
 
 TEST_F(DynamicBitsetTest, Construction_FromFixedBitset) {
@@ -693,7 +693,7 @@ TEST_F(DynamicBitsetTest, Construction_FromFixedBitset) {
     bitset<> dynamic(fixed);
     
     EXPECT_EQ(dynamic.size(), 64);
-    EXPECT_EQ(dynamic.to_ullong(), 0xABCDEF0123456789ULL);
+    EXPECT_EQ(dynamic.toUllong(), 0xABCDEF0123456789ULL);
 }
 
 TEST_F(DynamicBitsetTest, Reference_CompoundAssignment) {
@@ -845,7 +845,7 @@ TEST_F(DynamicBitsetTest, Modifiers_ShrinkToFit) {
     bitset<> bs(64);
     bs.reserve(1024);
     
-    bs.shrink_to_fit();
+    bs.shrinkToFit();
     EXPECT_EQ(bs.size(), 64);  // Size unchanged
 }
 
@@ -915,13 +915,13 @@ TEST_F(DynamicBitsetTest, Operations_AllowSameAsFixed) {
 
 TEST_F(DynamicBitsetTest, Conversions_ToFixed) {
     bitset<> dynamic(64, 0xABCDEF0123456789ULL);
-    bitset<64> fixed = dynamic.to_fixed<64>();
+    bitset<64> fixed = dynamic.toFixed<64>();
     
-    EXPECT_EQ(fixed.to_ullong(), 0xABCDEF0123456789ULL);
+    EXPECT_EQ(fixed.toUllong(), 0xABCDEF0123456789ULL);
     
     // Wrong size should throw
     bitset<> wrong_size(128);
-    EXPECT_THROW(wrong_size.to_fixed<64>(), std::invalid_argument);
+    EXPECT_THROW(wrong_size.toFixed<64>(), std::invalid_argument);
 }
 
 TEST_F(DynamicBitsetTest, Comparison_Equality) {
@@ -1131,12 +1131,12 @@ TEST(BitsetSliceTest, DynamicSliceOpsAndMasking) {
     EXPECT_TRUE(bs[6]);
     EXPECT_TRUE(bs[7]);
 
-    auto compact = slice.to_bitset();
+    auto compact = slice.toBitset();
     EXPECT_EQ(compact.size(), 6u);
     EXPECT_TRUE(compact[2]);
     EXPECT_TRUE(compact[3]);
 
-    auto shifted_left = slice.shifted_left(1);
+    auto shifted_left = slice.shiftedLeft(1);
     EXPECT_EQ(shifted_left.size(), 6u);
     EXPECT_TRUE(shifted_left[3]);
     EXPECT_TRUE(shifted_left[4]);
@@ -1338,14 +1338,14 @@ TEST(BitsetInteropTest, FixedToDynamic) {
     bitset<> dynamic(fixed);
     
     EXPECT_EQ(dynamic.size(), 64);
-    EXPECT_EQ(dynamic.to_ullong(), fixed.to_ullong());
+    EXPECT_EQ(dynamic.toUllong(), fixed.toUllong());
 }
 
 TEST(BitsetInteropTest, DynamicToFixed) {
     bitset<> dynamic(64, 0xABCDEF0123456789ULL);
-    bitset<64> fixed = dynamic.to_fixed<64>();
+    bitset<64> fixed = dynamic.toFixed<64>();
     
-    EXPECT_EQ(fixed.to_ullong(), 0xABCDEF0123456789ULL);
+    EXPECT_EQ(fixed.toUllong(), 0xABCDEF0123456789ULL);
 }
 
 TEST(BitsetInteropTest, BinaryCompatibility) {
@@ -1374,9 +1374,9 @@ TEST(BitsetSummaryTest, AllSizesWork) {
     std::cout << "✓ Dynamic-size bitsets: 8, 256, 1024, 65536 bits\n";
     std::cout << "✓ All operations tested: set, reset, flip, count, any, all, none\n";
     std::cout << "✓ Bitwise operators: &, |, ^, ~, <<, >>\n";
-    std::cout << "✓ Conversions: to_ulong, to_ullong, to_string, to_fixed\n";
+    std::cout << "✓ Conversions: toUlong, toUllong, toString, toFixed\n";
     std::cout << "✓ I/O operations: data, readFrom, writeTo\n";
-    std::cout << "✓ Dynamic operations: resize, reserve, clear, shrink_to_fit, insert\n";
+    std::cout << "✓ Dynamic operations: resize, reserve, clear, shrinkToFit, insert\n";
     std::cout << "✓ Edge cases: word boundaries, partial words, out of range\n";
     std::cout << "✓ Std::bitset parity: sizes 0-130, shifts, bitwise ops\n";
     std::cout << "✓ Interoperability: fixed ↔ dynamic conversions\n";
