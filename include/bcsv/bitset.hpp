@@ -18,13 +18,7 @@ template<size_t N>
 constexpr size_t bitset<N>::word_count() const noexcept {
     if constexpr (is_fixed) {
         return word_count_fixed;
-    } else {
-        return wordCount();
     }
-}
-
-template<size_t N>
-constexpr size_t bitset<N>::wordCount() const noexcept {
     return bits_to_words(size());
 }
 
@@ -38,7 +32,7 @@ constexpr bool bitset<N>::uses_inline() const noexcept {
     if constexpr (is_fixed) {
         return false;
     } else {
-        return wordCount() <= 1;
+        return word_count() <= 1;
     }
 }
 
@@ -454,7 +448,7 @@ constexpr bool bitset<N>::empty() const noexcept {
 
 template<size_t N>
 constexpr size_t bitset<N>::capacity() const noexcept {
-    return wordCount() * WORD_BITS;
+    return word_count() * WORD_BITS;
 }
 
 // ===== Slice View Implementations =====

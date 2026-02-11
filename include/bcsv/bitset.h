@@ -101,7 +101,6 @@ class bitset {
         // Helpers (instance)
         // =====================================================================
         constexpr size_t word_count() const noexcept;
-        constexpr size_t wordCount() const noexcept;
         constexpr size_t byte_count() const noexcept;
         constexpr void clear_unused_bits() noexcept;
         constexpr void set_from_value(unsigned long long val) noexcept;
