@@ -97,8 +97,7 @@ TEST(RowVectorizedTest, ChangeTrackingMultiple) {
     layout.addColumn({"col2", ColumnType::INT32});
     layout.addColumn({"col3", ColumnType::INT32});
 
-    Row row(layout);
-    row.trackChanges(true);
+    RowTracked<TrackingPolicy::Enabled> row(layout);
     row.resetChanges();
 
     EXPECT_FALSE(row.hasAnyChanges()) 
@@ -214,9 +213,7 @@ TEST(RowStaticVectorizedTest, CompileTimeGetPartialRange) {
 TEST(RowStaticVectorizedTest, CompileTimeChangeTracking) {
     using LayoutType = LayoutStatic<int32_t, int32_t, int32_t>;
     LayoutType layout({"col1", "col2", "col3"});
-    RowStatic<int32_t, int32_t, int32_t> row(layout);
-
-    row.trackChanges(true);
+    RowStaticTracked<TrackingPolicy::Enabled, int32_t, int32_t, int32_t> row(layout);
     row.resetChanges();
     EXPECT_FALSE(row.hasAnyChanges());
 
@@ -291,9 +288,7 @@ TEST(RowStaticVectorizedTest, RuntimeBoundaryCheck) {
 TEST(RowStaticVectorizedTest, RuntimeChangeTracking) {
     using LayoutType = LayoutStatic<int32_t, int32_t, int32_t>;
     LayoutType layout({"col1", "col2", "col3"});
-    RowStatic<int32_t, int32_t, int32_t> row(layout);
-
-    row.trackChanges(true);
+    RowStaticTracked<TrackingPolicy::Enabled, int32_t, int32_t, int32_t> row(layout);
     row.resetChanges();
     EXPECT_FALSE(row.hasAnyChanges());
 

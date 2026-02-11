@@ -90,11 +90,43 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
             Issue: currently we have a lot of branching depending on change tracking beeing enabled or disabled. But in normal operations, this decision only needs to be done once. For instence when the User decides to Write using ZoH, this basically requiers change tracking enabled.
             Goal: With minimum impact to the API make changeTracking a compile time decision. Propably using a template parameter
     8.h: Restructure Row object to not use ptr_. 
-            Issue: Pointers are usually the same size or bigger than the data we store. Thus, we are not gaining any stroage size benefit from using ptr_ indirection, but suffer a performance penalty from that indirection (cache locality cahce sizes) and higher complexity. 
-            Idea:  
-            use std::vector<uint64_t> data_; to store content directly using casts on all primitives i.e. static_cast<bool>(data_[i]) (i=columnindex) to access/manipulate the data. 
-           Just for std::string we need to provide a dedicated solution introducting std::vector<std::string> str_ access to string is str[data_[i]]. Thus data_ simply contains the index into the str_ vector.
-           Gain: Custom memory management not required anymore, reducing complexity. Easier to insert/remove columns. Smaller memory footprint. Faster access (less indirection for all primitives)
+            Issues: Pointers (stored in ptr_) are usually the same size or bigger than the acutal data (stored in data_) they are point to. 
+                    Therefore Row is more complex and heavier than it needs to be. 
+                    As we also have multiple Rows/RowViews sharing the same Layout it helps cache locality/cache sizes to centrlize any helper structure required to select correct data (data_[i]) for a specific column.
+                    We store different Types within data_. Some like std::string need special attention as they manage their own memory. This makes the code for assignements, construction, destruction and resizing quite complex.
+            Idea:   separate 3 DataType families and store them in their specific structures:
+                        Row::bits_ of type bitset<> (dynamic), stores all the information for bool columns. If TrackingPolicy is enabled bits_.size() == layout.columnCount().  If TrackingPolicy is disabled bits_.size() matches the number of columns that are of typ ColumnType::bools
+                        Row::data_ of type std::vector<std::byte>, store scalar, arithmetic types. Considerig sizeof and alignof of the actual type (similar to current data_, but without bool and without std::string).
+                        Row::strg_ of type std::vector<std:.string>, store the content of string columns.
+                    With that new data structure asignment, compies, moves, construction and destruction should become quite simple. 
+                    Remove Row::ptr_ not needed anymore. move Row::offset_ to Layout and make them accessible through a function.
+                    
+                    To lookup data we will do something allong the following example:
+                    consider Row::visit(size_t columnIndex) {
+                        ColumnType type = layout.getColumnType(columnIndex);
+                        size_t offset = layout.getColumnOffset(columnIndex);
+
+                        //perhaps you want to add a lambda to change visitor call based on TrackingPolicy
+                        // if tracking policy is on:
+                        // bool changed = true;
+                        // visitor(columnIndex, auto& value, bool& changed);
+                        // bits_[columnIndex] |= changed;
+
+                        switch(type) {
+                            case ColumnType::Bool:
+                                visitor(columnIndex, bits_[offset];)
+                            case ColumnType::uint8_t:
+                                visitor(columnIndex, *static_cast<uint8_t*>(&data_[offset]));
+                            case ColumnType::uint16_t:
+                                visitor(columnIndex, *static_cast<uint16_t*>(&data_[offset]));
+                                ...
+                            case ColumnType::String:
+                                visitor(columnIndex, strgs_[offset]));
+                            default:
+                            ...
+                        }
+
+                    }
 
 9 Restructure Row <-> Reader/Writer collaboration, introduce Serializer / Deserializier API
         - serializer and deserailizer functionalities are current tightly integrated with row:

@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include <cassert>
 #include <cstddef>
 #include <cstring>
 #include <span>
@@ -402,7 +403,7 @@ namespace bcsv {
 
 
 
-    // Mutable visitor concept: requires (size_t, T&, bool&) signature
+    // Mutable visitor concept: accepts either (size_t, T&, bool&) or (size_t, T&) signature
     // Uses || (OR) to check if visitor accepts the pattern with at least one BCSV type
     // Generic lambdas with auto& will satisfy this constraint
     template<typename V>
@@ -418,7 +419,21 @@ namespace bcsv {
         std::is_invocable_v<V, size_t, uint64_t&, bool&> ||
         std::is_invocable_v<V, size_t, float&, bool&> ||
         std::is_invocable_v<V, size_t, double&, bool&> ||
-        std::is_invocable_v<V, size_t, std::string&, bool&>;
+        std::is_invocable_v<V, size_t, std::string&, bool&> ||
+        std::is_invocable_v<V, size_t, std::string_view&, bool&> ||
+        std::is_invocable_v<V, size_t, bool&> ||
+        std::is_invocable_v<V, size_t, int8_t&> ||
+        std::is_invocable_v<V, size_t, int16_t&> ||
+        std::is_invocable_v<V, size_t, int32_t&> ||
+        std::is_invocable_v<V, size_t, int64_t&> ||
+        std::is_invocable_v<V, size_t, uint8_t&> ||
+        std::is_invocable_v<V, size_t, uint16_t&> ||
+        std::is_invocable_v<V, size_t, uint32_t&> ||
+        std::is_invocable_v<V, size_t, uint64_t&> ||
+        std::is_invocable_v<V, size_t, float&> ||
+        std::is_invocable_v<V, size_t, double&> ||
+        std::is_invocable_v<V, size_t, std::string&> ||
+        std::is_invocable_v<V, size_t, std::string_view&>;
 
     // Const visitor concept: accepts (size_t, const T&)  
     // Uses || (OR) to check if visitor accepts the pattern with at least one BCSV type
@@ -436,10 +451,12 @@ namespace bcsv {
         std::is_invocable_v<V, size_t, const uint64_t&> ||
         std::is_invocable_v<V, size_t, const float&> ||
         std::is_invocable_v<V, size_t, const double&> ||
-        std::is_invocable_v<V, size_t, const std::string&>;
+        std::is_invocable_v<V, size_t, const std::string&> ||
+        std::is_invocable_v<V, size_t, const std::string_view&>;
         
     /* Dynamic row with flexible layout (runtime-defined)*/
-    class Row {
+    template<TrackingPolicy Policy>
+    class RowImpl {
     private:
         // Immutable after construction
         Layout                      layout_;               // Shared layout data with observer callbacks
@@ -461,20 +478,19 @@ namespace bcsv {
         uint32_t                    offset_var_;           // offset into serilized buffer (wire), marking the beginning of variable-length section / size of the fixed section. Naive packed wire format (no alignment/padding).
  
     public:
-        Row() = delete; // no default constructor, we always need a layout
-        Row(const Layout& layout, bool trackChangesEnabled = false);
-        Row(const Row& other);
-        Row(Row&& other) noexcept;
+        RowImpl() = delete; // no default constructor, we always need a layout
+        RowImpl(const Layout& layout);
+        RowImpl(const RowImpl& other);
+        RowImpl(RowImpl&& other) noexcept;
         
-        ~Row();
+        ~RowImpl();
 
         void                        clear();
         const Layout&               layout() const noexcept         { return layout_; }
-        [[nodiscard]] bool          hasAnyChanges() const noexcept  { return !tracksChanges() || changes_.any(); } // defaults to true if change tracking is disabled
-        void                        trackChanges(bool enable)       { if (enable) { changes_.resize(layout_.columnCount(), true); } else { changes_.resize(0); } }
-        [[nodiscard]] bool          tracksChanges() const noexcept  { return !changes_.empty(); } 
-        void                        setChanges() noexcept           { changes_.set(); }     // mark everything as changed
-        void                        resetChanges() noexcept         { changes_.reset(); }   // mark everything as unchanged
+        [[nodiscard]] bool          hasAnyChanges() const noexcept  { return isTrackingEnabled(Policy) ? changes_.any() : true; }
+        [[nodiscard]] bool          tracksChanges() const noexcept  { return isTrackingEnabled(Policy); }
+        void                        setChanges() noexcept           { if constexpr (isTrackingEnabled(Policy)) { changes_.set(); } }
+        void                        resetChanges() noexcept         { if constexpr (isTrackingEnabled(Policy)) { changes_.reset(); } }
 
         [[nodiscard]] const void*   get(size_t index) const;
                                     template<typename T>
@@ -517,9 +533,16 @@ namespace bcsv {
                                     template<RowVisitor Visitor>
         void                        visit(Visitor&& visitor);
 
-        Row&                        operator=(const Row& other);               // Throws std::invalid_argument if layouts incompatible
-        Row&                        operator=(Row&& other) noexcept;
+        RowImpl&                    operator=(const RowImpl& other);               // Throws std::invalid_argument if layouts incompatible
+        RowImpl&                    operator=(RowImpl&& other) noexcept;
     };
+
+    template<TrackingPolicy Policy>
+    using RowTracked = RowImpl<Policy>;
+
+    using Row = RowImpl<TrackingPolicy::Disabled>;
+
+    using RowTracking = RowImpl<TrackingPolicy::Enabled>;
 
     /* RowView provides a direct view into a serilized buffer, partially supporting the row interface. Intended for sparse data access, avoiding costly full deserialization.
        Currently we only support the basic get/set interface for individual columns, into a flat serilized buffer. We do not support ZoH format or more complex encoding schemes.
@@ -583,8 +606,8 @@ namespace bcsv {
 
 
     /* Dynamic row with static layout (compile-time defined) */
-    template<typename... ColumnTypes>
-    class RowStatic {
+    template<TrackingPolicy Policy = TrackingPolicy::Disabled, typename... ColumnTypes>
+    class RowStaticImpl {
     public:
         using LayoutType = LayoutStatic<ColumnTypes...>;
         static constexpr size_t column_count = LayoutType::columnCount();
@@ -614,24 +637,22 @@ namespace bcsv {
         // Mutable data
         typename LayoutType::ColTypes   data_;
         bitset<column_count>            changes_;
-        bool                            change_tracking_ = false;
 
     public:
         // Constructors
-        RowStatic() = delete;
-        RowStatic(const LayoutType& layout);
-        RowStatic(const RowStatic& other) = default;        // default copy constructor, tuple manges copying its members including strings
-        RowStatic(RowStatic&& other) noexcept = default;    // default move constructor, tuple manges moving its members including strings
-        ~RowStatic() = default;
+        RowStaticImpl() = delete;
+        RowStaticImpl(const LayoutType& layout);
+        RowStaticImpl(const RowStaticImpl& other) = default;        // default copy constructor, tuple manges copying its members including strings
+        RowStaticImpl(RowStaticImpl&& other) noexcept = default;    // default move constructor, tuple manges moving its members including strings
+        ~RowStaticImpl() = default;
        
                                     template<size_t Index = 0>
         void                        clear();
         const LayoutType&           layout() const noexcept         { return layout_; }  // Reconstruct facade
-        [[nodiscard]] bool          hasAnyChanges() const noexcept  { if(change_tracking_) { return changes_.any(); } else { return true; } } // defaults to true if change tracking is disabled
-        void                        trackChanges(bool enable)       { change_tracking_ = enable; }
-        [[nodiscard]] bool          tracksChanges() const noexcept  { return change_tracking_; }
-        void                        setChanges() noexcept           { if(change_tracking_) changes_.set(); }     // mark everything as changed
-        void                        resetChanges() noexcept         { if(change_tracking_) changes_.reset(); }   // mark everything as unchanged
+        [[nodiscard]] bool          hasAnyChanges() const noexcept  { return isTrackingEnabled(Policy) ? changes_.any() : true; }
+        [[nodiscard]] bool          tracksChanges() const noexcept  { return isTrackingEnabled(Policy); }
+        void                        setChanges() noexcept           { if constexpr (isTrackingEnabled(Policy)) { changes_.set(); } }
+        void                        resetChanges() noexcept         { if constexpr (isTrackingEnabled(Policy)) { changes_.reset(); } }
 
         // =========================================================================
         // 1. Static Access (Compile-Time Index) - Zero Overhead
@@ -692,8 +713,8 @@ namespace bcsv {
                                     template<RowVisitor Visitor>
         void                        visit(Visitor&& visitor);
 
-        RowStatic& operator=(const RowStatic& other) noexcept = default; // default copy assignment, tuple manges copying its members including strings
-        RowStatic& operator=(RowStatic&& other) noexcept = default;      // default move assignment, tuple manges moving its members including strings
+        RowStaticImpl& operator=(const RowStaticImpl& other) noexcept = default; // default copy assignment, tuple manges copying its members including strings
+        RowStaticImpl& operator=(RowStaticImpl&& other) noexcept = default;      // default move assignment, tuple manges moving its members including strings
 
     private:
                                     template<size_t Index>
@@ -708,6 +729,15 @@ namespace bcsv {
                                     template<size_t Index>
         void                        deserializeElementsZoH(std::span<const std::byte> &srcBuffer);
     };
+
+    template<typename... ColumnTypes>
+    using RowStatic = RowStaticImpl<TrackingPolicy::Disabled, ColumnTypes...>;
+
+    template<TrackingPolicy Policy, typename... ColumnTypes>
+    using RowStaticTracked = RowStaticImpl<Policy, ColumnTypes...>;
+
+    template<typename... ColumnTypes>
+    using RowStaticTracking = RowStaticImpl<TrackingPolicy::Enabled, ColumnTypes...>;
 
 
     /* Provides a zero-copy view into a buffer with compile-time layout. 

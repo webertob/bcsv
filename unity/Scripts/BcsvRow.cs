@@ -66,15 +66,6 @@ namespace BCSV
         }
 
         /// <summary>
-        /// Enable or disable change tracking for this row
-        /// </summary>
-        /// <param name="enable">True to enable change tracking, false to disable</param>
-        public void TrackChanges(bool enable)
-        {
-            NativeMethods.bcsv_row_track_changes(Handle, enable);
-        }
-
-        /// <summary>
         /// Check if this row is currently tracking changes
         /// </summary>
         public bool TracksChanges

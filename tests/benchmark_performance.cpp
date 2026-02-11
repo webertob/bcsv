@@ -211,7 +211,7 @@ public:
         // Benchmark writing with ZoH
         auto writeStart = std::chrono::steady_clock::now();
         {
-            bcsv::Writer<bcsv::Layout> writer(layout);
+            bcsv::Writer<bcsv::Layout, bcsv::TrackingPolicy::Enabled> writer(layout);
             // Enable ZoH compression
             writer.open(FLEXIBLE_ZOH_FILENAME, true, 1 /*compressionLevel*/, 64 /*blockSizeKB*/, bcsv::FileFlags::ZERO_ORDER_HOLD);
             
@@ -245,7 +245,7 @@ public:
         // Benchmark reading
         auto readStart = std::chrono::steady_clock::now();
         {
-            bcsv::Reader<bcsv::Layout> reader;
+            bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Enabled> reader;
             reader.open(FLEXIBLE_ZOH_FILENAME);
             
             // Pre-declare variables
@@ -383,7 +383,7 @@ public:
         // Benchmark writing with ZoH
         auto writeStart = std::chrono::steady_clock::now();
         {
-            bcsv::Writer<BenchmarkLayoutStatic> writer(layout);
+            bcsv::Writer<BenchmarkLayoutStatic, bcsv::TrackingPolicy::Enabled> writer(layout);
             // Enable ZoH compression
             writer.open(STATIC_ZOH_FILENAME, true, 1 /*compressionLevel*/, 64 /*blockSizeKB*/, bcsv::FileFlags::ZERO_ORDER_HOLD);
             
@@ -417,7 +417,7 @@ public:
         // Benchmark reading
         auto readStart = std::chrono::steady_clock::now();
         {
-            bcsv::Reader<BenchmarkLayoutStatic> reader;
+            bcsv::Reader<BenchmarkLayoutStatic, bcsv::TrackingPolicy::Enabled> reader;
             reader.open(STATIC_ZOH_FILENAME);
             
             // Pre-declare variables

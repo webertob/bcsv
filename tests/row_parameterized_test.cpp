@@ -256,9 +256,7 @@ TYPED_TEST(RowTypedTest, Serialization) {
 
 TYPED_TEST(RowTypedTest, ChangeTracking) {
     using T = TypeParam;
-    Row row(this->layout_);
-    
-    row.trackChanges(true);
+    RowTracked<TrackingPolicy::Enabled> row(this->layout_);
     EXPECT_TRUE(row.tracksChanges())
         << "Change tracking not enabled for type " << this->GetTypeName();
     

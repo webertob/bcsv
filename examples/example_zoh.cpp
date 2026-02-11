@@ -108,7 +108,7 @@ void writeZoHBCSV(const std::vector<SampleData>& testData) {
 
     // Step 2: Create a writer
     const std::string filename = "example_flexible_zoh.bcsv";
-    bcsv::Writer<bcsv::Layout> writer(layout);
+    bcsv::WriterZoH<bcsv::Layout> writer(layout);
     if(!writer.open(filename, true, 1 /*compressionLevel*/, 64 /*blockSizeKB*/, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
         std::cerr << "Failed to open file for writing: " << filename << "\n";
         return;
@@ -189,10 +189,15 @@ std::vector<SampleData> readBCSV() {
     while (reader.readNext()) {
         auto& row = reader.row();
         SampleData data;
-        row.get(0, data.id);
-        row.get(1, data.name);
-        row.get(2, data.score);
-        row.get(3, data.active);
+        bool ok = true;
+        ok &= row.get(0, data.id);
+        ok &= row.get(1, data.name);
+        ok &= row.get(2, data.score);
+        ok &= row.get(3, data.active);
+        if (!ok) {
+            std::cerr << "Warning: Failed to read row values, skipping row.\n";
+            continue;
+        }
         
         readData.push_back(data);
 
@@ -223,7 +228,7 @@ std::vector<SampleData> readZoHBCSV() {
 
     // Step 2: Create a reader
     const std::string filename = "example_flexible_zoh.bcsv";
-    bcsv::Reader<bcsv::Layout> reader;
+    bcsv::ReaderZoH<bcsv::Layout> reader;
     if (!reader.open(filename)) {
         std::cerr << "Failed to open file: " << filename << "\n";
         return readData;
@@ -253,10 +258,15 @@ std::vector<SampleData> readZoHBCSV() {
     while (reader.readNext()) {
         auto& row = reader.row();
         SampleData data;
-        row.get(0, data.id);
-        row.get(1, data.name);
-        row.get(2, data.score);
-        row.get(3, data.active);
+        bool ok = true;
+        ok &= row.get(0, data.id);
+        ok &= row.get(1, data.name);
+        ok &= row.get(2, data.score);
+        ok &= row.get(3, data.active);
+        if (!ok) {
+            std::cerr << "Warning: Failed to read row values, skipping row.\n";
+            continue;
+        }
         
         readData.push_back(data);
 

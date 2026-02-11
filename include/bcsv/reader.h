@@ -15,6 +15,7 @@
 #include <optional>
 #include "definitions.h"
 #include "layout.h"
+#include "row.h"
 #include "file_header.h"
 #include "byte_buffer.h"
 #include "lz4_stream.hpp"
@@ -26,10 +27,10 @@ namespace bcsv {
     /**
      * @brief Class for reading BCSV binary files
      */
-    template<LayoutConcept LayoutType>
+    template<LayoutConcept LayoutType, TrackingPolicy Policy = TrackingPolicy::Disabled>
     class Reader {
     protected:
-        using RowType           = typename LayoutType::RowType;
+        using RowType           = typename LayoutType::template RowType<Policy>;
         using FilePath          = std::filesystem::path;
 
         std::string             errMsg_;                // last error message description
@@ -76,14 +77,17 @@ namespace bcsv {
         bool                    readFileHeader();
     };
 
+    template<LayoutConcept LayoutType>
+    using ReaderZoH = Reader<LayoutType, TrackingPolicy::Enabled>;
+
     /**
      * @brief Class for direct access reading of BCSV binary files
      */
-    template<LayoutConcept LayoutType>
-    class ReaderDirectAccess : public Reader<LayoutType> {
+    template<LayoutConcept LayoutType, TrackingPolicy Policy = TrackingPolicy::Disabled>
+    class ReaderDirectAccess : public Reader<LayoutType, Policy> {
     protected:
-        using Base              = Reader<LayoutType>;
-        using RowType           = typename LayoutType::RowType;
+        using Base              = Reader<LayoutType, Policy>;
+        using RowType           = typename LayoutType::template RowType<Policy>;
         using FilePath          = std::filesystem::path;
 
         FileFooter  fileFooter_;

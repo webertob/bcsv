@@ -36,8 +36,8 @@
 
 namespace bcsv {
 
-    template<LayoutConcept LayoutType>
-    Reader<LayoutType>::Reader() 
+    template<LayoutConcept LayoutType, TrackingPolicy Policy>
+    Reader<LayoutType, Policy>::Reader() 
     : errMsg_()
     , fileHeader_()
     , filePath_()
@@ -52,8 +52,8 @@ namespace bcsv {
     {
     }
 
-    template<LayoutConcept LayoutType>
-    Reader<LayoutType>::~Reader() {
+    template<LayoutConcept LayoutType, TrackingPolicy Policy>
+    Reader<LayoutType, Policy>::~Reader() {
         if (isOpen()) {
             close();
         }
@@ -62,8 +62,8 @@ namespace bcsv {
     /**
      * @brief Close the binary file
      */
-    template<LayoutConcept LayoutType>
-    void Reader<LayoutType>::close() {
+    template<LayoutConcept LayoutType, TrackingPolicy Policy>
+    void Reader<LayoutType, Policy>::close() {
         if(!isOpen()) {
             return;
         }
@@ -85,8 +85,8 @@ namespace bcsv {
      * @param filepath Path to the file (relative or absolute)
      * @return true if file was successfully opened, false otherwise
      */
-    template<LayoutConcept LayoutType>
-    bool Reader<LayoutType>::open(const FilePath& filepath) {
+    template<LayoutConcept LayoutType, TrackingPolicy Policy>
+    bool Reader<LayoutType, Policy>::open(const FilePath& filepath) {
         errMsg_.clear();
         if(isOpen())
             close();
@@ -148,8 +148,8 @@ namespace bcsv {
     /**
      * @brief Read file header
      */
-    template<LayoutConcept LayoutType>
-    bool Reader<LayoutType>::readFileHeader() {
+    template<LayoutConcept LayoutType, TrackingPolicy Policy>
+    bool Reader<LayoutType, Policy>::readFileHeader() {
         if (!stream_) {
             errMsg_ = "Error: Stream is not open";
             return false;
@@ -175,7 +175,17 @@ namespace bcsv {
                 return false;
             }
             
-            row_ = typename LayoutType::RowType(layout);
+            if constexpr (isTrackingEnabled(Policy)) {
+                if (!fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
+                    errMsg_ = "Error: TrackingPolicy::Enabled requires ZERO_ORDER_HOLD file";
+                    return false;
+                }
+            } else if (fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
+                errMsg_ = "Error: ZERO_ORDER_HOLD requires TrackingPolicy::Enabled";
+                return false;
+            }
+
+            row_ = RowType(layout);
             return true;
             
         } catch (const std::exception& ex) {
@@ -187,8 +197,8 @@ namespace bcsv {
         }
     }
 
-    template<LayoutConcept LayoutType>
-    void Reader<LayoutType>::closePacket() {
+    template<LayoutConcept LayoutType, TrackingPolicy Policy>
+    void Reader<LayoutType, Policy>::closePacket() {
         assert(stream_);
          
         // Finalize and validate packet checksum
@@ -207,8 +217,8 @@ namespace bcsv {
     /**
      * @brief Open next packet for sequential reading
      */
-    template<LayoutConcept LayoutType>
-    bool Reader<LayoutType>::openPacket() {
+    template<LayoutConcept LayoutType, TrackingPolicy Policy>
+    bool Reader<LayoutType, Policy>::openPacket() {
         assert(stream_);
 
         packetPos_ = stream_.tellg();
@@ -242,8 +252,8 @@ namespace bcsv {
     /**
      * @brief Read next row from current packet
      */
-    template<LayoutConcept LayoutType>
-    bool Reader<LayoutType>::readNext() {
+    template<LayoutConcept LayoutType, TrackingPolicy Policy>
+    bool Reader<LayoutType, Policy>::readNext() {
         if (!isOpen() || !packetOpen_) {
             return false;
         }
@@ -306,14 +316,14 @@ namespace bcsv {
         return true;        
     }
 
-    template<LayoutConcept LayoutType>
-    void ReaderDirectAccess<LayoutType>::close() {
+    template<LayoutConcept LayoutType, TrackingPolicy Policy>
+    void ReaderDirectAccess<LayoutType, Policy>::close() {
         Base::close();
         fileFooter_.clear();
     }
 
-    template<LayoutConcept LayoutType>
-    bool ReaderDirectAccess<LayoutType>::open(const FilePath& filepath, bool rebuildFooter ) {
+    template<LayoutConcept LayoutType, TrackingPolicy Policy>
+    bool ReaderDirectAccess<LayoutType, Policy>::open(const FilePath& filepath, bool rebuildFooter ) {
         // open file as normal
         if(!Base::open(filepath))
             return false;
@@ -353,8 +363,8 @@ namespace bcsv {
         return true;
     }
 
-    template<LayoutConcept LayoutType>
-    void ReaderDirectAccess<LayoutType>::buildFileFooter() {
+    template<LayoutConcept LayoutType, TrackingPolicy Policy>
+    void ReaderDirectAccess<LayoutType, Policy>::buildFileFooter() {
         assert(Base::stream_);
         fileFooter_.clear();
 

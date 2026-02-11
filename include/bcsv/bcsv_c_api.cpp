@@ -256,9 +256,6 @@ bool bcsv_row_has_any_changes(const_bcsv_row_t row) {
     return static_cast<const bcsv::Row*>(row)->hasAnyChanges();
 }
 
-void bcsv_row_track_changes(bcsv_row_t row, bool enable) {
-    static_cast<bcsv::Row*>(row)->trackChanges(enable);
-}
 
 bool bcsv_row_tracks_changes(const_bcsv_row_t row) {
     return static_cast<const bcsv::Row*>(row)->tracksChanges();
@@ -356,37 +353,48 @@ void bcsv_row_set_string(bcsv_row_t row, int col, const char* value) {
 
 // Vectorized get functions
 void bcsv_row_get_bool_array(const_bcsv_row_t row, int start_col, bool* dst, size_t count) {
-    static_cast<const bcsv::Row*>(row)->get<bool>(start_col, std::span<bool>(dst, count));
+    auto span = std::span<bool>(dst, count);
+    static_cast<const bcsv::Row*>(row)->get<bool>(start_col, span);
 }
 void bcsv_row_get_uint8_array(const_bcsv_row_t row, int start_col, uint8_t* dst, size_t count) {
-    static_cast<const bcsv::Row*>(row)->get<uint8_t>(start_col, std::span<uint8_t>(dst, count));
+    auto span = std::span<uint8_t>(dst, count);
+    static_cast<const bcsv::Row*>(row)->get<uint8_t>(start_col, span);
 }
 void bcsv_row_get_uint16_array(const_bcsv_row_t row, int start_col, uint16_t* dst, size_t count) {
-    static_cast<const bcsv::Row*>(row)->get<uint16_t>(start_col, std::span<uint16_t>(dst, count));
+    auto span = std::span<uint16_t>(dst, count);
+    static_cast<const bcsv::Row*>(row)->get<uint16_t>(start_col, span);
 }
 void bcsv_row_get_uint32_array(const_bcsv_row_t row, int start_col, uint32_t* dst, size_t count) {
-    static_cast<const bcsv::Row*>(row)->get<uint32_t>(start_col, std::span<uint32_t>(dst, count));
+    auto span = std::span<uint32_t>(dst, count);
+    static_cast<const bcsv::Row*>(row)->get<uint32_t>(start_col, span);
 }
 void bcsv_row_get_uint64_array(const_bcsv_row_t row, int start_col, uint64_t* dst, size_t count) {
-    static_cast<const bcsv::Row*>(row)->get<uint64_t>(start_col, std::span<uint64_t>(dst, count));
+    auto span = std::span<uint64_t>(dst, count);
+    static_cast<const bcsv::Row*>(row)->get<uint64_t>(start_col, span);
 }
 void bcsv_row_get_int8_array(const_bcsv_row_t row, int start_col, int8_t* dst, size_t count) {
-    static_cast<const bcsv::Row*>(row)->get<int8_t>(start_col, std::span<int8_t>(dst, count));
+    auto span = std::span<int8_t>(dst, count);
+    static_cast<const bcsv::Row*>(row)->get<int8_t>(start_col, span);
 }
 void bcsv_row_get_int16_array(const_bcsv_row_t row, int start_col, int16_t* dst, size_t count) {
-    static_cast<const bcsv::Row*>(row)->get<int16_t>(start_col, std::span<int16_t>(dst, count));
+    auto span = std::span<int16_t>(dst, count);
+    static_cast<const bcsv::Row*>(row)->get<int16_t>(start_col, span);
 }
 void bcsv_row_get_int32_array(const_bcsv_row_t row, int start_col, int32_t* dst, size_t count) {
-    static_cast<const bcsv::Row*>(row)->get<int32_t>(start_col, std::span<int32_t>(dst, count));
+    auto span = std::span<int32_t>(dst, count);
+    static_cast<const bcsv::Row*>(row)->get<int32_t>(start_col, span);
 }
 void bcsv_row_get_int64_array(const_bcsv_row_t row, int start_col, int64_t* dst, size_t count) {
-    static_cast<const bcsv::Row*>(row)->get<int64_t>(start_col, std::span<int64_t>(dst, count));
+    auto span = std::span<int64_t>(dst, count);
+    static_cast<const bcsv::Row*>(row)->get<int64_t>(start_col, span);
 }
 void bcsv_row_get_float_array(const_bcsv_row_t row, int start_col, float* dst, size_t count) {
-    static_cast<const bcsv::Row*>(row)->get<float>(start_col, std::span<float>(dst, count));
+    auto span = std::span<float>(dst, count);
+    static_cast<const bcsv::Row*>(row)->get<float>(start_col, span);
 }
 void bcsv_row_get_double_array(const_bcsv_row_t row, int start_col, double* dst, size_t count) {
-    static_cast<const bcsv::Row*>(row)->get<double>(start_col, std::span<double>(dst, count));
+    auto span = std::span<double>(dst, count);
+    static_cast<const bcsv::Row*>(row)->get<double>(start_col, span);
 }
 
 // Vectorized set functions

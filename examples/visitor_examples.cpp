@@ -113,7 +113,7 @@ void example_change_tracking() {
         {"name", ColumnType::STRING}
     });
     
-    Row row(layout, true); // Enable change tracking
+    RowTracked<TrackingPolicy::Enabled> row(layout);
     row.set(0, 10.0);
     row.set(1, int32_t(20));
     row.set(2, std::string("test"));

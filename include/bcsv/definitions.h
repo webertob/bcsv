@@ -32,6 +32,15 @@ namespace bcsv {
     template<typename T>
     constexpr bool always_false = false;
 
+    enum class TrackingPolicy : uint8_t {
+        Disabled,
+        Enabled
+    };
+
+    constexpr bool isTrackingEnabled(TrackingPolicy policy) noexcept {
+        return policy == TrackingPolicy::Enabled;
+    }
+
     // Version information (from auto-generated header)
     constexpr int VERSION_MAJOR = version::MAJOR;
     constexpr int VERSION_MINOR = version::MINOR;

@@ -82,7 +82,8 @@ namespace bcsv {
 
 
 
-    inline Row::Row(const Layout& layout, bool trackChangesEnabled)
+    template<TrackingPolicy Policy>
+    inline RowImpl<Policy>::RowImpl(const Layout& layout)
         : layout_(layout)
         , data_()
         , ptr_(layout.columnCount(), nullptr)
@@ -119,7 +120,9 @@ namespace bcsv {
             ptr_[i] = &data_[offsets[i]];
             constructDefaultAt(ptr_[i], layout_.columnType(i));
         }        
-        trackChanges(trackChangesEnabled);
+        if constexpr (isTrackingEnabled(Policy)) {
+            changes_.resize(columnCount, true);
+        }
 
         // deprecated offsets_ - convert vector<size_t> to vector<uint32_t>
         offsets_ = std::move(offsets);
@@ -130,7 +133,8 @@ namespace bcsv {
         }
     }
 
-    inline Row::Row(const Row& other)
+    template<TrackingPolicy Policy>
+    inline RowImpl<Policy>::RowImpl(const RowImpl& other)
         : layout_(other.layout_)  // Share layout (shallow copy of shared_ptr inside)
         , data_(other.data_) // Allocate our own data buffer
         , ptr_(other.ptr_.size(), nullptr) // We will set up our own pointers
@@ -161,7 +165,8 @@ namespace bcsv {
         );
     }
 
-    inline Row::Row(Row&& other) noexcept
+    template<TrackingPolicy Policy>
+    inline RowImpl<Policy>::RowImpl(RowImpl&& other) noexcept
         : layout_(other.layout_)
         , data_(std::move(other.data_))     // ✓ Transfers heap buffer ownership -> zero-copy move, data stays in place
         , ptr_(std::move(other.ptr_))       // ✓ Pointers remain valid!
@@ -175,7 +180,8 @@ namespace bcsv {
         });
     }
 
-    inline Row::~Row()
+    template<TrackingPolicy Policy>
+    inline RowImpl<Policy>::~RowImpl()
     {
         // Unregister from layout callbacks
         layout_.unregisterCallback(this);
@@ -196,7 +202,8 @@ namespace bcsv {
     }
 
     /** Clear the row to its default state (default values) */
-    inline void Row::clear()
+    template<TrackingPolicy Policy>
+    inline void RowImpl<Policy>::clear()
     {        
         // Use visitor to set all columns to their default values
         visit([](size_t, auto& value, bool&) {
@@ -209,7 +216,8 @@ namespace bcsv {
     // =========================================================================
     // 1. RAW POINTER ACCESS (caller must ensure type safety)
     // =========================================================================
-    inline const void* Row::get(size_t index) const {
+    template<TrackingPolicy Policy>
+    inline const void* RowImpl<Policy>::get(size_t index) const {
         if constexpr (RANGE_CHECKING) {
             if (index >= layout_.columnCount()) {
                 return nullptr;
@@ -228,8 +236,9 @@ namespace bcsv {
     // Type must match exactly (no conversions).
     // For flexible access with type conversions, use get(index, T& dst) instead.
     // =========================================================================
+    template<TrackingPolicy Policy>
     template<typename T>
-    inline const T& Row::get(size_t index) const {
+    inline const T& RowImpl<Policy>::get(size_t index) const {
         // Compile-time type validation
         static_assert(
             std::is_trivially_copyable_v<T> || 
@@ -267,8 +276,9 @@ namespace bcsv {
      *  Types must match exactly (no conversions). Only supports primitive types.
      *  For flexible access with type conversions, use get(index, T& dst) instead.
      */
+    template<TrackingPolicy Policy>
     template<typename T>
-    inline void Row::get(size_t index, std::span<T> &dst) const
+    inline void RowImpl<Policy>::get(size_t index, std::span<T> &dst) const
     {
         static_assert(std::is_arithmetic_v<T>, "vectorized get() supports arithmetic types only");
         constexpr ColumnType targetType = toColumnType<T>();
@@ -294,8 +304,9 @@ namespace bcsv {
     // Returns false if conversion not possible, true on success.
     // For strict access without conversions, use get<T>(index) instead.
     // =========================================================================
+    template<TrackingPolicy Policy>
     template<typename T>
-    inline bool Row::get(size_t index, T &dst) const {
+    inline bool RowImpl<Policy>::get(size_t index, T &dst) const {
         // Use visitor pattern for flexible type conversion
         bool success = false;
         
@@ -327,18 +338,20 @@ namespace bcsv {
         return success;
     }
 
+    template<TrackingPolicy Policy>
     template<typename T>
-    inline const T& Row::ref(size_t index) const
+    inline const T& RowImpl<Policy>::ref(size_t index) const
     {
         const T &r = get<T>(index);
         return r;
     }
 
+    template<TrackingPolicy Policy>
     template<typename T>
-    inline T& Row::ref(size_t index) {
+    inline T& RowImpl<Policy>::ref(size_t index) {
         const T &r = get<T>(index);
         // marks column as changed
-        if(tracksChanges()) {
+        if constexpr (isTrackingEnabled(Policy)) {
             changes_.set(index);
         }
         return const_cast<T&>(r);
@@ -354,8 +367,9 @@ namespace bcsv {
      * @param value Value to set (primitives, strings, or convertible types)
      * @return true on success, throws on type mismatch
      */
-template<detail::BcsvAssignable T>
-inline void Row::set(size_t index, const T& value) {
+    template<TrackingPolicy Policy>
+    template<detail::BcsvAssignable T>
+    inline void RowImpl<Policy>::set(size_t index, const T& value) {
 
     // Strict type matching via visit()
     visit(index, [value, index](size_t, auto& colValue, bool& changed) {
@@ -383,8 +397,9 @@ inline void Row::set(size_t index, const T& value) {
 
 
     /** Vectorized set of multiple columns of same type */
+    template<TrackingPolicy Policy>
     template<typename T>
-    inline void Row::set(size_t index, std::span<const T> values)
+    inline void RowImpl<Policy>::set(size_t index, std::span<const T> values)
     {
         static_assert(std::is_arithmetic_v<T>, "Only primitive arithmetic types are supported for vectorized set");
 
@@ -402,7 +417,7 @@ inline void Row::set(size_t index, const T& value) {
         assert(reinterpret_cast<std::byte*>(dst) >= data_.data() && 
                reinterpret_cast<std::byte*>(dst + values.size()) <= data_.data() + data_.size() && 
                "Row::set(span): ptr_ should point into data_ buffer");
-        if(tracksChanges()) {
+        if constexpr (isTrackingEnabled(Policy)) {
             // Element-wise check and set to track changes precisely
             for (size_t i = 0; i < values.size(); ++i) {
                 if (dst[i] != values[i]) {
@@ -419,7 +434,8 @@ inline void Row::set(size_t index, const T& value) {
     * @param buffer The byte buffer to serialize into. The buffer will be resized as needed.
     * @return A span pointing to the serialized row data within the buffer.
     */
-    inline std::span<std::byte> Row::serializeTo(ByteBuffer& buffer) const  {
+    template<TrackingPolicy Policy>
+    inline std::span<std::byte> RowImpl<Policy>::serializeTo(ByteBuffer& buffer) const  {
         const size_t  off_row = buffer.size();          // offset to the begin of this row
         size_t        off_fix = off_row;                // tracking offset(position) within the fixed section of the buffer. Starts at the begin of this row, used to write fixed data.
         size_t        off_var = offset_var_;            // tracking offset(position) within the variable section of the buffer. Starts just after the fixed section for this row.
@@ -457,7 +473,8 @@ inline void Row::set(size_t index, const T& value) {
         return {&buffer[off_row], buffer.size() - off_row};
     }
 
-    inline void Row::deserializeFrom(const std::span<const std::byte> buffer)
+    template<TrackingPolicy Policy>
+    inline void RowImpl<Policy>::deserializeFrom(const std::span<const std::byte> buffer)
     {
         size_t off_fix = 0;           // offset within the fixed section of the buffer. Starts at the begin of this row. We expect that span only contains data for a single row.
         size_t off_var = offset_var_; // offset within the variable section of the buffer. Starts just after the fixed section for this row.
@@ -501,8 +518,11 @@ inline void Row::set(size_t index, const T& value) {
      * @param buffer The byte buffer to serialize into. The buffer will be resized as needed.
      * @return A span pointing to the serialized row data within the buffer.
      */
-    inline std::span<std::byte> Row::serializeToZoH(ByteBuffer& buffer) const {
-        assert(tracksChanges() && "tracking must be enabled for ZoH serialization");
+    template<TrackingPolicy Policy>
+    inline std::span<std::byte> RowImpl<Policy>::serializeToZoH(ByteBuffer& buffer) const {
+        if constexpr (!isTrackingEnabled(Policy)) {
+            throw std::runtime_error("Row::serializeToZoH() requires tracking policy enabled");
+        }
 
         // preserve offset to beginning of row  
         size_t bufferSizeOld = buffer.size();
@@ -554,8 +574,11 @@ inline void Row::set(size_t index, const T& value) {
         return {&buffer[bufferSizeOld], buffer.size() - bufferSizeOld};
     }
 
-    inline void Row::deserializeFromZoH(const std::span<const std::byte> buffer) {
-        trackChanges(true); // ensure change tracking is enabled
+    template<TrackingPolicy Policy>
+    inline void RowImpl<Policy>::deserializeFromZoH(const std::span<const std::byte> buffer) {
+        if constexpr (!isTrackingEnabled(Policy)) {
+            throw std::runtime_error("Row::deserializeFromZoH() requires tracking policy enabled");
+        }
         
         // buffer starts with the change bitset, followed by the actual row data.
         if (buffer.size() >= changes_.sizeBytes()) {
@@ -631,8 +654,9 @@ inline void Row::set(size_t index, const T& value) {
      * 
      * @see Row::visitConst(Visitor&&) const for visiting all columns
      */
+    template<TrackingPolicy Policy>
     template<RowVisitorConst Visitor>
-    inline void Row::visitConst(size_t startIndex, Visitor&& visitor, size_t count) const {
+    inline void RowImpl<Policy>::visitConst(size_t startIndex, Visitor&& visitor, size_t count) const {
         if (count == 0) 
             return;  // Nothing to visit
         
@@ -735,8 +759,9 @@ inline void Row::set(size_t index, const T& value) {
      * @see Row::visit(Visitor&&) for mutable version
      * @see Row::visit(size_t, Visitor&&, size_t) const for visiting a range or single column
      */
+    template<TrackingPolicy Policy>
     template<RowVisitorConst Visitor>
-    inline void Row::visitConst(Visitor&& visitor) const {
+    inline void RowImpl<Policy>::visitConst(Visitor&& visitor) const {
         // Delegate to range-based visitor for all columns
         visitConst(0, std::forward<Visitor>(visitor), layout_.columnCount());
     }
@@ -747,10 +772,14 @@ inline void Row::set(size_t index, const T& value) {
      * 
      * @tparam Visitor Callable type
      * @param startIndex First column index to visit
-     * @param visitor Callable accepting `(size_t index, T& value[, bool& changed])`
+    * @param visitor Callable accepting `(size_t index, T& value[, bool& changed])`
      * @param count Number of columns to visit (default: 1 for single column, 0 visits nothing)
      * 
-     * @par Example - Modify single column
+    * @par Visitor Signatures
+    * - **Tracking enabled**: `(size_t index, T& value, bool& changed)`
+    * - **Tracking disabled**: `(size_t index, T& value)` or `(size_t index, T& value, bool& changed)`
+    *
+    * @par Example - Modify single column
      * @code
      * row.visit(2, [](size_t idx, auto& value, bool& changed) {
      *     auto old = value;
@@ -768,8 +797,9 @@ inline void Row::set(size_t index, const T& value) {
      * 
      * @see Row::visit(Visitor&&) for visiting all columns
      */
+    template<TrackingPolicy Policy>
     template<RowVisitor Visitor>
-    inline void Row::visit(size_t startIndex, Visitor&& visitor, size_t count) {
+    inline void RowImpl<Policy>::visit(size_t startIndex, Visitor&& visitor, size_t count) {
         if (count == 0) return;  // Nothing to visit
         
         size_t endIndex = startIndex + count;
@@ -786,46 +816,65 @@ inline void Row::set(size_t index, const T& value) {
         for (size_t i = startIndex; i < endIndex; ++i) {
             std::byte* ptr = ptr_[i];
             ColumnType type = layout_.columnType(i);
-            bool changed = true; // default to changed, visitor can set to false if no change occurred;
-            
+
+            auto dispatch = [&](auto& value) {
+                using T = std::decay_t<decltype(value)>;
+                if constexpr (isTrackingEnabled(Policy)) {
+                    static_assert(std::is_invocable_v<Visitor, size_t, T&, bool&>,
+                                  "Row::visit() with tracking requires (size_t, T&, bool&)");
+                    bool changed = true;
+                    visitor(i, value, changed);
+                    changes_[i] |= changed;
+                } else {
+                    if constexpr (std::is_invocable_v<Visitor, size_t, T&, bool&>) {
+                        bool changed = true;
+                        visitor(i, value, changed);
+                    } else {
+                        static_assert(std::is_invocable_v<Visitor, size_t, T&>,
+                                      "Row::visit() requires (size_t, T&) or (size_t, T&, bool&)");
+                        visitor(i, value);
+                    }
+                }
+            };
+
             // Dispatch based on column type
             switch(type) {
                 case ColumnType::BOOL:
-                    visitor(i, *reinterpret_cast<bool*>(ptr), changed);
+                    dispatch(*reinterpret_cast<bool*>(ptr));
                     break;
                 case ColumnType::INT8:
-                    visitor(i, *reinterpret_cast<int8_t*>(ptr), changed);
+                    dispatch(*reinterpret_cast<int8_t*>(ptr));
                     break;
                 case ColumnType::INT16:
-                    visitor(i, *reinterpret_cast<int16_t*>(ptr), changed);
+                    dispatch(*reinterpret_cast<int16_t*>(ptr));
                     break;
                 case ColumnType::INT32:
-                    visitor(i, *reinterpret_cast<int32_t*>(ptr), changed);
+                    dispatch(*reinterpret_cast<int32_t*>(ptr));
                     break;
                 case ColumnType::INT64:
-                    visitor(i, *reinterpret_cast<int64_t*>(ptr), changed);
+                    dispatch(*reinterpret_cast<int64_t*>(ptr));
                     break;
                 case ColumnType::UINT8:
-                    visitor(i, *reinterpret_cast<uint8_t*>(ptr), changed);
+                    dispatch(*reinterpret_cast<uint8_t*>(ptr));
                     break;
                 case ColumnType::UINT16:
-                    visitor(i, *reinterpret_cast<uint16_t*>(ptr), changed);
+                    dispatch(*reinterpret_cast<uint16_t*>(ptr));
                     break;
                 case ColumnType::UINT32:
-                    visitor(i, *reinterpret_cast<uint32_t*>(ptr), changed);
+                    dispatch(*reinterpret_cast<uint32_t*>(ptr));
                     break;
                 case ColumnType::UINT64:
-                    visitor(i, *reinterpret_cast<uint64_t*>(ptr), changed);
+                    dispatch(*reinterpret_cast<uint64_t*>(ptr));
                     break;
                 case ColumnType::FLOAT:
-                    visitor(i, *reinterpret_cast<float*>(ptr), changed);
+                    dispatch(*reinterpret_cast<float*>(ptr));
                     break;
                 case ColumnType::DOUBLE:
-                    visitor(i, *reinterpret_cast<double*>(ptr), changed);
+                    dispatch(*reinterpret_cast<double*>(ptr));
                     break;
                 case ColumnType::STRING: {
-                    std::string *str = reinterpret_cast<std::string*>(ptr);
-                    visitor(i, *str, changed);
+                    std::string* str = reinterpret_cast<std::string*>(ptr);
+                    dispatch(*str);
                     if (str->size() > MAX_STRING_LENGTH) {
                         // Ensure string length does not exceed maximum allowed (for serialization safety)
                         str->resize(MAX_STRING_LENGTH);
@@ -834,11 +883,6 @@ inline void Row::set(size_t index, const T& value) {
                 }
                 default: [[unlikely]]
                     throw std::runtime_error("Row::visit() unsupported column type");
-            }
-            
-            // Update change tracking if enabled
-            if (tracksChanges()) {
-                changes_[i] |= changed;
             }
         }
     }
@@ -852,10 +896,14 @@ inline void Row::set(size_t index, const T& value) {
      * 
      * @par Visitor Signature (non-const version)
      * 
-     * **Required signature:**
-     * ```cpp
-     * (size_t index, T& value, bool& changed)
-     * ```
+    * **Tracking enabled signature:**
+    * ```cpp
+    * (size_t index, T& value, bool& changed)
+    * ```
+    * **Tracking disabled signature:**
+    * ```cpp
+    * (size_t index, T& value)
+    * ```
      * - `index` - Column index
      * - `value` - Mutable reference to column value
      * - `changed` - Output: set to `true` if modified, `false` to skip marking
@@ -887,10 +935,10 @@ inline void Row::set(size_t index, const T& value) {
      * });
      * @endcode
      * 
-     * @par Change Tracking Behavior
+    * @par Change Tracking Behavior
      * - **With tracking enabled**: Changed columns are marked in internal bitset
      * - **Respects `changed` flag**: Only columns with `changed=true` are marked
-     * - **Without tracking**: No overhead, changes not recorded
+    * - **Without tracking**: No overhead, changes not recorded
      * 
      * @warning Only modifies columns through set() if you need type conversion or validation.
      *          Direct modification via visit() bypasses those checks but is more efficient.
@@ -898,11 +946,11 @@ inline void Row::set(size_t index, const T& value) {
      * @see row_visitors.h for concepts, helper types, and more examples
      * @see Row::visit(Visitor&&) const for read-only version
      * @see Row::visit(size_t, Visitor&&, size_t) for visiting a range or single column
-     * @see Row::trackChanges() to enable/disable change tracking
      * @see Row::hasAnyChanges() to check if any columns were modified
      */
+    template<TrackingPolicy Policy>
     template<RowVisitor Visitor>
-    inline void Row::visit(Visitor&& visitor) {
+    inline void RowImpl<Policy>::visit(Visitor&& visitor) {
         // Delegate to range-based visitor for all columns
         visit(0, std::forward<Visitor>(visitor), layout_.columnCount());
     }
@@ -911,7 +959,8 @@ inline void Row::set(size_t index, const T& value) {
     // Observer Callbacks (Layout Mutation Notifications)
     // ========================================================================
 
-    inline void Row::onLayoutUpdate(const std::vector<Layout::Data::Change>& changes) {
+    template<TrackingPolicy Policy>
+    inline void RowImpl<Policy>::onLayoutUpdate(const std::vector<Layout::Data::Change>& changes) {
         // Handle empty changes (no-op)
         if (changes.empty()) {
             return;
@@ -961,7 +1010,7 @@ inline void Row::set(size_t index, const T& value) {
         }
         
         // Reset change tracking
-        if (tracksChanges()) {
+        if constexpr (isTrackingEnabled(Policy)) {
             changes_.resize(newColumnCount);
             changes_.set();  // Mark all as changed
         }
@@ -974,7 +1023,8 @@ inline void Row::set(size_t index, const T& value) {
         }
     }
 
-    inline Row& Row::operator=(const Row& other)
+    template<TrackingPolicy Policy>
+    inline RowImpl<Policy>& RowImpl<Policy>::operator=(const RowImpl& other)
     {
         if(this == &other) {
             return *this; // self-assignment check
@@ -999,7 +1049,7 @@ inline void Row::set(size_t index, const T& value) {
             if(currentValue != newValue) {
                 // Assign new value (works for all types including strings)
                 *reinterpret_cast<T*>(ptr_[i]) = newValue;
-                if (tracksChanges()) {
+                if constexpr (isTrackingEnabled(Policy)) {
                     changes_[i] = true; // Mark this column as changed
                 }
             } 
@@ -1008,7 +1058,8 @@ inline void Row::set(size_t index, const T& value) {
         return *this;
     }
 
-    inline Row& Row::operator=(Row&& other) noexcept 
+    template<TrackingPolicy Policy>
+    inline RowImpl<Policy>& RowImpl<Policy>::operator=(RowImpl&& other) noexcept 
     {
         if (this == &other) 
             return *this;
@@ -1544,15 +1595,21 @@ inline void Row::set(size_t index, const T& value) {
     /** @brief Visit a range of columns with mutable access (primitives only)
      * 
      * Allows in-place modification of primitives in the serialized buffer.
-     * Strings are READ-ONLY - cannot resize buffer. Change tracking parameter
-     * is accepted but ignored (always treated as changed).
+    * Strings are READ-ONLY - cannot resize buffer. Change tracking parameter
+    * is accepted but ignored (always treated as changed).
      * 
-     * @tparam Visitor Callable accepting `(size_t index, T& value[, bool& changed])`
+    * @tparam Visitor Callable accepting `(size_t index, T& value[, bool& changed])`
      * @param startIndex First column index to visit
      * @param visitor Callable for in-place modification
      * @param count Number of columns to visit
      * 
-     * @par Example - Modify primitives in-place
+    * @par Visitor Signatures
+    * - `(size_t index, T& value)`
+    * - `(size_t index, T& value, bool& changed)`
+    *
+    * Note: For string columns, the visitor receives `std::string_view`.
+    *
+    * @par Example - Modify primitives in-place
      * @code
      * rowView.visit(0, [](size_t idx, auto& value) {
      *     if constexpr (std::is_arithmetic_v<decltype(value)>) {
@@ -1582,76 +1639,80 @@ inline void Row::set(size_t index, const T& value) {
         for (size_t i = startIndex; i < endIndex; ++i) {
             ColumnType type = layout_.columnType(i);
             uint32_t offset = offsets_[i];
-            
+
             // Bounds check
             if (buffer_.empty() || offset >= buffer_.size()) [[unlikely]] {
                 throw std::runtime_error("RowView::visit() buffer out of bounds");
             }
-            
+
             std::byte* ptr = &buffer_[offset];
-            bool changed = true;  // Default: assume changed
-            
-            // Helper lambda to invoke visitor with change tracking parameter
-            auto invoke_visitor = [&]<typename T>(T* value_ptr) {
-                // Visitors always require 3 params: (size_t, T&, bool&)
-                visitor(i, *value_ptr, changed);
+
+            auto dispatch = [&](auto&& value) {
+                using T = std::decay_t<decltype(value)>;
+                if constexpr (std::is_invocable_v<Visitor, size_t, T&, bool&>) {
+                    bool changed = true;
+                    visitor(i, value, changed);
+                } else {
+                    static_assert(std::is_invocable_v<Visitor, size_t, T&>,
+                                  "RowView::visit() requires (size_t, T&) or (size_t, T&, bool&)");
+                    visitor(i, value);
+                }
             };
-            
+
             // Dispatch based on column type - primitives only
             switch(type) {
                 case ColumnType::BOOL:
-                    invoke_visitor(reinterpret_cast<bool*>(ptr));
+                    dispatch(*reinterpret_cast<bool*>(ptr));
                     break;
                 case ColumnType::INT8:
-                    invoke_visitor(reinterpret_cast<int8_t*>(ptr));
+                    dispatch(*reinterpret_cast<int8_t*>(ptr));
                     break;
                 case ColumnType::INT16:
-                    invoke_visitor(reinterpret_cast<int16_t*>(ptr));
+                    dispatch(*reinterpret_cast<int16_t*>(ptr));
                     break;
                 case ColumnType::INT32:
-                    invoke_visitor(reinterpret_cast<int32_t*>(ptr));
+                    dispatch(*reinterpret_cast<int32_t*>(ptr));
                     break;
                 case ColumnType::INT64:
-                    invoke_visitor(reinterpret_cast<int64_t*>(ptr));
+                    dispatch(*reinterpret_cast<int64_t*>(ptr));
                     break;
                 case ColumnType::UINT8:
-                    invoke_visitor(reinterpret_cast<uint8_t*>(ptr));
+                    dispatch(*reinterpret_cast<uint8_t*>(ptr));
                     break;
                 case ColumnType::UINT16:
-                    invoke_visitor(reinterpret_cast<uint16_t*>(ptr));
+                    dispatch(*reinterpret_cast<uint16_t*>(ptr));
                     break;
                 case ColumnType::UINT32:
-                    invoke_visitor(reinterpret_cast<uint32_t*>(ptr));
+                    dispatch(*reinterpret_cast<uint32_t*>(ptr));
                     break;
                 case ColumnType::UINT64:
-                    invoke_visitor(reinterpret_cast<uint64_t*>(ptr));
+                    dispatch(*reinterpret_cast<uint64_t*>(ptr));
                     break;
                 case ColumnType::FLOAT:
-                    invoke_visitor(reinterpret_cast<float*>(ptr));
+                    dispatch(*reinterpret_cast<float*>(ptr));
                     break;
                 case ColumnType::DOUBLE:
-                    invoke_visitor(reinterpret_cast<double*>(ptr));
+                    dispatch(*reinterpret_cast<double*>(ptr));
                     break;
                 case ColumnType::STRING: {
                     // Strings are read-only in mutable visit (cannot resize buffer)
                     // Decode StringAddr and pass string_view
                     StringAddr strAddr;
                     std::memcpy(&strAddr, ptr, sizeof(StringAddr));
-                    
+
                     size_t strOffset = strAddr.offset();
                     size_t strLength = strAddr.length();
-                    
+
                     if (strOffset + strLength > buffer_.size()) [[unlikely]] {
                         throw std::runtime_error("RowView::visit() string payload out of bounds");
                     }
-                    
+
                     std::string_view strValue(
-                        reinterpret_cast<const char*>(&buffer_[strOffset]), 
+                        reinterpret_cast<const char*>(&buffer_[strOffset]),
                         strLength
                     );
-                    
-                    // Visitors always require 3 params: (size_t, T&, bool&)
-                    visitor(i, strValue, changed);
+
+                    dispatch(strValue);
                     break;
                 }
                 default: [[unlikely]]
@@ -1681,8 +1742,8 @@ inline void Row::set(size_t index, const T& value) {
     // RowStatic Implementation
     // ========================================================================
 
-    template<typename... ColumnTypes>
-    RowStatic<ColumnTypes...>::RowStatic(const LayoutType& layout) 
+    template<TrackingPolicy Policy, typename... ColumnTypes>
+    RowStaticImpl<Policy, ColumnTypes...>::RowStaticImpl(const LayoutType& layout) 
         : layout_(layout), data_() 
     {
         clear();
@@ -1690,13 +1751,13 @@ inline void Row::set(size_t index, const T& value) {
     }
 
     /** Clear the row to its default state (default values) */
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<size_t Index>
-    void RowStatic<ColumnTypes...>::clear()
+    void RowStaticImpl<Policy, ColumnTypes...>::clear()
     {
         if constexpr (Index < column_count) {
             std::get<Index>(data_) = defaultValueT<column_type<Index>>();
-            if(change_tracking_) {
+            if constexpr (isTrackingEnabled(Policy)) {
                 changes_.set(Index);
             }
             clear<Index + 1>();
@@ -1708,9 +1769,9 @@ inline void Row::set(size_t index, const T& value) {
      *  Returns const reference to the column value.
      *  For flexible runtime access with type conversions, use get(index, T& dst) instead.
      */
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<size_t Index>
-    const auto& RowStatic<ColumnTypes...>::get() const noexcept {
+    const auto& RowStaticImpl<Policy, ColumnTypes...>::get() const noexcept {
         static_assert(Index < column_count, "Index out of bounds");
         return std::get<Index>(data_);
     }
@@ -1722,9 +1783,9 @@ inline void Row::set(size_t index, const T& value) {
     *  - Conversion path: Element-wise static_cast when types are assignable
     *  Compile-time error if types are not assignable.
     */
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<size_t StartIndex, typename T, size_t Extent>
-    void RowStatic<ColumnTypes...>::get(std::span<T, Extent> &dst) const {
+    void RowStaticImpl<Policy, ColumnTypes...>::get(std::span<T, Extent> &dst) const {
         // 1. Static Checks
         static_assert(Extent != std::dynamic_extent, "RowStatic: Static vectorized get requires fixed-extent span (std::span<T, N>)");
         static_assert(StartIndex + Extent <= column_count, "RowStatic: Access range exceeds column count");
@@ -1757,8 +1818,8 @@ inline void Row::set(size_t index, const T& value) {
      *  Resolves the tuple element address at runtime using a fold expression.
      *  Note: The returned pointer is guaranteed to be aligned for the column's type.
      */
-    template<typename... ColumnTypes>
-    const void* RowStatic<ColumnTypes...>::get(size_t index) const noexcept {
+    template<TrackingPolicy Policy, typename... ColumnTypes>
+    const void* RowStaticImpl<Policy, ColumnTypes...>::get(size_t index) const noexcept {
         // 1. Bounds check
         if constexpr (RANGE_CHECKING) {
             if (index >= column_count) [[unlikely]] {
@@ -1769,13 +1830,14 @@ inline void Row::set(size_t index, const T& value) {
         }
 
         // 2. Define Function Pointer Signature
-        using GetterFunc = const void* (*)(const RowStatic&);
+        using Self = RowStaticImpl<Policy, ColumnTypes...>;
+        using GetterFunc = const void* (*)(const Self&);
 
         // 3. Generate Jump Table (Static Constexpr)
         static constexpr auto handlers = []<size_t... I>(std::index_sequence<I...>) {
             return std::array<GetterFunc, column_count>{
                 // Lambda capturing behavior for index I
-                +[](const RowStatic& self) -> const void* {
+                +[](const Self& self) -> const void* {
                     return &std::get<I>(self.data_);
                 }...
             };
@@ -1791,9 +1853,9 @@ inline void Row::set(size_t index, const T& value) {
      *  Throws if type mismatch or index invalid.
      *  For flexible access with type conversions, use get(index, T& dst) instead.
      */
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<typename T>
-    const T& RowStatic<ColumnTypes...>::get(size_t index) const {
+    const T& RowStaticImpl<Policy, ColumnTypes...>::get(size_t index) const {
         // Compile-time type validation
         static_assert(
             std::is_trivially_copyable_v<T> || 
@@ -1846,9 +1908,9 @@ inline void Row::set(size_t index, const T& value) {
      *  Throws std::runtime_error (via get<T>) if any column type does not match T.
      *  For flexible access with type conversions, use get(index, T& dst) instead.
      */
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<typename T, size_t Extent>
-    void RowStatic<ColumnTypes...>::get(size_t index, std::span<T, Extent> &dst) const {
+    void RowStaticImpl<Policy, ColumnTypes...>::get(size_t index, std::span<T, Extent> &dst) const {
         // 1. Range Check
         if (index + dst.size() > column_count) [[unlikely]] {
             throw std::out_of_range("RowStatic::get(span): Access range exceeds column count");
@@ -1868,9 +1930,9 @@ inline void Row::set(size_t index, const T& value) {
      *  Returns false if conversion not possible, true on success.
      *  For strict access without conversions, use get<T>(index) instead.
      */
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<typename T>
-    bool RowStatic<ColumnTypes...>::get(size_t index, T& dst) const noexcept {
+    bool RowStaticImpl<Policy, ColumnTypes...>::get(size_t index, T& dst) const noexcept {
         // Use visitor pattern for flexible type conversions
         bool success = false;
         
@@ -1904,28 +1966,28 @@ inline void Row::set(size_t index, const T& value) {
         return success;
     }
 
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<typename T>
-    const T& RowStatic<ColumnTypes...>::ref(size_t index) const
+    const T& RowStaticImpl<Policy, ColumnTypes...>::ref(size_t index) const
     {
         const T &r = get<T>(index);
         return r;
     }
 
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<typename T>
-    T& RowStatic<ColumnTypes...>::ref(size_t index) {
+    T& RowStaticImpl<Policy, ColumnTypes...>::ref(size_t index) {
         const T &r = get<T>(index);
         // marks column as changed
-        if(tracksChanges()) {
+        if constexpr (isTrackingEnabled(Policy)) {
             changes_.set(index);
         }
         return const_cast<T&>(r);
     } 
     
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<size_t Index, typename T>
-    void RowStatic<ColumnTypes...>::set(const T& value) {
+    void RowStaticImpl<Policy, ColumnTypes...>::set(const T& value) {
         static_assert(Index < column_count, "Index out of bounds");
 
 
@@ -1949,8 +2011,10 @@ inline void Row::set(size_t index, const T& value) {
                     sv = sv.substr(0, MAX_STRING_LENGTH);
                 }
                 if (currentVal != sv) {
-                    currentVal.assign(sv); 
-                    changes_.set(Index);
+                    currentVal.assign(sv);
+                    if constexpr (isTrackingEnabled(Policy)) {
+                        changes_.set(Index);
+                    }
                 }
             } 
 
@@ -1959,7 +2023,9 @@ inline void Row::set(size_t index, const T& value) {
                 std::string strVal = std::to_string(value); // cannot extend max length here               
                 if (currentVal != strVal) {
                     currentVal = std::move(strVal);
-                    changes_.set(Index);
+                    if constexpr (isTrackingEnabled(Policy)) {
+                        changes_.set(Index);
+                    }
                 }
             }
 
@@ -1967,7 +2033,9 @@ inline void Row::set(size_t index, const T& value) {
             else if constexpr (std::is_same_v<DecayedT, char>) {
                 if (currentVal.size() != 1 || currentVal[0] != value) {
                     currentVal.assign(1, value);
-                    changes_.set(Index);
+                    if constexpr (isTrackingEnabled(Policy)) {
+                        changes_.set(Index);
+                    }
                 }
             }
 
@@ -1983,14 +2051,16 @@ inline void Row::set(size_t index, const T& value) {
                 // Check equality after casting to avoid spurious changes (e.g. 5 != 5.1)
                 if (currentVal != static_cast<column_type<Index>>(value)) {
                     currentVal = static_cast<column_type<Index>>(value);
-                    changes_.set(Index);
+                    if constexpr (isTrackingEnabled(Policy)) {
+                        changes_.set(Index);
+                    }
                 }
         }
     } 
 
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<typename T>
-    void RowStatic<ColumnTypes...>::set(size_t index, const T& value)  {
+    void RowStaticImpl<Policy, ColumnTypes...>::set(size_t index, const T& value)  {
         // Use visitor pattern for runtime-indexed write
         visit(index, [&](size_t, auto& colValue, bool&) {
             using ColType = std::decay_t<decltype(colValue)>;
@@ -2013,9 +2083,9 @@ inline void Row::set(size_t index, const T& value) {
     }
 
     /** Vectorized static set (Compile-Time) */
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<size_t StartIndex, typename T, size_t Extent>
-    void RowStatic<ColumnTypes...>::set(std::span<const T, Extent> values) {
+    void RowStaticImpl<Policy, ColumnTypes...>::set(std::span<const T, Extent> values) {
         static_assert(StartIndex + Extent <= column_count, "RowStatic: Range exceeds column count");
         
         [&]<size_t... I>(std::index_sequence<I...>) {
@@ -2025,9 +2095,9 @@ inline void Row::set(size_t index, const T& value) {
     }
 
     /** Runtime vectorized set with span */
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<typename T, size_t Extent>
-    void RowStatic<ColumnTypes...>::set(size_t index, std::span<const T, Extent> values) {
+    void RowStaticImpl<Policy, ColumnTypes...>::set(size_t index, std::span<const T, Extent> values) {
 
         // ToDo: Currently its a simple loop delegating to scalar set(). Should be optimized as we know that elements are contiguous and hence no padding in between.
 
@@ -2056,8 +2126,8 @@ inline void Row::set(size_t index, const T& value) {
     * @param buffer The byte buffer to serialize into. The buffer will be resized as needed.
     * @return A span pointing to the serialized row data within the buffer.
     */
-    template<typename... ColumnTypes>
-    std::span<std::byte> RowStatic<ColumnTypes...>::serializeTo(ByteBuffer& buffer) const {
+    template<TrackingPolicy Policy, typename... ColumnTypes>
+    std::span<std::byte> RowStaticImpl<Policy, ColumnTypes...>::serializeTo(ByteBuffer& buffer) const {
         size_t offRow = buffer.size();               // remember where this row starts
         size_t offVar = offset_var_;                 // offset to the begin of variable-size data section (relative to row start)
         buffer.resize(buffer.size() + offset_var_);  // ensure buffer is large enough to hold fixed-size data
@@ -2067,9 +2137,9 @@ inline void Row::set(size_t index, const T& value) {
         return {&buffer[offRow], buffer.size() - offRow};
     }
 
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<size_t Index>
-    void RowStatic<ColumnTypes...>::serializeElements(ByteBuffer& buffer, const size_t& offRow, size_t& offVar) const {
+    void RowStaticImpl<Policy, ColumnTypes...>::serializeElements(ByteBuffer& buffer, const size_t& offRow, size_t& offVar) const {
         if constexpr (Index < column_count) {
             constexpr size_t lenFix = column_lengths[Index];
             constexpr size_t offFix = column_offsets[Index];
@@ -2096,9 +2166,11 @@ inline void Row::set(size_t index, const T& value) {
      * @param buffer The byte buffer to serialize into. The buffer will be resized as needed.
      * @return A span pointing to the serialized row data within the buffer.
      */
-    template<typename... ColumnTypes>
-    std::span<std::byte> RowStatic<ColumnTypes...>::serializeToZoH(ByteBuffer& buffer) const {
-        assert(change_tracking_ && "RowStatic::serializeToZoH() requires change tracking to be enabled.");
+    template<TrackingPolicy Policy, typename... ColumnTypes>
+    std::span<std::byte> RowStaticImpl<Policy, ColumnTypes...>::serializeToZoH(ByteBuffer& buffer) const {
+        if constexpr (!isTrackingEnabled(Policy)) {
+            throw std::runtime_error("RowStatic::serializeToZoH() requires tracking policy enabled");
+        }
 
         // remember where this row starts, (as we are appending to the buffer)
         size_t bufferSizeOld = buffer.size();
@@ -2121,9 +2193,9 @@ inline void Row::set(size_t index, const T& value) {
         return {&buffer[bufferSizeOld], buffer.size() - bufferSizeOld};
     }
 
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<size_t Index>
-    void RowStatic<ColumnTypes...>::serializeElementsZoH(ByteBuffer& buffer, bitset<column_count>& rowHeader) const 
+    void RowStaticImpl<Policy, ColumnTypes...>::serializeElementsZoH(ByteBuffer& buffer, bitset<column_count>& rowHeader) const 
     {
         if constexpr (Index < column_count) {
             if constexpr (std::is_same_v<column_type<Index>, bool>) {
@@ -2160,15 +2232,15 @@ inline void Row::set(size_t index, const T& value) {
         }
     }
 
-    template<typename... ColumnTypes>
-    void RowStatic<ColumnTypes...>::deserializeFrom(const std::span<const std::byte> buffer)  {
+    template<TrackingPolicy Policy, typename... ColumnTypes>
+    void RowStaticImpl<Policy, ColumnTypes...>::deserializeFrom(const std::span<const std::byte> buffer)  {
         //we expect the buffer, starts with the first byte of the row and ends with the last byte of the row (no change bitset)
         deserializeElements<0>(buffer);
     }
 
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<size_t Index>
-    void RowStatic<ColumnTypes...>::deserializeElements(const std::span<const std::byte> &buffer) 
+    void RowStaticImpl<Policy, ColumnTypes...>::deserializeElements(const std::span<const std::byte> &buffer) 
     {
         if constexpr (Index < column_count) {
             constexpr size_t len = wireSizeOf<column_type<Index>>();
@@ -2198,9 +2270,12 @@ inline void Row::set(size_t index, const T& value) {
         }
     }
 
-    template<typename... ColumnTypes>
-    void RowStatic<ColumnTypes...>::deserializeFromZoH(const std::span<const std::byte> buffer)  
+    template<TrackingPolicy Policy, typename... ColumnTypes>
+    void RowStaticImpl<Policy, ColumnTypes...>::deserializeFromZoH(const std::span<const std::byte> buffer)  
     {
+        if constexpr (!isTrackingEnabled(Policy)) {
+            throw std::runtime_error("RowStatic::deserializeFromZoH() requires tracking policy enabled");
+        }
         // we expect the buffer to start with the change bitset, followed by the actual row data
         if (buffer.size() < changes_.sizeBytes()) {
             throw std::runtime_error("RowStatic::deserializeFromZoH() failed! Buffer too small to contain change bitset.");
@@ -2212,9 +2287,9 @@ inline void Row::set(size_t index, const T& value) {
         deserializeElementsZoH<0>(dataBuffer);
     }
 
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<size_t Index>
-    void RowStatic<ColumnTypes...>::deserializeElementsZoH(std::span<const std::byte> &buffer) {
+    void RowStaticImpl<Policy, ColumnTypes...>::deserializeElementsZoH(std::span<const std::byte> &buffer) {
         // we expect the buffer to have the next element at the current position
         // thus the buffer needs to get shorter as we read elements
         // We also expect that the change bitset has been read already!
@@ -2279,9 +2354,9 @@ inline void Row::set(size_t index, const T& value) {
      * @see row_visitors.h for concepts and helper types
      * @see RowStatic::visitConst(Visitor&&) const for visiting all columns
      */
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<RowVisitorConst Visitor>
-    void RowStatic<ColumnTypes...>::visitConst(size_t startIndex, Visitor&& visitor, size_t count) const {
+    void RowStaticImpl<Policy, ColumnTypes...>::visitConst(size_t startIndex, Visitor&& visitor, size_t count) const {
         if (count == 0) return;  // Nothing to visit
         
         size_t endIndex = std::min(startIndex + count, column_count);
@@ -2328,9 +2403,9 @@ inline void Row::set(size_t index, const T& value) {
      * @see row_visitors.h for concepts and helper types
      * @see RowStatic::visit(size_t, Visitor&&, size_t) const for range access
      */
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<RowVisitorConst Visitor>
-    void RowStatic<ColumnTypes...>::visitConst(Visitor&& visitor) const {
+    void RowStaticImpl<Policy, ColumnTypes...>::visitConst(Visitor&& visitor) const {
         // Delegate to range-based visitor for all columns
         visitConst(0, std::forward<Visitor>(visitor), column_count);
     }
@@ -2348,7 +2423,6 @@ inline void Row::set(size_t index, const T& value) {
      * @par Example - Fine-grained tracking
      * @code
      * RowStatic<int, double, std::string> row{layout};
-     * row.trackChanges(true);
      * row.visit(0, [](size_t idx, auto& value, bool& changed) {
      *     auto old = value;
      *     value = process(value);
@@ -2357,11 +2431,10 @@ inline void Row::set(size_t index, const T& value) {
      * @endcode
      * 
      * @see row_visitors.h for concepts and helper types
-     * @see RowStatic::trackChanges() to enable/disable tracking
      */
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<RowVisitor Visitor>
-    void RowStatic<ColumnTypes...>::visit(size_t startIndex, Visitor&& visitor, size_t count) {
+    void RowStaticImpl<Policy, ColumnTypes...>::visit(size_t startIndex, Visitor&& visitor, size_t count) {
         if (count == 0) return;  // Nothing to visit
         
         size_t endIndex = std::min(startIndex + count, column_count);
@@ -2384,12 +2457,12 @@ inline void Row::set(size_t index, const T& value) {
                         if constexpr (std::is_invocable_v<Visitor, size_t, decltype(std::get<I>(data_))&, bool&>) {
                             bool changed = true;
                             visitor(I, std::get<I>(data_), changed);
-                            if (change_tracking_) {
+                            if constexpr (isTrackingEnabled(Policy)) {
                                 changes_[I] |= changed;
                             }
                         } else {
                             visitor(I, std::get<I>(data_));
-                            if (change_tracking_) {
+                            if constexpr (isTrackingEnabled(Policy)) {
                                 changes_[I] = true;
                             }
                         }
@@ -2428,11 +2501,10 @@ inline void Row::set(size_t index, const T& value) {
      * 
      * @see row_visitors.h for concepts and helper types
      * @see RowStatic::visit(size_t, Visitor&&, size_t) for range access
-     * @see RowStatic::trackChanges() to enable/disable tracking
      */
-    template<typename... ColumnTypes>
+    template<TrackingPolicy Policy, typename... ColumnTypes>
     template<RowVisitor Visitor>
-    void RowStatic<ColumnTypes...>::visit(Visitor&& visitor) {
+    void RowStaticImpl<Policy, ColumnTypes...>::visit(Visitor&& visitor) {
         // Delegate to range-based visitor for all columns
         visit(0, std::forward<Visitor>(visitor), column_count);
     }

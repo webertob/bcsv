@@ -140,7 +140,6 @@ void                bcsv_row_assign      (bcsv_row_t dest, const_bcsv_row_t src)
 
 // Change tracking
 bool                bcsv_row_has_any_changes  (const_bcsv_row_t row);             // returns true if any column has been modified
-void                bcsv_row_track_changes    (bcsv_row_t row, bool enable);      // enable/disable change tracking
 bool                bcsv_row_tracks_changes   (const_bcsv_row_t row);             // returns true if change tracking is enabled
 void                bcsv_row_set_changes      (bcsv_row_t row);                   // mark all columns as changed
 void                bcsv_row_reset_changes    (bcsv_row_t row);                   // mark all columns as unchanged

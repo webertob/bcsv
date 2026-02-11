@@ -191,9 +191,6 @@ namespace BCSV
         internal static extern bool bcsv_row_has_any_changes(IntPtr row);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_track_changes(IntPtr row, bool enable);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern bool bcsv_row_tracks_changes(IntPtr row);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]

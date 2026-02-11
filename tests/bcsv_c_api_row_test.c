@@ -33,15 +33,10 @@ int main() {
     assert(bcsv_layout_column_count(row_layout) == 3);
     printf("   Row layout has %zu columns\n", bcsv_layout_column_count(row_layout));
     
-    // Test 3: Change tracking (initially disabled)
+    // Test 3: Change tracking (compile-time only)
     printf("\n3. Testing change tracking...\n");
     printf("   Initial tracks_changes: %s\n", bcsv_row_tracks_changes(row) ? "true" : "false");
     printf("   Initial has_any_changes: %s\n", bcsv_row_has_any_changes(row) ? "true" : "false");
-    
-    // Enable change tracking
-    bcsv_row_track_changes(row, true);
-    printf("   After enabling tracking, tracks_changes: %s\n", bcsv_row_tracks_changes(row) ? "true" : "false");
-    printf("   After enabling tracking, has_any_changes: %s\n", bcsv_row_has_any_changes(row) ? "true" : "false");
     
     // Set some values
     bcsv_row_set_string(row, 0, "John");
@@ -70,13 +65,8 @@ int main() {
     
     printf("   After clear - name: '%s', age: %d, score: %.1f\n", name, age, score);
     
-    // Test 6: Disable change tracking
-    printf("\n6. Testing disable change tracking...\n");
-    bcsv_row_track_changes(row, false);
-    printf("   After disabling tracking, tracks_changes: %s\n", bcsv_row_tracks_changes(row) ? "true" : "false");
-    
-    // Test 7: Clone row
-    printf("\n7. Testing bcsv_row_clone...\n");
+    // Test 6: Clone row
+    printf("\n6. Testing bcsv_row_clone...\n");
     
     // First, set some values in the original row
     bcsv_row_set_string(row, 0, "Alice");
@@ -98,8 +88,8 @@ int main() {
     assert(cloned_age == 25);
     assert(cloned_score == 87.5);
     
-    // Test 8: Assign row
-    printf("\n8. Testing bcsv_row_assign...\n");
+    // Test 7: Assign row
+    printf("\n7. Testing bcsv_row_assign...\n");
     
     // Create another row and modify the original
     bcsv_row_t another_row = bcsv_row_create(layout);
@@ -121,8 +111,8 @@ int main() {
     assert(assigned_age == 35);
     assert(assigned_score == 92.3);
     
-    // Test 9: Destroy rows
-    printf("\n9. Testing bcsv_row_destroy for multiple rows...\n");
+    // Test 8: Destroy rows
+    printf("\n8. Testing bcsv_row_destroy for multiple rows...\n");
     bcsv_row_destroy(cloned_row);
     bcsv_row_destroy(another_row);
     bcsv_row_destroy(row);

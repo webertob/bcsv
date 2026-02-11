@@ -316,8 +316,8 @@ public:
     }
 
     // Helper to populate static row directly from TestDataGenerator  
-    template<size_t... Is>
-    void populateStaticRowImpl(bcsv::Writer<LargeTestLayoutStatic>& writer, size_t rowIndex, std::index_sequence<Is...>) {
+    template<typename WriterType, size_t... Is>
+    void populateStaticRowImpl(WriterType& writer, size_t rowIndex, std::index_sequence<Is...>) {
         auto& row = writer.row();
         // Generate values on the fly based on column index
         (populateStaticColumn<Is>(row, rowIndex), ...);
@@ -352,13 +352,14 @@ public:
         }
     }
     
-    void populateStaticRow(bcsv::Writer<LargeTestLayoutStatic>& writer, size_t rowIndex) {
+    template<typename WriterType>
+    void populateStaticRow(WriterType& writer, size_t rowIndex) {
         populateStaticRowImpl(writer, rowIndex, std::make_index_sequence<72>{});
     }
     
     // Helper to populate static row with time-series data for ZoH optimization
-    template<size_t... Is>
-    void populateStaticRowZoHImpl(bcsv::Writer<LargeTestLayoutStatic>& writer, size_t rowIndex, std::index_sequence<Is...>) {
+    template<typename WriterType, size_t... Is>
+    void populateStaticRowZoHImpl(WriterType& writer, size_t rowIndex, std::index_sequence<Is...>) {
         auto& row = writer.row();
         // Generate values on the fly based on column index
         (populateStaticColumnZoH<Is>(row, rowIndex), ...);
@@ -393,7 +394,8 @@ public:
         }
     }
     
-    void populateStaticRowZoH(bcsv::Writer<LargeTestLayoutStatic>& writer, size_t rowIndex) {
+    template<typename WriterType>
+    void populateStaticRowZoH(WriterType& writer, size_t rowIndex) {
         populateStaticRowZoHImpl(writer, rowIndex, std::make_index_sequence<72>{});
     }
 
@@ -495,7 +497,6 @@ public:
         
         // Temporary variables to hold generated data
         bcsv::Row testData(layout);
-        testData.trackChanges(false);
 
         const size_t colCount = layout.columnCount();
         for (size_t i = 0; i < numberOfRows; ++i) {
@@ -587,8 +588,7 @@ public:
         }
 
         // Temporary row to hold data for comparison avoids reallocations
-        bcsv::Row tempRow(reader.layout()); 
-        tempRow.trackChanges(false);
+        bcsv::Row tempRow(reader.layout());
 
         size_t i = 0;
         const size_t colCount = reader.layout().columnCount();
@@ -871,14 +871,13 @@ public:
 
     // Write BCSV Flexible ZoH file
     void writeBCSVFlexibleZoH(const std::string& filepath, const bcsv::Layout& layout, size_t numberOfRows) {
-        bcsv::Writer<bcsv::Layout> writer(layout);
+        bcsv::Writer<bcsv::Layout, bcsv::TrackingPolicy::Enabled> writer(layout);
         if (!writer.open(filepath, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
             throw std::runtime_error("Failed to open file for writing: " + filepath + " - " + writer.getErrorMsg());
         }
         
         // Temporary variables to hold generated data
         bcsv::Row testData(layout);
-        testData.trackChanges(false);
 
         const size_t colCount = layout.columnCount();
         for (size_t i = 0; i < numberOfRows; ++i) {
@@ -960,7 +959,7 @@ public:
     
     // Read BCSV Flexible ZoH file and return number of rows read
     size_t readBCSVFlexibleZoH(const std::string& filepath, const bcsv::Layout& layoutExpected) {
-        bcsv::Reader<bcsv::Layout> reader;
+        bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Enabled> reader;
         if (!reader.open(filepath)) {
             throw std::runtime_error("Failed to open file for reading: " + filepath + " - " + reader.getErrorMsg());
         }
@@ -970,8 +969,7 @@ public:
         }
 
         // Temporary row to hold data for comparison avoids reallocations
-        bcsv::Row tempRow(reader.layout()); 
-        tempRow.trackChanges(false);
+        bcsv::Row tempRow(reader.layout());
 
         size_t i = 0;
         const size_t colCount = reader.layout().columnCount();
@@ -1120,7 +1118,7 @@ public:
         }
         
         LargeTestLayoutStatic layout(columnNames);
-        bcsv::Writer<LargeTestLayoutStatic> writer(layout);
+        bcsv::Writer<LargeTestLayoutStatic, bcsv::TrackingPolicy::Enabled> writer(layout);
         if (!writer.open(filepath, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
             throw std::runtime_error("Failed to open file for writing: " + filepath + " - " + writer.getErrorMsg());
         }
@@ -1138,7 +1136,7 @@ public:
     
     // Read BCSV Static ZoH file and return number of rows read with validation
     size_t readBCSVStaticZoH(const std::string& filepath, const LargeTestLayoutStatic& /*layoutExpected*/) {
-        bcsv::Reader<LargeTestLayoutStatic> reader;
+        bcsv::Reader<LargeTestLayoutStatic, bcsv::TrackingPolicy::Enabled> reader;
         if (!reader.open(filepath)) {
             throw std::runtime_error("Failed to open file for reading: " + filepath + " - " + reader.getErrorMsg());
         }

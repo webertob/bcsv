@@ -104,7 +104,7 @@ void writeZoHStaticBCSV(const std::vector<SampleData>& testData) {
 
     // Step 2: Create a writer with ZoH compression enabled
     const std::string filename = "example_zoh_static.bcsv";
-    bcsv::Writer<ExampleLayout> writer(layout);
+    bcsv::WriterZoH<ExampleLayout> writer(layout);
     if(!writer.open(filename, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
         std::cerr << "Failed to open writer for BCSV file\n";
         return;
@@ -213,7 +213,7 @@ std::vector<SampleData> readZoHStaticBCSV() {
     
     // Step 2: Create a reader
     const std::string filename = "example_zoh_static.bcsv";
-    bcsv::Reader<ExampleLayout> reader;
+    bcsv::ReaderZoH<ExampleLayout> reader;
     if (!reader.open(filename)) {
         std::cerr << "Failed to open file: " << filename << "\n";
         return readData;

@@ -419,7 +419,7 @@ TEST(VisitTest, RowMutableVisitWithChangeTracking) {
         {"c", ColumnType::INT32}
     });
     
-    Row row(layout, true);  // Enable change tracking
+    RowTracked<TrackingPolicy::Enabled> row(layout);
     row.set(0, 10);
     row.set(1, 20);
     row.set(2, 30);
@@ -491,8 +491,7 @@ TEST(VisitTest, RowStaticMutableVisitWithTracking) {
     using LayoutType = LayoutStatic<int32_t, int32_t>;
     LayoutType layout({"x", "y"});
     
-    RowStatic<int32_t, int32_t> row(layout);
-    row.trackChanges(true);
+    RowStaticTracked<TrackingPolicy::Enabled, int32_t, int32_t> row(layout);
     row.set<0>(100);
     row.set<1>(200);
     row.resetChanges();
@@ -666,7 +665,7 @@ TEST(VisitTest, FineGrainedChangeTracking) {
         {"c", ColumnType::INT32}
     });
     
-    Row row(layout, true);  // Enable change tracking
+    RowTracked<TrackingPolicy::Enabled> row(layout);
     row.set(0, 10);
     row.set(1, 20);
     row.set(2, 30);
@@ -706,8 +705,7 @@ TEST(VisitTest, FineGrainedChangeTrackingRowStatic) {
     using LayoutType = LayoutStatic<int32_t, int32_t, int32_t, int32_t>;
     LayoutType layout({"a", "b", "c", "d"});
     
-    RowStatic<int32_t, int32_t, int32_t, int32_t> row(layout);
-    row.trackChanges(true);
+    RowStaticTracked<TrackingPolicy::Enabled, int32_t, int32_t, int32_t, int32_t> row(layout);
     row.set<0>(5);
     row.set<1>(15);
     row.set<2>(25);
@@ -744,7 +742,7 @@ TEST(VisitTest, IgnoringChangeFlagParameter) {
         {"y", ColumnType::INT32}
     });
     
-    Row row(layout, true);
+    RowTracked<TrackingPolicy::Enabled> row(layout);
     row.set(0, 10);
     row.set(1, 20);
     row.resetChanges();

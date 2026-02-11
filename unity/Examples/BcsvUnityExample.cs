@@ -47,8 +47,7 @@ namespace BCSV.Examples
                 {
                     Debug.Log("✓ Created row with layout");
 
-                    // Test change tracking
-                    row.TrackChanges(true);
+                    // Change tracking is compile-time only (Row<> does not enable it)
                     Debug.Log($"Tracks changes: {row.TracksChanges}");
                     Debug.Log($"Has changes initially: {row.HasAnyChanges}");
 

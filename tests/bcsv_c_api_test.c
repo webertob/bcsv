@@ -127,12 +127,9 @@ void test_row_api() {
     TEST_ASSERT(row_layout != NULL, "Row layout access");
     TEST_ASSERT(bcsv_layout_column_count(row_layout) == 4, "Row layout has 4 columns");
     
-    // Test change tracking
+    // Test change tracking (compile-time only)
     TEST_ASSERT(!bcsv_row_tracks_changes(row), "Change tracking initially disabled");
     TEST_ASSERT(bcsv_row_has_any_changes(row), "Without change tracking, we need to conservativly assume changes are present.");
-    
-    bcsv_row_track_changes(row, true);
-    TEST_ASSERT(bcsv_row_tracks_changes(row), "Change tracking enabled");
     
     // Test setting values
     bcsv_row_set_string(row, 0, "Alice");
@@ -155,12 +152,12 @@ void test_row_api() {
     bool active = bcsv_row_get_bool(row, 3);
     TEST_ASSERT(active == true, "Get bool value");
     
-    // Test change tracking functions
+    // Test change tracking functions (no effect when tracking is disabled)
     bcsv_row_reset_changes(row);
-    TEST_ASSERT(!bcsv_row_has_any_changes(row), "Reset changes");
+    TEST_ASSERT(bcsv_row_has_any_changes(row), "Reset changes is a no-op without tracking");
     
     bcsv_row_set_changes(row);
-    TEST_ASSERT(bcsv_row_has_any_changes(row), "Set all changes");
+    TEST_ASSERT(bcsv_row_has_any_changes(row), "Set changes is a no-op without tracking");
     
     // Test row cloning
     bcsv_row_t cloned_row = bcsv_row_clone(row);

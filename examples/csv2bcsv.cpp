@@ -373,7 +373,8 @@ std::vector<std::string> parseCSVLine(const std::string& line, char delimiter, c
 }
 
 // Convert string value to appropriate type and set in row
-void setRowValue(bcsv::Writer<bcsv::Layout>& writer, size_t column_index, 
+template<typename WriterType>
+void setRowValue(WriterType& writer, size_t column_index,
                  const std::string& value, bcsv::ColumnType type, char decimal_separator = '.') {
     if (value.empty()) {
         // Handle empty values - set default values
@@ -744,17 +745,15 @@ int main(int argc, char* argv[]) {
         }
         
         // Create BCSV writer and convert data
-        {
-            bcsv::Writer<bcsv::Layout> writer(layout);
+        bcsv::FileFlags flags = config.use_zoh ? bcsv::FileFlags::ZERO_ORDER_HOLD : bcsv::FileFlags::NONE;
+        size_t row_count = 0;
+        auto write_rows = [&](auto& writer) {
             // Use compression level 1 for better performance vs file size
-            // Enable ZoH compression by default for optimal compression of time-series data
-            bcsv::FileFlags flags = config.use_zoh ? bcsv::FileFlags::ZERO_ORDER_HOLD : bcsv::FileFlags::NONE;
             writer.open(config.output_file, true, 1, 64, flags);
-            size_t row_count = 0;
-            
+
             // Pre-calculate frequently used values outside the loop
             const size_t num_columns = headers.size();
-            
+
             while (std::getline(input, line)) {
                 // Trim carriage return (Windows line endings)
                 if (!line.empty() && line.back() == '\r') {
@@ -797,47 +796,55 @@ int main(int argc, char* argv[]) {
                     }
                 }
             }
-            
+
             writer.close();
-            
-            // Calculate conversion timing and statistics
-            auto end_time = std::chrono::steady_clock::now();
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-            auto output_file_size = std::filesystem::file_size(config.output_file);
-            
-            // Ensure minimum duration for throughput calculation
-            long long duration_ms = duration.count();
-            if (duration_ms == 0) duration_ms = 1;  // Minimum 1ms for calculation
-            double duration_seconds = duration_ms / 1000.0;
-            
-            // Calculate compression ratio and throughput
-            double compression_ratio = (static_cast<double>(input_file_size - output_file_size) / input_file_size) * 100.0;
-            double throughput_mb_s = (static_cast<double>(input_file_size) / (1024.0 * 1024.0)) / duration_seconds;
-            double rows_per_sec = static_cast<double>(row_count) / duration_seconds;
-            
-            // Display comprehensive conversion statistics
-            std::cout << "\n=== Conversion Complete ==="<< std::endl;
-            std::cout << "Successfully converted " << row_count << " rows to " << config.output_file << std::endl;
-            std::cout << "Columns detected: " << headers.size() << std::endl;
-            std::cout << layout << std::endl;
-            std::cout << "Performance Statistics:" << std::endl;
-            std::cout << "  Conversion time: " << duration.count() << " ms" << std::endl;
-            std::cout << "  Throughput: " << std::fixed << std::setprecision(2) << throughput_mb_s << " MB/s" << std::endl;
-            std::cout << "  Rows/second: " << std::fixed << std::setprecision(0) << rows_per_sec << " rows/s" << std::endl;
-            std::cout << "\nCompression Statistics:" << std::endl;
-            std::cout << "  Input CSV size: " << input_file_size << " bytes (" << std::fixed << std::setprecision(2) << (input_file_size / 1024.0) << " KB)" << std::endl;
-            std::cout << "  Output BCSV size: " << output_file_size << " bytes (" << std::fixed << std::setprecision(2) << (output_file_size / 1024.0) << " KB)" << std::endl;
-            
-            if (output_file_size <= input_file_size) {
-                std::cout << "  Compression ratio: " << std::fixed << std::setprecision(1) << compression_ratio << "%" << std::endl;
-                std::cout << "  Space saved: " << (input_file_size - output_file_size) << " bytes" << std::endl;
-            } else {
-                double size_increase_ratio = (static_cast<double>(output_file_size - input_file_size) / input_file_size) * 100.0;
-                std::cout << "  File size increase: " << std::fixed << std::setprecision(1) << size_increase_ratio << "% (overhead from binary format and metadata)" << std::endl;
-                std::cout << "  Additional space used: " << (output_file_size - input_file_size) << " bytes" << std::endl;
-            }
-            std::cout << "  Compression mode: " << (config.use_zoh ? "ZoH enabled" : "Standard") << std::endl;
+        };
+
+        if (config.use_zoh) {
+            bcsv::Writer<bcsv::Layout, bcsv::TrackingPolicy::Enabled> writer(layout);
+            write_rows(writer);
+        } else {
+            bcsv::Writer<bcsv::Layout> writer(layout);
+            write_rows(writer);
         }
+
+        // Calculate conversion timing and statistics
+        auto end_time = std::chrono::steady_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
+        auto output_file_size = std::filesystem::file_size(config.output_file);
+
+        // Ensure minimum duration for throughput calculation
+        long long duration_ms = duration.count();
+        if (duration_ms == 0) duration_ms = 1;  // Minimum 1ms for calculation
+        double duration_seconds = duration_ms / 1000.0;
+
+        // Calculate compression ratio and throughput
+        double compression_ratio = (static_cast<double>(input_file_size - output_file_size) / input_file_size) * 100.0;
+        double throughput_mb_s = (static_cast<double>(input_file_size) / (1024.0 * 1024.0)) / duration_seconds;
+        double rows_per_sec = static_cast<double>(row_count) / duration_seconds;
+        
+        // Display comprehensive conversion statistics
+        std::cout << "\n=== Conversion Complete ==="<< std::endl;
+        std::cout << "Successfully converted " << row_count << " rows to " << config.output_file << std::endl;
+        std::cout << "Columns detected: " << headers.size() << std::endl;
+        std::cout << layout << std::endl;
+        std::cout << "Performance Statistics:" << std::endl;
+        std::cout << "  Conversion time: " << duration.count() << " ms" << std::endl;
+        std::cout << "  Throughput: " << std::fixed << std::setprecision(2) << throughput_mb_s << " MB/s" << std::endl;
+        std::cout << "  Rows/second: " << std::fixed << std::setprecision(0) << rows_per_sec << " rows/s" << std::endl;
+        std::cout << "\nCompression Statistics:" << std::endl;
+        std::cout << "  Input CSV size: " << input_file_size << " bytes (" << std::fixed << std::setprecision(2) << (input_file_size / 1024.0) << " KB)" << std::endl;
+        std::cout << "  Output BCSV size: " << output_file_size << " bytes (" << std::fixed << std::setprecision(2) << (output_file_size / 1024.0) << " KB)" << std::endl;
+        
+        if (output_file_size <= input_file_size) {
+            std::cout << "  Compression ratio: " << std::fixed << std::setprecision(1) << compression_ratio << "%" << std::endl;
+            std::cout << "  Space saved: " << (input_file_size - output_file_size) << " bytes" << std::endl;
+        } else {
+            double size_increase_ratio = (static_cast<double>(output_file_size - input_file_size) / input_file_size) * 100.0;
+            std::cout << "  File size increase: " << std::fixed << std::setprecision(1) << size_increase_ratio << "% (overhead from binary format and metadata)" << std::endl;
+            std::cout << "  Additional space used: " << (output_file_size - input_file_size) << " bytes" << std::endl;
+        }
+        std::cout << "  Compression mode: " << (config.use_zoh ? "ZoH enabled" : "Standard") << std::endl;
         
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;

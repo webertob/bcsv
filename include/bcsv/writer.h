@@ -16,6 +16,7 @@
 #include "definitions.h"
 #include "byte_buffer.h"
 #include "layout.h"
+#include "row.h"
 #include "file_header.h"
 #include "file_footer.h"
 #include "lz4_stream.hpp"
@@ -26,9 +27,9 @@ namespace bcsv {
     /**
      * @brief Class for writing BCSV binary files
      */
-    template<LayoutConcept LayoutType>
+    template<LayoutConcept LayoutType, TrackingPolicy Policy = TrackingPolicy::Disabled>
     class Writer {
-        using RowType           = typename LayoutType::RowType;
+        using RowType           = typename LayoutType::template RowType<Policy>;
         using FilePath          = std::filesystem::path;
 
         std::string             errMsg_;                    // last error message description
@@ -73,5 +74,8 @@ namespace bcsv {
         bool                    isZoHRepeat();
         void                    writeRowLength(size_t length);
     };
+
+    template<LayoutConcept LayoutType>
+    using WriterZoH = Writer<LayoutType, TrackingPolicy::Enabled>;
 
 } // namespace bcsv
