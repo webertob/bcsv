@@ -25,31 +25,6 @@ namespace bcsv {
 // Sentinel value for dynamic extent (like std::dynamic_extent for std::span)
 inline constexpr size_t dynamic_extent = std::numeric_limits<size_t>::max();
 
-namespace detail {
-    using bitset_word_t = std::uintptr_t;
-    static constexpr size_t bitset_word_bits = sizeof(bitset_word_t) * 8;
-
-    static constexpr size_t bitset_bits_to_words(size_t bit_count) noexcept {
-        return (bit_count + bitset_word_bits - 1) / bitset_word_bits;
-    }
-
-    template<size_t N, bool Fixed, typename WordT = bitset_word_t>
-    struct bitset_storage_base;
-
-    template<size_t N, typename WordT>
-    struct bitset_storage_base<N, true, WordT> {
-        constexpr bitset_storage_base() : data_{} {}
-
-    public:
-        std::array<WordT, bitset_bits_to_words(N)> data_;
-    };
-
-    template<size_t N, typename WordT>
-    struct bitset_storage_base<N, false, WordT> {
-        constexpr bitset_storage_base() noexcept = default;
-    };
-} // namespace detail
-
 /**
  * @brief Unified bitset implementation supporting both compile-time and runtime sizes
  * 
@@ -70,25 +45,30 @@ namespace detail {
  * @endcode
  */
 template<size_t N = dynamic_extent>
-class bitset : private detail::bitset_storage_base<N, (N != dynamic_extent)> {
+class bitset {
     private:
-        using word_t = detail::bitset_word_t;
-        using storage_base = detail::bitset_storage_base<N, (N != dynamic_extent), word_t>;
-
-        // Compile-time detection of fixed vs dynamic
+        using word_t = std::uintptr_t;
         static constexpr bool is_fixed = (N != dynamic_extent);
-
         static constexpr size_t WORD_SIZE = sizeof(word_t);
-        static constexpr size_t WORD_BITS = detail::bitset_word_bits;
+        static constexpr size_t WORD_BITS = WORD_SIZE * 8;
+
+        static constexpr size_t bits_to_words(size_t bit_count) noexcept {
+            return (bit_count + WORD_BITS - 1) / WORD_BITS;
+        }
 
         // Fixed-size: calculate word count at compile time
-        static constexpr size_t word_count_fixed = is_fixed ? detail::bitset_bits_to_words(N) : 0;
+        static constexpr size_t word_count_fixed = is_fixed ? bits_to_words(N) : 0;
+
+        using storage_t = std::conditional_t<
+            is_fixed,
+            std::array<word_t, word_count_fixed>,
+            std::uintptr_t>;
 
         struct empty_size {};
 
         // Dynamic storage: exactly two members (size_ and data_)
-        [[no_unique_address]] std::conditional_t<is_fixed, empty_size, size_t> size_;
-        [[no_unique_address]] std::conditional_t<is_fixed, empty_size, std::uintptr_t> data_;
+        [[no_unique_address]] std::conditional_t<is_fixed, empty_size, size_t> size_{};
+        [[no_unique_address]] storage_t data_{};
 
         // Friend declarations
         template<size_t M> friend class bitset;
@@ -97,10 +77,6 @@ class bitset : private detail::bitset_storage_base<N, (N != dynamic_extent)> {
         // =====================================================================
         // Helpers (static)
         // =====================================================================
-        static constexpr size_t bits_to_words(size_t bit_count) noexcept {
-            return (bit_count + WORD_BITS - 1) / WORD_BITS;
-        }
-
         static constexpr size_t bits_to_bytes(size_t bit_count) noexcept {
             return (bit_count + 7) / 8;
         }

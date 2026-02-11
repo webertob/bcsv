@@ -45,7 +45,7 @@ constexpr bool bitset<N>::uses_inline() const noexcept {
 template<size_t N>
 constexpr typename bitset<N>::word_t* bitset<N>::word_data() noexcept {
     if constexpr (is_fixed) {
-        return this->storage_base::data_.data();
+        return data_.data();
     } else {
         if (uses_inline()) {
             return reinterpret_cast<word_t*>(&data_);
@@ -57,7 +57,7 @@ constexpr typename bitset<N>::word_t* bitset<N>::word_data() noexcept {
 template<size_t N>
 constexpr const typename bitset<N>::word_t* bitset<N>::word_data() const noexcept {
     if constexpr (is_fixed) {
-        return this->storage_base::data_.data();
+        return data_.data();
     } else {
         if (uses_inline()) {
             return reinterpret_cast<const word_t*>(&data_);
@@ -245,11 +245,11 @@ typename bitset<N>::reference& bitset<N>::reference::operator^=(bool value) {
 // Fixed-size constructors
 template<size_t N>
 constexpr bitset<N>::bitset() noexcept requires(is_fixed) 
-    : detail::bitset_storage_base<N, true>() {}
+    : data_{} {}
 
 template<size_t N>
 constexpr bitset<N>::bitset(unsigned long long val) noexcept requires(is_fixed)
-    : detail::bitset_storage_base<N, true>() { 
+    : data_{} { 
     set_from_value(val); 
 }
 
@@ -261,7 +261,7 @@ bitset<N>::bitset(
     typename std::basic_string<CharT, Traits, Allocator>::size_type n,
     CharT zero,
     CharT one) requires(is_fixed)
-    : detail::bitset_storage_base<N, true>() 
+    : data_{} 
 {
     set_from_string(str, pos, n, zero, one);
 }
@@ -269,8 +269,7 @@ bitset<N>::bitset(
 // Dynamic-size constructors
 template<size_t N>
 bitset<N>::bitset(size_t num_bits) requires(!is_fixed)
-    : detail::bitset_storage_base<N, false>()
-    , size_(num_bits)
+    : size_(num_bits)
     , data_(0)
 {
     resize_storage(0, size_, 0);
@@ -278,8 +277,7 @@ bitset<N>::bitset(size_t num_bits) requires(!is_fixed)
 
 template<size_t N>
 bitset<N>::bitset(size_t num_bits, unsigned long long val) requires(!is_fixed)
-    : detail::bitset_storage_base<N, false>()
-    , size_(num_bits)
+    : size_(num_bits)
     , data_(0)
 { 
     resize_storage(0, size_, 0);
@@ -288,8 +286,7 @@ bitset<N>::bitset(size_t num_bits, unsigned long long val) requires(!is_fixed)
 
 template<size_t N>
 bitset<N>::bitset(size_t num_bits, bool value) requires(!is_fixed)
-    : detail::bitset_storage_base<N, false>()
-    , size_(num_bits)
+    : size_(num_bits)
     , data_(0)
 {
     resize_storage(0, size_, value ? ~word_t{0} : 0);
@@ -305,8 +302,7 @@ bitset<N>::bitset(
     typename std::basic_string<CharT, Traits, Allocator>::size_type n,
     CharT zero,
     CharT one) requires(!is_fixed)
-    : detail::bitset_storage_base<N, false>()
-    , size_(num_bits)
+    : size_(num_bits)
     , data_(0)
 {
     resize_storage(0, size_, 0);
@@ -317,8 +313,7 @@ bitset<N>::bitset(
 template<size_t N>
 template<size_t M>
 bitset<N>::bitset(const bitset<M>& other) requires(!is_fixed && M != dynamic_extent)
-    : detail::bitset_storage_base<N, false>()
-    , size_(M)
+    : size_(M)
     , data_(0)
 {
     resize_storage(0, size_, 0);
@@ -330,7 +325,7 @@ bitset<N>::bitset(const bitset<M>& other) requires(!is_fixed && M != dynamic_ext
 template<size_t N>
 bitset<N>::bitset(const bitset& other) {
     if constexpr (is_fixed) {
-        this->storage_base::data_ = other.storage_base::data_;
+        data_ = other.data_;
     } else {
         size_ = other.size_;
         data_ = 0;
@@ -344,7 +339,7 @@ bitset<N>::bitset(const bitset& other) {
 template<size_t N>
 bitset<N>::bitset(bitset&& other) noexcept {
     if constexpr (is_fixed) {
-        this->storage_base::data_ = std::move(other.storage_base::data_);
+        data_ = std::move(other.data_);
     } else {
         size_ = other.size_;
         data_ = other.data_;
@@ -363,7 +358,7 @@ bitset<N>& bitset<N>::operator=(const bitset& other) {
         return *this;
     }
     if constexpr (is_fixed) {
-        this->storage_base::data_ = other.storage_base::data_;
+        data_ = other.data_;
     } else {
         release_heap();
         size_ = other.size_;
@@ -382,7 +377,7 @@ bitset<N>& bitset<N>::operator=(bitset&& other) noexcept {
         return *this;
     }
     if constexpr (is_fixed) {
-        this->storage_base::data_ = std::move(other.storage_base::data_);
+        data_ = std::move(other.data_);
     } else {
         release_heap();
         size_ = other.size_;
