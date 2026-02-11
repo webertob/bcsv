@@ -85,11 +85,18 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     I still like the current API of the BCSV library and would like to maintain the workflow, see examples and benchmark.
 [x] 8.d: Finalize Row::onAddColumn, Row::onChangeColumnType, Row::onRemoveColumn
 [x] 8.e: debug large column count bools
-    8.f: Add tests for concepts (Row & Vistors)
-[x] 8.g: Add test for bitset insert
+[x] 8.f: Add test for bitset insert
+    8.g. Make change tracking for Row and RowStatic a compile time decision.
+            Issue: currently we have a lot of branching depending on change tracking beeing enabled or disabled. But in normal operations, this decision only needs to be done once. For instence when the User decides to Write using ZoH, this basically requiers change tracking enabled.
+            Goal: With minimum impact to the API make changeTracking a compile time decision. Propably using a template parameter
+    8.h: Restructure Row object to not use ptr_. 
+            Issue: Pointers are usually the same size or bigger than the data we store. Thus, we are not gaining any stroage size benefit from using ptr_ indirection, but suffer a performance penalty from that indirection (cache locality cahce sizes) and higher complexity. 
+            Idea:  
+            use std::vector<uint64_t> data_; to store content directly using casts on all primitives i.e. static_cast<bool>(data_[i]) (i=columnindex) to access/manipulate the data. 
+           Just for std::string we need to provide a dedicated solution introducting std::vector<std::string> str_ access to string is str[data_[i]]. Thus data_ simply contains the index into the str_ vector.
+           Gain: Custom memory management not required anymore, reducing complexity. Easier to insert/remove columns. Smaller memory footprint. Faster access (less indirection for all primitives)
 
-
-9.a Restructure Row <-> Reader/Writer collaboration, introduce Serializer / Deserializier API
+9 Restructure Row <-> Reader/Writer collaboration, introduce Serializer / Deserializier API
         - serializer and deserailizer functionalities are current tightly integrated with row:
             - makes row heavier than required (memory) as it stores data required for serilization/deserialization, specifically offsets_ and offset_var_, 
               which in many cases not needed and limits rows ability to be used as lightweight facility to collect and transfer information in an application.
@@ -122,12 +129,6 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
             - run&pass benchmarks
             - build examples and CLI tools
 
-9.b: Restructure Row object to not use ptr_. Issue: pointers are basically the same size or bigger than the data we store (std::string, the only exception). 
-     Thus, we are not gaining any meory benefit from using ptr_ indirection but suffer a performance peanlty and higher complexity. 
-     Idea: use std::vector<uint64_t> data_; to store content directly using casts on all primitives i.e. static_cast<bool>(data_[i]) (i=columnindex) to access/manipulate the data. 
-           Just for std::string we need to provide a dedicated solution introducting std::vector<std::string> str_ access to string is str[data_[i]]. Thus data_ simply contains the index into the str_ vector.
-           Gain: Custom memory management not required anymore, reducing complexity. Easier to insert/remove columns. Smaller memory footprint. Faster access (less indirection for all primitives)
-
 10. Implement CSV write and read functionality using the BCSV interface
     10.a: Restructure BCSV Reader/ Writer API
         - Create a ReadAPI and WriterAPI class that defined the basic functionality each Reader and Writer needs to support.
@@ -155,11 +156,14 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
         - store reports with data and machine/host information for later reference
         - compare against: https://github.com/vincentlaucsb/csv-parser
 
+Samstag
 11. Update Tools and Libraries to use new API
     update and test CLI to use new API tools-tools
     update and test python libraries
     update and test C# (Unity)
 
+Sonntag API freez
+Sonntag: Switch Gears Dr
 13. Implement new row encoding schema, using variable length encoding for float and integer values
     Main usage of bcsv is the handling of time-series data. Thus we expect many rcurring or constantly falling or raising values and values that are similar to previouse values. In many cases the full extend of a variable type is not required to encode the actual value.
     This feature is working on a per row level, not only a single cell/value as the current vle_encode / vle_decode functions do. It tries to provide a better balance between computational effort and compression and takes advantange on previouse data (time-series).
@@ -265,11 +269,19 @@ Parking LOT:
         monotonic:  apply higher order delta encoding as a "nearly" monotonic (smooth) behaviour is expected
         ordered:    data to fall or grow in ordered fashion 
 
-25. Improve bitset:
-    - visit()
-    - operate on subsection
-    - BitsetView:
-        - view into a subsection of an existing bitset
-        - viet into a serilized piece of memory
-    - improve chained logic operations, try to reduce temporary objects
-    - introduce LayzyAllocator to avoid initialization costs.
+25. Improve bcsv::bitset:
+    Optimize memory allocation and layout for dynamic bcsv::bitset<> using (Small Object Optimization). 
+    Goal: avoid heap allocations and improve cache locality in the most commone use cases of having small bit counts.
+    Requirments: maintain current API and performance level. Try to avoid significant code growth, try to maintain commonality between static and dynamic bitsets bcsv::bitset<N> and bcsv::bitset<>
+    Concept: 
+        Make bcsv::bitset<> to have exactly 2 member variables, which are defined as: size_t size_; and uintptr_t data_;
+        size_: is going to hold the number of bits (N) currently managed by this bitset. Therefore: We don't store capacity. We don't store number of words. These need to be calculated on the fly as required. See notes.
+        data_: content of data_ deppends on size_. 
+                If N is small enough to be stored within one word (N<=sizeof(uintptr_t)*8):
+                    bits are stored directly within data_ on the stack. 
+                else if N grows bejond the capacity of a single word. 
+                    We need to allocate the required amount of words on the heap and data_ holds a pointer to that memory.
+
+        Note: implement a private function bitset::wordCount()const; That returns the number of words available within data_. it ca be easily calculatey on the fly from bitset::size_ e.g. divide by 64 on 64bit platforms (shift by 6) or devide by 32 on 32bit platforms (shift by 5). No need to make it a persitent member of bitset<>. 
+              implement a public function bitset::capacity(); We expect the layout of bitset to be quite stable. Thus we are not tracking capacity as an independent member. Therefore when a reduction of N causes a reduction of word count, we need to reallocate and move to a smaller chunk of memory to not lose track of the upper part of memory. 
+              the return of bitset.capacity() can only be slighly larger than bitset.size(), e.g: return capacity = wordCount() * sizeof(word) * 8;

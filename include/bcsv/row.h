@@ -456,7 +456,7 @@ namespace bcsv {
         // Observer callback for layout changes
         void onLayoutUpdate(const std::vector<Layout::Data::Change>& changes);
  
-        //Depreceated: we are going to remove this in the next future, when moving to Serializer/Deserializer classes, as the Row class should be only responsible for in-memory data management, not serialization details. But for now we keep it here for simplicity.
+        //Move offsets to Layout class, as they are directly tied to the layout and need to be updated on layout changes. Row will just reference them for data access.
         std::vector<uint32_t>       offsets_;              // offsets into data_ to access actual data for each column. Considers types alignment requirements.
         uint32_t                    offset_var_;           // offset into serilized buffer (wire), marking the beginning of variable-length section / size of the fixed section. Naive packed wire format (no alignment/padding).
  
