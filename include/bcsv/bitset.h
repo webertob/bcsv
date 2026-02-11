@@ -48,27 +48,27 @@ template<size_t N = dynamic_extent>
 class bitset {
     private:
         using word_t = std::uintptr_t;
-        static constexpr bool is_fixed = (N != dynamic_extent);
+        static constexpr bool IS_FIXED = (N != dynamic_extent);
         static constexpr size_t WORD_SIZE = sizeof(word_t);
         static constexpr size_t WORD_BITS = WORD_SIZE * 8;
 
-        static constexpr size_t bits_to_words(size_t bit_count) noexcept {
+        static constexpr size_t bitsToWords(size_t bit_count) noexcept {
             return (bit_count + WORD_BITS - 1) / WORD_BITS;
         }
 
         // Fixed-size: calculate word count at compile time
-        static constexpr size_t word_count_fixed = is_fixed ? bits_to_words(N) : 0;
+        static constexpr size_t WORD_COUNT_FIXED = IS_FIXED ? bitsToWords(N) : 0;
 
-        using storage_t = std::conditional_t<
-            is_fixed,
-            std::array<word_t, word_count_fixed>,
+        using StorageT = std::conditional_t<
+            IS_FIXED,
+            std::array<word_t, WORD_COUNT_FIXED>,
             std::uintptr_t>;
 
-        struct empty_size {};
+        struct EmptySize {};
 
         // Dynamic storage: exactly two members (size_ and data_)
-        [[no_unique_address]] std::conditional_t<is_fixed, empty_size, size_t> size_{};
-        [[no_unique_address]] storage_t data_{};
+        [[no_unique_address]] std::conditional_t<IS_FIXED, EmptySize, size_t> size_{};
+        [[no_unique_address]] StorageT data_{};
 
         // Friend declarations
         template<size_t M> friend class bitset;
@@ -77,19 +77,19 @@ class bitset {
         // =====================================================================
         // Helpers (static)
         // =====================================================================
-        static constexpr size_t bits_to_bytes(size_t bit_count) noexcept {
+        static constexpr size_t bitsToBytes(size_t bit_count) noexcept {
             return (bit_count + 7) / 8;
         }
 
-        static constexpr size_t bit_to_word_index(size_t bit_pos) noexcept {
+        static constexpr size_t bitToWordIndex(size_t bit_pos) noexcept {
             return bit_pos / WORD_BITS;
         }
 
-        static constexpr size_t bit_to_bit_index(size_t bit_pos) noexcept {
+        static constexpr size_t bitToBitIndex(size_t bit_pos) noexcept {
             return bit_pos % WORD_BITS;
         }
 
-        static constexpr word_t last_word_mask(size_t bit_count) noexcept {
+        static constexpr word_t lastWordMask(size_t bit_count) noexcept {
             const size_t bits_in_last = bit_count % WORD_BITS;
             if (bits_in_last == 0) {
                 return ~word_t{0};
@@ -100,18 +100,18 @@ class bitset {
         // =====================================================================
         // Helpers (instance)
         // =====================================================================
-        constexpr size_t word_count() const noexcept;
-        constexpr size_t byte_count() const noexcept;
-        constexpr void clear_unused_bits() noexcept;
-        constexpr void set_from_value(unsigned long long val) noexcept;
-        constexpr bool uses_inline() const noexcept;
-        constexpr word_t* word_data() noexcept;
-        constexpr const word_t* word_data() const noexcept;
-        void release_heap() noexcept;
-        void resize_storage(size_t old_size, size_t new_size, word_t value);
+        constexpr size_t wordCount() const noexcept;
+        constexpr size_t byteCount() const noexcept;
+        constexpr void clearUnusedBits() noexcept;
+        constexpr void setFromValue(unsigned long long val) noexcept;
+        constexpr bool usesInline() const noexcept;
+        constexpr word_t* wordData() noexcept;
+        constexpr const word_t* wordData() const noexcept;
+        void releaseHeap() noexcept;
+        void resizeStorage(size_t old_size, size_t new_size, word_t value);
 
         template<class CharT, class Traits, class Allocator>
-        void set_from_string(
+        void setFromString(
             const std::basic_string<CharT, Traits, Allocator>& str,
             typename std::basic_string<CharT, Traits, Allocator>::size_type pos,
             typename std::basic_string<CharT, Traits, Allocator>::size_type n,
@@ -135,8 +135,8 @@ class bitset {
             reference& flip();
 
         private:
-            word_t* word_ptr;
-            size_t bit_index;
+            word_t* word_ptr_;
+            size_t bit_index_;
         };
 
         class const_slice_view {
@@ -170,11 +170,11 @@ class bitset {
             size_t length_;
 
             struct slice_meta {
-                size_t start_word;
-                size_t start_bit;
-                size_t word_count;
-                size_t tail_bits;
-                word_t tail_mask;
+                size_t start_word_;
+                size_t start_bit_;
+                size_t word_count_;
+                size_t tail_bits_;
+                word_t tail_mask_;
             };
 
             slice_meta meta() const noexcept;
@@ -215,8 +215,8 @@ class bitset {
     // ===== Constructors and Assignment =====
     
     // Fixed-size constructors
-    constexpr bitset() noexcept requires(is_fixed);
-    constexpr bitset(unsigned long long val) noexcept requires(is_fixed);
+    constexpr bitset() noexcept requires(IS_FIXED);
+    constexpr bitset(unsigned long long val) noexcept requires(IS_FIXED);
     
     template<class CharT, class Traits, class Allocator>
     explicit bitset(
@@ -225,12 +225,12 @@ class bitset {
         typename std::basic_string<CharT, Traits, Allocator>::size_type n = 
             std::basic_string<CharT, Traits, Allocator>::npos,
         CharT zero = CharT('0'),
-        CharT one = CharT('1')) requires(is_fixed);
+        CharT one = CharT('1')) requires(IS_FIXED);
     
     // Dynamic-size constructors
-    explicit bitset(size_t num_bits = 0) requires(!is_fixed);
-    bitset(size_t num_bits, unsigned long long val) requires(!is_fixed);
-    bitset(size_t num_bits, bool value) requires(!is_fixed);
+    explicit bitset(size_t num_bits = 0) requires(!IS_FIXED);
+    bitset(size_t num_bits, unsigned long long val) requires(!IS_FIXED);
+    bitset(size_t num_bits, bool value) requires(!IS_FIXED);
     
     template<class CharT, class Traits, class Allocator>
     explicit bitset(
@@ -240,7 +240,7 @@ class bitset {
         typename std::basic_string<CharT, Traits, Allocator>::size_type n = 
             std::basic_string<CharT, Traits, Allocator>::npos,
         CharT zero = CharT('0'),
-        CharT one = CharT('1')) requires(!is_fixed);
+        CharT one = CharT('1')) requires(!IS_FIXED);
     
     bitset(const bitset& other);
     bitset(bitset&& other) noexcept;
@@ -250,7 +250,7 @@ class bitset {
     
     // Conversion: Fixed → Dynamic
     template<size_t M>
-    explicit bitset(const bitset<M>& other) requires(!is_fixed && M != dynamic_extent);
+    explicit bitset(const bitset<M>& other) requires(!IS_FIXED && M != dynamic_extent);
     
     // ===== Element Access =====
     // operator[] - Unchecked access (UB if out of bounds, debug assertion only)
@@ -286,11 +286,11 @@ class bitset {
     bitset& flip(size_t pos);  // Throws if pos >= size()
     
     // Dynamic-only modifiers
-    void clear() noexcept requires(!is_fixed);
-    void reserve(size_t bit_capacity) requires(!is_fixed);
-    void resize(size_t new_size, bool value = false) requires(!is_fixed);
-    void insert(size_t pos, bool value = false) requires(!is_fixed);  // Insert bit at pos, shifting subsequent bits right
-    void shrink_to_fit() requires(!is_fixed);
+    void clear() noexcept requires(!IS_FIXED);
+    void reserve(size_t bit_capacity) requires(!IS_FIXED);
+    void resize(size_t new_size, bool value = false) requires(!IS_FIXED);
+    void insert(size_t pos, bool value = false) requires(!IS_FIXED);  // Insert bit at pos, shifting subsequent bits right
+    void shrink_to_fit() requires(!IS_FIXED);
     
     // ===== Operations =====
     
@@ -312,7 +312,7 @@ class bitset {
     
     // Dynamic → Fixed conversion (with validation)
     template<size_t M>
-    bitset<M> to_fixed() const requires(!is_fixed);
+    bitset<M> to_fixed() const requires(!IS_FIXED);
     
     // ===== I/O and Binary Compatibility =====
     
