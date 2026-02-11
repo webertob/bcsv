@@ -107,14 +107,14 @@ The new unified bitset implementation successfully achieves all primary design g
 - ✅ Operations (count, any, all, none)
 - ✅ Bitwise operators (&, |, ^, ~)
 - ✅ Shift operators (<<, >>, word boundaries)
-- ✅ Conversions (to_ulong, to_ullong, to_string, overflow handling)
+- ✅ Conversions (toUlong, toUllong, toString, overflow handling)
 - ✅ I/O (data access, readFrom, writeTo)
 - ✅ Comparison (==, !=)
 - ✅ Stream I/O (operator<<, operator>>)
 
 #### **DynamicBitsetTest** (17 tests)
 - ✅ Construction (default, from value, from bool, from string, from fixed)
-- ✅ Dynamic operations (clear, reserve, shrink_to_fit)
+- ✅ Dynamic operations (clear, reserve, shrinkToFit)
 - ✅ Resize (grow, shrink, with value)
 - ✅ **Resize bug verification** (2 dedicated tests for partial word handling)
 - ✅ Conversions (dynamic → fixed with validation)
@@ -150,7 +150,7 @@ The new unified bitset implementation successfully achieves all primary design g
 - ✅ All accessors (operator[], test(), count(), any(), all(), none())
 - ✅ Masked queries (any(mask), all(mask))
 - ✅ All operators (bitwise &|^~, shift <<>>, comparison ==!=)
-- ✅ All conversions (to_ulong, to_ullong, to_string, to_fixed)
+- ✅ All conversions (toUlong, toUllong, toString, toFixed)
 - ✅ All I/O operations (data, readFrom, writeTo, streams)
 - ✅ Exception handling (out_of_range, overflow_error, invalid_argument)
 
@@ -187,7 +187,7 @@ The new unified bitset implementation successfully achieves all primary design g
 - Masked queries `any(mask)` and `all(mask)` truncate the mask to the left-hand bitset size; extra mask bits are ignored.
 - Dynamic bitwise compound ops (`&=`, `|=`, `^=`) truncate to the left-hand size and do not resize.
 - Slice views (`slice(start, length)`) are non-owning and operate directly on the underlying bitset.
-- `to_bitset()` and `shifted_left/right()` return compact dynamic bitsets for a slice (avoid full parent copies).
+- `toBitset()` and `shiftedLeft/Right()` return compact dynamic bitsets for a slice (avoid full parent copies).
 
 Slice API (non-owning views):
 ```cpp
@@ -435,7 +435,7 @@ void resize(size_t new_size, bool value = false) requires(!is_fixed);
 **Checked Operations** (throw exceptions):
 - `test(pos)` - std::out_of_range
 - `set(pos)`, `reset(pos)`, `flip(pos)` - std::out_of_range
-- `to_ulong()`, `to_ullong()` - std::overflow_error
+- `toUlong()`, `toUllong()` - std::overflow_error
 - `readFrom()`, `writeTo()` - std::out_of_range (buffer size)
 - String constructors - std::invalid_argument (invalid characters)
 
@@ -456,7 +456,7 @@ void resize(size_t new_size, bool value = false) requires(!is_fixed);
 - Heap storage: `std::vector<uint64_t>`
 - Overhead: 24 bytes (vector control block) + 8 bytes (bit_count_)
 - Capacity grows in word increments
-- Methods: reserve(), shrink_to_fit()
+- Methods: reserve(), shrinkToFit()
 
 ---
 
@@ -844,7 +844,7 @@ bitset& flip(size_t pos);             // Flip single (throws if OOB)
 void resize(size_t new_size, bool value=false);
 void reserve(size_t capacity);
 void clear();
-void shrink_to_fit();
+void shrinkToFit();
 
 // Operations
 size_t count() const;                 // Count set bits
@@ -862,9 +862,9 @@ bitset operator>>(size_t) const;        // Right shift
 bool operator==(const bitset&) const;   // Equality
 
 // Conversions
-unsigned long to_ulong() const;         // Throws std::overflow_error
-unsigned long long to_ullong() const;   // Throws std::overflow_error
-std::string to_string(char zero='0', char one='1') const;
+unsigned long toUlong() const;         // Throws std::overflow_error
+unsigned long long toUllong() const;   // Throws std::overflow_error
+std::string toString(char zero='0', char one='1') const;
 
 // I/O
 void readFrom(const void* src, size_t available);    // Throws std::out_of_range
@@ -876,7 +876,7 @@ const std::byte* data() const;
 size_t size() const;                  // Bit count
 size_t sizeBytes() const;             // Byte count (for I/O)
 bool empty() const;
-static constexpr bool is_fixed_size();
+static constexpr bool isFixedSize();
 ```
 
 ## Appendix D: Benchmark Infrastructure

@@ -10,7 +10,6 @@
 #pragma once
 
 #include <array>
-#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -31,203 +30,183 @@ inline constexpr size_t dynamic_extent = std::numeric_limits<size_t>::max();
  * 
  * This class provides a bitset that can be either:
  * - Fixed-size (compile-time): bitset<64> uses std::array, stack storage
- * - Dynamic-size (runtime): bitset<> or bitset<dynamic_extent> uses std::vector, heap storage
+ * - Dynamic-size (runtime): bitset<> or bitset<dynamic_extent> uses inline word or heap fallback
  * 
- * Storage uses platform-native word sizes (uint64_t on 64-bit, uint32_t on 32-bit) 
- * for optimal performance. STL containers provide proper alignment automatically.
+ * Storage uses platform-native word sizes (uintptr_t) for optimal performance.
+ * Inline storage is word-aligned.
  * 
  * @tparam N Number of bits (compile-time) or dynamic_extent for runtime size
  * 
  * Examples:
  * @code
  *   bitset<64> fixed;              // Fixed 64 bits, stack storage
- *   bitset<> dynamic(128);         // Dynamic 128 bits, heap storage
+ *   bitset<> dynamic(128);         // Dynamic 128 bits, inline/heap storage
  *   bitset<dynamic_extent> dyn;    // Explicit dynamic extent
  * @endcode
  */
 template<size_t N = dynamic_extent>
 class bitset {
-private:    
-#if defined(__x86_64__) || defined(_M_X64) || defined(__aarch64__) || defined(_M_ARM64)
-    using word_t = uint64_t;
-#elif defined(__arm__) || defined(_M_ARM) || defined(__i386__) || defined(_M_IX86)
-    using word_t = uint32_t;
-#else
-    // Conservative fallback for unknown platforms
-    using word_t = uint32_t;
-#endif
-
-    static constexpr size_t WORD_SIZE = sizeof(word_t);
-    static constexpr size_t WORD_BITS = WORD_SIZE * 8;
-
-    // Helper constants for fixed-size bitsets
-    static constexpr size_t bits_to_words(size_t bit_count) noexcept {
-        return (bit_count + WORD_BITS - 1) / WORD_BITS;
-    }
-
-    static constexpr size_t bits_to_bytes(size_t bit_count) noexcept {
-        return (bit_count + 7) / 8;
-    }
-
-    static constexpr size_t bit_to_word_index(size_t bit_pos) noexcept {
-        return bit_pos / WORD_BITS;
-    }
-
-    static constexpr size_t bit_to_bit_index(size_t bit_pos) noexcept {
-        return bit_pos % WORD_BITS;
-    }
-
-    static constexpr word_t last_word_mask(size_t bit_count) noexcept {
-        const size_t bits_in_last = bit_count % WORD_BITS;
-        if (bits_in_last == 0) {
-            return ~word_t{0};
-        }
-        return (word_t{1} << bits_in_last) - 1;
-    }
-
-    // Compile-time detection of fixed vs dynamic
-    static constexpr bool is_fixed = (N != dynamic_extent);
-
-    // For fixed-size: calculate word count at compile time
-    static constexpr size_t word_count_fixed = is_fixed ? bits_to_words(N) : 0;
-    
-    // Storage type selection: array for fixed, vector for dynamic
-    // Note: STL containers already provide proper alignment for storage_word_t
-    using storage_type = std::conditional_t<
-        is_fixed,
-        std::array<word_t, word_count_fixed>,
-        std::vector<word_t>
-    >;
-    
-    storage_type storage_;
-    
-    // Size storage: only for dynamic case, zero overhead for fixed case
-    struct empty_size {};
-    [[no_unique_address]] std::conditional_t<is_fixed, empty_size, size_t> bit_count_;
-    
-    // Friend declarations
-    template<size_t M> friend class bitset;
-    template<size_t M> friend bool operator==(const bitset<M>&, const bitset<M>&) noexcept;
-    
-    // Internal helpers
-    constexpr size_t word_count() const noexcept;
-    constexpr size_t byte_count() const noexcept;
-    constexpr void clear_unused_bits() noexcept;
-    constexpr void set_from_value(unsigned long long val) noexcept;
-    
-    template<class CharT, class Traits, class Allocator>
-    void set_from_string(
-        const std::basic_string<CharT, Traits, Allocator>& str,
-        typename std::basic_string<CharT, Traits, Allocator>::size_type pos,
-        typename std::basic_string<CharT, Traits, Allocator>::size_type n,
-        CharT zero, CharT one);
-    
-public:
-    /**
-     * @brief Proxy class for individual bit access
-     */
-    class reference {
     private:
-        word_t* word_ptr;
-        size_t bit_index;
-        
+        using word_t = std::uintptr_t;
+        static constexpr bool IS_FIXED = (N != dynamic_extent);
+        static constexpr size_t WORD_SIZE = sizeof(word_t);
+        static constexpr size_t WORD_BITS = WORD_SIZE * 8;
+
+        static constexpr size_t bitsToWords(size_t bit_count) noexcept {
+            return (bit_count + WORD_BITS - 1) / WORD_BITS;
+        }
+
+        // Fixed-size: calculate word count at compile time
+        static constexpr size_t WORD_COUNT_FIXED = IS_FIXED ? bitsToWords(N) : 0;
+
+        using StorageT = std::conditional_t<
+            IS_FIXED,
+            std::array<word_t, WORD_COUNT_FIXED>,
+            std::uintptr_t>;
+
+        struct EmptySize {};
+
+        // Dynamic storage: exactly two members (size_ and data_)
+        [[no_unique_address]] std::conditional_t<IS_FIXED, EmptySize, size_t> size_{};
+        [[no_unique_address]] StorageT data_{};
+
+        // Friend declarations
+        template<size_t M> friend class bitset;
+        template<size_t M> friend bool operator==(const bitset<M>&, const bitset<M>&) noexcept;
+
+        // =====================================================================
+        // Helpers (static)
+        // =====================================================================
+        static constexpr size_t bitsToBytes(size_t bit_count) noexcept {
+            return (bit_count + 7) / 8;
+        }
+
+        static constexpr size_t bitToWordIndex(size_t bit_pos) noexcept {
+            return bit_pos / WORD_BITS;
+        }
+
+        static constexpr size_t bitToBitIndex(size_t bit_pos) noexcept {
+            return bit_pos % WORD_BITS;
+        }
+
+        static constexpr word_t lastWordMask(size_t bit_count) noexcept {
+            const size_t bits_in_last = bit_count % WORD_BITS;
+            if (bits_in_last == 0) {
+                return ~word_t{0};
+            }
+            return (word_t{1} << bits_in_last) - 1;
+        }
+
+        // =====================================================================
+        // Helpers (instance)
+        // =====================================================================
+        constexpr size_t wordCount() const noexcept;
+        constexpr size_t byteCount() const noexcept;
+        constexpr void clearUnusedBits() noexcept;
+        constexpr void setFromValue(unsigned long long val) noexcept;
+        constexpr bool usesInline() const noexcept;
+        constexpr word_t* wordData() noexcept;
+        constexpr const word_t* wordData() const noexcept;
+        void releaseHeap() noexcept;
+        void resizeStorage(size_t old_size, size_t new_size, word_t value);
+
+        template<class CharT, class Traits, class Allocator>
+        void setFromString(
+            const std::basic_string<CharT, Traits, Allocator>& str,
+            typename std::basic_string<CharT, Traits, Allocator>::size_type pos,
+            typename std::basic_string<CharT, Traits, Allocator>::size_type n,
+            CharT zero, CharT one);
+
     public:
-        reference(word_t* ptr, size_t bit_idx);
-        
-        reference& operator=(bool value);
-        reference& operator=(const reference& other);
-        reference& operator|=(bool value);
-        reference& operator&=(bool value);
-        reference& operator^=(bool value);
-        operator bool() const;
-        bool operator~() const;
-        reference& flip();
-    };
+        // =====================================================================
+        // Reference and Slice Views
+        // =====================================================================
+        class reference {
+        public:
+            reference(word_t* ptr, size_t bit_idx);
 
-    /**
-     * @brief Read-only view into a contiguous range of bits
-     */
-    class const_slice_view {
-    public:
-        const_slice_view(const bitset* owner, size_t start, size_t length);
+            reference& operator=(bool value);
+            reference& operator=(const reference& other);
+            reference& operator|=(bool value);
+            reference& operator&=(bool value);
+            reference& operator^=(bool value);
+            operator bool() const;
+            bool operator~() const;
+            reference& flip();
 
-        size_t size() const noexcept;
-        bool empty() const noexcept;
-
-        bool operator[](size_t pos) const;
-        bool test(size_t pos) const;
-
-        bool all() const noexcept;
-        bool any() const noexcept;
-        bool none() const noexcept;
-        size_t count() const noexcept;
-
-        bool all(const bitset& mask) const noexcept;
-        bool any(const bitset& mask) const noexcept;
-
-        bitset operator<<(size_t shift_amount) const noexcept;
-        bitset operator>>(size_t shift_amount) const noexcept;
-
-        bitset<> to_bitset() const;
-        bitset<> shifted_left(size_t shift_amount) const;
-        bitset<> shifted_right(size_t shift_amount) const;
-
-    protected:
-        const bitset* owner_;
-        size_t start_;
-        size_t length_;
-
-        struct slice_meta {
-            size_t start_word;
-            size_t start_bit;
-            size_t word_count;
-            size_t tail_bits;
-            word_t tail_mask;
+        private:
+            word_t* word_ptr_;
+            size_t bit_index_;
         };
 
-        slice_meta meta() const noexcept;
-        word_t load_word(size_t index, const slice_meta& meta) const noexcept;
-    };
+        class const_slice_view {
+        public:
+            const_slice_view(const bitset* owner, size_t start, size_t length);
 
-    /**
-     * @brief Mutable view into a contiguous range of bits
-     */
-    class slice_view : public const_slice_view {
-    public:
-        slice_view(bitset* owner, size_t start, size_t length);
+            size_t size() const noexcept;
+            bool empty() const noexcept;
 
-        reference operator[](size_t pos);
+            bool operator[](size_t pos) const;
+            bool test(size_t pos) const;
 
-        slice_view& set() noexcept;
-        slice_view& set(size_t pos, bool val = true);
+            bool all() const noexcept;
+            bool any() const noexcept;
+            bool none() const noexcept;
+            size_t count() const noexcept;
 
-        slice_view& reset() noexcept;
-        slice_view& reset(size_t pos);
+            bool all(const bitset& mask) const noexcept;
+            bool any(const bitset& mask) const noexcept;
 
-        slice_view& flip() noexcept;
-        slice_view& flip(size_t pos);
+            bitset operator<<(size_t shift_amount) const noexcept;
+            bitset operator>>(size_t shift_amount) const noexcept;
 
-        slice_view& operator&=(const bitset& other) noexcept;
-        slice_view& operator|=(const bitset& other) noexcept;
-        slice_view& operator^=(const bitset& other) noexcept;
+            bitset<> toBitset() const;
+            bitset<> shiftedLeft(size_t shift_amount) const;
+            bitset<> shiftedRight(size_t shift_amount) const;
 
-        slice_view& operator&=(const const_slice_view& other) noexcept;
-        slice_view& operator|=(const const_slice_view& other) noexcept;
-        slice_view& operator^=(const const_slice_view& other) noexcept;
+        protected:
+            const bitset* owner_;
+            size_t start_;
+            size_t length_;
 
-        slice_view& operator<<=(size_t shift_amount) noexcept;
-        slice_view& operator>>=(size_t shift_amount) noexcept;
+            word_t loadWord(size_t index) const noexcept;
+        };
 
-    private:
-        using slice_meta = typename const_slice_view::slice_meta;
-        void store_word(size_t index, word_t value, word_t slice_mask, const slice_meta& meta) noexcept;
-    };
+        class slice_view : public const_slice_view {
+        public:
+            slice_view(bitset* owner, size_t start, size_t length);
+
+            reference operator[](size_t pos);
+
+            slice_view& set() noexcept;
+            slice_view& set(size_t pos, bool val = true);
+
+            slice_view& reset() noexcept;
+            slice_view& reset(size_t pos);
+
+            slice_view& flip() noexcept;
+            slice_view& flip(size_t pos);
+
+            slice_view& operator&=(const bitset& other) noexcept;
+            slice_view& operator|=(const bitset& other) noexcept;
+            slice_view& operator^=(const bitset& other) noexcept;
+
+            slice_view& operator&=(const const_slice_view& other) noexcept;
+            slice_view& operator|=(const const_slice_view& other) noexcept;
+            slice_view& operator^=(const const_slice_view& other) noexcept;
+
+            slice_view& operator<<=(size_t shift_amount) noexcept;
+            slice_view& operator>>=(size_t shift_amount) noexcept;
+
+        private:
+            void storeWord(size_t index, word_t value, word_t slice_mask) noexcept;
+        };
     
     // ===== Constructors and Assignment =====
     
     // Fixed-size constructors
-    constexpr bitset() noexcept requires(is_fixed);
-    constexpr bitset(unsigned long long val) noexcept requires(is_fixed);
+    constexpr bitset() noexcept requires(IS_FIXED);
+    constexpr bitset(unsigned long long val) noexcept requires(IS_FIXED);
     
     template<class CharT, class Traits, class Allocator>
     explicit bitset(
@@ -236,12 +215,12 @@ public:
         typename std::basic_string<CharT, Traits, Allocator>::size_type n = 
             std::basic_string<CharT, Traits, Allocator>::npos,
         CharT zero = CharT('0'),
-        CharT one = CharT('1')) requires(is_fixed);
+        CharT one = CharT('1')) requires(IS_FIXED);
     
     // Dynamic-size constructors
-    explicit bitset(size_t num_bits = 0) requires(!is_fixed);
-    bitset(size_t num_bits, unsigned long long val) requires(!is_fixed);
-    bitset(size_t num_bits, bool value) requires(!is_fixed);
+    explicit bitset(size_t num_bits = 0) requires(!IS_FIXED);
+    bitset(size_t num_bits, unsigned long long val) requires(!IS_FIXED);
+    bitset(size_t num_bits, bool value) requires(!IS_FIXED);
     
     template<class CharT, class Traits, class Allocator>
     explicit bitset(
@@ -251,17 +230,17 @@ public:
         typename std::basic_string<CharT, Traits, Allocator>::size_type n = 
             std::basic_string<CharT, Traits, Allocator>::npos,
         CharT zero = CharT('0'),
-        CharT one = CharT('1')) requires(!is_fixed);
+        CharT one = CharT('1')) requires(!IS_FIXED);
     
-    // Copy/move (compiler-generated)
-    bitset(const bitset&) = default;
-    bitset(bitset&&) noexcept = default;
-    bitset& operator=(const bitset&) = default;
-    bitset& operator=(bitset&&) noexcept = default;
+    bitset(const bitset& other);
+    bitset(bitset&& other) noexcept;
+    bitset& operator=(const bitset& other);
+    bitset& operator=(bitset&& other) noexcept;
+    ~bitset();
     
     // Conversion: Fixed → Dynamic
     template<size_t M>
-    explicit bitset(const bitset<M>& other) requires(!is_fixed && M != dynamic_extent);
+    explicit bitset(const bitset<M>& other) requires(!IS_FIXED && M != dynamic_extent);
     
     // ===== Element Access =====
     // operator[] - Unchecked access (UB if out of bounds, debug assertion only)
@@ -276,7 +255,8 @@ public:
     constexpr size_t size() const noexcept;
     constexpr size_t sizeBytes() const noexcept;
     constexpr bool empty() const noexcept;
-    static constexpr bool is_fixed_size() noexcept;
+    constexpr size_t capacity() const noexcept;
+    static constexpr bool isFixedSize() noexcept;
 
     // ===== Views =====
     // Throws std::out_of_range if the range exceeds the bitset size.
@@ -296,11 +276,11 @@ public:
     bitset& flip(size_t pos);  // Throws if pos >= size()
     
     // Dynamic-only modifiers
-    void clear() noexcept requires(!is_fixed);
-    void reserve(size_t bit_capacity) requires(!is_fixed);
-    void resize(size_t new_size, bool value = false) requires(!is_fixed);
-    void insert(size_t pos, bool value = false) requires(!is_fixed);  // Insert bit at pos, shifting subsequent bits right
-    void shrink_to_fit() requires(!is_fixed);
+    void clear() noexcept requires(!IS_FIXED);
+    void reserve(size_t bit_capacity) requires(!IS_FIXED);
+    void resize(size_t new_size, bool value = false) requires(!IS_FIXED);
+    void insert(size_t pos, bool value = false) requires(!IS_FIXED);  // Insert bit at pos, shifting subsequent bits right
+    void shrinkToFit() requires(!IS_FIXED);
     
     // ===== Operations =====
     
@@ -316,13 +296,13 @@ public:
     
     // ===== Conversions =====
     
-    unsigned long to_ulong() const;
-    unsigned long long to_ullong() const;
-    std::string to_string(char zero = '0', char one = '1') const;
+    unsigned long toUlong() const;
+    unsigned long long toUllong() const;
+    std::string toString(char zero = '0', char one = '1') const;
     
     // Dynamic → Fixed conversion (with validation)
     template<size_t M>
-    bitset<M> to_fixed() const requires(!is_fixed);
+    bitset<M> toFixed() const requires(!IS_FIXED);
     
     // ===== I/O and Binary Compatibility =====
     

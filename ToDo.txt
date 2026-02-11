@@ -157,11 +157,14 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
         - compare against: https://github.com/vincentlaucsb/csv-parser
 
 Samstag
+Samstag
 11. Update Tools and Libraries to use new API
     update and test CLI to use new API tools-tools
     update and test python libraries
     update and test C# (Unity)
 
+Sonntag API freez
+Sonntag: Switch Gears Dr
 Sonntag API freez
 Sonntag: Switch Gears Dr
 13. Implement new row encoding schema, using variable length encoding for float and integer values
