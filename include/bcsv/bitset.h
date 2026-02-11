@@ -10,14 +10,12 @@
 #pragma once
 
 #include <array>
-#include <vector>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <string>
 #include <limits>
 #include <algorithm>
-#include <utility>
 #include <ostream>
 #include <istream>
 #include <cassert>
@@ -27,15 +25,40 @@ namespace bcsv {
 // Sentinel value for dynamic extent (like std::dynamic_extent for std::span)
 inline constexpr size_t dynamic_extent = std::numeric_limits<size_t>::max();
 
+namespace detail {
+    using bitset_word_t = std::uintptr_t;
+    static constexpr size_t bitset_word_bits = sizeof(bitset_word_t) * 8;
+
+    static constexpr size_t bitset_bits_to_words(size_t bit_count) noexcept {
+        return (bit_count + bitset_word_bits - 1) / bitset_word_bits;
+    }
+
+    template<size_t N, bool Fixed, typename WordT = bitset_word_t>
+    struct bitset_storage_base;
+
+    template<size_t N, typename WordT>
+    struct bitset_storage_base<N, true, WordT> {
+        constexpr bitset_storage_base() : storage_{} {}
+
+    protected:
+        std::array<WordT, bitset_bits_to_words(N)> storage_;
+    };
+
+    template<size_t N, typename WordT>
+    struct bitset_storage_base<N, false, WordT> {
+        constexpr bitset_storage_base() noexcept = default;
+    };
+} // namespace detail
+
 /**
  * @brief Unified bitset implementation supporting both compile-time and runtime sizes
  * 
  * This class provides a bitset that can be either:
  * - Fixed-size (compile-time): bitset<64> uses std::array, stack storage
- * - Dynamic-size (runtime): bitset<> or bitset<dynamic_extent> uses inline words with heap fallback
+ * - Dynamic-size (runtime): bitset<> or bitset<dynamic_extent> uses inline word or heap fallback
  * 
- * Storage uses platform-native word sizes (uint64_t on 64-bit, uint32_t on 32-bit)
- * for optimal performance. Inline storage is word-aligned.
+ * Storage uses platform-native word sizes (uintptr_t) for optimal performance.
+ * Inline storage is word-aligned.
  * 
  * @tparam N Number of bits (compile-time) or dynamic_extent for runtime size
  * 
@@ -47,19 +70,12 @@ inline constexpr size_t dynamic_extent = std::numeric_limits<size_t>::max();
  * @endcode
  */
 template<size_t N = dynamic_extent>
-class bitset {
+class bitset : private detail::bitset_storage_base<N, (N != dynamic_extent)> {
 private:    
-#if defined(__x86_64__) || defined(_M_X64) || defined(__aarch64__) || defined(_M_ARM64)
-    using word_t = uint64_t;
-#elif defined(__arm__) || defined(_M_ARM) || defined(__i386__) || defined(_M_IX86)
-    using word_t = uint32_t;
-#else
-    // Conservative fallback for unknown platforms
-    using word_t = uint32_t;
-#endif
+    using word_t = detail::bitset_word_t;
 
     static constexpr size_t WORD_SIZE = sizeof(word_t);
-    static constexpr size_t WORD_BITS = WORD_SIZE * 8;
+    static constexpr size_t WORD_BITS = detail::bitset_word_bits;
 
     // Helper constants for fixed-size bitsets
     static constexpr size_t bits_to_words(size_t bit_count) noexcept {
@@ -92,220 +108,27 @@ private:
     // For fixed-size: calculate word count at compile time
     static constexpr size_t word_count_fixed = is_fixed ? bits_to_words(N) : 0;
 
-    class dynamic_storage {
-    public:
-        static constexpr uint32_t inline_words = 2;
+    struct empty_size {};
 
-        dynamic_storage() noexcept
-            : data_(inline_data_)
-            , size_bits_(0)
-            , size_words_(0)
-            , capacity_words_(inline_words) {}
+    // Dynamic storage: exactly two members (size_ and data_)
+    [[no_unique_address]] std::conditional_t<is_fixed, empty_size, size_t> size_;
+    [[no_unique_address]] std::conditional_t<is_fixed, empty_size, std::uintptr_t> data_;
 
-        dynamic_storage(const dynamic_storage& other) {
-            copy_from(other);
-        }
-
-        dynamic_storage& operator=(const dynamic_storage& other) {
-            if (this != &other) {
-                release_heap();
-                copy_from(other);
-            }
-            return *this;
-        }
-
-        dynamic_storage(dynamic_storage&& other) noexcept {
-            move_from(std::move(other));
-        }
-
-        dynamic_storage& operator=(dynamic_storage&& other) noexcept {
-            if (this != &other) {
-                release_heap();
-                move_from(std::move(other));
-            }
-            return *this;
-        }
-
-        ~dynamic_storage() {
-            release_heap();
-        }
-
-        constexpr size_t size() const noexcept {
-            return size_words_;
-        }
-
-        constexpr word_t* data() noexcept {
-            return data_;
-        }
-
-        constexpr const word_t* data() const noexcept {
-            return data_;
-        }
-
-        constexpr word_t& operator[](size_t index) noexcept {
-            return data_[index];
-        }
-
-        constexpr const word_t& operator[](size_t index) const noexcept {
-            return data_[index];
-        }
-
-        constexpr size_t bit_count() const noexcept {
-            return size_bits_;
-        }
-
-        void set_bit_count(size_t bits) noexcept {
-            size_bits_ = bits;
-        }
-
-        void clear() noexcept {
-            size_bits_ = 0;
-            size_words_ = 0;
-        }
-
-        void reserve(size_t word_capacity) {
-            if (word_capacity <= capacity()) {
-                return;
-            }
-            allocate_heap(word_capacity);
-        }
-
-        void resize(size_t word_count, word_t value) {
-            if (word_count > size_words_) {
-                ensure_capacity(word_count);
-                for (size_t i = size_words_; i < word_count; ++i) {
-                    data_[i] = value;
-                }
-            }
-            size_words_ = static_cast<uint32_t>(word_count);
-        }
-
-        void shrink_to_fit() {
-            if (using_inline()) {
-                return;
-            }
-            if (size_words_ <= inline_words) {
-                if (size_words_ > 0) {
-                    std::memcpy(inline_data_, data_, size_words_ * sizeof(word_t));
-                }
-                delete[] data_;
-                reset_inline();
-                return;
-            }
-            if (size_words_ < capacity_words_) {
-                word_t* new_data = new word_t[size_words_];
-                std::memcpy(new_data, data_, size_words_ * sizeof(word_t));
-                delete[] data_;
-                data_ = new_data;
-                capacity_words_ = size_words_;
-            }
-        }
-
-    private:
-        constexpr bool using_inline() const noexcept {
-            return data_ == inline_data_;
-        }
-
-        constexpr size_t capacity() const noexcept {
-            return using_inline() ? inline_words : capacity_words_;
-        }
-
-        void reset_inline() noexcept {
-            data_ = inline_data_;
-            capacity_words_ = inline_words;
-        }
-
-        void release_heap() noexcept {
-            if (!using_inline()) {
-                delete[] data_;
-                reset_inline();
-            }
-        }
-
-        void ensure_capacity(size_t word_capacity) {
-            if (word_capacity <= capacity()) {
-                return;
-            }
-            allocate_heap(word_capacity);
-        }
-
-        void allocate_heap(size_t word_capacity) {
-            if (word_capacity <= inline_words) {
-                return;
-            }
-            word_t* new_data = new word_t[word_capacity];
-            if (size_words_ > 0) {
-                std::memcpy(new_data, data_, size_words_ * sizeof(word_t));
-            }
-            if (!using_inline()) {
-                delete[] data_;
-            }
-            data_ = new_data;
-            capacity_words_ = static_cast<uint32_t>(word_capacity);
-        }
-
-        void copy_from(const dynamic_storage& other) {
-            size_bits_ = other.size_bits_;
-            size_words_ = other.size_words_;
-
-            if (size_words_ <= inline_words) {
-                reset_inline();
-                if (size_words_ > 0) {
-                    std::memcpy(inline_data_, other.data_, size_words_ * sizeof(word_t));
-                }
-                return;
-            }
-
-            data_ = new word_t[size_words_];
-            capacity_words_ = size_words_;
-            std::memcpy(data_, other.data_, size_words_ * sizeof(word_t));
-        }
-
-        void move_from(dynamic_storage&& other) noexcept {
-            size_bits_ = other.size_bits_;
-            size_words_ = other.size_words_;
-            capacity_words_ = other.capacity_words_;
-
-            if (other.using_inline()) {
-                reset_inline();
-                if (size_words_ > 0) {
-                    std::memcpy(inline_data_, other.inline_data_, size_words_ * sizeof(word_t));
-                }
-            } else {
-                data_ = other.data_;
-                other.reset_inline();
-            }
-
-            other.size_bits_ = 0;
-            other.size_words_ = 0;
-        }
-
-        alignas(word_t) word_t inline_data_[inline_words]{};
-        word_t* data_;
-        size_t size_bits_;
-        uint32_t size_words_;
-        uint32_t capacity_words_;
-    };
-    
-    // Storage type selection: array for fixed, small-buffer for dynamic
-    // Note: STL containers already provide proper alignment for storage_word_t
-    using storage_type = std::conditional_t<
-        is_fixed,
-        std::array<word_t, word_count_fixed>,
-        dynamic_storage
-    >;
-    
-    storage_type storage_;
-    
     // Friend declarations
     template<size_t M> friend class bitset;
     template<size_t M> friend bool operator==(const bitset<M>&, const bitset<M>&) noexcept;
     
     // Internal helpers
     constexpr size_t word_count() const noexcept;
+    constexpr size_t wordCount() const noexcept;
     constexpr size_t byte_count() const noexcept;
     constexpr void clear_unused_bits() noexcept;
     constexpr void set_from_value(unsigned long long val) noexcept;
+    constexpr bool uses_inline() const noexcept;
+    constexpr word_t* word_data() noexcept;
+    constexpr const word_t* word_data() const noexcept;
+    void release_heap() noexcept;
+    void resize_storage(size_t old_size, size_t new_size, word_t value);
     
     template<class CharT, class Traits, class Allocator>
     void set_from_string(
@@ -445,11 +268,11 @@ public:
         CharT zero = CharT('0'),
         CharT one = CharT('1')) requires(!is_fixed);
     
-    // Copy/move (compiler-generated)
-    bitset(const bitset&) = default;
-    bitset(bitset&&) noexcept = default;
-    bitset& operator=(const bitset&) = default;
-    bitset& operator=(bitset&&) noexcept = default;
+    bitset(const bitset& other);
+    bitset(bitset&& other) noexcept;
+    bitset& operator=(const bitset& other);
+    bitset& operator=(bitset&& other) noexcept;
+    ~bitset();
     
     // Conversion: Fixed → Dynamic
     template<size_t M>
@@ -468,6 +291,7 @@ public:
     constexpr size_t size() const noexcept;
     constexpr size_t sizeBytes() const noexcept;
     constexpr bool empty() const noexcept;
+    constexpr size_t capacity() const noexcept;
     static constexpr bool is_fixed_size() noexcept;
 
     // ===== Views =====
