@@ -24,6 +24,7 @@
 #include <iostream>
 #include <sstream>
 #include <iomanip>
+#include <limits>
 
 using namespace bcsv;
 
@@ -343,6 +344,135 @@ void example_json_output() {
 }
 
 // ============================================================================
+// Example 9: Typed visit<T>() — Compile-Time Dispatch
+// ============================================================================
+
+void example_typed_visit() {
+    std::cout << "\n=== Example 9: Typed visit<T>() — Compile-Time Dispatch ===\n";
+
+    // Layout with 5 consecutive double columns (homogeneous block)
+    Layout layout({
+        {"temp_1", ColumnType::DOUBLE},
+        {"temp_2", ColumnType::DOUBLE},
+        {"temp_3", ColumnType::DOUBLE},
+        {"temp_4", ColumnType::DOUBLE},
+        {"temp_5", ColumnType::DOUBLE}
+    });
+
+    Row row(layout);
+    // Set initial temperatures
+    for (size_t i = 0; i < 5; ++i)
+        row.set<double>(i, 20.0 + i * 0.5);
+
+    // Read all temperatures with visitConst<T>() — no runtime type switch
+    double sum = 0;
+    double minVal = std::numeric_limits<double>::max();
+    double maxVal = std::numeric_limits<double>::lowest();
+
+    row.visitConst<double>(0, [&](size_t col, const double& temp) {
+        sum += temp;
+        minVal = std::min(minVal, temp);
+        maxVal = std::max(maxVal, temp);
+        std::cout << "  " << layout.columnName(col) << " = " << temp << " °C\n";
+    }, 5);
+
+    std::cout << "  Mean: " << (sum / 5.0) << " °C, Range: [" << minVal << ", " << maxVal << "]\n";
+
+    // Scale all temperatures with visit<T>() and change tracking
+    row.visit<double>(0, [](size_t, double& temp, bool& changed) {
+        temp = temp * 1.8 + 32.0;  // Convert to Fahrenheit
+        changed = true;
+    }, 5);
+
+    std::cout << "  After C→F conversion:\n";
+    row.visitConst<double>(0, [&](size_t col, const double& temp) {
+        std::cout << "    " << layout.columnName(col) << " = " << temp << " °F\n";
+    }, 5);
+}
+
+// ============================================================================
+// Example 10: Typed visit<T>() — 2-param Visitor (auto-tracks changes)
+// ============================================================================
+
+void example_typed_visit_2param() {
+    std::cout << "\n=== Example 10: Typed visit<T>() — 2-Param Visitor ===\n";
+
+    Layout layout({
+        {"x", ColumnType::INT32},
+        {"y", ColumnType::INT32},
+        {"z", ColumnType::INT32}
+    });
+
+    RowTracking row(layout);
+    row.set<int32_t>(0, 10);
+    row.set<int32_t>(1, 20);
+    row.set<int32_t>(2, 30);
+    row.changes().reset();  // Clear change flags
+
+    // 2-param visitor: all visited columns automatically marked changed
+    row.visit<int32_t>(0, [](size_t, int32_t& val) {
+        val += 100;
+    }, 3);
+
+    std::cout << "  After adding 100 to all columns:\n";
+    row.visitConst<int32_t>(0, [&](size_t col, const int32_t& val) {
+        std::cout << "    " << layout.columnName(col) << " = " << val
+                  << " (changed: " << row.changes()[col] << ")\n";
+    }, 3);
+}
+
+// ============================================================================
+// Example 11: RowView visit<T>() — Zero-Copy Buffer Access
+// ============================================================================
+
+void example_rowview_typed_visit() {
+    std::cout << "\n=== Example 11: RowView visit<T>() — Zero-Copy Buffer Access ===\n";
+
+    Layout layout({
+        {"ch0", ColumnType::DOUBLE},
+        {"ch1", ColumnType::DOUBLE},
+        {"ch2", ColumnType::DOUBLE},
+        {"name", ColumnType::STRING}
+    });
+
+    // Create and populate a Row, then serialize
+    Row row(layout);
+    row.set(0, 100.0);
+    row.set(1, 200.0);
+    row.set(2, 300.0);
+    row.set(3, std::string("sensor_A"));
+
+    ByteBuffer buf;
+    auto serialized = row.serializeTo(buf);
+
+    // Create a zero-copy RowView into the serialized buffer
+    RowView rv(layout, std::span<std::byte>(serialized));
+
+    // Read doubles with visitConst<T>() — no runtime switch, zero-copy
+    double sum = 0;
+    rv.visitConst<double>(0, [&](size_t col, const double& val) {
+        std::cout << "  " << layout.columnName(col) << " = " << val << "\n";
+        sum += val;
+    }, 3);
+    std::cout << "  Sum: " << sum << "\n";
+
+    // Read string with visitConst<string_view>() — zero-copy into buffer
+    rv.visitConst<std::string_view>(3, [&](size_t col, const std::string_view& sv) {
+        std::cout << "  " << layout.columnName(col) << " = \"" << sv << "\"\n";
+    }, 1);
+
+    // Modify doubles in-place (directly in the serialized buffer)
+    rv.visit<double>(0, [](size_t, double& val) {
+        val *= 2.0;
+    }, 3);
+
+    std::cout << "  After 2x scaling:\n";
+    rv.visitConst<double>(0, [&](size_t col, const double& val) {
+        std::cout << "    " << layout.columnName(col) << " = " << val << "\n";
+    }, 3);
+}
+
+// ============================================================================
 // Main
 // ============================================================================
 
@@ -359,6 +489,9 @@ int main() {
         example_conditional();
         example_validation();
         example_json_output();
+        example_typed_visit();
+        example_typed_visit_2param();
+        example_rowview_typed_visit();
         
         std::cout << "\n✓ All examples completed successfully!\n";
         return 0;

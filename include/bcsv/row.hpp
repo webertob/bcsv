@@ -36,61 +36,12 @@ namespace bcsv {
     // Row Implementation
     // ========================================================================
 
-    // Helper: Construct default value at memory location based on ColumnType
-    inline void constructDefaultAt(std::byte* ptr, ColumnType type) {
-        switch (type) {
-            case ColumnType::BOOL:
-                new (ptr) bool(defaultValueT<bool>());
-                break;
-            case ColumnType::UINT8:
-                new (ptr) uint8_t(defaultValueT<uint8_t>());
-                break;
-            case ColumnType::UINT16:
-                new (ptr) uint16_t(defaultValueT<uint16_t>());
-                break;
-            case ColumnType::UINT32:
-                new (ptr) uint32_t(defaultValueT<uint32_t>());
-                break;
-            case ColumnType::UINT64:
-                new (ptr) uint64_t(defaultValueT<uint64_t>());
-                break;
-            case ColumnType::INT8:
-                new (ptr) int8_t(defaultValueT<int8_t>());
-                break;
-            case ColumnType::INT16:
-                new (ptr) int16_t(defaultValueT<int16_t>());
-                break;
-            case ColumnType::INT32:
-                new (ptr) int32_t(defaultValueT<int32_t>());
-                break;
-            case ColumnType::INT64:
-                new (ptr) int64_t(defaultValueT<int64_t>());
-                break;
-            case ColumnType::FLOAT:
-                new (ptr) float(defaultValueT<float>());
-                break;
-            case ColumnType::DOUBLE:
-                new (ptr) double(defaultValueT<double>());
-                break;
-            case ColumnType::STRING:
-                new (ptr) std::string(defaultValueT<std::string>());
-                break;
-            default: [[unlikely]]
-                throw std::runtime_error("Unknown column type");
-        }
-    }
-
-
-
     template<TrackingPolicy Policy>
     inline RowImpl<Policy>::RowImpl(const Layout& layout)
         : layout_(layout)
+        , bits_(0)
         , data_()
-        , ptr_(layout.columnCount(), nullptr)
-        , changes_(0)
-        // deprceated:
-        , offsets_()
-        , offset_var_(0)
+        , strg_()
     {
         // Register as observer for layout changes
         layout_.registerCallback(this, {
@@ -98,66 +49,47 @@ namespace bcsv {
             }
         );
 
-        size_t columnCount = layout_.columnCount();
+        const size_t colCount = layout_.columnCount();
 
-        // Build row's internal data structures based on layout
-        // Calculate offsets considering alignment requirements
-        uint32_t offset = 0;
-        std::vector<uint32_t> offsets(columnCount);
-        for(size_t i = 0; i < columnCount; ++i) {
-            ColumnType type  = layout_.columnType(i);
-            size_t alignment = alignOf(type);
-            // align offset to match type's alignment requirement
-            // Assumes alignment is a power of 2, which is true for all standard types
-            offset = (offset + (alignment - 1)) & ~(alignment - 1);
-            offsets[i] = offset;
-            offset += sizeOf(type); //advance offset for next column
-        }
-
-        // construct all types within data_ using their default values
-        data_.resize(offset);
-        for(size_t i = 0; i < columnCount; ++i) {
-            ptr_[i] = &data_[offsets[i]];
-            constructDefaultAt(ptr_[i], layout_.columnType(i));
-        }        
-        if constexpr (isTrackingEnabled(Policy)) {
-            changes_.resize(columnCount, true);
-        }
-
-        // deprecated offsets_ - convert vector<size_t> to vector<uint32_t>
-        offsets_ = std::move(offsets);
-        offset_var_ = 0; // start of variable section (string content), within flat binary buffer
-        for(size_t i = 0; i < columnCount; ++i) {
+        // Count bool and string columns to size bits_ and strg_
+        size_t boolCount = 0;
+        size_t strgCount = 0;
+        uint32_t dataSize = 0;
+        for (size_t i = 0; i < colCount; ++i) {
             ColumnType type = layout_.columnType(i);
-            offset_var_ += wireSizeOf(type);
+            if (type == ColumnType::BOOL)   ++boolCount;
+            else if (type == ColumnType::STRING) ++strgCount;
+        }
+
+        // Compute dataSize from layout offsets (last scalar offset + its size, or iterate)
+        // Use the static helper to get the total data_ size
+        {
+            std::vector<uint32_t> tmpOffsets;
+            Layout::Data::computeOffsets(layout_.columnTypes(), tmpOffsets, dataSize);
+            // offsets should match layout's offsets (they were computed from the same types)
+        }
+
+        // Initialize storage
+        data_.resize(dataSize);  // zero-initialized = scalar defaults (0 for all arithmetic types)
+        strg_.resize(strgCount); // default-constructed empty strings
+
+        if constexpr (isTrackingEnabled(Policy)) {
+            bits_.resize(colCount);
+            bits_.reset(); // all bits 0 (bools = false)
+            // Mark non-BOOL columns as changed (so first ZoH serialize includes all values)
+            bits_ |= layout_.trackedMask();
+        } else {
+            bits_.resize(boolCount, false);  // just bool values, default false
         }
     }
 
     template<TrackingPolicy Policy>
     inline RowImpl<Policy>::RowImpl(const RowImpl& other)
         : layout_(other.layout_)  // Share layout (shallow copy of shared_ptr inside)
-        , data_(other.data_) // Allocate our own data buffer
-        , ptr_(other.ptr_.size(), nullptr) // We will set up our own pointers
-        , changes_(other.changes_)
-        // deprceated:
-        , offsets_(other.offsets_)
-        , offset_var_(other.offset_var_)
+        , bits_(other.bits_)
+        , data_(other.data_)      // trivial byte copy (no string objects inside!)
+        , strg_(other.strg_)      // vector copy handles deep string copies automatically
     {
-        // update our pointers, as they point into our own data buffer, not other's
-        size_t columnCount = layout_.columnCount();
-        for(size_t i = 0; i < columnCount; ++i) {
-            size_t offset = other.ptr_[i] - other.data_.data();
-            assert(offset < data_.size() && "Row copy constructor: calculated offset should be within our data_ buffer");
-            ptr_[i] = data_.data() + offset;
-        }
-
-        // deep copy strings, as they manage their own memory and we want independent rows
-        for(size_t i = 0; i < columnCount; ++i) {
-            if(layout_.columnType(i) == ColumnType::STRING) {
-                new (ptr_[i]) std::string(*reinterpret_cast<const std::string*>(other.ptr_[i])); // placement new with copy constructor
-            }
-        }
-
         // Register as observer for layout changes (independent from 'other')
         layout_.registerCallback(this, {
                [this](const std::vector<Layout::Data::Change>& changes) { onLayoutUpdate(changes); }
@@ -168,12 +100,9 @@ namespace bcsv {
     template<TrackingPolicy Policy>
     inline RowImpl<Policy>::RowImpl(RowImpl&& other) noexcept
         : layout_(other.layout_)
-        , data_(std::move(other.data_))     // ✓ Transfers heap buffer ownership -> zero-copy move, data stays in place
-        , ptr_(std::move(other.ptr_))       // ✓ Pointers remain valid!
-        , changes_(std::move(other.changes_))
-        // deprceated:
-        , offsets_(std::move(other.offsets_))
-        , offset_var_(other.offset_var_)
+        , bits_(std::move(other.bits_))
+        , data_(std::move(other.data_))
+        , strg_(std::move(other.strg_))
     {
         layout_.registerCallback(this, {
             [this](const std::vector<Layout::Data::Change>& changes) { onLayoutUpdate(changes); }
@@ -185,32 +114,45 @@ namespace bcsv {
     {
         // Unregister from layout callbacks
         layout_.unregisterCallback(this);
-
-        if(ptr_.empty()) {
-            return; // Nothing to clean up
-        }
-
-        // Ensure pointer are still valid and point into our data buffer (they should, as we moved the vector which owns the buffer)
-        size_t columnCount = layout_.columnCount();
-        for(size_t i = 0; i < columnCount; ++i) {
-            auto type = layout_.columnType(i);
-            if(type == ColumnType::STRING) {
-                // Manually call destructor for string, as it manages its own memory
-                reinterpret_cast<std::string*>(ptr_[i])->~string();
-            }
-        }
+        // No manual cleanup needed — strg_ vector handles string destruction,
+        // data_ handles byte buffer, bits_ handles bitset.
     }
 
     /** Clear the row to its default state (default values) */
     template<TrackingPolicy Policy>
     inline void RowImpl<Policy>::clear()
-    {        
-        // Use visitor to set all columns to their default values
-        visit([](size_t, auto& value, bool&) {
-            using T = std::decay_t<decltype(value)>;
-            value = defaultValueT<T>();
-        });
-        // Visitor marks all as changed, which is correct for clear()
+    {
+        // Zero all scalar data
+        std::memset(data_.data(), 0, data_.size());
+
+        // Clear all strings
+        for (auto& s : strg_) {
+            s.clear();
+        }
+
+        // Reset all bits (bools = false, change flags = cleared)
+        bits_.reset();
+
+        // For tracking: mark all non-BOOL columns as changed
+        if constexpr (isTrackingEnabled(Policy)) {
+            bits_ |= layout_.trackedMask();
+        }
+    }
+
+    template<TrackingPolicy Policy>
+    inline void RowImpl<Policy>::setChanges() noexcept {
+        if constexpr (isTrackingEnabled(Policy)) {
+            // Set all change flags (non-BOOL). BOOL value bits are preserved.
+            bits_ |= layout_.trackedMask();
+        }
+    }
+
+    template<TrackingPolicy Policy>
+    inline void RowImpl<Policy>::resetChanges() noexcept {
+        if constexpr (isTrackingEnabled(Policy)) {
+            // Clear all change flags (non-BOOL). BOOL value bits are preserved.
+            bits_ &= layout_.boolMask();
+        }
     }
 
     // =========================================================================
@@ -225,20 +167,34 @@ namespace bcsv {
         } else {
             assert(index < layout_.columnCount() && "Row::get(index): Index out of bounds");
         }
-        auto ptr = ptr_[index];
-        assert( (ptr - data_.data() + sizeOf(layout_.columnType(index)) <= data_.size()) && "Row::get(index): ptr_ should point into data_ buffer");
-        return ptr;
+        ColumnType type = layout_.columnType(index);
+        uint32_t offset = layout_.columnOffset(index);
+        if (type == ColumnType::BOOL) {
+            // WARNING: Returns pointer to thread-local storage. The pointer is only valid until
+            // the next get(size_t) call for a BOOL column on the same thread. Two consecutive
+            // bool get() calls will alias. Prefer get<bool>(index) for safe by-value access.
+            static thread_local bool tl_bool[2];
+            static thread_local unsigned tl_idx = 0;
+            tl_idx = 1 - tl_idx;  // alternate between [0] and [1]
+            tl_bool[tl_idx] = bits_[bitsIndex(index)];
+            return &tl_bool[tl_idx];
+        } else if (type == ColumnType::STRING) {
+            return &strg_[offset];
+        } else {
+            return &data_[offset];
+        }
     }
    
     // =========================================================================
-    // 2. TYPED REFERENCE ACCESS (Row Only) - STRICT
-    // Returns const T& (reference) to column value. Row owns aligned memory, so references are safe.
+    // 2. TYPED CONST ACCESS (Row Only) - STRICT, ZERO-COPY
+    // Returns const T& for scalars and strings, bool by value for bools.
+    // String views (string_view, span<const char>) return lightweight views.
     // Type must match exactly (no conversions).
     // For flexible access with type conversions, use get(index, T& dst) instead.
     // =========================================================================
     template<TrackingPolicy Policy>
     template<typename T>
-    inline const T& RowImpl<Policy>::get(size_t index) const {
+    inline decltype(auto) RowImpl<Policy>::get(size_t index) const {
         // Compile-time type validation
         static_assert(
             std::is_trivially_copyable_v<T> || 
@@ -247,29 +203,32 @@ namespace bcsv {
             std::is_same_v<T, std::span<const char>>,
             "Row::get<T>: Type T must be either trivially copyable (primitives) or string-related (std::string, std::string_view, std::span<const char>)"
         );
-        
-        // Use visitor pattern for type-safe access
-        const T* result = nullptr;
-        
-        visitConst(index, [&result](size_t, const auto& value) {
-            using ValueType = std::decay_t<decltype(value)>;
-            
-            // Type must match exactly (compile-time check via if constexpr)
-            if constexpr (std::is_same_v<T, ValueType>) {
-                result = &value;
-            } else {
-                // Type mismatch - will throw below
+
+        if constexpr (RANGE_CHECKING) {
+            if (index >= layout_.columnCount()) [[unlikely]] {
+                throw std::out_of_range("Row::get<T>: Index out of range");
             }
-        });
-        
-        if (!result) [[unlikely]] {
-            throw std::runtime_error(
-                "Row::get<T>: Type mismatch at index " + std::to_string(index) + 
-                ". Requested: " + std::string(toString(toColumnType<T>())) + 
-                ", Actual: " + std::string(toString(layout_.columnType(index))));
+            if (toColumnType<T>() != layout_.columnType(index)) [[unlikely]] {
+                throw std::runtime_error(
+                    "Row::get<T>: Type mismatch at index " + std::to_string(index) + 
+                    ". Requested: " + std::string(toString(toColumnType<T>())) + 
+                    ", Actual: " + std::string(toString(layout_.columnType(index))));
+            }
         }
         
-        return *result;
+        uint32_t offset = layout_.columnOffset(index);
+
+        if constexpr (std::is_same_v<T, bool>) {
+            return bits_[bitsIndex(index)];  // bool by value (bitset has no addressable storage)
+        } else if constexpr (std::is_same_v<T, std::string>) {
+            return static_cast<const std::string&>(strg_[offset]);  // const ref, zero-copy
+        } else if constexpr (std::is_same_v<T, std::string_view>) {
+            return std::string_view(strg_[offset]);  // lightweight view into internal storage
+        } else if constexpr (std::is_same_v<T, std::span<const char>>) {
+            return std::span<const char>(strg_[offset].data(), strg_[offset].size());
+        } else {
+            return static_cast<const T&>(*reinterpret_cast<const T*>(&data_[offset]));  // const ref, zero-copy
+        }
     }
 
     /** Vectorized access to multiple columns of same type - STRICT.
@@ -284,7 +243,6 @@ namespace bcsv {
         constexpr ColumnType targetType = toColumnType<T>();
 
         if (RANGE_CHECKING) {
-            // combined range (touch each column) and type check
             for (size_t i = index; i < index+dst.size(); ++i) {
                 if (targetType != layout_.columnType(i)) [[unlikely]]{
                     throw std::runtime_error("vectorized get() types must match exactly");
@@ -292,10 +250,16 @@ namespace bcsv {
             }
         }
 
-        // All type checks passed, safe to get values
-        // Exploit the fact that types are aligned within the row data_ and that we don't have to expect padding bytes between the values. Thus we can do a fast copy.
-        assert(ptr_[index] >= data_.data() && ptr_[index] + dst.size() * sizeof(T) <= data_.data() + data_.size() && "Row::get(span): ptr_ should point into data_ buffer");
-        memcpy(dst.data(), ptr_[index], dst.size() * sizeof(T));
+        if constexpr (std::is_same_v<T, bool>) {
+            // Bit-by-bit extraction from bits_
+            for (size_t i = 0; i < dst.size(); ++i) {
+                dst[i] = bits_[bitsIndex(index + i)];
+            }
+        } else {
+            // Consecutive same-type scalars are contiguous in aligned data_
+            uint32_t offset = layout_.columnOffset(index);
+            memcpy(dst.data(), &data_[offset], dst.size() * sizeof(T));
+        }
     }
 
     // =========================================================================
@@ -340,21 +304,36 @@ namespace bcsv {
 
     template<TrackingPolicy Policy>
     template<typename T>
-    inline const T& RowImpl<Policy>::ref(size_t index) const
-    {
-        const T &r = get<T>(index);
-        return r;
-    }
-
-    template<TrackingPolicy Policy>
-    template<typename T>
-    inline T& RowImpl<Policy>::ref(size_t index) {
-        const T &r = get<T>(index);
-        // marks column as changed
-        if constexpr (isTrackingEnabled(Policy)) {
-            changes_.set(index);
+    inline decltype(auto) RowImpl<Policy>::ref(size_t index) {
+        if constexpr (RANGE_CHECKING) {
+            if (index >= layout_.columnCount()) [[unlikely]] {
+                throw std::out_of_range("Row::ref<T>: Index out of range");
+            }
+            if (toColumnType<T>() != layout_.columnType(index)) [[unlikely]] {
+                throw std::runtime_error("Row::ref<T>: Type mismatch at index " + std::to_string(index));
+            }
         }
-        return const_cast<T&>(r);
+
+        uint32_t offset = layout_.columnOffset(index);
+
+        if constexpr (std::is_same_v<T, bool>) {
+            // Mark changed if tracking
+            if constexpr (isTrackingEnabled(Policy)) {
+                // For bools, the bit IS the value, change is implicit via write-through
+                // No separate change flag for bools — caller writes directly
+            }
+            return bits_[bitsIndex(index)];  // returns bitset<>::reference proxy
+        } else if constexpr (std::is_same_v<T, std::string>) {
+            if constexpr (isTrackingEnabled(Policy)) {
+                bits_.set(index);
+            }
+            return static_cast<std::string&>(strg_[offset]);
+        } else {
+            if constexpr (isTrackingEnabled(Policy)) {
+                bits_.set(index);
+            }
+            return *reinterpret_cast<T*>(&data_[offset]);
+        }
     } 
 
     /** 
@@ -371,27 +350,64 @@ namespace bcsv {
     template<detail::BcsvAssignable T>
     inline void RowImpl<Policy>::set(size_t index, const T& value) {
 
-    // Strict type matching via visit()
-    visit(index, [value, index](size_t, auto& colValue, bool& changed) {
-        using ColType = std::decay_t<decltype(colValue)>;
+    // Helper: detect bool proxy types (e.g. std::vector<bool>::reference / std::_Bit_reference)
+    constexpr bool isBoolLike = std::is_same_v<T, bool> || 
+        (std::is_convertible_v<T, bool> && !std::is_arithmetic_v<T> && !std::is_same_v<T, std::string>);
 
-        if constexpr (std::is_same_v<ColType, T>) {
-            // Exact type match - direct assignment
-            changed = colValue != value;
-            colValue = value;
-        } else if constexpr (std::is_same_v<ColType, std::string> && std::is_convertible_v<T, std::string>) {
-            changed = colValue != value;
-            colValue = value; // Move assignment for efficiency
-        } else if constexpr (std::is_assignable_v<ColType&, const T&>) {
-            ColType oldValue = colValue;
-            colValue = value;
-            changed = colValue != oldValue;
-        } else {
-            throw std::runtime_error("Row::set<T>: Type mismatch at index " + std::to_string(index) + 
-                                     ". Cannot assign value of type " + std::string(toString(toColumnType<T>())) + 
-                                     " to column of type " + std::string(toString(toColumnType<ColType>())));
+    // Helper: detect string-like types (std::string, std::string_view, const char*, etc.)
+    constexpr bool isStringLike = detail::is_string_like_v<T> || 
+        (std::is_convertible_v<T, std::string_view> && !detail::is_primitive_v<T> && !isBoolLike);
+
+    // Direct dispatch — compile-time type check, no runtime switch
+    if constexpr (RANGE_CHECKING) {
+        if (index >= layout_.columnCount()) [[unlikely]] {
+            throw std::out_of_range("Row::set<T>: Index out of range");
         }
-    });
+        if constexpr (isBoolLike) {
+            if (layout_.columnType(index) != ColumnType::BOOL) [[unlikely]] {
+                throw std::runtime_error("Row::set<T>: Type mismatch at index " + std::to_string(index) + 
+                    ". Expected BOOL, actual " + std::string(toString(layout_.columnType(index))));
+            }
+        } else if constexpr (isStringLike) {
+            if (layout_.columnType(index) != ColumnType::STRING) [[unlikely]] {
+                throw std::runtime_error("Row::set<T>: Type mismatch at index " + std::to_string(index) + 
+                    ". Expected STRING, actual " + std::string(toString(layout_.columnType(index))));
+            }
+        } else {
+            if (toColumnType<T>() != layout_.columnType(index)) [[unlikely]] {
+                throw std::runtime_error("Row::set<T>: Type mismatch at index " + std::to_string(index) + 
+                    ". Cannot assign " + std::string(toString(toColumnType<T>())) + 
+                    " to " + std::string(toString(layout_.columnType(index))));
+            }
+        }
+    }
+
+    uint32_t offset = layout_.columnOffset(index);
+
+    if constexpr (isBoolLike) {
+        // Bool (or bool proxy like std::vector<bool>::reference): write to bitset
+        bits_[bitsIndex(index)] = static_cast<bool>(value);
+        // No separate change tracking for bools (the bit IS the value)
+    } else if constexpr (isStringLike) {
+        // String: write to strg_, with change tracking and truncation
+        std::string& str = strg_[offset];
+        bool changed = (str != value);
+        str = value;
+        if (str.size() > MAX_STRING_LENGTH) {
+            str.resize(MAX_STRING_LENGTH);
+        }
+        if constexpr (isTrackingEnabled(Policy)) {
+            bits_[index] |= changed;
+        }
+    } else {
+        // Scalar: direct write to data_
+        T& colValue = *reinterpret_cast<T*>(&data_[offset]);
+        bool changed = (colValue != value);
+        colValue = value;
+        if constexpr (isTrackingEnabled(Policy)) {
+            bits_[index] |= changed;
+        }
+    }
 }
 
 
@@ -404,7 +420,6 @@ namespace bcsv {
         static_assert(std::is_arithmetic_v<T>, "Only primitive arithmetic types are supported for vectorized set");
 
         if constexpr (RANGE_CHECKING) {
-            // combined range (touch each column) and type check
             for (size_t i = 0; i < values.size(); ++i) {
                 const ColumnType &targetType = layout_.columnType(index + i);
                 if (toColumnType<T>() != targetType) [[unlikely]]{
@@ -413,20 +428,31 @@ namespace bcsv {
             }
         }
 
-        T* dst = reinterpret_cast<T*>(ptr_[index]);
-        assert(reinterpret_cast<std::byte*>(dst) >= data_.data() && 
-               reinterpret_cast<std::byte*>(dst + values.size()) <= data_.data() + data_.size() && 
-               "Row::set(span): ptr_ should point into data_ buffer");
-        if constexpr (isTrackingEnabled(Policy)) {
-            // Element-wise check and set to track changes precisely
+        if constexpr (std::is_same_v<T, bool>) {
+            // Bit-by-bit write to bits_
             for (size_t i = 0; i < values.size(); ++i) {
-                if (dst[i] != values[i]) {
-                    dst[i] = values[i];
-                    changes_.set(index + i);
+                size_t bi = bitsIndex(index + i);
+                if constexpr (isTrackingEnabled(Policy)) {
+                    // For bools, the bit IS the value — just write it
+                    bits_[bi] = values[i];
+                } else {
+                    bits_[bi] = values[i];
                 }
             }
         } else {
-            std::memcpy(dst, values.data(), values.size() * sizeof(T));
+            uint32_t offset = layout_.columnOffset(index);
+            T* dst = reinterpret_cast<T*>(&data_[offset]);
+            if constexpr (isTrackingEnabled(Policy)) {
+                // Element-wise check and set to track changes precisely
+                for (size_t i = 0; i < values.size(); ++i) {
+                    if (dst[i] != values[i]) {
+                        dst[i] = values[i];
+                        bits_.set(index + i);
+                    }
+                }
+            } else {
+                std::memcpy(dst, values.data(), values.size() * sizeof(T));
+            }
         }
     }
 
@@ -437,37 +463,44 @@ namespace bcsv {
     template<TrackingPolicy Policy>
     inline std::span<std::byte> RowImpl<Policy>::serializeTo(ByteBuffer& buffer) const  {
         const size_t  off_row = buffer.size();          // offset to the begin of this row
-        size_t        off_fix = off_row;                // tracking offset(position) within the fixed section of the buffer. Starts at the begin of this row, used to write fixed data.
-        size_t        off_var = offset_var_;            // tracking offset(position) within the variable section of the buffer. Starts just after the fixed section for this row.
+        size_t        off_fix = off_row;                // tracking offset(position) within the fixed section
+
+        // Compute offset_var (wire-format fixed section size) on the fly
+        uint32_t offset_var = 0;
+        const size_t count = layout_.columnCount();
+        for (size_t i = 0; i < count; ++i) {
+            offset_var += wireSizeOf(layout_.columnType(i));
+        }
+
+        size_t off_var = offset_var;            // tracking offset(position) within the variable section
         
         // resize buffer to have enough room to hold the entire fixed section of the row
-        buffer.resize(buffer.size() + offset_var_);
-        size_t count = layout_.columnCount();
-        for(size_t i=0; i<count; ++i) {
-            ColumnType type = layout_.columnType(i);
-            const std::byte* ptr = ptr_[i];
-            assert(ptr >= data_.data() && ptr + sizeOf(type) <= data_.data() + data_.size() && "Row::serializeTo: ptr_ should point into data_ buffer");
+        buffer.resize(buffer.size() + offset_var);
 
-            if (type == ColumnType::STRING) {
-                const std::string& str = *reinterpret_cast<const std::string*>(ptr);               
-                // Create StringAddr pointing to string data in variable section, handles truncation
+        for(size_t i = 0; i < count; ++i) {
+            ColumnType type = layout_.columnType(i);
+            uint32_t offset = layout_.columnOffset(i);
+
+            if (type == ColumnType::BOOL) {
+                bool val = bits_[bitsIndex(i)];
+                std::memcpy(&buffer[off_fix], &val, sizeof(bool));
+                off_fix += wireSizeOf(type);
+            } else if (type == ColumnType::STRING) {
+                const std::string& str = strg_[offset];               
                 StringAddr strAddr(off_var, str.length());
                 
-                // Write StringAddr to fixed section
                 std::memcpy(&buffer[off_fix], &strAddr, sizeof(strAddr));
-                off_fix += sizeof(strAddr);  // advance fixed offset
+                off_fix += sizeof(strAddr);
                 
-                // Append actual string data to variable section (only if non-empty)
                 if (strAddr.length() > 0) {
                     buffer.resize(off_row + off_var + strAddr.length());
                     std::memcpy(&buffer[off_row + off_var], str.data(), strAddr.length());
-                    off_var += strAddr.length();           // advance variable offset
+                    off_var += strAddr.length();
                 }
-                
             } else {
                 size_t len = wireSizeOf(type);
-                std::memcpy(&buffer[off_fix], ptr, len);
-                off_fix += len; // advance fixed offset
+                std::memcpy(&buffer[off_fix], &data_[offset], len);
+                off_fix += len;
             }
         }
         return {&buffer[off_row], buffer.size() - off_row};
@@ -476,37 +509,43 @@ namespace bcsv {
     template<TrackingPolicy Policy>
     inline void RowImpl<Policy>::deserializeFrom(const std::span<const std::byte> buffer)
     {
-        size_t off_fix = 0;           // offset within the fixed section of the buffer. Starts at the begin of this row. We expect that span only contains data for a single row.
-        size_t off_var = offset_var_; // offset within the variable section of the buffer. Starts just after the fixed section for this row.
+        // Compute offset_var (wire-format fixed section size) on the fly
+        uint32_t offset_var = 0;
+        const size_t count = layout_.columnCount();
+        for (size_t i = 0; i < count; ++i) {
+            offset_var += wireSizeOf(layout_.columnType(i));
+        }
+
+        size_t off_fix = 0;
         
         // Safety check: ensure buffer is large enough to contain fixed section
-        if (off_var > buffer.size()) [[unlikely]] {
+        if (offset_var > buffer.size()) [[unlikely]] {
             throw std::runtime_error("Row::deserializeFrom failed as buffer is too short");
         }
         
-        size_t count = layout_.columnCount();
         for(size_t i = 0; i < count; ++i) {
             ColumnType type = layout_.columnType(i);
-            std::byte* ptr = ptr_[i];
-            assert(ptr >= data_.data() && ptr + sizeOf(type) <= data_.data() + data_.size() && "Row::deserializeFrom: ptr_ should point into data_ buffer");
+            uint32_t offset = layout_.columnOffset(i);
             
-            if (type == ColumnType::STRING) {
+            if (type == ColumnType::BOOL) {
+                bool val = false;
+                std::memcpy(&val, &buffer[off_fix], sizeof(bool));
+                bits_[bitsIndex(i)] = val;
+            } else if (type == ColumnType::STRING) {
                 StringAddr strAddr;
-                assert(wireSizeOf(type) == sizeof(strAddr));
                 std::memcpy(&strAddr, &buffer[off_fix], sizeof(strAddr));                
                 if (strAddr.offset() + strAddr.length() > buffer.size()) {
                     throw std::runtime_error("Row::deserializeFrom String payload extends beyond buffer");
                 }
                 
-                std::string& str = *reinterpret_cast<std::string*>(ptr);
+                std::string& str = strg_[offset];
                 if (strAddr.length() > 0) {
                     str.assign(reinterpret_cast<const char*>(&buffer[strAddr.offset()]), strAddr.length());
                 } else {
                     str.clear();
                 }
             } else {
-                assert(wireSizeOf(type) == sizeOf(type));
-                std::memcpy(ptr, &buffer[off_fix], wireSizeOf(type));
+                std::memcpy(&data_[offset], &buffer[off_fix], wireSizeOf(type));
             }
             off_fix += wireSizeOf(type); // advance fixed offset
         }
@@ -527,33 +566,36 @@ namespace bcsv {
         // preserve offset to beginning of row  
         size_t bufferSizeOld = buffer.size();
 
-        // Early exit if no changes
-        if(!hasAnyChanges()) {
-            // nothing to serialize --> skip and exit early
-            // Return empty span without accessing buffer elements
-            return std::span<std::byte>{}; 
+        // Early exit if no changes at all (no bool=true, no changed columns)
+        if(!bits_.any()) {
+            return std::span<std::byte>{};
         }
 
+        // bits_ IS the ZoH wire format — write it directly to the buffer (no copy needed).
+        // Bool values sit at bool positions, change flags at non-bool positions.
+        const size_t headerSize = bits_.sizeBytes();
+        buffer.resize(buffer.size() + headerSize);
+        std::memcpy(&buffer[bufferSizeOld], bits_.data(), headerSize);
 
-        // reserve space for rowHeader (bitset) at the begin of the row
-        bitset<> rowHeader = changes_; // make a copy to modify for bools
-        buffer.resize(buffer.size() + rowHeader.sizeBytes());
+        // If no non-BOOL columns have changed, the header (with bool values) is all we need.
+        // Skip the column loop entirely — a significant saving for bool-heavy / static rows.
+        // Note: Future delta encoding of bool bits (flip-detection) will be handled by
+        // Writer/Serializer, which tracks previous-row state.
+        if (!bits_.any(layout_.trackedMask())) {
+            return {&buffer[bufferSizeOld], headerSize};
+        }
 
-        // Serialize each element that has changed
+        // Serialize each non-bool element that has changed (sequential, forward-only writes)
         for(size_t i = 0; i < layout_.columnCount(); ++i) {
             ColumnType type = layout_.columnType(i);
-            const std::byte* ptr = ptr_[i];
-            assert(ptr >= data_.data() && ptr + sizeOf(type) <= data_.data() + data_.size() && "Row::serializeToZoH: ptr_ should point into data_ buffer");      
+            uint32_t offset = layout_.columnOffset(i);
+
             if (type == ColumnType::BOOL) {
-                // Special handling for bools: always serialize to single bit in the rowHeader
-                bool val = *reinterpret_cast<const bool*>(ptr);
-                rowHeader[i] = val; // set bit in rowHeader to represent bool value
-            } else if (changes_.test(i)) {
+                // Bool value is already encoded in the header (bits_[i]) — nothing else to do
+            } else if (bits_[i]) {
                 size_t off = buffer.size();
                 if(type == ColumnType::STRING) {
-                    // Special handling for strings - encoding in ZoH mode happens in place
-                    // Indices in string vector
-                    const std::string& str = *reinterpret_cast<const std::string*>(ptr);
+                    const std::string& str = strg_[offset];
                     uint16_t strLength = static_cast<uint16_t>(std::min(str.size(), MAX_STRING_LENGTH));
                     buffer.resize(buffer.size() + sizeof(strLength) + strLength);
                     std::memcpy(&buffer[off], &strLength, sizeof(strLength));
@@ -562,15 +604,12 @@ namespace bcsv {
                     }
                 } else {
                     size_t len = wireSizeOf(type);
-                    assert(len == sizeOf(type));
                     buffer.resize(buffer.size() + len);
-                    std::memcpy(&buffer[off], ptr, len);
+                    std::memcpy(&buffer[off], &data_[offset], len);
                 }
             }
         }
 
-        // Write rowHeader to the begin of the row
-        memcpy(&buffer[bufferSizeOld], rowHeader.data(), rowHeader.sizeBytes());
         return {&buffer[bufferSizeOld], buffer.size() - bufferSizeOld};
     }
 
@@ -580,50 +619,46 @@ namespace bcsv {
             throw std::runtime_error("Row::deserializeFromZoH() requires tracking policy enabled");
         }
         
-        // buffer starts with the change bitset, followed by the actual row data.
-        if (buffer.size() >= changes_.sizeBytes()) {
-            std::memcpy(changes_.data(), &buffer[0], changes_.sizeBytes());  
+        // buffer starts with the bits_ bitset (bool values + change flags), followed by the actual row data.
+        if (buffer.size() >= bits_.sizeBytes()) {
+            std::memcpy(bits_.data(), &buffer[0], bits_.sizeBytes());  
         } else [[unlikely]] {
             throw std::runtime_error("Row::deserializeFromZoH() failed! Buffer too small to contain change bitset.");
         }        
         
         // Deserialize each element that has changed
-        size_t offset = changes_.sizeBytes();
+        size_t dataOffset = bits_.sizeBytes();
         for(size_t i = 0; i < layout_.columnCount(); ++i) {
             ColumnType type = layout_.columnType(i);
-            std::byte* ptr = ptr_[i];
+            uint32_t offset = layout_.columnOffset(i);
+
             if (type == ColumnType::BOOL) {
-                // always deserialize bools from bitset
-                *reinterpret_cast<bool*>(ptr) = changes_[i];
-            
-            } else if (changes_.test(i)) {
-                // deserilialize other types only if they have changed
+                // Bool value already decoded — bit i in bits_ IS the value. Nothing else to do.
+            } else if (bits_[i]) {
+                // Deserialize other types only if they have changed
                 if(type == ColumnType::STRING) {
-                    // Special handling of strings: note ZoH encoding places string data next to string length (in place encoding)
-                    // read string length
                     uint16_t strLength; 
-                    if (offset + sizeof(strLength) > buffer.size()) [[unlikely]]
+                    if (dataOffset + sizeof(strLength) > buffer.size()) [[unlikely]]
                         throw std::runtime_error("buffer too small");
-                    std::memcpy(&strLength, &buffer[offset], sizeof(strLength));
-                    offset += sizeof(strLength);
+                    std::memcpy(&strLength, &buffer[dataOffset], sizeof(strLength));
+                    dataOffset += sizeof(strLength);
                     
-                    // read string data
-                    if (offset + strLength > buffer.size()) [[unlikely]]
+                    if (dataOffset + strLength > buffer.size()) [[unlikely]]
                         throw std::runtime_error("buffer too small");
-                    std::string& str = *reinterpret_cast<std::string*>(ptr);
+                    std::string& str = strg_[offset];
                     if (strLength > 0) {
-                        str.assign(reinterpret_cast<const char*>(&buffer[offset]), strLength);
+                        str.assign(reinterpret_cast<const char*>(&buffer[dataOffset]), strLength);
                     } else {
                         str.clear();
                     }
-                    offset += strLength;
+                    dataOffset += strLength;
                 } else {
                     size_t len = wireSizeOf(type);
-                    if (offset + len > buffer.size()) [[unlikely]]
+                    if (dataOffset + len > buffer.size()) [[unlikely]]
                         throw std::runtime_error("buffer too small");
                     
-                    std::memcpy(ptr, &buffer[offset], len);
-                    offset += len;
+                    std::memcpy(&data_[offset], &buffer[dataOffset], len);
+                    dataOffset += len;
                 }
             }
         }
@@ -672,45 +707,47 @@ namespace bcsv {
         // Core implementation: iterate and dispatch for each column
         for (size_t i = startIndex; i < endIndex; ++i) {
             ColumnType type = layout_.columnType(i);
-            const std::byte* ptr = ptr_[i];
+            uint32_t offset = layout_.columnOffset(i);
             
             // Dispatch based on column type
             switch(type) {
-                case ColumnType::BOOL:
-                    visitor(i, *reinterpret_cast<const bool*>(ptr));
+                case ColumnType::BOOL: {
+                    bool val = bits_[bitsIndex(i)];
+                    visitor(i, val);
                     break;
+                }
                 case ColumnType::INT8:
-                    visitor(i, *reinterpret_cast<const int8_t*>(ptr));
+                    visitor(i, *reinterpret_cast<const int8_t*>(&data_[offset]));
                     break;
                 case ColumnType::INT16:
-                    visitor(i, *reinterpret_cast<const int16_t*>(ptr));
+                    visitor(i, *reinterpret_cast<const int16_t*>(&data_[offset]));
                     break;
                 case ColumnType::INT32:
-                    visitor(i, *reinterpret_cast<const int32_t*>(ptr));
+                    visitor(i, *reinterpret_cast<const int32_t*>(&data_[offset]));
                     break;
                 case ColumnType::INT64:
-                    visitor(i, *reinterpret_cast<const int64_t*>(ptr));
+                    visitor(i, *reinterpret_cast<const int64_t*>(&data_[offset]));
                     break;
                 case ColumnType::UINT8:
-                    visitor(i, *reinterpret_cast<const uint8_t*>(ptr));
+                    visitor(i, *reinterpret_cast<const uint8_t*>(&data_[offset]));
                     break;
                 case ColumnType::UINT16:
-                    visitor(i, *reinterpret_cast<const uint16_t*>(ptr));
+                    visitor(i, *reinterpret_cast<const uint16_t*>(&data_[offset]));
                     break;
                 case ColumnType::UINT32:
-                    visitor(i, *reinterpret_cast<const uint32_t*>(ptr));
+                    visitor(i, *reinterpret_cast<const uint32_t*>(&data_[offset]));
                     break;
                 case ColumnType::UINT64:
-                    visitor(i, *reinterpret_cast<const uint64_t*>(ptr));
+                    visitor(i, *reinterpret_cast<const uint64_t*>(&data_[offset]));
                     break;
                 case ColumnType::FLOAT:
-                    visitor(i, *reinterpret_cast<const float*>(ptr));
+                    visitor(i, *reinterpret_cast<const float*>(&data_[offset]));
                     break;
                 case ColumnType::DOUBLE:
-                    visitor(i, *reinterpret_cast<const double*>(ptr));
+                    visitor(i, *reinterpret_cast<const double*>(&data_[offset]));
                     break;
                 case ColumnType::STRING:
-                    visitor(i, *reinterpret_cast<const std::string*>(ptr));
+                    visitor(i, strg_[offset]);
                     break;
                 default: [[unlikely]]
                     throw std::runtime_error("Row::visit() unsupported column type");
@@ -814,75 +851,103 @@ namespace bcsv {
         
         // Core implementation: iterate and dispatch for each column
         for (size_t i = startIndex; i < endIndex; ++i) {
-            std::byte* ptr = ptr_[i];
             ColumnType type = layout_.columnType(i);
+            uint32_t offset = layout_.columnOffset(i);
 
-            auto dispatch = [&](auto& value) {
-                using T = std::decay_t<decltype(value)>;
+            if (type == ColumnType::BOOL) {
+                // Materialize bool from bitset, let visitor modify, write back
+                bool val = bits_[bitsIndex(i)];
                 if constexpr (isTrackingEnabled(Policy)) {
-                    static_assert(std::is_invocable_v<Visitor, size_t, T&, bool&>,
+                    static_assert(std::is_invocable_v<Visitor, size_t, bool&, bool&>,
                                   "Row::visit() with tracking requires (size_t, T&, bool&)");
                     bool changed = true;
-                    visitor(i, value, changed);
-                    changes_[i] |= changed;
+                    visitor(i, val, changed);
                 } else {
-                    if constexpr (std::is_invocable_v<Visitor, size_t, T&, bool&>) {
+                    if constexpr (std::is_invocable_v<Visitor, size_t, bool&, bool&>) {
+                        bool changed = true;
+                        visitor(i, val, changed);
+                    } else {
+                        static_assert(std::is_invocable_v<Visitor, size_t, bool&>,
+                                      "Row::visit() requires (size_t, T&) or (size_t, T&, bool&)");
+                        visitor(i, val);
+                    }
+                }
+                bits_[bitsIndex(i)] = val;  // Write back (no separate change tracking for bools)
+            } else if (type == ColumnType::STRING) {
+                std::string& str = strg_[offset];
+                if constexpr (isTrackingEnabled(Policy)) {
+                    static_assert(std::is_invocable_v<Visitor, size_t, std::string&, bool&>,
+                                  "Row::visit() with tracking requires (size_t, T&, bool&)");
+                    bool changed = true;
+                    visitor(i, str, changed);
+                    bits_[i] |= changed;
+                } else {
+                    if constexpr (std::is_invocable_v<Visitor, size_t, std::string&, bool&>) {
+                        bool changed = true;
+                        visitor(i, str, changed);
+                    } else {
+                        visitor(i, str);
+                    }
+                }
+                if (str.size() > MAX_STRING_LENGTH) {
+                    str.resize(MAX_STRING_LENGTH);
+                }
+            } else {
+                // Scalar types: dispatch via lambda
+                auto dispatch = [&](auto& value) {
+                    using T = std::decay_t<decltype(value)>;
+                    if constexpr (isTrackingEnabled(Policy)) {
+                        static_assert(std::is_invocable_v<Visitor, size_t, T&, bool&>,
+                                      "Row::visit() with tracking requires (size_t, T&, bool&)");
                         bool changed = true;
                         visitor(i, value, changed);
+                        bits_[i] |= changed;
                     } else {
-                        static_assert(std::is_invocable_v<Visitor, size_t, T&>,
-                                      "Row::visit() requires (size_t, T&) or (size_t, T&, bool&)");
-                        visitor(i, value);
+                        if constexpr (std::is_invocable_v<Visitor, size_t, T&, bool&>) {
+                            bool changed = true;
+                            visitor(i, value, changed);
+                        } else {
+                            static_assert(std::is_invocable_v<Visitor, size_t, T&>,
+                                          "Row::visit() requires (size_t, T&) or (size_t, T&, bool&)");
+                            visitor(i, value);
+                        }
                     }
-                }
-            };
+                };
 
-            // Dispatch based on column type
-            switch(type) {
-                case ColumnType::BOOL:
-                    dispatch(*reinterpret_cast<bool*>(ptr));
-                    break;
-                case ColumnType::INT8:
-                    dispatch(*reinterpret_cast<int8_t*>(ptr));
-                    break;
-                case ColumnType::INT16:
-                    dispatch(*reinterpret_cast<int16_t*>(ptr));
-                    break;
-                case ColumnType::INT32:
-                    dispatch(*reinterpret_cast<int32_t*>(ptr));
-                    break;
-                case ColumnType::INT64:
-                    dispatch(*reinterpret_cast<int64_t*>(ptr));
-                    break;
-                case ColumnType::UINT8:
-                    dispatch(*reinterpret_cast<uint8_t*>(ptr));
-                    break;
-                case ColumnType::UINT16:
-                    dispatch(*reinterpret_cast<uint16_t*>(ptr));
-                    break;
-                case ColumnType::UINT32:
-                    dispatch(*reinterpret_cast<uint32_t*>(ptr));
-                    break;
-                case ColumnType::UINT64:
-                    dispatch(*reinterpret_cast<uint64_t*>(ptr));
-                    break;
-                case ColumnType::FLOAT:
-                    dispatch(*reinterpret_cast<float*>(ptr));
-                    break;
-                case ColumnType::DOUBLE:
-                    dispatch(*reinterpret_cast<double*>(ptr));
-                    break;
-                case ColumnType::STRING: {
-                    std::string* str = reinterpret_cast<std::string*>(ptr);
-                    dispatch(*str);
-                    if (str->size() > MAX_STRING_LENGTH) {
-                        // Ensure string length does not exceed maximum allowed (for serialization safety)
-                        str->resize(MAX_STRING_LENGTH);
-                    }
-                    break;
+                switch(type) {
+                    case ColumnType::INT8:
+                        dispatch(*reinterpret_cast<int8_t*>(&data_[offset]));
+                        break;
+                    case ColumnType::INT16:
+                        dispatch(*reinterpret_cast<int16_t*>(&data_[offset]));
+                        break;
+                    case ColumnType::INT32:
+                        dispatch(*reinterpret_cast<int32_t*>(&data_[offset]));
+                        break;
+                    case ColumnType::INT64:
+                        dispatch(*reinterpret_cast<int64_t*>(&data_[offset]));
+                        break;
+                    case ColumnType::UINT8:
+                        dispatch(*reinterpret_cast<uint8_t*>(&data_[offset]));
+                        break;
+                    case ColumnType::UINT16:
+                        dispatch(*reinterpret_cast<uint16_t*>(&data_[offset]));
+                        break;
+                    case ColumnType::UINT32:
+                        dispatch(*reinterpret_cast<uint32_t*>(&data_[offset]));
+                        break;
+                    case ColumnType::UINT64:
+                        dispatch(*reinterpret_cast<uint64_t*>(&data_[offset]));
+                        break;
+                    case ColumnType::FLOAT:
+                        dispatch(*reinterpret_cast<float*>(&data_[offset]));
+                        break;
+                    case ColumnType::DOUBLE:
+                        dispatch(*reinterpret_cast<double*>(&data_[offset]));
+                        break;
+                    default: [[unlikely]]
+                        throw std::runtime_error("Row::visit() unsupported column type");
                 }
-                default: [[unlikely]]
-                    throw std::runtime_error("Row::visit() unsupported column type");
             }
         }
     }
@@ -946,13 +1011,180 @@ namespace bcsv {
      * @see row_visitors.h for concepts, helper types, and more examples
      * @see Row::visit(Visitor&&) const for read-only version
      * @see Row::visit(size_t, Visitor&&, size_t) for visiting a range or single column
-     * @see Row::hasAnyChanges() to check if any columns were modified
+     * @see Row::changes() to access the change tracking bitset
      */
     template<TrackingPolicy Policy>
     template<RowVisitor Visitor>
     inline void RowImpl<Policy>::visit(Visitor&& visitor) {
         // Delegate to range-based visitor for all columns
         visit(0, std::forward<Visitor>(visitor), layout_.columnCount());
+    }
+
+    // ========================================================================
+    // Type-Safe visit<T>() — Compile-Time Dispatch (No Runtime Switch)
+    // ========================================================================
+
+    /** @brief Type-safe mutable visit: iterate columns of known type T
+     * 
+     * Unlike the untyped visit(), this overload uses compile-time dispatch
+     * via if-constexpr, eliminating the runtime ColumnType switch entirely.
+     * All columns in [startIndex, startIndex+count) must be of type T.
+     * 
+     * Performance: identical to ref<T>() — no columnType() lookup, no switch.
+     * Safety: runtime type check verifies each column matches T (in debug/RANGE_CHECKING).
+     * 
+     * @tparam T         The expected column type (must be a BCSV-supported type)
+     * @tparam Visitor    Callable accepting (size_t, T&, bool&) or (size_t, T&)
+     * @param startIndex  First column index to visit
+     * @param visitor     Callable for modification with optional change tracking
+     * @param count       Number of consecutive columns to visit (default 1)
+     * 
+     * @par Example — Calibrate 5 consecutive double sensor channels
+     * @code
+     * row.visit<double>(10, [&](size_t i, double& val, bool& changed) {
+     *     val += calibration[i - 10];
+     *     changed = true;
+     * }, 5);
+     * @endcode
+     * 
+     * @throws std::out_of_range if startIndex + count > columnCount (when RANGE_CHECKING)
+     * @throws std::runtime_error if any column in range is not of type T (when RANGE_CHECKING)
+     * 
+     * @see visit(size_t, Visitor&&, size_t) for untyped (heterogeneous) iteration
+     * @see visitConst<T>() for read-only typed iteration
+     */
+    template<TrackingPolicy Policy>
+    template<typename T, typename Visitor>
+        requires TypedRowVisitor<Visitor, T>
+    inline void RowImpl<Policy>::visit(size_t startIndex, Visitor&& visitor, size_t count) {
+        if (count == 0) return;
+
+        size_t endIndex = startIndex + count;
+
+        if constexpr (RANGE_CHECKING) {
+            if (endIndex > layout_.columnCount()) {
+                throw std::out_of_range("Row::visit<T>: Range [" + std::to_string(startIndex) + 
+                    ", " + std::to_string(endIndex) + ") exceeds column count " + 
+                    std::to_string(layout_.columnCount()));
+            }
+            constexpr ColumnType expectedType = toColumnType<T>();
+            for (size_t i = startIndex; i < endIndex; ++i) {
+                if (layout_.columnType(i) != expectedType) [[unlikely]] {
+                    throw std::runtime_error("Row::visit<T>: Type mismatch at column " + std::to_string(i) +
+                        ". Expected " + std::string(toString(expectedType)) +
+                        ", actual " + std::string(toString(layout_.columnType(i))));
+                }
+            }
+        } else {
+            assert(endIndex <= layout_.columnCount() && "Row::visit<T>: Range out of bounds");
+        }
+
+        for (size_t i = startIndex; i < endIndex; ++i) {
+            uint32_t offset = layout_.columnOffset(i);
+
+            if constexpr (std::is_same_v<T, bool>) {
+                // Materialize bool from bitset, let visitor modify, write back
+                bool val = bits_[bitsIndex(i)];
+                if constexpr (std::is_invocable_v<Visitor, size_t, bool&, bool&>) {
+                    bool changed = true;
+                    visitor(i, val, changed);
+                } else {
+                    visitor(i, val);
+                }
+                bits_[bitsIndex(i)] = val;
+            } else if constexpr (std::is_same_v<T, std::string>) {
+                std::string& str = strg_[offset];
+                if constexpr (std::is_invocable_v<Visitor, size_t, std::string&, bool&>) {
+                    bool changed = true;
+                    visitor(i, str, changed);
+                    if constexpr (isTrackingEnabled(Policy)) {
+                        bits_[i] |= changed;
+                    }
+                } else {
+                    visitor(i, str);
+                    if constexpr (isTrackingEnabled(Policy)) {
+                        bits_.set(i);
+                    }
+                }
+                if (str.size() > MAX_STRING_LENGTH) {
+                    str.resize(MAX_STRING_LENGTH);
+                }
+            } else {
+                // Scalar: direct reinterpret_cast, no switch
+                T& value = *reinterpret_cast<T*>(&data_[offset]);
+                if constexpr (std::is_invocable_v<Visitor, size_t, T&, bool&>) {
+                    bool changed = true;
+                    visitor(i, value, changed);
+                    if constexpr (isTrackingEnabled(Policy)) {
+                        bits_[i] |= changed;
+                    }
+                } else {
+                    visitor(i, value);
+                    if constexpr (isTrackingEnabled(Policy)) {
+                        bits_.set(i);
+                    }
+                }
+            }
+        }
+    }
+
+    /** @brief Type-safe const visit: iterate columns of known type T (read-only)
+     * 
+     * Read-only counterpart of visit<T>(). Uses compile-time dispatch,
+     * no runtime ColumnType switch. Zero-copy for scalars and strings.
+     * 
+     * @tparam T         The expected column type
+     * @tparam Visitor    Callable accepting (size_t, const T&)
+     * @param startIndex  First column index to visit
+     * @param visitor     Read-only callable
+     * @param count       Number of consecutive columns to visit (default 1)
+     * 
+     * @par Example — Read 3 consecutive int32 columns
+     * @code
+     * double sum = 0;
+     * row.visitConst<int32_t>(0, [&](size_t, const int32_t& val) {
+     *     sum += val;
+     * }, 3);
+     * @endcode
+     */
+    template<TrackingPolicy Policy>
+    template<typename T, typename Visitor>
+        requires TypedRowVisitorConst<Visitor, T>
+    inline void RowImpl<Policy>::visitConst(size_t startIndex, Visitor&& visitor, size_t count) const {
+        if (count == 0) return;
+
+        size_t endIndex = startIndex + count;
+
+        if constexpr (RANGE_CHECKING) {
+            if (endIndex > layout_.columnCount()) {
+                throw std::out_of_range("Row::visitConst<T>: Range [" + std::to_string(startIndex) + 
+                    ", " + std::to_string(endIndex) + ") exceeds column count " + 
+                    std::to_string(layout_.columnCount()));
+            }
+            constexpr ColumnType expectedType = toColumnType<T>();
+            for (size_t i = startIndex; i < endIndex; ++i) {
+                if (layout_.columnType(i) != expectedType) [[unlikely]] {
+                    throw std::runtime_error("Row::visitConst<T>: Type mismatch at column " + std::to_string(i) +
+                        ". Expected " + std::string(toString(expectedType)) +
+                        ", actual " + std::string(toString(layout_.columnType(i))));
+                }
+            }
+        } else {
+            assert(endIndex <= layout_.columnCount() && "Row::visitConst<T>: Range out of bounds");
+        }
+
+        for (size_t i = startIndex; i < endIndex; ++i) {
+            uint32_t offset = layout_.columnOffset(i);
+
+            if constexpr (std::is_same_v<T, bool>) {
+                const bool val = bits_[bitsIndex(i)];
+                visitor(i, val);
+            } else if constexpr (std::is_same_v<T, std::string>) {
+                visitor(i, static_cast<const std::string&>(strg_[offset]));
+            } else {
+                visitor(i, static_cast<const T&>(*reinterpret_cast<const T*>(&data_[offset])));
+            }
+        }
     }
 
     // ========================================================================
@@ -966,60 +1198,125 @@ namespace bcsv {
             return;
         }
 
-        // safe old data
-        std::vector<std::byte> oldData = std::move(data_);
-        std::vector<std::byte*> oldPtr = std::move(ptr_);
-        size_t oldColumnCount = layout_.columnCount();
-        assert(oldPtr.size() == oldColumnCount);
-        for(size_t i = 0; i < oldColumnCount; ++i) {
-            auto oldType = layout_.columnType(i);
-            // for now we simply scrap the old data --> call destructors
-            if(oldType == ColumnType::STRING) {
-                reinterpret_cast<std::string*>(oldPtr[i])->~string();
+        // Save old state (layout_ still has pre-mutation types/offsets)
+        bitset<> oldBits = bits_;
+        std::vector<std::byte> oldData = data_;
+        std::vector<std::string> oldStrg = strg_;
+
+        const size_t oldColCount = layout_.columnCount();
+        std::vector<uint32_t> oldOffsets(oldColCount);
+        std::vector<ColumnType> oldTypes(oldColCount);
+        for (size_t i = 0; i < oldColCount; ++i) {
+            oldOffsets[i] = layout_.columnOffset(i);
+            oldTypes[i] = layout_.columnType(i);
+        }
+
+        // Build new column types and mapping (newIndex → oldIndex, -1 if new)
+        std::vector<ColumnType> newTypes;
+        std::vector<int> newToOld;
+
+        if (changes.size() == 1) {
+            const auto& c = changes[0];
+            if (c.oldType == ColumnType::VOID && c.newType != ColumnType::VOID) {
+                // addColumn at position c.index
+                newTypes.reserve(oldColCount + 1);
+                newToOld.reserve(oldColCount + 1);
+                for (size_t i = 0; i < c.index && i < oldColCount; ++i) {
+                    newTypes.push_back(oldTypes[i]);
+                    newToOld.push_back(static_cast<int>(i));
+                }
+                newTypes.push_back(c.newType);
+                newToOld.push_back(-1); // new column
+                for (size_t i = c.index; i < oldColCount; ++i) {
+                    newTypes.push_back(oldTypes[i]);
+                    newToOld.push_back(static_cast<int>(i));
+                }
+            } else if (c.newType == ColumnType::VOID && c.oldType != ColumnType::VOID) {
+                // removeColumn at index c.index
+                newTypes.reserve(oldColCount > 0 ? oldColCount - 1 : 0);
+                newToOld.reserve(oldColCount > 0 ? oldColCount - 1 : 0);
+                for (size_t i = 0; i < oldColCount; ++i) {
+                    if (i != c.index) {
+                        newTypes.push_back(oldTypes[i]);
+                        newToOld.push_back(static_cast<int>(i));
+                    }
+                }
+            } else {
+                // setColumnType at index c.index
+                newTypes.reserve(oldColCount);
+                newToOld.reserve(oldColCount);
+                for (size_t i = 0; i < oldColCount; ++i) {
+                    newTypes.push_back(i == c.index ? c.newType : oldTypes[i]);
+                    newToOld.push_back(static_cast<int>(i));
+                }
+            }
+        } else {
+            // setColumns (full replacement)
+            newTypes.reserve(changes.size());
+            newToOld.reserve(changes.size());
+            for (const auto& c : changes) {
+                if (c.newType != ColumnType::VOID) {
+                    newTypes.push_back(c.newType);
+                    newToOld.push_back(c.oldType != ColumnType::VOID ? static_cast<int>(c.index) : -1);
+                }
             }
         }
 
-        // For simplicity, we will rebuild the entire row based on the new layout.
-        std::vector<ColumnType> newTypes;
-        for (const auto& change : changes) {
-            if (change.newType != ColumnType::VOID) {
-                newTypes.push_back(change.newType);
+        // Compute new offsets
+        const size_t newColCount = newTypes.size();
+        std::vector<uint32_t> newOffsets(newColCount);
+        uint32_t dataSize = 0;
+        Layout::Data::computeOffsets(newTypes, newOffsets, dataSize);
+
+        // Count bools and strings for container sizing
+        size_t newBoolCount = 0, newStrCount = 0;
+        for (auto t : newTypes) {
+            if (t == ColumnType::BOOL) ++newBoolCount;
+            else if (t == ColumnType::STRING) ++newStrCount;
+        }
+
+        // Allocate new storage (zero-initialized)
+        size_t bitsSize = isTrackingEnabled(Policy) ? newColCount : newBoolCount;
+        bits_.resize(bitsSize);
+        bits_.reset(); // All bools false, all change flags clear
+        data_.assign(dataSize, std::byte{0});
+        strg_.clear();
+        strg_.resize(newStrCount);
+
+        // Mark all non-bool columns as changed (new default values)
+        if constexpr (isTrackingEnabled(Policy)) {
+            for (size_t ni = 0; ni < newColCount; ++ni) {
+                if (newTypes[ni] != ColumnType::BOOL) {
+                    bits_[ni] = true;
+                }
             }
         }
-        
-        // Calculate new offsets
-        uint32_t offset = 0;
-        size_t newColumnCount = newTypes.size();
-        std::vector<uint32_t> newOffsets(newColumnCount);
-        for (size_t i = 0; i < newColumnCount; ++i) {
-            uint32_t alignment = alignOf(newTypes[i]);
-            offset = (offset + (alignment - 1)) & ~(alignment - 1);
-            newOffsets[i] = offset;
-            offset += sizeOf(newTypes[i]);
-        }
-        
-        // Rebuild storage
-        data_.clear();
-        data_.resize(offset);
-        ptr_.resize(newColumnCount);
-        
-        // Initialize all columns with default values
-        for (size_t i = 0; i < newColumnCount; ++i) {
-            ptr_[i] = &data_[newOffsets[i]];
-            constructDefaultAt(ptr_[i], newTypes[i]);
-        }
-        
-        // Reset change tracking
-        if constexpr (isTrackingEnabled(Policy)) {
-            changes_.resize(newColumnCount);
-            changes_.set();  // Mark all as changed
-        }
-        
-        // Update deprecated offsets_ and offset_var_
-        offsets_ = std::move(newOffsets);
-        offset_var_ = 0;
-        for (size_t i = 0; i < newColumnCount; ++i) {
-            offset_var_ += wireSizeOf(newTypes[i]);
+
+        // Preserve old values where types match
+        for (size_t ni = 0; ni < newColCount; ++ni) {
+            int oi = newToOld[ni];
+            if (oi < 0 || static_cast<size_t>(oi) >= oldColCount) continue;
+            if (oldTypes[oi] != newTypes[ni]) continue; // type changed → keep default
+
+            uint32_t oOff = oldOffsets[oi];
+            uint32_t nOff = newOffsets[ni];
+
+            if (newTypes[ni] == ColumnType::BOOL) {
+                // Copy bool value from old bits to new bits
+                size_t oldBitsIdx = isTrackingEnabled(Policy) ? static_cast<size_t>(oi) : oOff;
+                size_t newBitsIdx = isTrackingEnabled(Policy) ? ni : nOff;
+                bits_[newBitsIdx] = oldBits[oldBitsIdx];
+            } else if (newTypes[ni] == ColumnType::STRING) {
+                strg_[nOff] = std::move(oldStrg[oOff]);
+                if constexpr (isTrackingEnabled(Policy)) {
+                    bits_[ni] = false; // Preserved value — not changed
+                }
+            } else {
+                std::memcpy(&data_[nOff], &oldData[oOff], sizeOf(newTypes[ni]));
+                if constexpr (isTrackingEnabled(Policy)) {
+                    bits_[ni] = false; // Preserved value — not changed
+                }
+            }
         }
     }
 
@@ -1041,18 +1338,32 @@ namespace bcsv {
         // Use visitor to copy values and detect actual changes
         other.visitConst([this](size_t i, const auto& newValue) {
             using T = std::decay_t<decltype(newValue)>;
+            uint32_t offset = layout_.columnOffset(i);
             
-            // Get current value for comparison
-            const T& currentValue = this->get<T>(i);
-            
-            // Check if value actually changed
-            if(currentValue != newValue) {
-                // Assign new value (works for all types including strings)
-                *reinterpret_cast<T*>(ptr_[i]) = newValue;
-                if constexpr (isTrackingEnabled(Policy)) {
-                    changes_[i] = true; // Mark this column as changed
+            if constexpr (std::is_same_v<T, bool>) {
+                size_t idx = bitsIndex(i);
+                bool oldVal = bits_[idx];
+                if (oldVal != newValue) {
+                    bits_[idx] = newValue;
+                    // No separate change tracking for bools
                 }
-            } 
+            } else if constexpr (std::is_same_v<T, std::string>) {
+                std::string& current = strg_[offset];
+                if (current != newValue) {
+                    current = newValue;
+                    if constexpr (isTrackingEnabled(Policy)) {
+                        bits_[i] = true;
+                    }
+                }
+            } else {
+                T& current = *reinterpret_cast<T*>(&data_[offset]);
+                if (current != newValue) {
+                    current = newValue;
+                    if constexpr (isTrackingEnabled(Policy)) {
+                        bits_[i] = true;
+                    }
+                }
+            }
         });
         
         return *this;
@@ -1064,30 +1375,20 @@ namespace bcsv {
         if (this == &other) 
             return *this;
         
-        // Clean up current state
+        // Unregister from current layout
         layout_.unregisterCallback(this);
-        if(!ptr_.empty()) {
-            for(size_t i = 0; i < layout_.columnCount(); ++i) {
-                if(layout_.columnType(i) == ColumnType::STRING) {
-                    reinterpret_cast<std::string*>(ptr_[i])->~string();
-                }
-            }
-        }
         
-        // Move other's data
+        // Move other's data (no manual destruction needed — vectors/bitset clean up themselves)
         layout_ = other.layout_;
-        data_ = std::move(other.data_);     // Transfers heap buffer ownership -> zero-copy move
-        ptr_  = std::move(other.ptr_);       // Pointers remain valid (point into same heap buffer now owned by this->data_)
-        changes_ = std::move(other.changes_);
+        bits_ = std::move(other.bits_);
+        data_ = std::move(other.data_);
+        strg_ = std::move(other.strg_);
         
         // Re-register with new this pointer
         layout_.registerCallback(this, {
             [this](const std::vector<Layout::Data::Change>& changes) { onLayoutUpdate(changes); }
         });
         
-        // dependency: offsets_ and offset_var_ are derived from layout and data, so we need to reconstruct them based on the new layout and data after move
-        offsets_ = std::move(other.offsets_);
-        offset_var_ = other.offset_var_;
         return *this;
     }
 
@@ -1738,6 +2039,201 @@ namespace bcsv {
         visit(0, std::forward<Visitor>(visitor), layout_.columnCount());
     }
 
+    /** @brief Type-safe visit: iterate RowView columns of known type T (compile-time dispatch)
+     *
+     * Eliminates the runtime ColumnType switch for homogeneous column ranges.
+     * For scalar types (int32_t, double, etc.) the visitor receives a mutable reference
+     * directly into the serialized buffer. For bool, the visitor also gets a mutable reference.
+     * For strings (T = std::string_view), the visitor receives a read-only string_view
+     * pointing into the buffer (cannot resize).
+     *
+     * No change tracking — RowView has no tracking infrastructure. The bool& changed
+     * parameter is accepted but ignored.
+     *
+     * @tparam T         The expected column type (use std::string_view for STRING columns)
+     * @tparam Visitor    Callable accepting (size_t, T&, bool&) or (size_t, T&)
+     * @param startIndex  First column index to visit
+     * @param visitor     Callable for in-place access
+     * @param count       Number of consecutive columns to visit (default 1)
+     *
+     * @par Example — Scale 100 double columns in-place
+     * @code
+     * rowView.visit<double>(0, [](size_t, double& v, bool&) {
+     *     v *= 2.0;
+     * }, 100);
+     * @endcode
+     */
+    template<typename T, typename Visitor>
+        requires TypedRowVisitor<Visitor, T>
+    inline void RowView::visit(size_t startIndex, Visitor&& visitor, size_t count) {
+        if (count == 0) return;
+
+        size_t endIndex = startIndex + count;
+
+        if constexpr (RANGE_CHECKING) {
+            if (endIndex > layout_.columnCount()) {
+                throw std::out_of_range("RowView::visit<T>: Range [" + std::to_string(startIndex) +
+                    ", " + std::to_string(endIndex) + ") exceeds column count " +
+                    std::to_string(layout_.columnCount()));
+            }
+            constexpr ColumnType expectedType = toColumnType<T>();
+            for (size_t i = startIndex; i < endIndex; ++i) {
+                if (layout_.columnType(i) != expectedType) [[unlikely]] {
+                    throw std::runtime_error("RowView::visit<T>: Type mismatch at column " + std::to_string(i) +
+                        ". Expected " + std::string(toString(expectedType)) +
+                        ", actual " + std::string(toString(layout_.columnType(i))));
+                }
+            }
+        } else {
+            assert(endIndex <= layout_.columnCount() && "RowView::visit<T>: Range out of bounds");
+        }
+
+        for (size_t i = startIndex; i < endIndex; ++i) {
+            uint32_t offset = offsets_[i];
+            std::byte* ptr = &buffer_[offset];
+
+            if constexpr (std::is_same_v<T, bool>) {
+                // Bool: mutable reference into buffer
+                bool& value = *reinterpret_cast<bool*>(ptr);
+                if constexpr (std::is_invocable_v<Visitor, size_t, bool&, bool&>) {
+                    bool changed = true;
+                    visitor(i, value, changed);
+                } else {
+                    visitor(i, value);
+                }
+            } else if constexpr (std::is_same_v<T, std::string_view> || std::is_same_v<T, std::string>) {
+                // Strings: read-only (buffer is fixed-size, cannot resize)
+                StringAddr strAddr;
+                std::memcpy(&strAddr, ptr, sizeof(StringAddr));
+                size_t strOffset = strAddr.offset();
+                size_t strLength = strAddr.length();
+
+                if constexpr (RANGE_CHECKING) {
+                    if (strOffset + strLength > buffer_.size()) [[unlikely]] {
+                        throw std::runtime_error("RowView::visit<T>() string payload out of bounds");
+                    }
+                }
+
+                // Provide as string_view (mutable visit still read-only for strings)
+                std::string_view sv(
+                    reinterpret_cast<const char*>(&buffer_[strOffset]),
+                    strLength
+                );
+                // Note: visitor gets string_view by reference but modifying the view
+                // only changes the local view, not the buffer content
+                if constexpr (std::is_invocable_v<Visitor, size_t, std::string_view&, bool&>) {
+                    bool changed = true;
+                    visitor(i, sv, changed);
+                } else if constexpr (std::is_invocable_v<Visitor, size_t, std::string_view&>) {
+                    visitor(i, sv);
+                } else if constexpr (std::is_invocable_v<Visitor, size_t, std::string&, bool&>) {
+                    // Caller requested std::string — create temporary
+                    std::string tmp(sv);
+                    bool changed = true;
+                    visitor(i, tmp, changed);
+                } else {
+                    std::string tmp(sv);
+                    visitor(i, tmp);
+                }
+            } else {
+                // Scalar: direct mutable reference into buffer (no switch needed)
+                T& value = *reinterpret_cast<T*>(ptr);
+                if constexpr (std::is_invocable_v<Visitor, size_t, T&, bool&>) {
+                    bool changed = true;
+                    visitor(i, value, changed);
+                } else {
+                    visitor(i, value);
+                }
+            }
+        }
+    }
+
+    /** @brief Type-safe const visit: iterate RowView columns of known type T (read-only, compile-time dispatch)
+     *
+     * Read-only counterpart of visit<T>(). Zero-copy for both scalars and strings.
+     * Scalars are accessed via memcpy (safe for unaligned access).
+     * Strings yield std::string_view directly into the buffer.
+     *
+     * @tparam T         The expected column type (use std::string_view for STRING columns)
+     * @tparam Visitor    Callable accepting (size_t, const T&)
+     * @param startIndex  First column index to visit
+     * @param visitor     Read-only callable
+     * @param count       Number of consecutive columns to visit (default 1)
+     *
+     * @par Example — Sum 50 consecutive int32 columns
+     * @code
+     * int64_t sum = 0;
+     * rowView.visitConst<int32_t>(0, [&](size_t, const int32_t& v) {
+     *     sum += v;
+     * }, 50);
+     * @endcode
+     */
+    template<typename T, typename Visitor>
+        requires TypedRowVisitorConst<Visitor, T>
+    inline void RowView::visitConst(size_t startIndex, Visitor&& visitor, size_t count) const {
+        if (count == 0) return;
+
+        size_t endIndex = startIndex + count;
+
+        if constexpr (RANGE_CHECKING) {
+            if (endIndex > layout_.columnCount()) {
+                throw std::out_of_range("RowView::visitConst<T>: Range [" + std::to_string(startIndex) +
+                    ", " + std::to_string(endIndex) + ") exceeds column count " +
+                    std::to_string(layout_.columnCount()));
+            }
+            constexpr ColumnType expectedType = toColumnType<T>();
+            for (size_t i = startIndex; i < endIndex; ++i) {
+                if (layout_.columnType(i) != expectedType) [[unlikely]] {
+                    throw std::runtime_error("RowView::visitConst<T>: Type mismatch at column " + std::to_string(i) +
+                        ". Expected " + std::string(toString(expectedType)) +
+                        ", actual " + std::string(toString(layout_.columnType(i))));
+                }
+            }
+        } else {
+            assert(endIndex <= layout_.columnCount() && "RowView::visitConst<T>: Range out of bounds");
+        }
+
+        for (size_t i = startIndex; i < endIndex; ++i) {
+            uint32_t offset = offsets_[i];
+            const std::byte* ptr = &buffer_[offset];
+
+            if constexpr (std::is_same_v<T, bool>) {
+                bool value;
+                std::memcpy(&value, ptr, sizeof(bool));
+                visitor(i, value);
+            } else if constexpr (std::is_same_v<T, std::string_view> || std::is_same_v<T, std::string>) {
+                // Zero-copy string access via string_view
+                StringAddr strAddr;
+                std::memcpy(&strAddr, ptr, sizeof(StringAddr));
+                size_t strOffset = strAddr.offset();
+                size_t strLength = strAddr.length();
+
+                if constexpr (RANGE_CHECKING) {
+                    if (strOffset + strLength > buffer_.size()) [[unlikely]] {
+                        throw std::runtime_error("RowView::visitConst<T>() string payload out of bounds");
+                    }
+                }
+
+                const std::string_view sv(
+                    reinterpret_cast<const char*>(&buffer_[strOffset]),
+                    strLength
+                );
+                if constexpr (std::is_same_v<T, std::string_view>) {
+                    visitor(i, sv);
+                } else {
+                    // T = std::string — create temporary for the visitor
+                    const std::string tmp(sv);
+                    visitor(i, tmp);
+                }
+            } else {
+                // Scalar: memcpy for safe unaligned access
+                T value;
+                std::memcpy(&value, ptr, sizeof(T));
+                visitor(i, value);
+            }
+        }
+    }
+
     // ========================================================================
     // RowStatic Implementation
     // ========================================================================
@@ -1964,14 +2460,6 @@ namespace bcsv {
         }
         
         return success;
-    }
-
-    template<TrackingPolicy Policy, typename... ColumnTypes>
-    template<typename T>
-    const T& RowStaticImpl<Policy, ColumnTypes...>::ref(size_t index) const
-    {
-        const T &r = get<T>(index);
-        return r;
     }
 
     template<TrackingPolicy Policy, typename... ColumnTypes>

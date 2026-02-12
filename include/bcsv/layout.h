@@ -21,6 +21,7 @@
 #include <cstdint>
 #include <iostream>
 #include <memory>
+#include "bitset.h"
 #include "column_name_index.h"
 #include "definitions.h"
 
@@ -95,9 +96,13 @@ namespace bcsv {
             std::vector<std::string>                 column_names_;  // column --> name
             ColumnNameIndex<0>                       column_index_;  // name --> column
             std::vector<ColumnType>                  column_types_;  // column --> type
+            std::vector<uint32_t>                    offsets_;       // Unified per-column offsets into RowImpl's storage containers (bits_, data_, strg_). Meaning depends on columnType: BOOL→bit index in bits_, STRING→index in strg_, scalar→byte offset in data_ (aligned).
+            bitset<>                                 bool_mask_;     // Bit i set iff column i is BOOL. Size == columnCount.
+            bitset<>                                 tracked_mask_;  // Bit i set iff column i is NOT BOOL (inverse of bool_mask_). Size == columnCount.
 
             // Internal helpers
             void rebuildColumnIndex();
+            void rebuildOffsets();  // Recomputes offsets_ from column_types_
             void checkRange(size_t index) const;
 
         public:
@@ -118,6 +123,14 @@ namespace bcsv {
             const std::vector<ColumnType>& columnTypes() const noexcept { return column_types_; }
             bool hasColumn(const std::string& name) const { return column_index_.contains(name); }
             bool isCompatible(const Data& other) const;
+            uint32_t columnOffset(size_t index) const;
+            const std::vector<uint32_t>& columnOffsets() const noexcept { return offsets_; }
+            const bitset<>& boolMask() const noexcept { return bool_mask_; }
+            const bitset<>& trackedMask() const noexcept { return tracked_mask_; }
+
+            /// Compute unified offsets from a type vector. Used by Row's onLayoutUpdate to pre-compute new offsets
+            /// before the layout has been updated. Returns total data_ byte size via out parameter.
+            static void computeOffsets(const std::vector<ColumnType>& types, std::vector<uint32_t>& offsets, uint32_t& dataSize);
 
             // ============================================================
             // Layout modification operations (with observer notifications)
@@ -196,6 +209,22 @@ namespace bcsv {
         
         ColumnType columnType(size_t index) const { 
             return data_->columnType(index); 
+        }
+        
+        uint32_t columnOffset(size_t index) const {
+            return data_->columnOffset(index);
+        }
+        
+        const std::vector<uint32_t>& columnOffsets() const noexcept {
+            return data_->columnOffsets();
+        }
+        
+        const bitset<>& boolMask() const noexcept {
+            return data_->boolMask();
+        }
+        
+        const bitset<>& trackedMask() const noexcept {
+            return data_->trackedMask();
         }
         
         const std::vector<ColumnType>& columnTypes() const noexcept { 

@@ -63,6 +63,33 @@
  * });
  * @endcode
  * 
+ * @subsection compile_time_typed_visitors Compile-Time Typed Visitors (visit<T>)
+ * 
+ * When columns share a known type, visit<T>() eliminates the runtime type switch:
+ * @code
+ * // 2x faster than visit() for homogeneous column ranges
+ * row.visit<double>(0, [](size_t col, double& v, bool& changed) {
+ *     v *= 2.0;
+ *     changed = true;
+ * }, 100);  // Process 100 consecutive double columns
+ * 
+ * // Read-only variant
+ * double sum = 0;
+ * row.visitConst<int32_t>(0, [&](size_t, const int32_t& v) {
+ *     sum += v;
+ * }, 50);
+ * @endcode
+ *
+ * visit<T>() and visitConst<T>() are available on both RowImpl and RowView.
+ * On RowView, scalars are accessed directly in the serialized buffer
+ * and strings are returned as zero-copy std::string_view references:
+ * @code
+ * bcsv::RowView view(buffer.data(), buffer.size(), layout);
+ * view.visitConst<std::string_view>(stringCol, [](size_t, std::string_view sv) {
+ *     std::cout << sv << "\n";  // zero-copy into buffer
+ * });
+ * @endcode
+ * 
  * @subsection helper_visitors Using Helper Types
  * 
  * Use overload helper for different types:
@@ -146,6 +173,66 @@ template<typename Visitor, size_t Index, typename T>
 concept RowStaticReadOnlyVisitor = 
     std::invocable<Visitor, std::integral_constant<size_t, Index>, const T&> ||
     std::invocable<Visitor, size_t, const T&>;
+
+// ============================================================================
+// Typed Row Visitor Concepts  (C++20)
+// ============================================================================
+
+/**
+ * @brief Concept for typed mutable visitors used with visit<T>()
+ * 
+ * A TypedRowVisitor must be invocable with a SPECIFIC type T:
+ * - (size_t index, T& value, bool& changed)   — with change tracking control
+ * - (size_t index, T& value)                   — all visited columns marked changed
+ * 
+ * Unlike the generic visit() which dispatches to the visitor with auto& (each
+ * column's actual type), visit<T>() calls the visitor with a concrete T& for
+ * all columns in the range. This enables:
+ * - Compile-time dispatch (no runtime ColumnType switch) → ~2x faster
+ * - Concrete lambda signatures (no if-constexpr chains needed)
+ * - Type-safe bulk operations on homogeneous column ranges
+ * 
+ * @note Defined in row.h since it is required by RowImpl's visit<T>() declaration.
+ *       Documented here for reference.
+ * 
+ * @code
+ * // Scale 100 consecutive double columns by 2x
+ * row.visit<double>(0, [](size_t, double& v, bool& changed) {
+ *     v *= 2.0;
+ *     changed = true;
+ * }, 100);
+ * @endcode
+ * 
+ * @tparam V The visitor callable type
+ * @tparam T The expected column type (int32_t, double, std::string, bool, etc.)
+ * 
+ * @see row.h for concept definition
+ * @see TypedRowVisitorConst for read-only variant
+ */
+// concept TypedRowVisitor — defined in row.h
+
+/**
+ * @brief Concept for typed read-only visitors used with visitConst<T>()
+ * 
+ * A TypedRowVisitorConst must be invocable with:
+ * - (size_t index, const T& value)
+ * 
+ * Read-only counterpart of TypedRowVisitor. Zero-copy for scalars and strings.
+ * 
+ * @code
+ * double sum = 0;
+ * row.visitConst<double>(10, [&](size_t, const double& v) {
+ *     sum += v;
+ * }, 50);  // Sum columns 10..59
+ * @endcode
+ * 
+ * @tparam V The visitor callable type
+ * @tparam T The expected column type
+ * 
+ * @see row.h for concept definition
+ * @see TypedRowVisitor for mutable variant
+ */
+// concept TypedRowVisitorConst — defined in row.h
 
 // ============================================================================
 // Visitor Helper Types

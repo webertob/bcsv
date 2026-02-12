@@ -453,58 +453,98 @@ namespace bcsv {
         std::is_invocable_v<V, size_t, const double&> ||
         std::is_invocable_v<V, size_t, const std::string&> ||
         std::is_invocable_v<V, size_t, const std::string_view&>;
-        
-    /* Dynamic row with flexible layout (runtime-defined)*/
+
+    // Typed mutable visitor concept: accepts (size_t, T&, bool&) or (size_t, T&) for a specific type T
+    // Used by visit<T>() for compile-time type-safe iteration over homogeneous column ranges
+    template<typename V, typename T>
+    concept TypedRowVisitor = 
+        std::is_invocable_v<V, size_t, T&, bool&> ||
+        std::is_invocable_v<V, size_t, T&>;
+
+    // Typed const visitor concept: accepts (size_t, const T&) for a specific type T
+    // Used by visitConst<T>() for compile-time type-safe read-only iteration
+    template<typename V, typename T>
+    concept TypedRowVisitorConst = 
+        std::is_invocable_v<V, size_t, const T&>;
+
+    /* Dynamic row with flexible layout (runtime-defined)
+     *
+     * Storage is split into three type-family containers:
+     *   bits_  — bitset storing bool column values (and change flags when tracking enabled)
+     *   data_  — contiguous byte buffer for scalar/arithmetic column values (aligned)
+     *   strg_  — vector of strings for string column values
+     *
+     * Per-column offsets live in Layout::Data (shared across all rows sharing the same layout).
+     * The meaning of layout_.columnOffset(i) depends on columnType(i):
+     *   BOOL   → bit index into bits_  (when tracking disabled; when enabled, column index i is used directly)
+     *   STRING → index into strg_
+     *   scalar → byte offset into data_
+     *
+     * When tracking is enabled, bits_.size() == columnCount. Bit i is:
+     *   - the bool VALUE for BOOL columns (no separate change tracking for bools)
+     *   - the CHANGE FLAG for non-BOOL columns (1 = changed since last reset)
+     * When tracking is disabled, bits_.size() == number of BOOL columns only.
+     */
     template<TrackingPolicy Policy>
     class RowImpl {
     private:
         // Immutable after construction
         Layout                      layout_;               // Shared layout data with observer callbacks
-         
-        // Mutable data
-        std::vector<std::byte>      data_;                 // continuous memory buffer to hold data (Note: We store string objects here too. But strings themselves are allocating additional memory elsewhere for their content.)
-        std::vector<std::byte*>     ptr_;                  // pointers into data_ for each column, set up according to layout and updated on layout changes (for efficient access without recalculating offsets every time)
-        bitset<>                    changes_;              // change tracking
-        /* change tracking i.e. for Zero-Order-Hold compression
-        *  changes_[0:column_count  ] == true   indicates column i has been modified since last reset.
-        *  changes_.empty()           == true   indicates change tracking is disabled.
-        */
+
+        // Mutable data — three type-family storage containers
+        bitset<>                    bits_;                  // Bool values + change tracking (see class comment for semantics)
+        std::vector<std::byte>      data_;                 // Aligned scalar/arithmetic column values (no bools, no strings)
+        std::vector<std::string>    strg_;                 // String column values
 
         // Observer callback for layout changes
         void onLayoutUpdate(const std::vector<Layout::Data::Change>& changes);
- 
-        //Move offsets to Layout class, as they are directly tied to the layout and need to be updated on layout changes. Row will just reference them for data access.
-        std::vector<uint32_t>       offsets_;              // offsets into data_ to access actual data for each column. Considers types alignment requirements.
-        uint32_t                    offset_var_;           // offset into serilized buffer (wire), marking the beginning of variable-length section / size of the fixed section. Naive packed wire format (no alignment/padding).
- 
+
+        // Helper: get the bits_ index for a given column
+        inline size_t bitsIndex(size_t columnIndex) const noexcept {
+            if constexpr (isTrackingEnabled(Policy)) {
+                return columnIndex;  // bits_.size() == columnCount, direct index
+            } else {
+                return layout_.columnOffset(columnIndex);  // sequential bool index
+            }
+        }
+
     public:
         RowImpl() = delete; // no default constructor, we always need a layout
         RowImpl(const Layout& layout);
         RowImpl(const RowImpl& other);
         RowImpl(RowImpl&& other) noexcept;
-        
+
         ~RowImpl();
 
         void                        clear();
         const Layout&               layout() const noexcept         { return layout_; }
-        [[nodiscard]] bool          hasAnyChanges() const noexcept  { return isTrackingEnabled(Policy) ? changes_.any() : true; }
         [[nodiscard]] bool          tracksChanges() const noexcept  { return isTrackingEnabled(Policy); }
-        void                        setChanges() noexcept           { if constexpr (isTrackingEnabled(Policy)) { changes_.set(); } }
-        void                        resetChanges() noexcept         { if constexpr (isTrackingEnabled(Policy)) { changes_.reset(); } }
+
+        /// Direct access to the underlying bits_ bitset (bool values + change flags).
+        /// When tracking enabled: bit[i] = bool value for BOOL columns, change flag for others.
+        /// When tracking disabled: bit[k] = k-th bool column value.
+        [[nodiscard]] const bitset<>& changes() const noexcept      { return bits_; }
+        [[nodiscard]] bitset<>&       changes() noexcept            { return bits_; }
+
+        // Backward-compatible wrappers (used by Writer for RowImpl/RowStaticImpl uniformity)
+        // Note: These only touch change-flag bits (non-BOOL columns). BOOL value bits are preserved.
+        // Note: checks ALL bits (bool values + change flags). Any true bit means there's
+        // data to serialize. This is intentional — bits_.any() is already O(words), and the
+        // writer must serialize when any bool is true OR any column has changed.
+        [[nodiscard]] bool          hasAnyChanges() const noexcept  { return isTrackingEnabled(Policy) ? bits_.any() : true; }
+        void                        setChanges() noexcept;
+        void                        resetChanges() noexcept;
 
         [[nodiscard]] const void*   get(size_t index) const;
                                     template<typename T>
-        [[nodiscard]] const T&      get(size_t index) const;
+        [[nodiscard]] decltype(auto) get(size_t index) const;
                                     template<typename T>
         void                        get(size_t index, std::span<T> &dst) const;
                                     template<typename T>
         [[nodiscard]] bool          get(size_t index, T &dst) const;                        // Flexible: allows type conversions, returns false on failure
 
                                     template<typename T>
-        [[nodiscard]] const T&      ref(size_t index) const;                                // get a const reference to the internal data (no type conversion, may throw)
-
-                                    template<typename T>
-        [[nodiscard]] T&            ref(size_t index);                                      // get a mutable reference to the internal data (no type conversion, may throw, marks column as changed)    
+        [[nodiscard]] decltype(auto) ref(size_t index);                                      // get a mutable reference to the internal data (returns T& for scalars/strings, bitset<>::reference for bool, marks column as changed)
 
                                     template<detail::BcsvAssignable T>
         void                        set(size_t index, const T& value);
@@ -532,6 +572,16 @@ namespace bcsv {
         /** @brief Visit all columns with mutable access and change tracking. @see row.hpp */
                                     template<RowVisitor Visitor>
         void                        visit(Visitor&& visitor);
+
+        /** @brief Type-safe visit: iterate columns of known type T with compile-time dispatch (no runtime switch). @see row.hpp */
+                                    template<typename T, typename Visitor>
+                                        requires TypedRowVisitor<Visitor, T>
+        void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1);
+
+        /** @brief Type-safe const visit: iterate columns of known type T with compile-time dispatch (no runtime switch). @see row.hpp */
+                                    template<typename T, typename Visitor>
+                                        requires TypedRowVisitorConst<Visitor, T>
+        void                        visitConst(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
 
         RowImpl&                    operator=(const RowImpl& other);               // Throws std::invalid_argument if layouts incompatible
         RowImpl&                    operator=(RowImpl&& other) noexcept;
@@ -598,7 +648,19 @@ namespace bcsv {
         /** @brief Visit all columns with mutable access (primitives only). @see row.hpp */
                                     template<RowVisitor Visitor>
         void                        visit(Visitor&& visitor);
-        
+
+        /** @brief Type-safe visit: iterate columns of known type T with compile-time dispatch (no runtime switch).
+         *  For string columns use T=std::string_view (read-only). @see row.hpp */
+                                    template<typename T, typename Visitor>
+                                        requires TypedRowVisitor<Visitor, T>
+        void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1);
+
+        /** @brief Type-safe const visit: iterate columns of known type T with compile-time dispatch (no runtime switch).
+         *  For string columns use T=std::string_view. @see row.hpp */
+                                    template<typename T, typename Visitor>
+                                        requires TypedRowVisitorConst<Visitor, T>
+        void                        visitConst(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
+
         RowView& operator=(const RowView& other) noexcept = default; // default copy assignment, as we don't own the buffer
         RowView& operator=(RowView&& other) noexcept = default;      // default move assignment, as we don't own the buffer
     };
@@ -677,9 +739,6 @@ namespace bcsv {
                                     template<typename T>
         [[nodiscard]] bool          get(size_t index, T &dst) const noexcept;               // Flexible: allows type conversions, returns false on failure.
         
-                                    template<typename T>
-        [[nodiscard]] const T&      ref(size_t index) const;                                // get a const reference to the internal data (no type conversion, may throw)
-
                                     template<typename T>
         [[nodiscard]] T&            ref(size_t index);                                      // get a mutable reference to the internal data (no type conversion, may throw, marks column as changed)   
 

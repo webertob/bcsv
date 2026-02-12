@@ -86,59 +86,62 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
 [x] 8.d: Finalize Row::onAddColumn, Row::onChangeColumnType, Row::onRemoveColumn
 [x] 8.e: debug large column count bools
 [x] 8.f: Add test for bitset insert
-    8.g. Make change tracking for Row and RowStatic a compile time decision.
+[x] 8.g: Improve bcsv::bitset:
+        Optimize memory allocation and layout for dynamic bcsv::bitset<> using (Small Object Optimization). 
+        Goal: avoid heap allocations and improve cache locality in the most commone use cases of having small bit counts.
+        Requirments: maintain current API and performance level. Try to avoid significant code growth, try to maintain commonality between static and dynamic bitsets bcsv::bitset<N> and bcsv::bitset<>
+        Concept: 
+            Make bcsv::bitset<> to have exactly 2 member variables, which are defined as: size_t size_; and uintptr_t data_;
+            size_: is going to hold the number of bits (N) currently managed by this bitset. Therefore: We don't store capacity. We don't store number of words. These need to be calculated on the fly as required. See notes.
+            data_: content of data_ deppends on size_. 
+                    If N is small enough to be stored within one word (N<=sizeof(uintptr_t)*8):
+                        bits are stored directly within data_ on the stack. 
+                    else if N grows bejond the capacity of a single word. 
+                        We need to allocate the required amount of words on the heap and data_ holds a pointer to that memory.
+
+            Note: implement a private function bitset::wordCount()const; That returns the number of words available within data_. it ca be easily calculatey on the fly from bitset::size_ e.g. divide by 64 on 64bit platforms (shift by 6) or devide by 32 on 32bit platforms (shift by 5). No need to make it a persitent member of bitset<>. 
+                implement a public function bitset::capacity(); We expect the layout of bitset to be quite stable. Thus we are not tracking capacity as an independent member. Therefore when a reduction of N causes a reduction of word count, we need to reallocate and move to a smaller chunk of memory to not lose track of the upper part of memory. 
+                the return of bitset.capacity() can only be slighly larger than bitset.size(), e.g: return capacity = wordCount() * sizeof(word) * 8;
+[x] 8.h Make change tracking for Row and RowStatic a compile time decision.
             Issue: currently we have a lot of branching depending on change tracking beeing enabled or disabled. But in normal operations, this decision only needs to be done once. For instence when the User decides to Write using ZoH, this basically requiers change tracking enabled.
             Goal: With minimum impact to the API make changeTracking a compile time decision. Propably using a template parameter
-    8.h: Restructure Row object to not use ptr_. 
-            Issues: Pointers (stored in ptr_) are usually the same size or bigger than the acutal data (stored in data_) they are point to. 
-                    Therefore Row is more complex and heavier than it needs to be. 
-                    As we also have multiple Rows/RowViews sharing the same Layout it helps cache locality/cache sizes to centrlize any helper structure required to select correct data (data_[i]) for a specific column.
-                    We store different Types within data_. Some like std::string need special attention as they manage their own memory. This makes the code for assignements, construction, destruction and resizing quite complex.
-            Idea:   separate 3 DataType families and store them in their specific structures:
-                        Row::bits_ of type bitset<> (dynamic), stores all the information for bool columns. If TrackingPolicy is enabled bits_.size() == layout.columnCount().  If TrackingPolicy is disabled bits_.size() matches the number of columns that are of typ ColumnType::bools
-                        Row::data_ of type std::vector<std::byte>, store scalar, arithmetic types. Considerig sizeof and alignof of the actual type (similar to current data_, but without bool and without std::string).
-                        Row::strg_ of type std::vector<std:.string>, store the content of string columns.
-                    With that new data structure asignment, compies, moves, construction and destruction should become quite simple. 
-                    Remove Row::ptr_ not needed anymore. move Row::offset_ to Layout and make them accessible through a function.
-                    
-                    To lookup data we will do something allong the following example:
-                    consider Row::visit(size_t columnIndex) {
-                        ColumnType type = layout.getColumnType(columnIndex);
-                        size_t offset = layout.getColumnOffset(columnIndex);
+[x] 8.h: Restructure Row object to not use ptr_. 
+            Delivered: 
+                - Three-container storage: bits_ (bitset<>), data_ (vector<byte>), strg_ (vector<string>). Removed ptr_.
+                - Moved offsets_ to Layout::Data. Added Layout::Data::computeOffsets() / rebuildOffsets().
+                - Added bool_mask_ and tracked_mask_ (bitset<>) to Layout::Data for O(1) mask-based operations.
+                - Incremental addColumn optimization: O(1) for BOOL append, O(n) for STRING/scalar or mid-insert. Avoids full rebuildOffsets().
+                - Sequential serializeToZoH: writes bits_ directly to buffer (memcpy), early exit if no tracked changes.
+                - get<T>/ref<T>() return by value. Removed bool_cache_. Supports string_view and span<const char> for zero-copy reads.
+                - Removed ref<T>() const (was duplicate of get<T>). Kept mutable ref<T>() for both Row and RowStatic.
+                - setChanges/resetChanges use bitwise mask ops (|= trackedMask, &= boolMask) instead of loops.
+                - hasAnyChanges() uses bits_.any() — intentionally includes bool values (any true bit = data to serialize).
+                - Fixed thread_local bool aliasing in raw get(size_t): alternating 2-slot buffer.
+            Note: Raw get(size_t) returning const void* is a legacy API, not called externally. Pointer to bool
+                  columns is only valid until the next get(size_t) call for a bool column on the same thread.
+            Tested: 299/299 tests pass (debug + release). All examples and benchmarks verified.
 
-                        //perhaps you want to add a lambda to change visitor call based on TrackingPolicy
-                        // if tracking policy is on:
-                        // bool changed = true;
-                        // visitor(columnIndex, auto& value, bool& changed);
-                        // bits_[columnIndex] |= changed;
-
-                        switch(type) {
-                            case ColumnType::Bool:
-                                visitor(columnIndex, bits_[offset];)
-                            case ColumnType::uint8_t:
-                                visitor(columnIndex, *static_cast<uint8_t*>(&data_[offset]));
-                            case ColumnType::uint16_t:
-                                visitor(columnIndex, *static_cast<uint16_t*>(&data_[offset]));
-                                ...
-                            case ColumnType::String:
-                                visitor(columnIndex, strgs_[offset]));
-                            default:
-                            ...
-                        }
-
-                    }
-
-9 Restructure Row <-> Reader/Writer collaboration, introduce Serializer / Deserializier API
-        - serializer and deserailizer functionalities are current tightly integrated with row:
-            - makes row heavier than required (memory) as it stores data required for serilization/deserialization, specifically offsets_ and offset_var_, 
-              which in many cases not needed and limits rows ability to be used as lightweight facility to collect and transfer information in an application.
-            - duplication and distribution of offset_ and offset_var_ over many rows, reduces cache-locality and increases cache-misses (performance)
-              Consider that we are preapring for delta encoding, that means we are going to have more than one row active during serialization/deserialization.
-            - Row implementation grows complex --> currently ~3000 lines of code in row.hpp
-        - Create Serializer<Layout, Row> and Deserailizier<Layout, Row> Base interface
-            outline: 
-                Serializer/Deserializer operate on uncompressed data. Thus, it is callers job to manage compression.
-                serializer/Deserializer operate on a single row (per call). Thus, it is callers job to manage packets. 
+9 Restructure Interaction between Row(classes) and Reader/Writer. Proposal: Introduce a Serializer / Deserializier layer within the API that is going to allow us to support different Encoding schemas, limiting the impact on Row, Reader and Writer classes.
+        Issue: Currently serializer and deserailizer functionalities are tightly integrated with row, this:
+            - makes row heavier (memory) and more complex than required, as it stores data required for serilization/deserialization, e.g. (wire)offsets_ within RowView and offset_var_ in all Row classes.
+              which in many use cases may not be needed and limits rows ability to be used as lightweight facility to collect and transfer information within an application.
+            - duplication and distribution of offset_ and offset_var_ over multiple Row instances, which reduces cache-locality and increases cache-misses and potentially causing a performance penaltiy
+            - For upcoming delta encoding schedmal, we are going to have multiple rows active during serialization/deserialization, as we need to calculate deltas between them or rebuild from deltas.
+            - For ZoH or upcoming more complex delta encoding, a persitent context between subsequent rows is required. Currently Writer/Reader provideds this context.
+            - However as we intend to support different Serialization/Deserialization schemas, to match specific application environments (embedded, sequential, radnom-access, high through-put, high compression). Reader&Writer might grow in complexity quickly.
+            - Reader & Writer are API relevant interaction points, that should be kept stable, there fore Serilaization/Deserialization 
+            - Row implementation grows complex --> currently ~3500 lines of code in row.hpp, we should split for maintain ability. --> Take serialization/deserilization out.
+            - In order to provide backward compatibility to support older file formats, Reader/Writter should be able to switch the serialization/deserialiozation engine
+        Proposal: Implement a Serializer and Deserailizier layer providing a stable interface towards Reader/Writer and Row(s) to enable different encoding schemas (i.e. flat (ToDo 12.), ZoH, delta (ToDo 13.)), with little to now impact on Row(s), Writers and Readers.
+            Ideas:
+                A. Serializer/Deserializer to operate on uncompressed data. Thus, it is callers job to manage compression and packkage structure. --> Still a considerable amount of complexity remains within Reader/Writer
+                B. Serializer/Deserializer operate on a single row (per call). Thus, it is callers job to manage packets. 
+                    Does it make sense to seperate:
+                        RowSerializers/Deserializers for encoding/decoding rows from/to uncompressed data, can have knowledge about multiple rows (delta encoding)
+                        FileSerializers, manages header, packet structure and compression.
+        Goals:
+        Constrains:
+        Tasks:
             proposal:
                 Serializer<Layout, Row> {
                     bool do(const Row& row, ByteBuffer &buffer);
@@ -188,10 +191,16 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
         - store reports with data and machine/host information for later reference
         - compare against: https://github.com/vincentlaucsb/csv-parser
 
+12. Change flat wire format: Each row is encoded as: bits_ (contains bool columns only), data_(packed / without padding / no alignment), strg_lengths [vector of uint16_t], strg_data [vector of const char*]
+        - faster serializatzion / deserialization as wire format is closer to Row format, no need to calculate strAddr.
+        - small footprint (bool to be stored as bits), no strAddr no offsets stored and calculated
+
 Samstag
 Samstag
 11. Update Tools and Libraries to use new API
-    update and test CLI to use new API tools-tools
+    update and test CLI tool to use new C_API
+    Update CLI tools to auto-detect FileFlags::ZERO_ORDER_HOLD and switch to ReaderZoH (or surface a clear message). 
+    Medium: CLI tools don’t support ZoH outputs by default, while csv2bcsv still defaults to ZoH. The CLI tools (bcsvHeader, bcsvHead, bcsvTail, bcsv2csv) construct Reader<Layout> with Tracking disabled, which will refuse ZoH files. This is a UX/documentation mismatch: the default csv2bcsv output is not readable by those tools without --no-zoh. See csv2bcsv default in csv2bcsv.cpp:31-40 and the default reader usage in
     update and test python libraries
     update and test C# (Unity)
 
@@ -199,6 +208,7 @@ Sonntag API freez
 Sonntag: Switch Gears Dr
 Sonntag API freez
 Sonntag: Switch Gears Dr
+
 13. Implement new row encoding schema, using variable length encoding for float and integer values
     Main usage of bcsv is the handling of time-series data. Thus we expect many rcurring or constantly falling or raising values and values that are similar to previouse values. In many cases the full extend of a variable type is not required to encode the actual value.
     This feature is working on a per row level, not only a single cell/value as the current vle_encode / vle_decode functions do. It tries to provide a better balance between computational effort and compression and takes advantange on previouse data (time-series).
@@ -304,19 +314,13 @@ Parking LOT:
         monotonic:  apply higher order delta encoding as a "nearly" monotonic (smooth) behaviour is expected
         ordered:    data to fall or grow in ordered fashion 
 
-25. Improve bcsv::bitset:
-    Optimize memory allocation and layout for dynamic bcsv::bitset<> using (Small Object Optimization). 
-    Goal: avoid heap allocations and improve cache locality in the most commone use cases of having small bit counts.
-    Requirments: maintain current API and performance level. Try to avoid significant code growth, try to maintain commonality between static and dynamic bitsets bcsv::bitset<N> and bcsv::bitset<>
-    Concept: 
-        Make bcsv::bitset<> to have exactly 2 member variables, which are defined as: size_t size_; and uintptr_t data_;
-        size_: is going to hold the number of bits (N) currently managed by this bitset. Therefore: We don't store capacity. We don't store number of words. These need to be calculated on the fly as required. See notes.
-        data_: content of data_ deppends on size_. 
-                If N is small enough to be stored within one word (N<=sizeof(uintptr_t)*8):
-                    bits are stored directly within data_ on the stack. 
-                else if N grows bejond the capacity of a single word. 
-                    We need to allocate the required amount of words on the heap and data_ holds a pointer to that memory.
 
-        Note: implement a private function bitset::wordCount()const; That returns the number of words available within data_. it ca be easily calculatey on the fly from bitset::size_ e.g. divide by 64 on 64bit platforms (shift by 6) or devide by 32 on 32bit platforms (shift by 5). No need to make it a persitent member of bitset<>. 
-              implement a public function bitset::capacity(); We expect the layout of bitset to be quite stable. Thus we are not tracking capacity as an independent member. Therefore when a reduction of N causes a reduction of word count, we need to reallocate and move to a smaller chunk of memory to not lose track of the upper part of memory. 
-              the return of bitset.capacity() can only be slighly larger than bitset.size(), e.g: return capacity = wordCount() * sizeof(word) * 8;
+LOW PRIORITY / Known Issues (from 8.h review, 2026-02-12):
+    - hasAnyChanges() conflates bool values with change flags. Semantically correct for ZoH wire protocol
+      but name is misleading. Consider renaming to hasDataToSerialize() or adding a comment for callers.
+    - serializeToZoH writes raw bits_.data() via memcpy — architecture-dependent byte order. 
+      Not portable across different endianness or word sizes. Document in wire format spec if cross-platform needed.
+    - Bool changed flag in mutable visit() is passed to the visitor but silently ignored on write-back. 
+      Document that changed parameter is read-only for bool columns.
+    - setColumns(vector<string>, vector<ColumnType>) does not trigger observer notification (pre-existing). 
+      Rows attached to layout will be out-of-sync if this overload is called. Add notification or document restriction.

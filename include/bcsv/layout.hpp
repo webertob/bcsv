@@ -41,6 +41,9 @@ namespace bcsv {
         , column_names_(other.column_names_)
         , column_index_(other.column_index_)
         , column_types_(other.column_types_)
+        , offsets_(other.offsets_)
+        , bool_mask_(other.bool_mask_)
+        , tracked_mask_(other.tracked_mask_)
     {
         callbacks_.reserve(64);
     }
@@ -54,6 +57,66 @@ namespace bcsv {
         if constexpr (RANGE_CHECKING) {
             if (index >= column_types_.size()) {
                 throw std::out_of_range("Layout::Data::Column index out of range");
+            }
+        }
+    }
+
+    inline uint32_t Layout::Data::columnOffset(size_t index) const {
+        checkRange(index);
+        return offsets_[index];
+    }
+
+    /// Compute unified offsets from column types.
+    /// For BOOL: sequential bool index (0, 1, 2, ...)
+    /// For STRING: sequential string index (0, 1, 2, ...)
+    /// For scalars: byte offset into data_ buffer (naturally aligned)
+    /// dataSize receives the total byte size needed for the scalar data_ buffer.
+    inline void Layout::Data::computeOffsets(const std::vector<ColumnType>& types, std::vector<uint32_t>& offsets, uint32_t& dataSize) {
+        offsets.resize(types.size());
+        uint32_t bitIdx  = 0;
+        uint32_t dataOff = 0;
+        uint32_t strgIdx = 0;
+        for (size_t i = 0; i < types.size(); ++i) {
+            ColumnType type = types[i];
+            if (type == ColumnType::BOOL) {
+                offsets[i] = bitIdx++;
+            } else if (type == ColumnType::STRING) {
+                offsets[i] = strgIdx++;
+            } else {
+                uint32_t alignment = static_cast<uint32_t>(alignOf(type));
+                dataOff = (dataOff + (alignment - 1)) & ~(alignment - 1);
+                offsets[i] = dataOff;
+                dataOff += static_cast<uint32_t>(sizeOf(type));
+            }
+        }
+        dataSize = dataOff;
+    }
+
+    inline void Layout::Data::rebuildOffsets() {
+        const size_t n = column_types_.size();
+        offsets_.resize(n);
+        bool_mask_.resize(n);
+        bool_mask_.reset();
+        tracked_mask_.resize(n);
+        tracked_mask_.reset();
+
+        uint32_t bitIdx  = 0;
+        uint32_t dataOff = 0;
+        uint32_t strgIdx = 0;
+        for (size_t i = 0; i < n; ++i) {
+            ColumnType type = column_types_[i];
+            if (type == ColumnType::BOOL) {
+                offsets_[i] = bitIdx++;
+                bool_mask_.set(i);
+            } else if (type == ColumnType::STRING) {
+                offsets_[i] = strgIdx++;
+                tracked_mask_.set(i);
+            } else {
+                uint32_t alignment = static_cast<uint32_t>(alignOf(type));
+                dataOff = (dataOff + (alignment - 1)) & ~(alignment - 1);
+                offsets_[i] = dataOff;
+                dataOff += static_cast<uint32_t>(sizeOf(type));
+                tracked_mask_.set(i);
             }
         }
     }
@@ -86,6 +149,74 @@ namespace bcsv {
         column_index_.insert(column.name, position);
         column_names_.insert(column_names_.begin() + position, column.name);
         column_types_.insert(column_types_.begin() + position, column.type);
+
+        // Incremental offset/mask update — avoid full rebuild.
+        // For the common append-at-end case: O(1). For mid-insert: O(n).
+        const ColumnType type = column.type;
+        const bool isAppend = (position == column_types_.size() - 1); // we already inserted into column_types_
+        if (type == ColumnType::BOOL) {
+            if (isAppend) {
+                // O(1): offset = count of existing BOOL columns (already tracked in bool_mask_)
+                offsets_.push_back(static_cast<uint32_t>(bool_mask_.count()));
+            } else {
+                uint32_t boolIdx = 0;
+                for (size_t i = 0; i < position; ++i) {
+                    if (column_types_[i] == ColumnType::BOOL) ++boolIdx;
+                }
+                offsets_.insert(offsets_.begin() + position, boolIdx);
+                for (size_t i = position + 1; i < column_types_.size(); ++i) {
+                    if (column_types_[i] == ColumnType::BOOL) offsets_[i]++;
+                }
+            }
+            bool_mask_.insert(position, true);
+            tracked_mask_.insert(position, false);
+        } else if (type == ColumnType::STRING) {
+            // String offset = sequential string index (count of STRING columns before us).
+            // O(n) scan — acceptable since string-append is not the hot path (bool-append is).
+            {
+                uint32_t strgIdx = 0;
+                for (size_t i = 0; i < position; ++i) {
+                    if (column_types_[i] == ColumnType::STRING) ++strgIdx;
+                }
+                if (isAppend) {
+                    offsets_.push_back(strgIdx);
+                } else {
+                    offsets_.insert(offsets_.begin() + position, strgIdx);
+                    for (size_t i = position + 1; i < column_types_.size(); ++i) {
+                        if (column_types_[i] == ColumnType::STRING) offsets_[i]++;
+                    }
+                }
+            }
+            bool_mask_.insert(position, false);
+            tracked_mask_.insert(position, true);
+        } else {
+            // Scalar: byte offset depends on alignment
+            uint32_t dataOff = 0;
+            for (size_t i = 0; i < position; ++i) {
+                if (column_types_[i] != ColumnType::BOOL && column_types_[i] != ColumnType::STRING) {
+                    uint32_t a = static_cast<uint32_t>(alignOf(column_types_[i]));
+                    dataOff = (dataOff + (a - 1)) & ~(a - 1);
+                    dataOff += static_cast<uint32_t>(sizeOf(column_types_[i]));
+                }
+            }
+            if (isAppend) {
+                uint32_t a = static_cast<uint32_t>(alignOf(type));
+                dataOff = (dataOff + (a - 1)) & ~(a - 1);
+                offsets_.push_back(dataOff);
+            } else {
+                offsets_.insert(offsets_.begin() + position, 0u);
+                for (size_t i = position; i < column_types_.size(); ++i) {
+                    if (column_types_[i] != ColumnType::BOOL && column_types_[i] != ColumnType::STRING) {
+                        uint32_t a = static_cast<uint32_t>(alignOf(column_types_[i]));
+                        dataOff = (dataOff + (a - 1)) & ~(a - 1);
+                        offsets_[i] = dataOff;
+                        dataOff += static_cast<uint32_t>(sizeOf(column_types_[i]));
+                    }
+                }
+            }
+            bool_mask_.insert(position, false);
+            tracked_mask_.insert(position, true);
+        }
     }
 
     inline void Layout::Data::removeColumn(size_t index) {
@@ -103,6 +234,7 @@ namespace bcsv {
         column_index_.remove(column_names_[index]);
         column_names_.erase(column_names_.begin() + index);
         column_types_.erase(column_types_.begin() + index);
+        rebuildOffsets();
     }
 
     inline void Layout::Data::setColumnName(size_t index, std::string name) {
@@ -133,6 +265,7 @@ namespace bcsv {
         
         // Now change the type
         column_types_[index] = type;
+        rebuildOffsets();
     }
 
     inline void Layout::Data::setColumns(const std::vector<ColumnDefinition>& columns) {
@@ -170,6 +303,7 @@ namespace bcsv {
             column_types_[i] = columns[i].type;
         }
         column_index_.build(column_names_);
+        rebuildOffsets();
     }
 
     inline void Layout::Data::setColumns(const std::vector<std::string>& columnNames, 
@@ -188,6 +322,7 @@ namespace bcsv {
         column_names_ = columnNames;
         column_types_ = columnTypes;
         column_index_.build(column_names_);
+        rebuildOffsets();
         
         // Note: Bulk setColumns doesn't trigger individual notifications
     }
@@ -215,6 +350,9 @@ namespace bcsv {
         column_names_.clear();
         column_index_.clear();
         column_types_.clear();
+        offsets_.clear();
+        bool_mask_.resize(0);
+        tracked_mask_.resize(0);
         // Note: clear() doesn't trigger notifications
     }
 

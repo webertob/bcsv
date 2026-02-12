@@ -556,3 +556,123 @@ The visit() function implementation exceeded the original scope by delivering mu
 
 **Document Status:** CLOSED - Implementation complete, lessons captured, recommendations documented.  
 **Date Closed:** February 7, 2026
+
+---
+
+## Phase 1.7: Typed visit<T>() and visitConst<T>() — Compile-Time Dispatch ✅ COMPLETED
+
+**Date:** February 2026 (addendum)
+
+### Motivation
+
+The untyped `visit()` uses a runtime `switch(ColumnType)` to dispatch each column to the visitor.
+For **homogeneous column ranges** (e.g., 100 consecutive double columns), this runtime switch is
+pure overhead — the type is known at call time. Micro-benchmarks showed the runtime switch adds
+a consistent **~2x cost** vs. compile-time dispatch for bulk column access.
+
+### API
+
+```cpp
+// Typed mutable visit — compile-time dispatch, no runtime switch
+template<typename T, typename Visitor>
+    requires TypedRowVisitor<Visitor, T>
+void visit(size_t startIndex, Visitor&& visitor, size_t count = 1);
+
+// Typed read-only visit — compile-time dispatch, zero-copy
+template<typename T, typename Visitor>
+    requires TypedRowVisitorConst<Visitor, T>
+void visitConst(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
+```
+
+**New concepts** (defined in row.h):
+- `TypedRowVisitor<V, T>`: requires `(size_t, T&, bool&)` or `(size_t, T&)`
+- `TypedRowVisitorConst<V, T>`: requires `(size_t, const T&)`
+
+### Implementation Details
+
+Uses `if constexpr` for compile-time type dispatch into three branches:
+1. **bool** → materialize from `bits_[]`, call visitor, write back
+2. **string** → direct `strg_[]` reference, with truncation and tracking
+3. **scalar** → `reinterpret_cast<T*>(&data_[offset])`
+
+Runtime type checking (when `RANGE_CHECKING` enabled) validates all columns
+in the range match the expected type T before iterating.
+
+**Key design insight:** `std::is_convertible_v<std::string_view, std::string>` is **false** in
+C++17/20 because `std::string`'s constructor from `string_view` is `explicit`. The string
+branch uses `detail::is_string_like_v<T>` which correctly covers both `std::string` and
+`std::string_view`.
+
+### set<T>() Refactoring
+
+As part of this work, `set<T>()` was refactored from routing through `visit()` (runtime switch)
+to using the same direct `if constexpr` dispatch. This eliminates the visitor overhead for the
+most common single-column write operation.
+
+### Benchmark Results
+
+**Multi-column benchmark** (100 double columns, 100K iterations = 10M accesses, -O3):
+
+| Method | Time (ms) | Notes |
+|---|---|---|
+| `visit()` | ~12 | Runtime switch per column |
+| `visit<T>()` | ~5.7 | **2x faster** — no switch |
+| `visitConst<T>()` | ~5.2 | Read-only, slightly faster |
+| `ref<T>()` loop | ~4.6 | Manual per-column, no visitor overhead |
+| `set<T>()` loop | ~4.6 | Refactored to direct dispatch |
+
+At -O2, `visit<T>()` (5.1ms) is faster than even the `ref<T>()` loop (6.7ms) because
+the single call with internal iteration avoids per-column function call overhead.
+
+### Tests Added
+
+10 new tests in visit_test.cpp (total: 315 tests):
+- TypedVisitScalarReadWrite, TypedVisitConstReadOnly, TypedVisitSingleColumn
+- TypedVisitBool, TypedVisitString, TypedVisitWithChangeTracking
+- TypedVisitTypeMismatchThrows, TypedVisitRangeOutOfBoundsThrows
+- TypedVisitZeroCount, TypedVisitTwoParamVisitor
+
+### Other Row Classes — Analysis
+
+`visit<T>()`/`visitConst<T>()` is implemented on **RowImpl** and **RowView**.
+
+| Row Class | Layout | Ownership | Runtime Dispatch | visit<T> Benefit | Status |
+|---|---|---|---|---|---|
+| **RowImpl** | Runtime | Owning | 12-branch switch | ✅ High — eliminates switch | **DONE** |
+| **RowView** | Runtime | Non-owning | 12-branch switch | ✅ High — same switch, API consistency | **DONE** |
+| **RowStaticImpl** | Compile-time | Owning | Fold expr `((I==i ? ... : false) \|\| ...)` | ❌ Low — types already known at compile time | Not needed |
+| **RowViewStatic** | Compile-time | Non-owning | Fold expr (same pattern) | ❌ Low — types already known at compile time | Not needed |
+
+#### RowView — Implementation Notes
+
+**RowView** has the same 12-branch `switch(ColumnType)` dispatch as RowImpl. Key design
+differences from RowImpl:
+
+- **Strings**: Uses `std::string_view` (not `std::string&`) since RowView doesn't own
+  string storage. The buffer holds `StringAddr` records decoded to `string_view`. Both
+  `visit<std::string_view>` and `visit<std::string>` are accepted — the latter creates
+  a temporary `std::string` from the buffer's `string_view`.
+- **Mutability**: Scalars and bools are mutable in-place (direct `reinterpret_cast` into
+  buffer). Strings are read-only in both mutable and const visit (buffer cannot resize).
+- **Change tracking**: RowView has no tracking infrastructure. The `bool& changed` parameter
+  is accepted but ignored (consistent with current untyped visit behavior).
+- **Performance**: At -O3, RowView's runtime switch is very well predicted for homogeneous
+  column ranges, so `visit<T>()` shows comparable speed (~5-8ms for 10M accesses). At -O2,
+  `visit<T>()` is 1.24x faster for mutable access. The primary value is API consistency with
+  RowImpl and type safety (compile-time type enforcement).
+
+**12 new tests** added: RowViewTypedVisitConstScalar, RowViewTypedVisitConstDouble,
+RowViewTypedVisitConstString, RowViewTypedVisitMutableScalar, RowViewTypedVisitMutableDouble,
+RowViewTypedVisitMutableBool, RowViewTypedVisitSingleColumn, RowViewTypedVisitTypeMismatchThrows,
+RowViewTypedVisitRangeOutOfBoundsThrows, RowViewTypedVisitZeroCount,
+RowViewTypedVisitStringReadOnly, RowViewTypedVisitRoundtrip.
+
+Total test count: 327 (315 + 12 new RowView typed visit tests).
+
+#### RowStaticImpl & RowViewStatic — Not Needed
+
+These classes use compile-time fold expressions that already know each column's type at each
+index I. There is no `ColumnType` runtime switch to eliminate. The minor overhead is the
+`((I == i ? ... : false) || ...)` linear scan to find the matching index, but this is an
+O(N) scan over a small, known-at-compile-time N, and the compiler typically optimizes it.
+Adding `visit<T>()` would only add API surface without meaningful performance benefit.

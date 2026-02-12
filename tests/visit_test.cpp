@@ -669,9 +669,9 @@ TEST(VisitTest, FineGrainedChangeTracking) {
     row.set(0, 10);
     row.set(1, 20);
     row.set(2, 30);
-    row.resetChanges();
+    row.changes().reset();
     
-    EXPECT_FALSE(row.hasAnyChanges());
+    EXPECT_FALSE(row.changes().any());
     
     // Fine-grained visitor: only modifies columns where value < 25
     // Uses optional 3rd parameter to control change tracking
@@ -758,6 +758,561 @@ TEST(VisitTest, IgnoringChangeFlagParameter) {
     EXPECT_EQ(row.get<int32_t>(0), 20);
     EXPECT_EQ(row.get<int32_t>(1), 40);
     EXPECT_TRUE(row.hasAnyChanges());
+}
+
+// ============================================================================
+// Test: visit<T>() — Type-Safe Typed Visit (Compile-Time Dispatch)
+// ============================================================================
+
+TEST(VisitTest, TypedVisitScalarReadWrite) {
+    Layout layout({
+        {"a", ColumnType::DOUBLE},
+        {"b", ColumnType::DOUBLE},
+        {"c", ColumnType::DOUBLE}
+    });
+    
+    Row row(layout);
+    row.set(0, 1.0);
+    row.set(1, 2.0);
+    row.set(2, 3.0);
+    
+    // Typed mutable visit: multiply all doubles by 10
+    row.visit<double>(0, [](size_t, double& val, bool& changed) {
+        val *= 10.0;
+        changed = true;
+    }, 3);
+    
+    EXPECT_NEAR(row.get<double>(0), 10.0, 0.01);
+    EXPECT_NEAR(row.get<double>(1), 20.0, 0.01);
+    EXPECT_NEAR(row.get<double>(2), 30.0, 0.01);
+}
+
+TEST(VisitTest, TypedVisitConstReadOnly) {
+    Layout layout({
+        {"x", ColumnType::INT32},
+        {"y", ColumnType::INT32},
+        {"z", ColumnType::INT32}
+    });
+    
+    Row row(layout);
+    row.set(0, int32_t(10));
+    row.set(1, int32_t(20));
+    row.set(2, int32_t(30));
+    
+    // Typed const visit: sum all values
+    int32_t sum = 0;
+    row.visitConst<int32_t>(0, [&](size_t, const int32_t& val) {
+        sum += val;
+    }, 3);
+    
+    EXPECT_EQ(sum, 60);
+}
+
+TEST(VisitTest, TypedVisitSingleColumn) {
+    Layout layout({
+        {"id", ColumnType::UINT32},
+        {"value", ColumnType::DOUBLE},
+        {"name", ColumnType::STRING}
+    });
+    
+    Row row(layout);
+    row.set(0, uint32_t(42));
+    row.set(1, 3.14);
+    row.set(2, std::string("hello"));
+    
+    // Visit single column (default count=1)
+    double result = 0;
+    row.visitConst<double>(1, [&](size_t, const double& val) {
+        result = val;
+    });
+    EXPECT_NEAR(result, 3.14, 0.001);
+    
+    // Visit single string column
+    std::string strResult;
+    row.visitConst<std::string>(2, [&](size_t, const std::string& val) {
+        strResult = val;
+    });
+    EXPECT_EQ(strResult, "hello");
+    
+    // Mutable visit: modify the double
+    row.visit<double>(1, [](size_t, double& val, bool& changed) {
+        val = 2.718;
+        changed = true;
+    });
+    EXPECT_NEAR(row.get<double>(1), 2.718, 0.001);
+}
+
+TEST(VisitTest, TypedVisitBool) {
+    Layout layout({
+        {"flag1", ColumnType::BOOL},
+        {"flag2", ColumnType::BOOL},
+        {"flag3", ColumnType::BOOL}
+    });
+    
+    Row row(layout);
+    row.set(0, true);
+    row.set(1, false);
+    row.set(2, true);
+    
+    // Const visit: count true values
+    int trueCount = 0;
+    row.visitConst<bool>(0, [&](size_t, const bool& val) {
+        if (val) trueCount++;
+    }, 3);
+    EXPECT_EQ(trueCount, 2);
+    
+    // Mutable visit: flip all bools
+    row.visit<bool>(0, [](size_t, bool& val, bool&) {
+        val = !val;
+    }, 3);
+    
+    EXPECT_FALSE(row.get<bool>(0));
+    EXPECT_TRUE(row.get<bool>(1));
+    EXPECT_FALSE(row.get<bool>(2));
+}
+
+TEST(VisitTest, TypedVisitString) {
+    Layout layout({
+        {"s1", ColumnType::STRING},
+        {"s2", ColumnType::STRING}
+    });
+    
+    Row row(layout);
+    row.set(0, std::string("hello"));
+    row.set(1, std::string("world"));
+    
+    // Mutable visit: append suffix
+    row.visit<std::string>(0, [](size_t, std::string& val, bool& changed) {
+        val += "!";
+        changed = true;
+    }, 2);
+    
+    EXPECT_EQ(row.get<std::string>(0), "hello!");
+    EXPECT_EQ(row.get<std::string>(1), "world!");
+}
+
+TEST(VisitTest, TypedVisitWithChangeTracking) {
+    Layout layout({
+        {"a", ColumnType::INT32},
+        {"b", ColumnType::INT32},
+        {"c", ColumnType::INT32}
+    });
+    
+    RowTracked<TrackingPolicy::Enabled> row(layout);
+    row.set(0, 10);
+    row.set(1, 20);
+    row.set(2, 30);
+    row.resetChanges();
+    
+    EXPECT_FALSE(row.hasAnyChanges());
+    
+    // Typed visit: only modify columns where value > 15
+    row.visit<int32_t>(0, [](size_t, int32_t& val, bool& changed) {
+        if (val > 15) {
+            val += 100;
+            changed = true;
+        } else {
+            changed = false;
+        }
+    }, 3);
+    
+    EXPECT_EQ(row.get<int32_t>(0), 10);   // Not modified
+    EXPECT_EQ(row.get<int32_t>(1), 120);  // Modified
+    EXPECT_EQ(row.get<int32_t>(2), 130);  // Modified
+    EXPECT_TRUE(row.hasAnyChanges());
+    
+    // Verify ZoH serialization only includes changed columns
+    ByteBuffer buffer;
+    auto serialized = row.serializeToZoH(buffer);
+    // bitset (1 byte) + 2 * int32 = 1 + 8 = 9 bytes
+    EXPECT_EQ(serialized.size(), 9);
+}
+
+TEST(VisitTest, TypedVisitTypeMismatchThrows) {
+    Layout layout({
+        {"value", ColumnType::INT32},
+        {"name", ColumnType::STRING}
+    });
+    
+    Row row(layout);
+    row.set(0, int32_t(42));
+    row.set(1, std::string("test"));
+    
+    // Visiting INT32 column as DOUBLE should throw
+    EXPECT_THROW(
+        row.visit<double>(0, [](size_t, double&, bool&) {}, 1),
+        std::runtime_error
+    );
+    
+    // Visiting 2 columns where types differ should throw
+    EXPECT_THROW(
+        row.visit<int32_t>(0, [](size_t, int32_t&, bool&) {}, 2),
+        std::runtime_error
+    );
+    
+    // visitConst type mismatch
+    EXPECT_THROW(
+        row.visitConst<double>(0, [](size_t, const double&) {}, 1),
+        std::runtime_error
+    );
+}
+
+TEST(VisitTest, TypedVisitRangeOutOfBoundsThrows) {
+    Layout layout({
+        {"a", ColumnType::INT32},
+        {"b", ColumnType::INT32}
+    });
+    
+    Row row(layout);
+    
+    // Range exceeds column count
+    EXPECT_THROW(
+        row.visit<int32_t>(0, [](size_t, int32_t&, bool&) {}, 5),
+        std::out_of_range
+    );
+    
+    EXPECT_THROW(
+        row.visitConst<int32_t>(3, [](size_t, const int32_t&) {}, 1),
+        std::out_of_range
+    );
+}
+
+TEST(VisitTest, TypedVisitZeroCount) {
+    Layout layout({{"a", ColumnType::INT32}});
+    Row row(layout);
+    
+    int callCount = 0;
+    // count=0 should be a no-op
+    row.visit<int32_t>(0, [&](size_t, int32_t&, bool&) { callCount++; }, 0);
+    EXPECT_EQ(callCount, 0);
+    
+    row.visitConst<int32_t>(0, [&](size_t, const int32_t&) { callCount++; }, 0);
+    EXPECT_EQ(callCount, 0);
+}
+
+TEST(VisitTest, TypedVisitTwoParamVisitor) {
+    Layout layout({
+        {"x", ColumnType::DOUBLE},
+        {"y", ColumnType::DOUBLE}
+    });
+    
+    Row row(layout);
+    row.set(0, 1.0);
+    row.set(1, 2.0);
+    
+    // 2-param visitor (no bool& changed) — marks all as changed when tracking
+    row.visit<double>(0, [](size_t, double& val) {
+        val *= 3.0;
+    }, 2);
+    
+    EXPECT_NEAR(row.get<double>(0), 3.0, 0.01);
+    EXPECT_NEAR(row.get<double>(1), 6.0, 0.01);
+}
+
+// ============================================================================
+// RowView Typed visit<T>() / visitConst<T>() Tests
+// ============================================================================
+
+TEST(VisitTest, RowViewTypedVisitConstScalar) {
+    Layout layout({
+        {"a", ColumnType::INT32},
+        {"b", ColumnType::INT32},
+        {"c", ColumnType::INT32}
+    });
+
+    Row row(layout);
+    row.set(0, int32_t(10));
+    row.set(1, int32_t(20));
+    row.set(2, int32_t(30));
+
+    ByteBuffer buf;
+    auto serialized = row.serializeTo(buf);
+    RowView rv(layout, std::span<std::byte>(serialized));
+
+    // visitConst<int32_t> over all 3 columns
+    int64_t sum = 0;
+    rv.visitConst<int32_t>(0, [&](size_t, const int32_t& val) {
+        sum += val;
+    }, 3);
+
+    EXPECT_EQ(sum, 60);
+}
+
+TEST(VisitTest, RowViewTypedVisitConstDouble) {
+    Layout layout({
+        {"x", ColumnType::DOUBLE},
+        {"y", ColumnType::DOUBLE}
+    });
+
+    Row row(layout);
+    row.set(0, 1.5);
+    row.set(1, 2.5);
+
+    ByteBuffer buf;
+    auto serialized = row.serializeTo(buf);
+    RowView rv(layout, std::span<std::byte>(serialized));
+
+    double sum = 0;
+    rv.visitConst<double>(0, [&](size_t, const double& val) {
+        sum += val;
+    }, 2);
+
+    EXPECT_NEAR(sum, 4.0, 0.01);
+}
+
+TEST(VisitTest, RowViewTypedVisitConstString) {
+    Layout layout({
+        {"s1", ColumnType::STRING},
+        {"s2", ColumnType::STRING}
+    });
+
+    Row row(layout);
+    row.set(0, std::string("hello"));
+    row.set(1, std::string("world"));
+
+    ByteBuffer buf;
+    auto serialized = row.serializeTo(buf);
+    RowView rv(layout, std::span<std::byte>(serialized));
+
+    // RowView strings are string_view
+    std::vector<std::string> collected;
+    rv.visitConst<std::string_view>(0, [&](size_t, const std::string_view& sv) {
+        collected.emplace_back(sv);
+    }, 2);
+
+    ASSERT_EQ(collected.size(), 2);
+    EXPECT_EQ(collected[0], "hello");
+    EXPECT_EQ(collected[1], "world");
+}
+
+TEST(VisitTest, RowViewTypedVisitMutableScalar) {
+    Layout layout({
+        {"a", ColumnType::INT32},
+        {"b", ColumnType::INT32},
+        {"c", ColumnType::INT32}
+    });
+
+    Row row(layout);
+    row.set(0, int32_t(10));
+    row.set(1, int32_t(20));
+    row.set(2, int32_t(30));
+
+    ByteBuffer buf;
+    auto serialized = row.serializeTo(buf);
+    RowView rv(layout, std::span<std::byte>(serialized));
+
+    // Mutable typed visit: add 100 to each
+    rv.visit<int32_t>(0, [](size_t, int32_t& val, bool&) {
+        val += 100;
+    }, 3);
+
+    // Verify changes via get
+    EXPECT_EQ(rv.get<int32_t>(0), 110);
+    EXPECT_EQ(rv.get<int32_t>(1), 120);
+    EXPECT_EQ(rv.get<int32_t>(2), 130);
+}
+
+TEST(VisitTest, RowViewTypedVisitMutableDouble) {
+    Layout layout({
+        {"x", ColumnType::DOUBLE},
+        {"y", ColumnType::DOUBLE}
+    });
+
+    Row row(layout);
+    row.set(0, 1.0);
+    row.set(1, 2.0);
+
+    ByteBuffer buf;
+    auto serialized = row.serializeTo(buf);
+    RowView rv(layout, std::span<std::byte>(serialized));
+
+    // Scale doubles
+    rv.visit<double>(0, [](size_t, double& val) {
+        val *= 3.0;
+    }, 2);
+
+    EXPECT_NEAR(rv.get<double>(0), 3.0, 0.01);
+    EXPECT_NEAR(rv.get<double>(1), 6.0, 0.01);
+}
+
+TEST(VisitTest, RowViewTypedVisitMutableBool) {
+    Layout layout({
+        {"f1", ColumnType::BOOL},
+        {"f2", ColumnType::BOOL}
+    });
+
+    Row row(layout);
+    row.set(0, true);
+    row.set(1, false);
+
+    ByteBuffer buf;
+    auto serialized = row.serializeTo(buf);
+    RowView rv(layout, std::span<std::byte>(serialized));
+
+    // Flip bools
+    rv.visit<bool>(0, [](size_t, bool& val, bool&) {
+        val = !val;
+    }, 2);
+
+    EXPECT_EQ(rv.get<bool>(0), false);
+    EXPECT_EQ(rv.get<bool>(1), true);
+}
+
+TEST(VisitTest, RowViewTypedVisitSingleColumn) {
+    Layout layout({
+        {"a", ColumnType::DOUBLE},
+        {"b", ColumnType::INT32},
+        {"c", ColumnType::DOUBLE}
+    });
+
+    Row row(layout);
+    row.set(0, 1.0);
+    row.set(1, int32_t(42));
+    row.set(2, 3.0);
+
+    ByteBuffer buf;
+    auto serialized = row.serializeTo(buf);
+    RowView rv(layout, std::span<std::byte>(serialized));
+
+    // Visit just column 2 (double)
+    rv.visit<double>(2, [](size_t idx, double& val) {
+        EXPECT_EQ(idx, 2);
+        val = 99.0;
+    }, 1);
+
+    EXPECT_NEAR(rv.get<double>(2), 99.0, 0.01);
+    // Ensure column 0 wasn't touched
+    EXPECT_NEAR(rv.get<double>(0), 1.0, 0.01);
+}
+
+TEST(VisitTest, RowViewTypedVisitTypeMismatchThrows) {
+    Layout layout({
+        {"a", ColumnType::INT32},
+        {"b", ColumnType::DOUBLE}  // Different type!
+    });
+
+    Row row(layout);
+    row.set(0, int32_t(1));
+    row.set(1, 2.0);
+
+    ByteBuffer buf;
+    auto serialized = row.serializeTo(buf);
+    RowView rv(layout, std::span<std::byte>(serialized));
+
+    // Visiting both columns as int32_t should throw (column 1 is DOUBLE)
+    EXPECT_THROW(
+        rv.visit<int32_t>(0, [](size_t, int32_t&, bool&) {}, 2),
+        std::runtime_error
+    );
+
+    EXPECT_THROW(
+        rv.visitConst<int32_t>(0, [](size_t, const int32_t&) {}, 2),
+        std::runtime_error
+    );
+}
+
+TEST(VisitTest, RowViewTypedVisitRangeOutOfBoundsThrows) {
+    Layout layout({{"a", ColumnType::INT32}});
+    
+    Row row(layout);
+    row.set(0, int32_t(1));
+
+    ByteBuffer buf;
+    auto serialized = row.serializeTo(buf);
+    RowView rv(layout, std::span<std::byte>(serialized));
+
+    // Range exceeds column count
+    EXPECT_THROW(
+        rv.visit<int32_t>(0, [](size_t, int32_t&, bool&) {}, 5),
+        std::out_of_range
+    );
+
+    EXPECT_THROW(
+        rv.visitConst<int32_t>(0, [](size_t, const int32_t&) {}, 5),
+        std::out_of_range
+    );
+}
+
+TEST(VisitTest, RowViewTypedVisitZeroCount) {
+    Layout layout({{"a", ColumnType::INT32}});
+    
+    Row row(layout);
+    row.set(0, int32_t(1));
+
+    ByteBuffer buf;
+    auto serialized = row.serializeTo(buf);
+    RowView rv(layout, std::span<std::byte>(serialized));
+
+    int callCount = 0;
+    rv.visit<int32_t>(0, [&](size_t, int32_t&, bool&) { callCount++; }, 0);
+    EXPECT_EQ(callCount, 0);
+
+    rv.visitConst<int32_t>(0, [&](size_t, const int32_t&) { callCount++; }, 0);
+    EXPECT_EQ(callCount, 0);
+}
+
+TEST(VisitTest, RowViewTypedVisitStringReadOnly) {
+    // Verify that string visit in mutable mode still gives string_view (read-only semantics)
+    Layout layout({
+        {"s1", ColumnType::STRING},
+        {"s2", ColumnType::STRING}
+    });
+
+    Row row(layout);
+    row.set(0, std::string("alpha"));
+    row.set(1, std::string("beta"));
+
+    ByteBuffer buf;
+    auto serialized = row.serializeTo(buf);
+    RowView rv(layout, std::span<std::byte>(serialized));
+
+    // Mutable visit with string_view — can read but not resize the buffer
+    std::vector<std::string> results;
+    rv.visit<std::string_view>(0, [&](size_t, std::string_view& sv, bool&) {
+        results.emplace_back(sv);
+    }, 2);
+
+    ASSERT_EQ(results.size(), 2);
+    EXPECT_EQ(results[0], "alpha");
+    EXPECT_EQ(results[1], "beta");
+}
+
+TEST(VisitTest, RowViewTypedVisitRoundtrip) {
+    // Full roundtrip: Row -> serialize -> RowView visit<T> modify -> RowView get -> verify
+    Layout layout({
+        {"ch0", ColumnType::DOUBLE},
+        {"ch1", ColumnType::DOUBLE},
+        {"ch2", ColumnType::DOUBLE},
+        {"ch3", ColumnType::DOUBLE},
+        {"ch4", ColumnType::DOUBLE}
+    });
+
+    Row row(layout);
+    for (size_t i = 0; i < 5; i++)
+        row.set(i, static_cast<double>(i) * 10.0);
+
+    ByteBuffer buf;
+    auto serialized = row.serializeTo(buf);
+    RowView rv(layout, std::span<std::byte>(serialized));
+
+    // Read original values via visitConst<T>
+    std::vector<double> original;
+    rv.visitConst<double>(0, [&](size_t, const double& val) {
+        original.push_back(val);
+    }, 5);
+
+    ASSERT_EQ(original.size(), 5);
+    for (size_t i = 0; i < 5; i++)
+        EXPECT_NEAR(original[i], i * 10.0, 0.01);
+
+    // Modify via visit<T>
+    rv.visit<double>(0, [](size_t, double& val, bool&) {
+        val += 1000.0;
+    }, 5);
+
+    // Verify modifications via get
+    for (size_t i = 0; i < 5; i++)
+        EXPECT_NEAR(rv.get<double>(i), i * 10.0 + 1000.0, 0.01);
 }
 
 

@@ -87,30 +87,31 @@ private:
 public:
     // Generate random-like deterministic values
     template<typename T>
-    void getRandom(size_t row, size_t col, T& value) const {
-        if constexpr (std::is_same_v<T, bool>) {
+    void getRandom(size_t row, size_t col, T&& value) const {
+        using V = std::decay_t<T>;
+        if constexpr (std::is_same_v<V, bool>) {
             value = hashBool(row, col) != 0;
-        } else if constexpr (std::is_same_v<T, int8_t>) {
+        } else if constexpr (std::is_same_v<V, int8_t>) {
             value = hashInt8(row, col);
-        } else if constexpr (std::is_same_v<T, int16_t>) {
+        } else if constexpr (std::is_same_v<V, int16_t>) {
             value = hashInt16(row, col);
-        } else if constexpr (std::is_same_v<T, int32_t>) {
+        } else if constexpr (std::is_same_v<V, int32_t>) {
             value = hashInt32(row, col);
-        } else if constexpr (std::is_same_v<T, int64_t>) {
+        } else if constexpr (std::is_same_v<V, int64_t>) {
             value = hashInt64(row, col);
-        } else if constexpr (std::is_same_v<T, uint8_t>) {
+        } else if constexpr (std::is_same_v<V, uint8_t>) {
             value = hashUInt8(row, col);
-        } else if constexpr (std::is_same_v<T, uint16_t>) {
+        } else if constexpr (std::is_same_v<V, uint16_t>) {
             value = hashUInt16(row, col);
-        } else if constexpr (std::is_same_v<T, uint32_t>) {
+        } else if constexpr (std::is_same_v<V, uint32_t>) {
             value = hashUInt32(row, col);
-        } else if constexpr (std::is_same_v<T, uint64_t>) {
+        } else if constexpr (std::is_same_v<V, uint64_t>) {
             value = hashUInt64(row, col);
-        } else if constexpr (std::is_same_v<T, float>) {
+        } else if constexpr (std::is_same_v<V, float>) {
             value = hashFloat(row, col);
-        } else if constexpr (std::is_same_v<T, double>) {
+        } else if constexpr (std::is_same_v<V, double>) {
             value = hashDouble(row, col);
-        } else if constexpr (std::is_same_v<T, std::string>) {
+        } else if constexpr (std::is_same_v<V, std::string>) {
             // String size round-robin through 5 sizes: 9, 48, 512, 4096, 128
             // col % 5 determines size category (branchless)
             constexpr size_t sizes[5] = {9, 48, 512, 4096, 128};
@@ -132,34 +133,35 @@ public:
     // Generate time-series data with temporal correlation
     // Value parameter serves as storage for previous value
     template<typename T>
-    void getTimeSeries(size_t row, size_t col, T& value) const {
+    void getTimeSeries(size_t row, size_t col, T&& value) const {
+        using V = std::decay_t<T>;
         // Change interval: values change every 100 rows
         constexpr size_t changeInterval = 100;
         size_t segment = row / changeInterval;
         
-        if constexpr (std::is_same_v<T, bool>) {
+        if constexpr (std::is_same_v<V, bool>) {
             value = ((segment + col) % 3) == 0;
-        } else if constexpr (std::is_same_v<T, int8_t>) {
+        } else if constexpr (std::is_same_v<V, int8_t>) {
             value = static_cast<int8_t>((segment % 50) + col * 10);
-        } else if constexpr (std::is_same_v<T, int16_t>) {
+        } else if constexpr (std::is_same_v<V, int16_t>) {
             value = static_cast<int16_t>((segment % 1000) + col * 100);
-        } else if constexpr (std::is_same_v<T, int32_t>) {
+        } else if constexpr (std::is_same_v<V, int32_t>) {
             value = static_cast<int32_t>(segment * 10 + col * 1000);
-        } else if constexpr (std::is_same_v<T, int64_t>) {
+        } else if constexpr (std::is_same_v<V, int64_t>) {
             value = static_cast<int64_t>(1640995200000LL + segment * 60000 + col * 1000);
-        } else if constexpr (std::is_same_v<T, uint8_t>) {
+        } else if constexpr (std::is_same_v<V, uint8_t>) {
             value = static_cast<uint8_t>((segment + col * 20) % 200);
-        } else if constexpr (std::is_same_v<T, uint16_t>) {
+        } else if constexpr (std::is_same_v<V, uint16_t>) {
             value = static_cast<uint16_t>((segment % 10000) + col * 5000);
-        } else if constexpr (std::is_same_v<T, uint32_t>) {
+        } else if constexpr (std::is_same_v<V, uint32_t>) {
             value = static_cast<uint32_t>(segment * 100 + col * 10000);
-        } else if constexpr (std::is_same_v<T, uint64_t>) {
+        } else if constexpr (std::is_same_v<V, uint64_t>) {
             value = static_cast<uint64_t>(segment * 1000000ULL + col * 1000000000ULL);
-        } else if constexpr (std::is_same_v<T, float>) {
+        } else if constexpr (std::is_same_v<V, float>) {
             value = static_cast<float>(50.0f + (segment % 100) * 0.5f + col * 10.0f);
-        } else if constexpr (std::is_same_v<T, double>) {
+        } else if constexpr (std::is_same_v<V, double>) {
             value = static_cast<double>(100.0 + (segment % 500) * 0.1 + col * 25.0);
-        } else if constexpr (std::is_same_v<T, std::string>) {
+        } else if constexpr (std::is_same_v<V, std::string>) {
             // Repeated string categories for ZoH compression
             const char* categories[] = {"Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta"};
             value = categories[(segment / 5 + col) % 6];
@@ -505,7 +507,8 @@ public:
                 // Generate random data
                 switch(layout.columnType(k)) {
                     case bcsv::ColumnType::BOOL: {
-                        dataGen_.getRandom(i, k, testData.ref<bool>(k));
+                        bool tmp; dataGen_.getRandom(i, k, tmp);
+                        testData.set(k, tmp);
                         row.set(k, testData.get<bool>(k));
                         break;
                     }
@@ -600,7 +603,8 @@ public:
                 bool success;
                 switch(reader.layout().columnType(k)) {
                     case bcsv::ColumnType::BOOL: {
-                        dataGen_.getRandom(i, k, tempRow.ref<bool>(k));
+                        bool tmp; dataGen_.getRandom(i, k, tmp);
+                        tempRow.set(k, tmp);
                         const bool& val_read = row.get<bool>(k);
                         success = (val_read == tempRow.get<bool>(k));
                         break;
@@ -886,7 +890,8 @@ public:
                 // Pre-fill with time-series data to simulate ZoH patterns
                 switch(layout.columnType(k)) {
                     case bcsv::ColumnType::BOOL: {
-                        dataGen_.getTimeSeries(i, k, testData.ref<bool>(k));
+                        bool tmp; dataGen_.getTimeSeries(i, k, tmp);
+                        testData.set(k, tmp);
                         row.set(k, testData.get<bool>(k));
                         break;
                     }
@@ -981,7 +986,8 @@ public:
                 bool success;
                 switch(reader.layout().columnType(k)) {
                     case bcsv::ColumnType::BOOL: {
-                        dataGen_.getTimeSeries(i, k, tempRow.ref<bool>(k));
+                        bool tmp; dataGen_.getTimeSeries(i, k, tmp);
+                        tempRow.set(k, tmp);
                         const bool& val_read = row.get<bool>(k);
                         success = (val_read == tempRow.get<bool>(k));
                         break;

@@ -3408,3 +3408,205 @@ TEST_F(BCSVBoundaryTests, RowSizeLimit_16MB_StressTest) {
         reader.close();
     }
 }
+
+// ==================================================================================
+// ref<T>() Regression Tests
+// Guards against decltype(auto) → auto regression where ref() returns by value
+// ==================================================================================
+
+TEST_F(BCSVTestSuite, Ref_WriteAndReadBack_AllTypes) {
+    // Creates a flexible row, writes values through ref<T>(), reads back via get<T>()
+    auto layout = createFullFlexibleLayout();
+    bcsv::Row row(layout);
+
+    // Write through ref<T>()
+    row.ref<bool>(0) = true;
+    row.ref<bool>(1) = false;
+    row.ref<int8_t>(2) = -42;
+    row.ref<int8_t>(3) = 127;
+    row.ref<int16_t>(4) = -1234;
+    row.ref<int16_t>(5) = 32000;
+    row.ref<int32_t>(6) = -99999;
+    row.ref<int32_t>(7) = 2147483;
+    row.ref<int64_t>(8) = -123456789LL;
+    row.ref<int64_t>(9) = 987654321LL;
+    row.ref<uint8_t>(10) = 200;
+    row.ref<uint8_t>(11) = 0;
+    row.ref<uint16_t>(12) = 50000;
+    row.ref<uint16_t>(13) = 1;
+    row.ref<uint32_t>(14) = 3000000;
+    row.ref<uint32_t>(15) = 42;
+    row.ref<uint64_t>(16) = 1000000000ULL;
+    row.ref<uint64_t>(17) = 0ULL;
+    row.ref<float>(18) = 3.14f;
+    row.ref<float>(19) = -0.001f;
+    row.ref<double>(20) = 2.71828;
+    row.ref<double>(21) = -1e15;
+    row.ref<std::string>(22) = "Hello World";
+    row.ref<std::string>(23) = "";
+
+    // Read back via get<T>() — every value must match
+    EXPECT_EQ(row.get<bool>(0), true);
+    EXPECT_EQ(row.get<bool>(1), false);
+    EXPECT_EQ(row.get<int8_t>(2), -42);
+    EXPECT_EQ(row.get<int8_t>(3), 127);
+    EXPECT_EQ(row.get<int16_t>(4), -1234);
+    EXPECT_EQ(row.get<int16_t>(5), 32000);
+    EXPECT_EQ(row.get<int32_t>(6), -99999);
+    EXPECT_EQ(row.get<int32_t>(7), 2147483);
+    EXPECT_EQ(row.get<int64_t>(8), -123456789LL);
+    EXPECT_EQ(row.get<int64_t>(9), 987654321LL);
+    EXPECT_EQ(row.get<uint8_t>(10), 200);
+    EXPECT_EQ(row.get<uint8_t>(11), 0);
+    EXPECT_EQ(row.get<uint16_t>(12), 50000);
+    EXPECT_EQ(row.get<uint16_t>(13), 1);
+    EXPECT_EQ(row.get<uint32_t>(14), 3000000u);
+    EXPECT_EQ(row.get<uint32_t>(15), 42u);
+    EXPECT_EQ(row.get<uint64_t>(16), 1000000000ULL);
+    EXPECT_EQ(row.get<uint64_t>(17), 0ULL);
+    EXPECT_FLOAT_EQ(row.get<float>(18), 3.14f);
+    EXPECT_FLOAT_EQ(row.get<float>(19), -0.001f);
+    EXPECT_DOUBLE_EQ(row.get<double>(20), 2.71828);
+    EXPECT_DOUBLE_EQ(row.get<double>(21), -1e15);
+    EXPECT_EQ(row.get<std::string>(22), "Hello World");
+    EXPECT_EQ(row.get<std::string>(23), "");
+}
+
+TEST_F(BCSVTestSuite, Ref_SerializeRoundTrip) {
+    // Write via ref<T>(), serialize, deserialize into new row, verify all values
+    auto layout = createFullFlexibleLayout();
+    bcsv::Row row(layout);
+
+    row.ref<bool>(0) = true;
+    row.ref<int32_t>(6) = 42424242;
+    row.ref<double>(20) = 3.14159265;
+    row.ref<std::string>(22) = "Serialize me";
+
+    bcsv::ByteBuffer buffer;
+    auto span = row.serializeTo(buffer);
+    ASSERT_GT(span.size(), 0u) << "Serialized row must be non-empty";
+
+    bcsv::Row row2(layout);
+    row2.deserializeFrom(span);
+
+    EXPECT_EQ(row2.get<bool>(0), true);
+    EXPECT_EQ(row2.get<int32_t>(6), 42424242);
+    EXPECT_DOUBLE_EQ(row2.get<double>(20), 3.14159265);
+    EXPECT_EQ(row2.get<std::string>(22), "Serialize me");
+}
+
+TEST_F(BCSVTestSuite, Ref_ChangeTracking) {
+    // Verify that ref<T>() marks non-BOOL columns as changed (tracking enabled)
+    auto layout = createFullFlexibleLayout();
+    bcsv::RowImpl<bcsv::TrackingPolicy::Enabled> row(layout);
+
+    // After construction, all non-BOOL columns should be marked changed
+    row.resetChanges();
+
+    // Now ref<T>() on a tracked row must set the change bit
+    row.ref<int32_t>(6) = 99;
+    EXPECT_TRUE(row.changes().test(6)) << "ref<int32_t>() must mark column as changed";
+
+    row.ref<std::string>(22) = "changed";
+    EXPECT_TRUE(row.changes().test(22)) << "ref<std::string>() must mark column as changed";
+
+    // Bool columns: change bit IS the value bit, not a separate flag
+    row.ref<bool>(0) = true;
+    EXPECT_TRUE(row.changes().test(0)) << "ref<bool>() sets value bit = true";
+    row.ref<bool>(0) = false;
+    EXPECT_FALSE(row.changes().test(0)) << "ref<bool>() sets value bit = false";
+}
+
+TEST_F(BCSVTestSuite, Ref_WriteThroughFileRoundTrip) {
+    // The actual benchmark pattern: ref<T>() → set → write file → read → compare
+    auto layout = createFullFlexibleLayout();
+    std::string filepath = test_dir_ + "/ref_roundtrip.bcsv";
+
+    // Write
+    {
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        ASSERT_TRUE(writer.open(filepath, true, 1));
+        auto& row = writer.row();
+
+        for (int i = 0; i < 100; ++i) {
+            // Create test data via ref<T>()
+            bcsv::Row testData(layout);
+            testData.ref<bool>(0) = (i % 2 == 0);
+            testData.ref<int8_t>(2) = static_cast<int8_t>(i % 127);
+            testData.ref<int32_t>(6) = i * 1000;
+            testData.ref<int64_t>(8) = static_cast<int64_t>(i) * 1000000LL;
+            testData.ref<double>(20) = 2.5 * i;
+            testData.ref<std::string>(22) = "row_" + std::to_string(i);
+
+            // Copy to writer row (the benchmark pattern)
+            row.set(0, testData.get<bool>(0));
+            row.set<int8_t>(2, testData.get<int8_t>(2));
+            row.set<int32_t>(6, testData.get<int32_t>(6));
+            row.set<int64_t>(8, testData.get<int64_t>(8));
+            row.set<double>(20, testData.get<double>(20));
+            row.set<std::string>(22, testData.get<std::string>(22));
+            writer.writeRow();
+        }
+        writer.close();
+    }
+
+    // Verify file is not suspiciously small (the original bug signature)
+    auto fileSize = fs::file_size(filepath);
+    EXPECT_GT(fileSize, 1000u) << "File must not be nearly empty (regression check)";
+
+    // Read back and verify
+    {
+        bcsv::Reader<bcsv::Layout> reader;
+        ASSERT_TRUE(reader.open(filepath));
+        int rowCount = 0;
+        while (reader.readNext()) {
+            const auto& row = reader.row();
+            EXPECT_EQ(row.get<bool>(0), (rowCount % 2 == 0)) << "bool mismatch at row " << rowCount;
+            EXPECT_EQ(row.get<int8_t>(2), static_cast<int8_t>(rowCount % 127)) << "int8 mismatch at row " << rowCount;
+            EXPECT_EQ(row.get<int32_t>(6), rowCount * 1000) << "int32 mismatch at row " << rowCount;
+            EXPECT_EQ(row.get<int64_t>(8), static_cast<int64_t>(rowCount) * 1000000LL) << "int64 mismatch at row " << rowCount;
+            EXPECT_DOUBLE_EQ(row.get<double>(20), 2.5 * rowCount) << "double mismatch at row " << rowCount;
+            EXPECT_EQ(row.get<std::string>(22), "row_" + std::to_string(rowCount)) << "string mismatch at row " << rowCount;
+            rowCount++;
+        }
+        reader.close();
+        EXPECT_EQ(rowCount, 100);
+    }
+}
+
+TEST_F(BCSVTestSuite, Ref_ReturnsLvalueReference) {
+    // Compile-time guard: ref<T>() must return something assignable as an lvalue.
+    // If ref<T>() ever regresses to return by value, these assignments would
+    // modify a temporary and the subsequent get<T>() would still read the old value.
+    auto layout = createFullFlexibleLayout();
+    bcsv::Row row(layout);
+
+    // Write distinct non-default values
+    auto& intRef = row.ref<int32_t>(6);
+    intRef = 777;
+    EXPECT_EQ(row.get<int32_t>(6), 777) << "ref<T>() must return a true lvalue reference, not a copy";
+
+    auto& strRef = row.ref<std::string>(22);
+    strRef = "persistent";
+    EXPECT_EQ(row.get<std::string>(22), "persistent") << "ref<std::string>() must return a true lvalue reference";
+
+    auto& dblRef = row.ref<double>(20);
+    dblRef = 99.99;
+    EXPECT_EQ(row.get<double>(20), 99.99) << "ref<double>() must return a true lvalue reference";
+}
+
+TEST_F(BCSVTestSuite, Ref_BoolViaProxy) {
+    // Bool ref returns bitset<>::reference proxy — verify write-through works
+    auto layout = createFullFlexibleLayout();
+    bcsv::Row row(layout);
+
+    row.ref<bool>(0) = true;
+    EXPECT_TRUE(row.get<bool>(0));
+    row.ref<bool>(0) = false;
+    EXPECT_FALSE(row.get<bool>(0));
+
+    // Verify the proxy is usable in boolean expressions
+    row.ref<bool>(1) = true;
+    bool val = row.ref<bool>(1);
+    EXPECT_TRUE(val);
+}
