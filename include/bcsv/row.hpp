@@ -115,7 +115,7 @@ namespace bcsv {
         // Unregister from layout callbacks
         layout_.unregisterCallback(this);
         // No manual cleanup needed — strg_ vector handles string destruction,
-        // data_ handles byte buffer, bits_ handles bitset.
+        // data_ handles byte buffer, bits_ handles Bitset.
     }
 
     /** Clear the row to its default state (default values) */
@@ -219,7 +219,7 @@ namespace bcsv {
         uint32_t offset = layout_.columnOffset(index);
 
         if constexpr (std::is_same_v<T, bool>) {
-            return bits_[bitsIndex(index)];  // bool by value (bitset has no addressable storage)
+            return bits_[bitsIndex(index)];  // bool by value (Bitset has no addressable storage)
         } else if constexpr (std::is_same_v<T, std::string>) {
             return static_cast<const std::string&>(strg_[offset]);  // const ref, zero-copy
         } else if constexpr (std::is_same_v<T, std::string_view>) {
@@ -322,7 +322,7 @@ namespace bcsv {
                 // For bools, the bit IS the value, change is implicit via write-through
                 // No separate change flag for bools — caller writes directly
             }
-            return bits_[bitsIndex(index)];  // returns bitset<>::reference proxy
+            return bits_[bitsIndex(index)];  // returns Bitset<>::reference proxy
         } else if constexpr (std::is_same_v<T, std::string>) {
             if constexpr (isTrackingEnabled(Policy)) {
                 bits_.set(index);
@@ -385,7 +385,7 @@ namespace bcsv {
     uint32_t offset = layout_.columnOffset(index);
 
     if constexpr (isBoolLike) {
-        // Bool (or bool proxy like std::vector<bool>::reference): write to bitset
+        // Bool (or bool proxy like std::vector<bool>::reference): write to Bitset
         bits_[bitsIndex(index)] = static_cast<bool>(value);
         // No separate change tracking for bools (the bit IS the value)
     } else if constexpr (isStringLike) {
@@ -552,8 +552,8 @@ namespace bcsv {
     }
 
     /** Serialize the row into the provided buffer using Zero-Order-Hold (ZoH) compression.
-     * Only the columns that have changed (as indicated by the change tracking bitset) are serialized.
-     * Bool columns are always serialized, but their values are stored in the change bitset.
+     * Only the columns that have changed (as indicated by the change tracking Bitset) are serialized.
+     * Bool columns are always serialized, but their values are stored in the change Bitset.
      * @param buffer The byte buffer to serialize into. The buffer will be resized as needed.
      * @return A span pointing to the serialized row data within the buffer.
      */
@@ -619,11 +619,11 @@ namespace bcsv {
             throw std::runtime_error("Row::deserializeFromZoH() requires tracking policy enabled");
         }
         
-        // buffer starts with the bits_ bitset (bool values + change flags), followed by the actual row data.
+        // buffer starts with the bits_ Bitset (bool values + change flags), followed by the actual row data.
         if (buffer.size() >= bits_.sizeBytes()) {
             std::memcpy(bits_.data(), &buffer[0], bits_.sizeBytes());  
         } else [[unlikely]] {
-            throw std::runtime_error("Row::deserializeFromZoH() failed! Buffer too small to contain change bitset.");
+            throw std::runtime_error("Row::deserializeFromZoH() failed! Buffer too small to contain change Bitset.");
         }        
         
         // Deserialize each element that has changed
@@ -855,7 +855,7 @@ namespace bcsv {
             uint32_t offset = layout_.columnOffset(i);
 
             if (type == ColumnType::BOOL) {
-                // Materialize bool from bitset, let visitor modify, write back
+                // Materialize bool from Bitset, let visitor modify, write back
                 bool val = bits_[bitsIndex(i)];
                 if constexpr (isTrackingEnabled(Policy)) {
                     static_assert(std::is_invocable_v<Visitor, size_t, bool&, bool&>,
@@ -1001,7 +1001,7 @@ namespace bcsv {
      * @endcode
      * 
     * @par Change Tracking Behavior
-     * - **With tracking enabled**: Changed columns are marked in internal bitset
+     * - **With tracking enabled**: Changed columns are marked in internal Bitset
      * - **Respects `changed` flag**: Only columns with `changed=true` are marked
     * - **Without tracking**: No overhead, changes not recorded
      * 
@@ -1011,7 +1011,7 @@ namespace bcsv {
      * @see row_visitors.h for concepts, helper types, and more examples
      * @see Row::visit(Visitor&&) const for read-only version
      * @see Row::visit(size_t, Visitor&&, size_t) for visiting a range or single column
-     * @see Row::changes() to access the change tracking bitset
+     * @see Row::changes() to access the change tracking Bitset
      */
     template<TrackingPolicy Policy>
     template<RowVisitor Visitor>
@@ -1083,7 +1083,7 @@ namespace bcsv {
             uint32_t offset = layout_.columnOffset(i);
 
             if constexpr (std::is_same_v<T, bool>) {
-                // Materialize bool from bitset, let visitor modify, write back
+                // Materialize bool from Bitset, let visitor modify, write back
                 bool val = bits_[bitsIndex(i)];
                 if constexpr (std::is_invocable_v<Visitor, size_t, bool&, bool&>) {
                     bool changed = true;
@@ -1199,7 +1199,7 @@ namespace bcsv {
         }
 
         // Save old state (layout_ still has pre-mutation types/offsets)
-        bitset<> oldBits = bits_;
+        Bitset<> oldBits = bits_;
         std::vector<std::byte> oldData = data_;
         std::vector<std::string> oldStrg = strg_;
 
@@ -1217,7 +1217,7 @@ namespace bcsv {
 
         if (changes.size() == 1) {
             const auto& c = changes[0];
-            if (c.oldType == ColumnType::VOID && c.newType != ColumnType::VOID) {
+            if (c.old_type == ColumnType::VOID && c.new_type != ColumnType::VOID) {
                 // addColumn at position c.index
                 newTypes.reserve(oldColCount + 1);
                 newToOld.reserve(oldColCount + 1);
@@ -1225,13 +1225,13 @@ namespace bcsv {
                     newTypes.push_back(oldTypes[i]);
                     newToOld.push_back(static_cast<int>(i));
                 }
-                newTypes.push_back(c.newType);
+                newTypes.push_back(c.new_type);
                 newToOld.push_back(-1); // new column
                 for (size_t i = c.index; i < oldColCount; ++i) {
                     newTypes.push_back(oldTypes[i]);
                     newToOld.push_back(static_cast<int>(i));
                 }
-            } else if (c.newType == ColumnType::VOID && c.oldType != ColumnType::VOID) {
+            } else if (c.new_type == ColumnType::VOID && c.old_type != ColumnType::VOID) {
                 // removeColumn at index c.index
                 newTypes.reserve(oldColCount > 0 ? oldColCount - 1 : 0);
                 newToOld.reserve(oldColCount > 0 ? oldColCount - 1 : 0);
@@ -1246,7 +1246,7 @@ namespace bcsv {
                 newTypes.reserve(oldColCount);
                 newToOld.reserve(oldColCount);
                 for (size_t i = 0; i < oldColCount; ++i) {
-                    newTypes.push_back(i == c.index ? c.newType : oldTypes[i]);
+                    newTypes.push_back(i == c.index ? c.new_type : oldTypes[i]);
                     newToOld.push_back(static_cast<int>(i));
                 }
             }
@@ -1255,9 +1255,9 @@ namespace bcsv {
             newTypes.reserve(changes.size());
             newToOld.reserve(changes.size());
             for (const auto& c : changes) {
-                if (c.newType != ColumnType::VOID) {
-                    newTypes.push_back(c.newType);
-                    newToOld.push_back(c.oldType != ColumnType::VOID ? static_cast<int>(c.index) : -1);
+                if (c.new_type != ColumnType::VOID) {
+                    newTypes.push_back(c.new_type);
+                    newToOld.push_back(c.old_type != ColumnType::VOID ? static_cast<int>(c.index) : -1);
                 }
             }
         }
@@ -1378,7 +1378,7 @@ namespace bcsv {
         // Unregister from current layout
         layout_.unregisterCallback(this);
         
-        // Move other's data (no manual destruction needed — vectors/bitset clean up themselves)
+        // Move other's data (no manual destruction needed — vectors/Bitset clean up themselves)
         layout_ = other.layout_;
         bits_ = std::move(other.bits_);
         data_ = std::move(other.data_);
@@ -2251,7 +2251,7 @@ namespace bcsv {
     template<size_t Index>
     void RowStaticImpl<Policy, ColumnTypes...>::clear()
     {
-        if constexpr (Index < column_count) {
+        if constexpr (Index < COLUMN_COUNT) {
             std::get<Index>(data_) = defaultValueT<column_type<Index>>();
             if constexpr (isTrackingEnabled(Policy)) {
                 changes_.set(Index);
@@ -2268,7 +2268,7 @@ namespace bcsv {
     template<TrackingPolicy Policy, typename... ColumnTypes>
     template<size_t Index>
     const auto& RowStaticImpl<Policy, ColumnTypes...>::get() const noexcept {
-        static_assert(Index < column_count, "Index out of bounds");
+        static_assert(Index < COLUMN_COUNT, "Index out of bounds");
         return std::get<Index>(data_);
     }
 
@@ -2284,7 +2284,7 @@ namespace bcsv {
     void RowStaticImpl<Policy, ColumnTypes...>::get(std::span<T, Extent> &dst) const {
         // 1. Static Checks
         static_assert(Extent != std::dynamic_extent, "RowStatic: Static vectorized get requires fixed-extent span (std::span<T, N>)");
-        static_assert(StartIndex + Extent <= column_count, "RowStatic: Access range exceeds column count");
+        static_assert(StartIndex + Extent <= COLUMN_COUNT, "RowStatic: Access range exceeds column count");
 
         // 2. Check assignability (compile-time error if not convertible)
         [&]<size_t... I>(std::index_sequence<I...>) {
@@ -2318,11 +2318,11 @@ namespace bcsv {
     const void* RowStaticImpl<Policy, ColumnTypes...>::get(size_t index) const noexcept {
         // 1. Bounds check
         if constexpr (RANGE_CHECKING) {
-            if (index >= column_count) [[unlikely]] {
+            if (index >= COLUMN_COUNT) [[unlikely]] {
                 return nullptr;
             }
         } else {
-            assert(index < column_count && "RowStatic::get(index): Index out of bounds");
+            assert(index < COLUMN_COUNT && "RowStatic::get(index): Index out of bounds");
         }
 
         // 2. Define Function Pointer Signature
@@ -2331,13 +2331,13 @@ namespace bcsv {
 
         // 3. Generate Jump Table (Static Constexpr)
         static constexpr auto handlers = []<size_t... I>(std::index_sequence<I...>) {
-            return std::array<GetterFunc, column_count>{
+            return std::array<GetterFunc, COLUMN_COUNT>{
                 // Lambda capturing behavior for index I
                 +[](const Self& self) -> const void* {
                     return &std::get<I>(self.data_);
                 }...
             };
-        }(std::make_index_sequence<column_count>{});
+        }(std::make_index_sequence<COLUMN_COUNT>{});
 
         // 4. O(1) Dispatch
         return handlers[index](*this);
@@ -2408,7 +2408,7 @@ namespace bcsv {
     template<typename T, size_t Extent>
     void RowStaticImpl<Policy, ColumnTypes...>::get(size_t index, std::span<T, Extent> &dst) const {
         // 1. Range Check
-        if (index + dst.size() > column_count) [[unlikely]] {
+        if (index + dst.size() > COLUMN_COUNT) [[unlikely]] {
             throw std::out_of_range("RowStatic::get(span): Access range exceeds column count");
         }
 
@@ -2476,7 +2476,7 @@ namespace bcsv {
     template<TrackingPolicy Policy, typename... ColumnTypes>
     template<size_t Index, typename T>
     void RowStaticImpl<Policy, ColumnTypes...>::set(const T& value) {
-        static_assert(Index < column_count, "Index out of bounds");
+        static_assert(Index < COLUMN_COUNT, "Index out of bounds");
 
 
         using DecayedT = std::decay_t<T>;
@@ -2574,7 +2574,7 @@ namespace bcsv {
     template<TrackingPolicy Policy, typename... ColumnTypes>
     template<size_t StartIndex, typename T, size_t Extent>
     void RowStaticImpl<Policy, ColumnTypes...>::set(std::span<const T, Extent> values) {
-        static_assert(StartIndex + Extent <= column_count, "RowStatic: Range exceeds column count");
+        static_assert(StartIndex + Extent <= COLUMN_COUNT, "RowStatic: Range exceeds column count");
         
         [&]<size_t... I>(std::index_sequence<I...>) {
             // Fold set: set<StartIndex+0>(values[0]); ...
@@ -2591,11 +2591,11 @@ namespace bcsv {
 
         // 1. Access Check
         if constexpr (RANGE_CHECKING) {
-            if (index + values.size() > column_count) {
+            if (index + values.size() > COLUMN_COUNT) {
                 throw std::out_of_range("RowStatic::set(span): Span exceeds column count");
             }
         } else {
-            assert(index + values.size() <= column_count && "RowStatic::set(span): Span exceeds column count");
+            assert(index + values.size() <= COLUMN_COUNT && "RowStatic::set(span): Span exceeds column count");
         }
 
         // 2. Iterative Set
@@ -2617,8 +2617,8 @@ namespace bcsv {
     template<TrackingPolicy Policy, typename... ColumnTypes>
     std::span<std::byte> RowStaticImpl<Policy, ColumnTypes...>::serializeTo(ByteBuffer& buffer) const {
         size_t offRow = buffer.size();               // remember where this row starts
-        size_t offVar = offset_var_;                 // offset to the begin of variable-size data section (relative to row start)
-        buffer.resize(buffer.size() + offset_var_);  // ensure buffer is large enough to hold fixed-size data
+        size_t offVar = OFFSET_VAR;                 // offset to the begin of variable-size data section (relative to row start)
+        buffer.resize(buffer.size() + OFFSET_VAR);  // ensure buffer is large enough to hold fixed-size data
 
         // serialize each tuple element using compile-time recursion
         serializeElements<0>(buffer, offRow, offVar);
@@ -2628,9 +2628,9 @@ namespace bcsv {
     template<TrackingPolicy Policy, typename... ColumnTypes>
     template<size_t Index>
     void RowStaticImpl<Policy, ColumnTypes...>::serializeElements(ByteBuffer& buffer, const size_t& offRow, size_t& offVar) const {
-        if constexpr (Index < column_count) {
-            constexpr size_t lenFix = column_lengths[Index];
-            constexpr size_t offFix = column_offsets[Index];
+        if constexpr (Index < COLUMN_COUNT) {
+            constexpr size_t lenFix = COLUMN_LENGTHS[Index];
+            constexpr size_t offFix = COLUMN_OFFSETS[Index];
             if constexpr (std::is_same_v<column_type<Index>, std::string>) {
                 size_t lenVar = std::get<Index>(data_).size();
                 StringAddr strAddr(offVar, lenVar);                                                   // Make address relative to row start, handles truncation
@@ -2649,8 +2649,8 @@ namespace bcsv {
     }
 
     /** Serialize the row into the provided buffer using Zero-Order-Hold (ZoH) compression.
-     * Only the columns that have changed (as indicated by the change tracking bitset) are serialized.
-     * Bool columns are always serialized, but their values are stored in the change bitset.
+     * Only the columns that have changed (as indicated by the change tracking Bitset) are serialized.
+     * Bool columns are always serialized, but their values are stored in the change Bitset.
      * @param buffer The byte buffer to serialize into. The buffer will be resized as needed.
      * @return A span pointing to the serialized row data within the buffer.
      */
@@ -2669,8 +2669,8 @@ namespace bcsv {
             return std::span<std::byte>{}; 
         }
 
-        bitset<column_count> rowHeader = changes_;              // make a copy to modify for bools (changes_ are const!)
-        buffer.resize(buffer.size() + rowHeader.sizeBytes());    // reserve space for rowHeader (bitset) at the begin of the row
+        Bitset<COLUMN_COUNT> rowHeader = changes_;              // make a copy to modify for bools (changes_ are const!)
+        buffer.resize(buffer.size() + rowHeader.sizeBytes());    // reserve space for rowHeader (Bitset) at the begin of the row
         
         // Serialize each tuple element using compile-time recursion
         serializeElementsZoH<0>(buffer, rowHeader);
@@ -2683,9 +2683,9 @@ namespace bcsv {
 
     template<TrackingPolicy Policy, typename... ColumnTypes>
     template<size_t Index>
-    void RowStaticImpl<Policy, ColumnTypes...>::serializeElementsZoH(ByteBuffer& buffer, bitset<column_count>& rowHeader) const 
+    void RowStaticImpl<Policy, ColumnTypes...>::serializeElementsZoH(ByteBuffer& buffer, Bitset<COLUMN_COUNT>& rowHeader) const 
     {
-        if constexpr (Index < column_count) {
+        if constexpr (Index < COLUMN_COUNT) {
             if constexpr (std::is_same_v<column_type<Index>, bool>) {
                 // store as single bit within serialization_bits
                 bool value = std::get<Index>(data_);
@@ -2722,7 +2722,7 @@ namespace bcsv {
 
     template<TrackingPolicy Policy, typename... ColumnTypes>
     void RowStaticImpl<Policy, ColumnTypes...>::deserializeFrom(const std::span<const std::byte> buffer)  {
-        //we expect the buffer, starts with the first byte of the row and ends with the last byte of the row (no change bitset)
+        //we expect the buffer, starts with the first byte of the row and ends with the last byte of the row (no change Bitset)
         deserializeElements<0>(buffer);
     }
 
@@ -2730,9 +2730,9 @@ namespace bcsv {
     template<size_t Index>
     void RowStaticImpl<Policy, ColumnTypes...>::deserializeElements(const std::span<const std::byte> &buffer) 
     {
-        if constexpr (Index < column_count) {
+        if constexpr (Index < COLUMN_COUNT) {
             constexpr size_t len = wireSizeOf<column_type<Index>>();
-            constexpr size_t off = column_offsets[Index];
+            constexpr size_t off = COLUMN_OFFSETS[Index];
 
             if (off + len > buffer.size()) {
                 throw std::runtime_error("RowStatic::deserializeElements() failed! Buffer overflow while reading.");
@@ -2764,11 +2764,11 @@ namespace bcsv {
         if constexpr (!isTrackingEnabled(Policy)) {
             throw std::runtime_error("RowStatic::deserializeFromZoH() requires tracking policy enabled");
         }
-        // we expect the buffer to start with the change bitset, followed by the actual row data
+        // we expect the buffer to start with the change Bitset, followed by the actual row data
         if (buffer.size() < changes_.sizeBytes()) {
-            throw std::runtime_error("RowStatic::deserializeFromZoH() failed! Buffer too small to contain change bitset.");
+            throw std::runtime_error("RowStatic::deserializeFromZoH() failed! Buffer too small to contain change Bitset.");
         } else {
-            // read change bitset from beginning of buffer
+            // read change Bitset from beginning of buffer
             std::memcpy(changes_.data(), buffer.data(), changes_.sizeBytes());
         }
         auto dataBuffer = buffer.subspan(changes_.sizeBytes());
@@ -2780,9 +2780,9 @@ namespace bcsv {
     void RowStaticImpl<Policy, ColumnTypes...>::deserializeElementsZoH(std::span<const std::byte> &buffer) {
         // we expect the buffer to have the next element at the current position
         // thus the buffer needs to get shorter as we read elements
-        // We also expect that the change bitset has been read already!
+        // We also expect that the change Bitset has been read already!
 
-        if constexpr (Index < column_count) {
+        if constexpr (Index < COLUMN_COUNT) {
             if constexpr (std::is_same_v<column_type<Index>, bool>) {
                 // Special handling for bools: 
                 //  - always deserialize!
@@ -2847,14 +2847,14 @@ namespace bcsv {
     void RowStaticImpl<Policy, ColumnTypes...>::visitConst(size_t startIndex, Visitor&& visitor, size_t count) const {
         if (count == 0) return;  // Nothing to visit
         
-        size_t endIndex = std::min(startIndex + count, column_count);
+        size_t endIndex = std::min(startIndex + count, COLUMN_COUNT);
         
         if constexpr (RANGE_CHECKING) {
-            if (startIndex >= column_count) {
+            if (startIndex >= COLUMN_COUNT) {
                 throw std::out_of_range("RowStatic::visit: Invalid start index " + std::to_string(startIndex));
             }
         } else {
-            assert(startIndex < column_count && "RowStatic::visit: Start index out of bounds");
+            assert(startIndex < COLUMN_COUNT && "RowStatic::visit: Start index out of bounds");
         }
         
         // Runtime loop with compile-time type dispatch
@@ -2862,7 +2862,7 @@ namespace bcsv {
             // Use fold expression to dispatch to correct tuple element at runtime
             [&]<size_t... I>(std::index_sequence<I...>) {
                 ((I == i ? (visitor(I, std::get<I>(data_)), true) : false) || ...);
-            }(std::make_index_sequence<column_count>{});
+            }(std::make_index_sequence<COLUMN_COUNT>{});
         }
     }
 
@@ -2895,7 +2895,7 @@ namespace bcsv {
     template<RowVisitorConst Visitor>
     void RowStaticImpl<Policy, ColumnTypes...>::visitConst(Visitor&& visitor) const {
         // Delegate to range-based visitor for all columns
-        visitConst(0, std::forward<Visitor>(visitor), column_count);
+        visitConst(0, std::forward<Visitor>(visitor), COLUMN_COUNT);
     }
 
     /** @brief Visit a range of columns with mutable access and change tracking (compile-time optimized)
@@ -2925,14 +2925,14 @@ namespace bcsv {
     void RowStaticImpl<Policy, ColumnTypes...>::visit(size_t startIndex, Visitor&& visitor, size_t count) {
         if (count == 0) return;  // Nothing to visit
         
-        size_t endIndex = std::min(startIndex + count, column_count);
+        size_t endIndex = std::min(startIndex + count, COLUMN_COUNT);
         
         if constexpr (RANGE_CHECKING) {
-            if (startIndex >= column_count) {
+            if (startIndex >= COLUMN_COUNT) {
                 throw std::out_of_range("RowStatic::visit: Invalid start index " + std::to_string(startIndex));
             }
         } else {
-            assert(startIndex < column_count && "RowStatic::visit: Start index out of bounds");
+            assert(startIndex < COLUMN_COUNT && "RowStatic::visit: Start index out of bounds");
         }
         
         // Runtime loop with compile-time type dispatch and change tracking
@@ -2956,7 +2956,7 @@ namespace bcsv {
                         }
                     }
                 }(), ...);
-            }(std::make_index_sequence<column_count>{});
+            }(std::make_index_sequence<COLUMN_COUNT>{});
         }
     }
 
@@ -2994,7 +2994,7 @@ namespace bcsv {
     template<RowVisitor Visitor>
     void RowStaticImpl<Policy, ColumnTypes...>::visit(Visitor&& visitor) {
         // Delegate to range-based visitor for all columns
-        visit(0, std::forward<Visitor>(visitor), column_count);
+        visit(0, std::forward<Visitor>(visitor), COLUMN_COUNT);
     }
 
 
@@ -3013,15 +3013,15 @@ namespace bcsv {
     template<typename... ColumnTypes>
     template<size_t Index>
     auto RowViewStatic<ColumnTypes...>::get() const {
-        static_assert(Index < column_count, "Index out of bounds");
+        static_assert(Index < COLUMN_COUNT, "Index out of bounds");
         
         // check buffer validity
         if (buffer_.data() == nullptr) [[unlikely]] {
              throw std::runtime_error("RowViewStatic::get<" + std::to_string(Index) + ">: Buffer not set");
         }
 
-        constexpr size_t length = column_lengths[Index];
-        constexpr size_t offset = column_offsets[Index];
+        constexpr size_t length = COLUMN_LENGTHS[Index];
+        constexpr size_t offset = COLUMN_OFFSETS[Index];
         using T = column_type<Index>;
         if (offset + length > buffer_.size()) [[unlikely]] {
             throw std::out_of_range("RowViewStatic::get<" + std::to_string(Index) + ">: Buffer too small " +
@@ -3058,7 +3058,7 @@ namespace bcsv {
     template<size_t StartIndex, typename T, size_t Extent>
     void RowViewStatic<ColumnTypes...>::get(std::span<T, Extent>& dst) const {
         static_assert(Extent != std::dynamic_extent, "RowViewStatic: requires fixed-extent span");
-        static_assert(StartIndex + Extent <= column_count, "RowViewStatic: Range exceeds column count");
+        static_assert(StartIndex + Extent <= COLUMN_COUNT, "RowViewStatic: Range exceeds column count");
 
         // 1. Validate buffer at runtime
         if (buffer_.empty()) {
@@ -3078,7 +3078,7 @@ namespace bcsv {
         
         if constexpr (all_types_match) {
             // Fast path: Types match exactly, contiguous memory copy
-            constexpr size_t start_offset = column_offsets[StartIndex];
+            constexpr size_t start_offset = COLUMN_OFFSETS[StartIndex];
             constexpr size_t total_bytes = Extent * sizeof(T);
             
             if (start_offset + total_bytes > buffer_.size()) {
@@ -3101,19 +3101,19 @@ namespace bcsv {
      */
     template<typename... ColumnTypes>
     std::span<const std::byte> RowViewStatic<ColumnTypes...>::get(size_t index) const noexcept {
-        assert(index < column_count && "RowViewStatic<ColumnTypes...>::get(index): Index out of bounds");
+        assert(index < COLUMN_COUNT && "RowViewStatic<ColumnTypes...>::get(index): Index out of bounds");
         
-        if (index >= column_count || buffer_.empty()) 
+        if (index >= COLUMN_COUNT || buffer_.empty()) 
             return {};
 
         using GetterFunc = std::span<const std::byte> (*)(const RowViewStatic&);
 
         // O(1) Jump Table to handle type-specific logic (StringAddr vs Primitive)
         static constexpr auto handlers = []<size_t... I>(std::index_sequence<I...>) {
-            return std::array<GetterFunc, column_count>{
+            return std::array<GetterFunc, COLUMN_COUNT>{
                 +[](const RowViewStatic& self) -> std::span<const std::byte> {
-                    constexpr size_t offset = column_offsets[I];
-                    constexpr size_t length    = column_lengths[I]; // Size of fixed field (primitives or StringAddr)
+                    constexpr size_t offset = COLUMN_OFFSETS[I];
+                    constexpr size_t length    = COLUMN_LENGTHS[I]; // Size of fixed field (primitives or StringAddr)
                     
                     if (self.buffer_.size() < offset + length) return {};
                     
@@ -3132,7 +3132,7 @@ namespace bcsv {
                     }
                 }...
             };
-        }(std::make_index_sequence<column_count>{});
+        }(std::make_index_sequence<COLUMN_COUNT>{});
 
         return handlers[index](*this);
     }
@@ -3152,7 +3152,7 @@ namespace bcsv {
 
         // 2. Access Check
         size_t iMax = index + dst.size();
-        if (iMax > column_count) return false;
+        if (iMax > COLUMN_COUNT) return false;
         
         // 3. Type Consistency Check (Fast Fail)
         auto dstType = toColumnType<T>();
@@ -3163,7 +3163,7 @@ namespace bcsv {
         }
 
         // 4. check buffer size for last column
-        const size_t offset = column_offsets[index];
+        const size_t offset = COLUMN_OFFSETS[index];
         const size_t length = wireSizeOf(dstType) * dst.size();
         assert(length == sizeof(T) * dst.size());
         if (offset + length > buffer_.size()) [[unlikely]] {
@@ -3222,13 +3222,13 @@ namespace bcsv {
     template<typename... ColumnTypes>
     template<size_t Index, typename T>
     void RowViewStatic<ColumnTypes...>::set(const T& value) noexcept {
-        static_assert(Index < column_count, "Index out of bounds");
+        static_assert(Index < COLUMN_COUNT, "Index out of bounds");
         using ColT = column_type<Index>;
 
         static_assert(std::is_same_v<ColT, T> && std::is_arithmetic_v<T>, 
             "RowViewStatic::set<I> only supports matching primitive types. Strings not supported.");
 
-        constexpr size_t offset = column_offsets[Index];
+        constexpr size_t offset = COLUMN_OFFSETS[Index];
         
         // Safety check for buffer size
         if (offset + sizeof(T) > buffer_.size()) [[unlikely]] {
@@ -3243,7 +3243,7 @@ namespace bcsv {
     template<typename... ColumnTypes>
     template<size_t StartIndex, typename T, size_t Extent>
     void RowViewStatic<ColumnTypes...>::set(std::span<const T, Extent> values) noexcept {
-        static_assert(StartIndex + Extent <= column_count, "Out of bounds");
+        static_assert(StartIndex + Extent <= COLUMN_COUNT, "Out of bounds");
         
         [&]<size_t... I>(std::index_sequence<I...>) {
             (this->template set<StartIndex + I>(values[I]), ...);
@@ -3273,7 +3273,7 @@ namespace bcsv {
     template<typename... ColumnTypes>
     template<typename T, size_t Extent>
     void RowViewStatic<ColumnTypes...>::set(size_t index, std::span<const T, Extent> values) noexcept {
-        if (index + values.size() > column_count) return;
+        if (index + values.size() > COLUMN_COUNT) return;
         
         for (size_t i = 0; i < values.size(); ++i) {
              this->set(index + i, values[i]);
@@ -3287,7 +3287,7 @@ namespace bcsv {
         // Use fold expression to copy every column I=0..N from View to Row
         [&]<size_t... I>(std::index_sequence<I...>) {
              (row.template set<I>(this->template get<I>()), ...);
-        }(std::make_index_sequence<column_count>{});
+        }(std::make_index_sequence<COLUMN_COUNT>{});
         
         return row;
     }
@@ -3299,12 +3299,12 @@ namespace bcsv {
             return false;
         }
 
-        if constexpr (column_count == 0) {
+        if constexpr (COLUMN_COUNT == 0) {
             return true; // Nothing to validate
         }
 
         // Check if buffer is large enough for all fixed fields
-        if (LayoutType::column_offsets[column_count-1] + LayoutType::column_lengths[column_count-1] > buffer_.size()) {
+        if (LayoutType::COLUMN_OFFSETS[COLUMN_COUNT-1] + LayoutType::COLUMN_LENGTHS[COLUMN_COUNT-1] > buffer_.size()) {
             return false;
         }
 
@@ -3315,12 +3315,12 @@ namespace bcsv {
     template<typename... ColumnTypes>
     template<size_t Index>
     bool RowViewStatic<ColumnTypes...>::validateStringPayloads() const {
-        if constexpr (Index >= column_count) {
+        if constexpr (Index >= COLUMN_COUNT) {
             return true;
         } else {
             if constexpr (std::is_same_v<column_type<Index>, std::string>) {
                 StringAddr addr;
-                std::memcpy(&addr, buffer_.data() + LayoutType::column_offsets[Index], sizeof(addr));
+                std::memcpy(&addr, buffer_.data() + LayoutType::COLUMN_OFFSETS[Index], sizeof(addr));
                 if (addr.offset() + addr.length() > buffer_.size()) {
                     return false;
                 }
@@ -3356,14 +3356,14 @@ namespace bcsv {
     void RowViewStatic<ColumnTypes...>::visitConst(size_t startIndex, Visitor&& visitor, size_t count) const {
         if (count == 0) return;  // Nothing to visit
         
-        size_t endIndex = std::min(startIndex + count, column_count);
+        size_t endIndex = std::min(startIndex + count, COLUMN_COUNT);
         
         if constexpr (RANGE_CHECKING) {
-            if (startIndex >= column_count) {
+            if (startIndex >= COLUMN_COUNT) {
                 throw std::out_of_range("RowViewStatic::visit: Invalid start index " + std::to_string(startIndex));
             }
         } else {
-            assert(startIndex < column_count && "RowViewStatic::visit: Start index out of bounds");
+            assert(startIndex < COLUMN_COUNT && "RowViewStatic::visit: Start index out of bounds");
         }
         
         // Runtime loop with compile-time type dispatch
@@ -3371,7 +3371,7 @@ namespace bcsv {
             // Use fold expression to dispatch to correct column at runtime
             [&]<size_t... I>(std::index_sequence<I...>) {
                 ((I == i ? (visitor(I, get<I>()), true) : false) || ...);
-            }(std::make_index_sequence<column_count>{});
+            }(std::make_index_sequence<COLUMN_COUNT>{});
         }
     }
 
@@ -3401,7 +3401,7 @@ namespace bcsv {
     template<RowVisitorConst Visitor>
     void RowViewStatic<ColumnTypes...>::visitConst(Visitor&& visitor) const {
         // Delegate to range-based visitor for all columns
-        visitConst(0, std::forward<Visitor>(visitor), column_count);
+        visitConst(0, std::forward<Visitor>(visitor), COLUMN_COUNT);
     }
 
     /** @brief Visit a range of columns with mutable access (compile-time, primitives only)
@@ -3435,14 +3435,14 @@ namespace bcsv {
     void RowViewStatic<ColumnTypes...>::visit(size_t startIndex, Visitor&& visitor, size_t count) {
         if (count == 0) return;  // Nothing to visit
         
-        size_t endIndex = std::min(startIndex + count, column_count);
+        size_t endIndex = std::min(startIndex + count, COLUMN_COUNT);
         
         if constexpr (RANGE_CHECKING) {
-            if (startIndex >= column_count) {
+            if (startIndex >= COLUMN_COUNT) {
                 throw std::out_of_range("RowViewStatic::visit: Invalid start index " + std::to_string(startIndex));
             }
         } else {
-            assert(startIndex < column_count && "RowViewStatic::visit: Start index out of bounds");
+            assert(startIndex < COLUMN_COUNT && "RowViewStatic::visit: Start index out of bounds");
         }
         
         // Runtime loop with compile-time type dispatch and change tracking
@@ -3456,7 +3456,7 @@ namespace bcsv {
                         
                         if constexpr (std::is_arithmetic_v<ColType> || std::is_same_v<ColType, bool>) {
                             // Primitives: get mutable reference and pass to visitor
-                            constexpr size_t offset = column_offsets[I];
+                            constexpr size_t offset = COLUMN_OFFSETS[I];
                             ColType& value = *reinterpret_cast<ColType*>(buffer_.data() + offset);
                             
                             if constexpr (std::is_invocable_v<Visitor, size_t, ColType&, bool&>) {
@@ -3476,7 +3476,7 @@ namespace bcsv {
                         }
                     }
                 }(), ...);
-            }(std::make_index_sequence<column_count>{});
+            }(std::make_index_sequence<COLUMN_COUNT>{});
         }
     }
 
@@ -3510,7 +3510,7 @@ namespace bcsv {
     template<RowVisitor Visitor>
     void RowViewStatic<ColumnTypes...>::visit(Visitor&& visitor) {
         // Delegate to range-based visitor for all columns
-        visit(0, std::forward<Visitor>(visitor), column_count);
+        visit(0, std::forward<Visitor>(visitor), COLUMN_COUNT);
     }
 
 } // namespace bcsv

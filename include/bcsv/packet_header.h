@@ -44,7 +44,7 @@ namespace bcsv {
     struct PacketHeader {
         
         uint32_t magic;           ///< Magic number: "PCKT" (0x50 0x43 0x4B 0x54)
-        uint64_t firstRowIndex;   ///< Absolute row index (0-based, file-wide)
+        uint64_t first_row_index; ///< Absolute row index (0-based, file-wide)
         uint32_t checksum;        ///< xxHash32 of bytes 0-19 (magic + firstRowIndex + prevPayloadChecksum)
         
         /**
@@ -52,7 +52,7 @@ namespace bcsv {
          */
         PacketHeader() 
             : magic(PCKT_MAGIC)
-            , firstRowIndex(0)
+            , first_row_index(0)
             , checksum(0)
         {}
         
@@ -62,7 +62,7 @@ namespace bcsv {
          */
         PacketHeader(uint64_t firstRow)
             : magic(PCKT_MAGIC)
-            , firstRowIndex(firstRow)
+            , first_row_index(firstRow)
             , checksum(0)
         {
             updateChecksum();

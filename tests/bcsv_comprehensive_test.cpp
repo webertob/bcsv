@@ -3596,7 +3596,7 @@ TEST_F(BCSVTestSuite, Ref_ReturnsLvalueReference) {
 }
 
 TEST_F(BCSVTestSuite, Ref_BoolViaProxy) {
-    // Bool ref returns bitset<>::reference proxy — verify write-through works
+    // Bool ref returns Bitset<>::Reference proxy — verify write-through works
     auto layout = createFullFlexibleLayout();
     bcsv::Row row(layout);
 

@@ -9,7 +9,7 @@
 
 /**
  * @file bitset_test.cpp
- * @brief Comprehensive tests for unified bitset implementation (fixed & dynamic)
+ * @brief Comprehensive tests for unified Bitset implementation (fixed & dynamic)
  * 
  * Tests cover:
  * - Fixed-size bitsets (compile-time size)
@@ -113,8 +113,8 @@ std::vector<bool> ModelXor(const std::vector<bool>& lhs, const std::vector<bool>
 }
 
 template<size_t N>
-bitset<N> MakeFixedBitset(const std::vector<bool>& pattern) {
-    bitset<N> bs;
+Bitset<N> MakeFixedBitset(const std::vector<bool>& pattern) {
+    Bitset<N> bs;
     for (size_t i = 0; i < N; ++i) {
         if (pattern[i]) {
             bs.set(i);
@@ -123,8 +123,8 @@ bitset<N> MakeFixedBitset(const std::vector<bool>& pattern) {
     return bs;
 }
 
-bitset<> MakeDynamicBitset(size_t size, const std::vector<bool>& pattern) {
-    bitset<> bs(size);
+Bitset<> MakeDynamicBitset(size_t size, const std::vector<bool>& pattern) {
+    Bitset<> bs(size);
     for (size_t i = 0; i < size; ++i) {
         if (pattern[i]) {
             bs.set(i);
@@ -145,7 +145,7 @@ std::bitset<N> MakeStdBitset(const std::vector<bool>& pattern) {
 }
 
 template<size_t N>
-void ExpectParityFixed(const bitset<N>& bcsv_bs, const std::bitset<N>& std_bs) {
+void ExpectParityFixed(const Bitset<N>& bcsv_bs, const std::bitset<N>& std_bs) {
     EXPECT_EQ(bcsv_bs.count(), std_bs.count());
     EXPECT_EQ(bcsv_bs.any(), std_bs.any());
     EXPECT_EQ(bcsv_bs.all(), std_bs.all());
@@ -157,7 +157,7 @@ void ExpectParityFixed(const bitset<N>& bcsv_bs, const std::bitset<N>& std_bs) {
 }
 
 template<size_t N>
-void ExpectParityDynamic(const bitset<>& bcsv_bs, const std::bitset<N>& std_bs) {
+void ExpectParityDynamic(const Bitset<>& bcsv_bs, const std::bitset<N>& std_bs) {
     EXPECT_EQ(bcsv_bs.size(), N);
     EXPECT_EQ(bcsv_bs.count(), std_bs.count());
     EXPECT_EQ(bcsv_bs.any(), std_bs.any());
@@ -169,7 +169,7 @@ void ExpectParityDynamic(const bitset<>& bcsv_bs, const std::bitset<N>& std_bs) 
     }
 }
 
-void ExpectMatchesModel(const bitset<>& bcsv_bs, const std::vector<bool>& model) {
+void ExpectMatchesModel(const Bitset<>& bcsv_bs, const std::vector<bool>& model) {
     EXPECT_EQ(bcsv_bs.size(), model.size());
     size_t expected_count = 0;
     for (size_t i = 0; i < model.size(); ++i) {
@@ -286,10 +286,10 @@ void RunParitySweep(std::index_sequence<Ns...>) {
 class FixedBitsetTest : public ::testing::Test {
 protected:
     // Test various fixed sizes
-    bitset<1> bs1;
-    bitset<8> bs8;
-    bitset<64> bs64;
-    bitset<256> bs256;
+    Bitset<1> bs1;
+    Bitset<8> bs8;
+    Bitset<64> bs64;
+    Bitset<256> bs256;
     
     void SetUp() override {
         // Start fresh for each test
@@ -313,7 +313,7 @@ TEST_F(FixedBitsetTest, Construction_Default) {
 }
 
 TEST_F(FixedBitsetTest, Construction_FromValue) {
-    bitset<8> bs_val(0xAB);  // 10101011
+    Bitset<8> bs_val(0xAB);  // 10101011
     EXPECT_EQ(bs_val.count(), 5);
     EXPECT_TRUE(bs_val[0]);
     EXPECT_TRUE(bs_val[1]);
@@ -322,14 +322,14 @@ TEST_F(FixedBitsetTest, Construction_FromValue) {
     EXPECT_TRUE(bs_val[5]);
     EXPECT_TRUE(bs_val[7]);
     
-    bitset<64> bs64_val(0xFFFFFFFF00000000ULL);
+    Bitset<64> bs64_val(0xFFFFFFFF00000000ULL);
     EXPECT_EQ(bs64_val.count(), 32);
     for (size_t i = 0; i < 32; ++i) EXPECT_FALSE(bs64_val[i]);
     for (size_t i = 32; i < 64; ++i) EXPECT_TRUE(bs64_val[i]);
 }
 
 TEST_F(FixedBitsetTest, Construction_FromString) {
-    bitset<8> bs(std::string("10101011"));  // MSB first
+    Bitset<8> bs(std::string("10101011"));  // MSB first
     EXPECT_EQ(bs.count(), 5);
     EXPECT_TRUE(bs[0]);   // LSB
     EXPECT_TRUE(bs[1]);
@@ -478,9 +478,9 @@ TEST_F(FixedBitsetTest, Operations_AnyAllNone) {
 }
 
 TEST_F(FixedBitsetTest, BitwiseOperators_AND) {
-    bitset<8> a(0b11110000);
-    bitset<8> b(0b11001100);
-    bitset<8> result = a & b;
+    Bitset<8> a(0b11110000);
+    Bitset<8> b(0b11001100);
+    Bitset<8> result = a & b;
     
     EXPECT_EQ(result.toUlong(), 0b11000000);
     
@@ -489,9 +489,9 @@ TEST_F(FixedBitsetTest, BitwiseOperators_AND) {
 }
 
 TEST_F(FixedBitsetTest, BitwiseOperators_OR) {
-    bitset<8> a(0b11110000);
-    bitset<8> b(0b11001100);
-    bitset<8> result = a | b;
+    Bitset<8> a(0b11110000);
+    Bitset<8> b(0b11001100);
+    Bitset<8> result = a | b;
     
     EXPECT_EQ(result.toUlong(), 0b11111100);
     
@@ -500,9 +500,9 @@ TEST_F(FixedBitsetTest, BitwiseOperators_OR) {
 }
 
 TEST_F(FixedBitsetTest, BitwiseOperators_XOR) {
-    bitset<8> a(0b11110000);
-    bitset<8> b(0b11001100);
-    bitset<8> result = a ^ b;
+    Bitset<8> a(0b11110000);
+    Bitset<8> b(0b11001100);
+    Bitset<8> result = a ^ b;
     
     EXPECT_EQ(result.toUlong(), 0b00111100);
     
@@ -511,16 +511,16 @@ TEST_F(FixedBitsetTest, BitwiseOperators_XOR) {
 }
 
 TEST_F(FixedBitsetTest, BitwiseOperators_NOT) {
-    bitset<8> a(0b11110000);
-    bitset<8> result = ~a;
+    Bitset<8> a(0b11110000);
+    Bitset<8> result = ~a;
     
     EXPECT_EQ(result.toUlong(), 0b00001111);
 }
 
 TEST_F(FixedBitsetTest, ShiftOperators_Left) {
-    bitset<8> a(0b00001111);
+    Bitset<8> a(0b00001111);
     
-    bitset<8> result = a << 2;
+    Bitset<8> result = a << 2;
     EXPECT_EQ(result.toUlong(), 0b00111100);
     
     result = a << 4;
@@ -531,9 +531,9 @@ TEST_F(FixedBitsetTest, ShiftOperators_Left) {
 }
 
 TEST_F(FixedBitsetTest, ShiftOperators_Right) {
-    bitset<8> a(0b11110000);
+    Bitset<8> a(0b11110000);
     
-    bitset<8> result = a >> 2;
+    Bitset<8> result = a >> 2;
     EXPECT_EQ(result.toUlong(), 0b00111100);
     
     result = a >> 4;
@@ -544,8 +544,8 @@ TEST_F(FixedBitsetTest, ShiftOperators_Right) {
 }
 
 TEST_F(FixedBitsetTest, ShiftOperators_WordBoundary) {
-    // Test shifts across word boundaries on 64-bit bitset
-    bitset<64> a;
+    // Test shifts across word boundaries on 64-bit Bitset
+    Bitset<64> a;
     a.set(31);
     a.set(32);
     
@@ -561,20 +561,20 @@ TEST_F(FixedBitsetTest, ShiftOperators_WordBoundary) {
 }
 
 TEST_F(FixedBitsetTest, Conversions_ToUlong) {
-    bitset<8> bs(0xAB);
+    Bitset<8> bs(0xAB);
     EXPECT_EQ(bs.toUlong(), 0xABUL);
     
-    bitset<32> bs32(0x12345678UL);
+    Bitset<32> bs32(0x12345678UL);
     EXPECT_EQ(bs32.toUlong(), 0x12345678UL);
 }
 
 TEST_F(FixedBitsetTest, Conversions_ToUllong) {
-    bitset<64> bs(0xABCDEF0123456789ULL);
+    Bitset<64> bs(0xABCDEF0123456789ULL);
     EXPECT_EQ(bs.toUllong(), 0xABCDEF0123456789ULL);
 }
 
 TEST_F(FixedBitsetTest, Conversions_ToString) {
-    bitset<8> bs(0b10101011);
+    Bitset<8> bs(0b10101011);
     std::string str = bs.toString();
     EXPECT_EQ(str, "10101011");  // MSB first
     
@@ -584,7 +584,7 @@ TEST_F(FixedBitsetTest, Conversions_ToString) {
 }
 
 TEST_F(FixedBitsetTest, Conversions_Overflow) {
-    bitset<64> bs;
+    Bitset<64> bs;
     bs.set();  // All bits = 1
     
     // toUlong should throw if bits beyond position 31 are set
@@ -596,7 +596,7 @@ TEST_F(FixedBitsetTest, Conversions_Overflow) {
 }
 
 TEST_F(FixedBitsetTest, IO_DataAccess) {
-    bitset<64> bs(0x123456789ABCDEF0ULL);
+    Bitset<64> bs(0x123456789ABCDEF0ULL);
     
     const std::byte* data = bs.data();
     EXPECT_NE(data, nullptr);
@@ -607,12 +607,12 @@ TEST_F(FixedBitsetTest, IO_DataAccess) {
 }
 
 TEST_F(FixedBitsetTest, IO_ReadWrite) {
-    bitset<64> bs1(0xABCDEF0123456789ULL);
+    Bitset<64> bs1(0xABCDEF0123456789ULL);
     std::vector<std::byte> buffer(bs1.sizeBytes());
     
     bs1.writeTo(buffer.data(), buffer.size());
     
-    bitset<64> bs2;
+    Bitset<64> bs2;
     bs2.readFrom(buffer.data(), buffer.size());
     
     EXPECT_EQ(bs1, bs2);
@@ -620,9 +620,9 @@ TEST_F(FixedBitsetTest, IO_ReadWrite) {
 }
 
 TEST_F(FixedBitsetTest, Comparison_Equality) {
-    bitset<8> a(0b10101010);
-    bitset<8> b(0b10101010);
-    bitset<8> c(0b10101011);
+    Bitset<8> a(0b10101010);
+    Bitset<8> b(0b10101010);
+    Bitset<8> c(0b10101011);
     
     EXPECT_TRUE(a == b);
     EXPECT_FALSE(a == c);
@@ -631,7 +631,7 @@ TEST_F(FixedBitsetTest, Comparison_Equality) {
 }
 
 TEST_F(FixedBitsetTest, Stream_Output) {
-    bitset<8> bs(0b10101011);
+    Bitset<8> bs(0b10101011);
     std::ostringstream oss;
     oss << bs;
     EXPECT_EQ(oss.str(), "10101011");
@@ -644,9 +644,9 @@ TEST_F(FixedBitsetTest, Stream_Output) {
 class DynamicBitsetTest : public ::testing::Test {
 protected:
     // Test various dynamic sizes
-    bitset<> bs_small{8};
-    bitset<> bs_medium{256};
-    bitset<> bs_large{1024};
+    Bitset<> bs_small{8};
+    Bitset<> bs_medium{256};
+    Bitset<> bs_large{1024};
     
     void SetUp() override {
         bs_small.reset();
@@ -656,14 +656,14 @@ protected:
 };
 
 TEST_F(DynamicBitsetTest, Construction_Default) {
-    bitset<> bs(128);
+    Bitset<> bs(128);
     EXPECT_EQ(bs.size(), 128);
     EXPECT_TRUE(bs.none());
     EXPECT_FALSE(bs.isFixedSize());
 }
 
 TEST_F(DynamicBitsetTest, Construction_FromValue) {
-    bitset<> bs(64, 0xFFFFFFFF00000000ULL);
+    Bitset<> bs(64, 0xFFFFFFFF00000000ULL);
     EXPECT_EQ(bs.size(), 64);
     EXPECT_EQ(bs.count(), 32);
     
@@ -672,25 +672,25 @@ TEST_F(DynamicBitsetTest, Construction_FromValue) {
 }
 
 TEST_F(DynamicBitsetTest, Construction_FromBool) {
-    bitset<> bs_false(64, false);
+    Bitset<> bs_false(64, false);
     EXPECT_TRUE(bs_false.none());
     
-    bitset<> bs_true(64, true);
+    Bitset<> bs_true(64, true);
     EXPECT_TRUE(bs_true.all());
     EXPECT_EQ(bs_true.count(), 64);
 }
 
 TEST_F(DynamicBitsetTest, Construction_FromString) {
     std::string bits = "10101010";
-    bitset<> bs(8, bits);
+    Bitset<> bs(8, bits);
     EXPECT_EQ(bs.size(), 8);
     EXPECT_EQ(bs.count(), 4);
     EXPECT_EQ(bs.toString(), bits);
 }
 
 TEST_F(DynamicBitsetTest, Construction_FromFixedBitset) {
-    bitset<64> fixed(0xABCDEF0123456789ULL);
-    bitset<> dynamic(fixed);
+    Bitset<64> fixed(0xABCDEF0123456789ULL);
+    Bitset<> dynamic(fixed);
     
     EXPECT_EQ(dynamic.size(), 64);
     EXPECT_EQ(dynamic.toUllong(), 0xABCDEF0123456789ULL);
@@ -745,7 +745,7 @@ TEST_F(DynamicBitsetTest, Modifiers_Clear) {
 }
 
 TEST_F(DynamicBitsetTest, Modifiers_Reserve) {
-    bitset<> bs(64);
+    Bitset<> bs(64);
     bs.reserve(1024);  // Pre-allocate space
     
     // Size should remain 64
@@ -757,7 +757,7 @@ TEST_F(DynamicBitsetTest, Modifiers_Reserve) {
 }
 
 TEST_F(DynamicBitsetTest, Modifiers_Resize_Grow) {
-    bitset<> bs(32);
+    Bitset<> bs(32);
     bs.set();  // All 32 bits = 1
     
     bs.resize(64);
@@ -771,7 +771,7 @@ TEST_F(DynamicBitsetTest, Modifiers_Resize_Grow) {
 }
 
 TEST_F(DynamicBitsetTest, Modifiers_Resize_GrowWithValue) {
-    bitset<> bs(32);
+    Bitset<> bs(32);
     bs.set();  // All 32 bits = 1
     
     bs.resize(64, true);  // Grow and set new bits to 1
@@ -787,7 +787,7 @@ TEST_F(DynamicBitsetTest, Modifiers_Resize_BugCheck_PartialWord) {
     // The last word (bits 0-63) is only partially filled (bits 0-49)
     // Bits 50-63 need to be set when growing
     
-    bitset<> bs(50);
+    Bitset<> bs(50);
     for (size_t i = 0; i < 50; ++i) bs.set(i);
     
     bs.resize(128, true);
@@ -803,7 +803,7 @@ TEST_F(DynamicBitsetTest, Modifiers_Resize_BugCheck_PartialWord) {
 
 TEST_F(DynamicBitsetTest, Modifiers_Resize_BugCheck_MultipleWords) {
     // Test resize across word boundaries: 32→64→128
-    bitset<> bs(32);
+    Bitset<> bs(32);
     bs.set();
     
     bs.resize(64, true);
@@ -820,7 +820,7 @@ TEST_F(DynamicBitsetTest, Modifiers_Resize_BugCheck_MultipleWords) {
 }
 
 TEST_F(DynamicBitsetTest, Modifiers_Resize_Shrink) {
-    bitset<> bs(128);
+    Bitset<> bs(128);
     bs.set();
     
     bs.resize(64);
@@ -830,7 +830,7 @@ TEST_F(DynamicBitsetTest, Modifiers_Resize_Shrink) {
 }
 
 TEST_F(DynamicBitsetTest, Modifiers_Resize_ShrinkAndGrow) {
-    bitset<> bs(128);
+    Bitset<> bs(128);
     for (size_t i = 0; i < 64; ++i) bs.set(i);
     
     bs.resize(64);
@@ -842,7 +842,7 @@ TEST_F(DynamicBitsetTest, Modifiers_Resize_ShrinkAndGrow) {
 }
 
 TEST_F(DynamicBitsetTest, Modifiers_ShrinkToFit) {
-    bitset<> bs(64);
+    Bitset<> bs(64);
     bs.reserve(1024);
     
     bs.shrinkToFit();
@@ -850,7 +850,7 @@ TEST_F(DynamicBitsetTest, Modifiers_ShrinkToFit) {
 }
 
 TEST_F(DynamicBitsetTest, Modifiers_Insert_EmptyToGrown) {
-    bitset<> bs(0);
+    Bitset<> bs(0);
     std::vector<bool> model;
 
     auto insert_and_check = [&](size_t pos, bool value) {
@@ -867,7 +867,7 @@ TEST_F(DynamicBitsetTest, Modifiers_Insert_EmptyToGrown) {
 }
 
 TEST_F(DynamicBitsetTest, Modifiers_Insert_BoundariesAndMiddle) {
-    bitset<> bs(63);
+    Bitset<> bs(63);
     std::vector<bool> model(63, false);
 
     bs.set(0);
@@ -893,7 +893,7 @@ TEST_F(DynamicBitsetTest, Modifiers_Insert_BoundariesAndMiddle) {
 
 TEST_F(DynamicBitsetTest, Operations_AllowSameAsFixed) {
     // Verify dynamic bitsets support all operations that fixed bitsets do
-    bitset<> bs(64, 0xABCDEF0123456789ULL);
+    Bitset<> bs(64, 0xABCDEF0123456789ULL);
     
     EXPECT_EQ(bs.count(), std::popcount(0xABCDEF0123456789ULL));
     EXPECT_TRUE(bs.any());
@@ -903,7 +903,7 @@ TEST_F(DynamicBitsetTest, Operations_AllowSameAsFixed) {
     EXPECT_EQ(bs.count(), 64 - std::popcount(0xABCDEF0123456789ULL));
     
     // Bitwise operations
-    bitset<> other(64, 0xFFFFFFFF00000000ULL);
+    Bitset<> other(64, 0xFFFFFFFF00000000ULL);
     bs &= other;
     bs |= other;
     bs ^= other;
@@ -914,21 +914,21 @@ TEST_F(DynamicBitsetTest, Operations_AllowSameAsFixed) {
 }
 
 TEST_F(DynamicBitsetTest, Conversions_ToFixed) {
-    bitset<> dynamic(64, 0xABCDEF0123456789ULL);
-    bitset<64> fixed = dynamic.toFixed<64>();
+    Bitset<> dynamic(64, 0xABCDEF0123456789ULL);
+    Bitset<64> fixed = dynamic.toFixed<64>();
     
     EXPECT_EQ(fixed.toUllong(), 0xABCDEF0123456789ULL);
     
     // Wrong size should throw
-    bitset<> wrong_size(128);
+    Bitset<> wrong_size(128);
     EXPECT_THROW(wrong_size.toFixed<64>(), std::invalid_argument);
 }
 
 TEST_F(DynamicBitsetTest, Comparison_Equality) {
-    bitset<> a(64, 0xABCDULL);
-    bitset<> b(64, 0xABCDULL);
-    bitset<> c(64, 0xABCEULL);
-    bitset<> d(128, 0xABCDULL);  // Different size
+    Bitset<> a(64, 0xABCDULL);
+    Bitset<> b(64, 0xABCDULL);
+    Bitset<> c(64, 0xABCEULL);
+    Bitset<> d(128, 0xABCDULL);  // Different size
     
     EXPECT_EQ(a, b);
     EXPECT_NE(a, c);
@@ -1007,8 +1007,8 @@ TEST(BitsetSizeMismatchTest, DynamicBitwiseTruncatesToLhsSize) {
 }
 
 TEST(BitsetMaskOpsTest, FixedAndDynamicMaskedQueries) {
-    bitset<64> fixed_a;
-    bitset<64> fixed_mask;
+    Bitset<64> fixed_a;
+    Bitset<64> fixed_mask;
 
     fixed_a.reset();
     fixed_mask.reset();
@@ -1027,12 +1027,12 @@ TEST(BitsetMaskOpsTest, FixedAndDynamicMaskedQueries) {
     EXPECT_TRUE(fixed_a.any(fixed_mask));
     EXPECT_FALSE(fixed_a.all(fixed_mask));
 
-    bitset<> dyn_a(64);
+    Bitset<> dyn_a(64);
     dyn_a.reset();
     dyn_a.set(2);
     dyn_a.set(7);
 
-    bitset<> dyn_mask_same(64);
+    Bitset<> dyn_mask_same(64);
     dyn_mask_same.reset();
     dyn_mask_same.set(2);
     dyn_mask_same.set(7);
@@ -1040,7 +1040,7 @@ TEST(BitsetMaskOpsTest, FixedAndDynamicMaskedQueries) {
     EXPECT_TRUE(dyn_a.any(dyn_mask_same));
     EXPECT_TRUE(dyn_a.all(dyn_mask_same));
 
-    bitset<> dyn_mask_small(23);
+    Bitset<> dyn_mask_small(23);
     dyn_mask_small.reset();
     dyn_mask_small.set(2);
     dyn_mask_small.set(7);
@@ -1048,7 +1048,7 @@ TEST(BitsetMaskOpsTest, FixedAndDynamicMaskedQueries) {
     EXPECT_TRUE(dyn_a.any(dyn_mask_small));
     EXPECT_TRUE(dyn_a.all(dyn_mask_small));
 
-    bitset<> dyn_mask_large(96);
+    Bitset<> dyn_mask_large(96);
     dyn_mask_large.reset();
     dyn_mask_large.set(2);
     dyn_mask_large.set(7);
@@ -1065,7 +1065,7 @@ TEST(BitsetMaskOpsTest, FixedAndDynamicMaskedQueries) {
 }
 
 TEST(BitsetSliceTest, FixedSliceReadWrite) {
-    bitset<16> bs;
+    Bitset<16> bs;
     bs.reset();
     bs.set(4);
     bs.set(7);
@@ -1082,7 +1082,7 @@ TEST(BitsetSliceTest, FixedSliceReadWrite) {
 }
 
 TEST(BitsetSliceTest, DynamicSliceOpsAndMasking) {
-    bitset<> bs(16);
+    Bitset<> bs(16);
     bs.reset();
     bs.set(4);
     bs.set(8);
@@ -1092,20 +1092,20 @@ TEST(BitsetSliceTest, DynamicSliceOpsAndMasking) {
     EXPECT_TRUE(slice.any());
     EXPECT_FALSE(slice.all());
 
-    bitset<> mask_same(6);
+    Bitset<> mask_same(6);
     mask_same.reset();
     mask_same.set(0);
     mask_same.set(4);
     EXPECT_TRUE(slice.any(mask_same));
     EXPECT_TRUE(slice.all(mask_same));
 
-    bitset<> mask_small(3);
+    Bitset<> mask_small(3);
     mask_small.reset();
     mask_small.set(0);
     EXPECT_TRUE(slice.any(mask_small));
     EXPECT_TRUE(slice.all(mask_small));
 
-    bitset<> mask_large(12);
+    Bitset<> mask_large(12);
     mask_large.reset();
     mask_large.set(0);
     mask_large.set(4);
@@ -1113,7 +1113,7 @@ TEST(BitsetSliceTest, DynamicSliceOpsAndMasking) {
     EXPECT_TRUE(slice.any(mask_large));
     EXPECT_TRUE(slice.all(mask_large));
 
-    bitset<> rhs(6);
+    Bitset<> rhs(6);
     rhs.reset();
     rhs.set(1);
     rhs.set(4);
@@ -1147,7 +1147,7 @@ TEST(BitsetSliceTest, DynamicSliceOpsAndMasking) {
 // ============================================================================
 
 TEST(LargeBitsetTest, FixedSize_1024bits) {
-    bitset<1024> bs;
+    Bitset<1024> bs;
     
     // Set every 10th bit
     for (size_t i = 0; i < 1024; i += 10) {
@@ -1163,13 +1163,13 @@ TEST(LargeBitsetTest, FixedSize_1024bits) {
 }
 
 TEST(LargeBitsetTest, FixedSize_8192bits) {
-    bitset<8192> bs;
+    Bitset<8192> bs;
     bs.set();
     
     EXPECT_EQ(bs.count(), 8192);
     EXPECT_TRUE(bs.all());
     
-    // Test shifting large bitset
+    // Test shifting large Bitset
     auto shifted = bs >> 100;
     EXPECT_EQ(shifted.count(), 8192 - 100);
 }
@@ -1177,7 +1177,7 @@ TEST(LargeBitsetTest, FixedSize_8192bits) {
 TEST(LargeBitsetTest, DynamicSize_65536bits_RowScenario) {
     // Test case for 65k rows scenario mentioned in requirements
     const size_t NUM_ROWS = 65536;
-    bitset<> bs(NUM_ROWS);
+    Bitset<> bs(NUM_ROWS);
     
     EXPECT_EQ(bs.size(), NUM_ROWS);
     
@@ -1198,7 +1198,7 @@ TEST(LargeBitsetTest, DynamicSize_65536bits_RowScenario) {
 }
 
 TEST(LargeBitsetTest, DynamicSize_Resize_Large) {
-    bitset<> bs(1024);
+    Bitset<> bs(1024);
     bs.set();
     
     bs.resize(8192, true);
@@ -1213,7 +1213,7 @@ TEST(LargeBitsetTest, DynamicSize_Resize_Large) {
 
 TEST(LargeBitsetTest, BitwiseOperations_Performance) {
     const size_t SIZE = 4096;
-    bitset<SIZE> a, b;
+    Bitset<SIZE> a, b;
     
     // Initialize with patterns
     for (size_t i = 0; i < SIZE; i += 2) a.set(i);
@@ -1237,7 +1237,7 @@ TEST(LargeBitsetTest, BitwiseOperations_Performance) {
 // ============================================================================
 
 TEST(BitsetEdgeCasesTest, Size_One) {
-    bitset<1> bs;
+    Bitset<1> bs;
     EXPECT_EQ(bs.size(), 1);
     
     bs.set();
@@ -1249,50 +1249,50 @@ TEST(BitsetEdgeCasesTest, Size_One) {
 }
 
 TEST(BitsetEdgeCasesTest, Size_NotPowerOfTwo) {
-    bitset<13> bs;
+    Bitset<13> bs;
     bs.set();
     EXPECT_EQ(bs.count(), 13);
     EXPECT_TRUE(bs.all());
     
-    bitset<100> bs100;
+    Bitset<100> bs100;
     bs100.set();
     EXPECT_EQ(bs100.count(), 100);
 }
 
 TEST(BitsetEdgeCasesTest, Size_WordBoundary_63_64_65) {
     // Test sizes around word boundaries
-    bitset<63> bs63;
+    Bitset<63> bs63;
     bs63.set();
     EXPECT_EQ(bs63.count(), 63);
     
-    bitset<64> bs64;
+    Bitset<64> bs64;
     bs64.set();
     EXPECT_EQ(bs64.count(), 64);
     
-    bitset<65> bs65;
+    Bitset<65> bs65;
     bs65.set();
     EXPECT_EQ(bs65.count(), 65);
 }
 
 TEST(BitsetEdgeCasesTest, Size_WordBoundary_127_128_129) {
-    bitset<127> bs127;
+    Bitset<127> bs127;
     bs127.set();
     EXPECT_EQ(bs127.count(), 127);
     EXPECT_TRUE(bs127.all());
 
-    bitset<128> bs128;
+    Bitset<128> bs128;
     bs128.set();
     EXPECT_EQ(bs128.count(), 128);
     EXPECT_TRUE(bs128.all());
 
-    bitset<129> bs129;
+    Bitset<129> bs129;
     bs129.set();
     EXPECT_EQ(bs129.count(), 129);
     EXPECT_TRUE(bs129.all());
 }
 
 TEST(BitsetEdgeCasesTest, OutOfRange_Access) {
-    bitset<8> bs;
+    Bitset<8> bs;
     EXPECT_THROW(bs.test(8), std::out_of_range);
     EXPECT_THROW(bs.set(8), std::out_of_range);
     EXPECT_THROW(bs.reset(8), std::out_of_range);
@@ -1300,7 +1300,7 @@ TEST(BitsetEdgeCasesTest, OutOfRange_Access) {
 }
 
 TEST(BitsetEdgeCasesTest, IO_InsufficientBuffer) {
-    bitset<64> bs;
+    Bitset<64> bs;
     std::vector<std::byte> small_buffer(4);  // Too small
     
     EXPECT_THROW(bs.writeTo(small_buffer.data(), small_buffer.size()), 
@@ -1310,7 +1310,7 @@ TEST(BitsetEdgeCasesTest, IO_InsufficientBuffer) {
 }
 
 TEST(BitsetEdgeCasesTest, Shift_Zero) {
-    bitset<8> bs(0b10101010);
+    Bitset<8> bs(0b10101010);
     
     auto result_left = bs << 0;
     EXPECT_EQ(result_left, bs);
@@ -1320,7 +1320,7 @@ TEST(BitsetEdgeCasesTest, Shift_Zero) {
 }
 
 TEST(BitsetEdgeCasesTest, Shift_AllBitsOut) {
-    bitset<8> bs(0xFF);
+    Bitset<8> bs(0xFF);
     
     auto result_left = bs << 10;
     EXPECT_TRUE(result_left.none());
@@ -1334,24 +1334,24 @@ TEST(BitsetEdgeCasesTest, Shift_AllBitsOut) {
 // ============================================================================
 
 TEST(BitsetInteropTest, FixedToDynamic) {
-    bitset<64> fixed(0xABCDEF0123456789ULL);
-    bitset<> dynamic(fixed);
+    Bitset<64> fixed(0xABCDEF0123456789ULL);
+    Bitset<> dynamic(fixed);
     
     EXPECT_EQ(dynamic.size(), 64);
     EXPECT_EQ(dynamic.toUllong(), fixed.toUllong());
 }
 
 TEST(BitsetInteropTest, DynamicToFixed) {
-    bitset<> dynamic(64, 0xABCDEF0123456789ULL);
-    bitset<64> fixed = dynamic.toFixed<64>();
+    Bitset<> dynamic(64, 0xABCDEF0123456789ULL);
+    Bitset<64> fixed = dynamic.toFixed<64>();
     
     EXPECT_EQ(fixed.toUllong(), 0xABCDEF0123456789ULL);
 }
 
 TEST(BitsetInteropTest, BinaryCompatibility) {
     // Ensure fixed and dynamic bitsets produce identical binary data
-    bitset<64> fixed(0xABCDEF0123456789ULL);
-    bitset<> dynamic(64, 0xABCDEF0123456789ULL);
+    Bitset<64> fixed(0xABCDEF0123456789ULL);
+    Bitset<> dynamic(64, 0xABCDEF0123456789ULL);
     
     EXPECT_EQ(fixed.sizeBytes(), dynamic.sizeBytes());
     
@@ -1378,7 +1378,7 @@ TEST(BitsetSummaryTest, AllSizesWork) {
     std::cout << "✓ I/O operations: data, readFrom, writeTo\n";
     std::cout << "✓ Dynamic operations: resize, reserve, clear, shrinkToFit, insert\n";
     std::cout << "✓ Edge cases: word boundaries, partial words, out of range\n";
-    std::cout << "✓ Std::bitset parity: sizes 0-130, shifts, bitwise ops\n";
+    std::cout << "✓ Std::Bitset parity: sizes 0-130, shifts, bitwise ops\n";
     std::cout << "✓ Interoperability: fixed ↔ dynamic conversions\n";
     std::cout << "============================\n\n";
     

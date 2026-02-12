@@ -13,17 +13,17 @@ TEST(VLETest, EncodeSmallValues) {
     std::vector<uint8_t> buffer(10);
     
     // Test 0
-    size_t size = vle_encode(0, buffer);
+    size_t size = vleEncode(0, buffer);
     EXPECT_EQ(size, 1);
     EXPECT_EQ(buffer[0], 0x00);
     
     // Test 1
-    size = vle_encode(1, buffer);
+    size = vleEncode(1, buffer);
     EXPECT_EQ(size, 1);
     EXPECT_EQ(buffer[0], 0x01);
     
     // Test 127 (max 1-byte value)
-    size = vle_encode(127, buffer);
+    size = vleEncode(127, buffer);
     EXPECT_EQ(size, 1);
     EXPECT_EQ(buffer[0], 0x7F);
 }
@@ -33,19 +33,19 @@ TEST(VLETest, EncodeTwoByteValues) {
     std::vector<uint8_t> buffer(10);
     
     // Test 128 (min 2-byte value)
-    size_t size = vle_encode(128, buffer);
+    size_t size = vleEncode(128, buffer);
     EXPECT_EQ(size, 2);
     EXPECT_EQ(buffer[0], 0x80);  // 0b10000000 (continuation bit set)
     EXPECT_EQ(buffer[1], 0x01);  // 0b00000001
     
     // Test 300
-    size = vle_encode(300, buffer);
+    size = vleEncode(300, buffer);
     EXPECT_EQ(size, 2);
     EXPECT_EQ(buffer[0], 0xAC);  // 0b10101100 (44 + 128)
     EXPECT_EQ(buffer[1], 0x02);  // 0b00000010
     
     // Test 16383 (max 2-byte value)
-    size = vle_encode(16383, buffer);
+    size = vleEncode(16383, buffer);
     EXPECT_EQ(size, 2);
     EXPECT_EQ(buffer[0], 0xFF);  // 0b11111111
     EXPECT_EQ(buffer[1], 0x7F);  // 0b01111111
@@ -56,14 +56,14 @@ TEST(VLETest, EncodeThreeByteValues) {
     std::vector<uint8_t> buffer(10);
     
     // Test 16384 (min 3-byte value)
-    size_t size = vle_encode(16384, buffer);
+    size_t size = vleEncode(16384, buffer);
     EXPECT_EQ(size, 3);
     EXPECT_EQ(buffer[0], 0x80);
     EXPECT_EQ(buffer[1], 0x80);
     EXPECT_EQ(buffer[2], 0x01);
     
     // Test 2097151 (max 3-byte value)
-    size = vle_encode(2097151, buffer);
+    size = vleEncode(2097151, buffer);
     EXPECT_EQ(size, 3);
     EXPECT_EQ(buffer[0], 0xFF);
     EXPECT_EQ(buffer[1], 0xFF);
@@ -75,7 +75,7 @@ TEST(VLETest, EncodeFourByteValues) {
     std::vector<uint8_t> buffer(10);
     
     // Test 2097152 (min 4-byte value)
-    size_t size = vle_encode(2097152, buffer);
+    size_t size = vleEncode(2097152, buffer);
     EXPECT_EQ(size, 4);
     EXPECT_EQ(buffer[0], 0x80);
     EXPECT_EQ(buffer[1], 0x80);
@@ -83,7 +83,7 @@ TEST(VLETest, EncodeFourByteValues) {
     EXPECT_EQ(buffer[3], 0x01);
     
     // Test 268435455 (max 4-byte value)
-    size = vle_encode(268435455, buffer);
+    size = vleEncode(268435455, buffer);
     EXPECT_EQ(size, 4);
     EXPECT_EQ(buffer[0], 0xFF);
     EXPECT_EQ(buffer[1], 0xFF);
@@ -96,7 +96,7 @@ TEST(VLETest, EncodeFiveByteValues) {
     std::vector<uint8_t> buffer(10);
     
     // Test 268435456 (min 5-byte value)
-    size_t size = vle_encode(268435456, buffer);
+    size_t size = vleEncode(268435456, buffer);
     EXPECT_EQ(size, 5);
     EXPECT_EQ(buffer[0], 0x80);
     EXPECT_EQ(buffer[1], 0x80);
@@ -105,7 +105,7 @@ TEST(VLETest, EncodeFiveByteValues) {
     EXPECT_EQ(buffer[4], 0x01);
     
     // Test UINT32_MAX (4,294,967,295)
-    size = vle_encode(UINT32_MAX, buffer);
+    size = vleEncode(UINT32_MAX, buffer);
     EXPECT_EQ(size, 5);
     EXPECT_EQ(buffer[0], 0xFF);
     EXPECT_EQ(buffer[1], 0xFF);
@@ -120,27 +120,27 @@ TEST(VLETest, EncodeLargeValues) {
     
     // Test 8MB (typical max row size in BCSV)
     size_t row_8mb = 8ULL * 1024 * 1024;
-    size_t size = vle_encode(row_8mb, buffer);
+    size_t size = vleEncode(row_8mb, buffer);
     EXPECT_EQ(size, 4);  // 8MB = 8,388,608 fits in 4 bytes
     
     size_t decoded;
-    vle_decode(std::span(buffer.data(), size), decoded);
+    vleDecode(std::span(buffer.data(), size), decoded);
     EXPECT_EQ(decoded, row_8mb);
     
     // Test 1GB (large but realistic memory size)
     size_t size_1gb = 1ULL * 1024 * 1024 * 1024;
-    size = vle_encode(size_1gb, buffer);
+    size = vleEncode(size_1gb, buffer);
     EXPECT_EQ(size, 5);
     
-    vle_decode(std::span(buffer.data(), size), decoded);
+    vleDecode(std::span(buffer.data(), size), decoded);
     EXPECT_EQ(decoded, size_1gb);
     
     // Test 1TB (extreme but possible on 64-bit)
     size_t size_1tb = 1ULL * 1024 * 1024 * 1024 * 1024;
-    size = vle_encode(size_1tb, buffer);
+    size = vleEncode(size_1tb, buffer);
     EXPECT_EQ(size, 6);  // 1TB = 40 bits -> 6 bytes
     
-    vle_decode(std::span(buffer.data(), size), decoded);
+    vleDecode(std::span(buffer.data(), size), decoded);
     EXPECT_EQ(decoded, size_1tb);
 }
 
@@ -149,7 +149,7 @@ TEST(VLETest, EncodeMaxUInt64) {
     std::vector<uint8_t> buffer(10);
     
     // Test UINT64_MAX
-    size_t size = vle_encode(UINT64_MAX, buffer);
+    size_t size = vleEncode(UINT64_MAX, buffer);
     EXPECT_EQ(size, 10);
     EXPECT_EQ(buffer[0], 0xFF);
     EXPECT_EQ(buffer[1], 0xFF);
@@ -163,7 +163,7 @@ TEST(VLETest, EncodeMaxUInt64) {
     EXPECT_EQ(buffer[9], 0x01);  // Only 1 bit used in last byte
     
     size_t decoded;
-    vle_decode(std::span(buffer.data(), size), decoded);
+    vleDecode(std::span(buffer.data(), size), decoded);
     EXPECT_EQ(decoded, UINT64_MAX);
 }
 
@@ -181,10 +181,10 @@ TEST(VLETest, EncodeDecodeRoundTrip) {
     };
     
     for (size_t original : test_values) {
-        size_t encoded_size = vle_encode(original, buffer);
+        size_t encoded_size = vleEncode(original, buffer);
         
         size_t decoded;
-        size_t decoded_size = vle_decode(std::span(buffer.data(), encoded_size), decoded);
+        size_t decoded_size = vleDecode(std::span(buffer.data(), encoded_size), decoded);
         
         EXPECT_EQ(decoded, original) << "Failed for value: " << original;
         EXPECT_EQ(decoded_size, encoded_size) << "Size mismatch for value: " << original;
@@ -214,39 +214,39 @@ TEST(VLETest, PeekSize) {
     std::vector<uint8_t> buffer(10);
     
     // Test various sizes
-    vle_encode(100, buffer);  // 1 byte
+    vleEncode(100, buffer);  // 1 byte
     EXPECT_EQ(vle_peek_size(buffer), 1);
     
-    vle_encode(1000, buffer);  // 2 bytes
+    vleEncode(1000, buffer);  // 2 bytes
     EXPECT_EQ(vle_peek_size(buffer), 2);
     
-    vle_encode(100000, buffer);  // 3 bytes
+    vleEncode(100000, buffer);  // 3 bytes
     EXPECT_EQ(vle_peek_size(buffer), 3);
     
-    vle_encode(10000000, buffer);  // 4 bytes
+    vleEncode(10000000, buffer);  // 4 bytes
     EXPECT_EQ(vle_peek_size(buffer), 4);
     
-    vle_encode(UINT32_MAX, buffer);  // 5 bytes
+    vleEncode(UINT32_MAX, buffer);  // 5 bytes
     EXPECT_EQ(vle_peek_size(buffer), 5);
     
-    vle_encode(1ULL * 1024 * 1024 * 1024 * 1024, buffer);  // 1TB = 6 bytes
+    vleEncode(1ULL * 1024 * 1024 * 1024 * 1024, buffer);  // 1TB = 6 bytes
     EXPECT_EQ(vle_peek_size(buffer), 6);
     
-    vle_encode(UINT64_MAX, buffer);  // 10 bytes
+    vleEncode(UINT64_MAX, buffer);  // 10 bytes
     EXPECT_EQ(vle_peek_size(buffer), 10);
 }
 
 // Test error handling: buffer too small for encoding
 TEST(VLETest, EncodeBufferTooSmall) {
     std::vector<uint8_t> buffer(9);  // Only 9 bytes
-    EXPECT_THROW(vle_encode(UINT64_MAX, buffer), std::invalid_argument);
+    EXPECT_THROW(vleEncode(UINT64_MAX, buffer), std::invalid_argument);
 }
 
 // Test error handling: empty decode buffer
 TEST(VLETest, DecodeEmptyBuffer) {
     std::vector<uint8_t> buffer;
     size_t value;
-    EXPECT_THROW(vle_decode(buffer, value), std::invalid_argument);
+    EXPECT_THROW(vleDecode(buffer, value), std::invalid_argument);
 }
 
 // Test error handling: empty peek buffer
@@ -259,7 +259,7 @@ TEST(VLETest, PeekEmptyBuffer) {
 TEST(VLETest, DecodeInvalidEncoding) {
     std::vector<uint8_t> buffer = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};  // All continuation bits set
     size_t value;
-    EXPECT_THROW(vle_decode(buffer, value), std::runtime_error);
+    EXPECT_THROW(vleDecode(buffer, value), std::runtime_error);
 }
 
 // Test error handling: incomplete encoding in peek
@@ -273,7 +273,7 @@ TEST(VLETest, StreamingDecoderSmallValues) {
     std::vector<uint8_t> buffer(10);
     
     // Test 0
-    vle_encode(0, buffer);
+    vleEncode(0, buffer);
     VLEDecoder decoder;
     decoder.add_byte(buffer[0]);
     EXPECT_TRUE(decoder.is_complete());
@@ -282,7 +282,7 @@ TEST(VLETest, StreamingDecoderSmallValues) {
     
     // Test 127
     decoder.reset();
-    vle_encode(127, buffer);
+    vleEncode(127, buffer);
     decoder.add_byte(buffer[0]);
     EXPECT_TRUE(decoder.is_complete());
     EXPECT_EQ(decoder.get_value(), 127);
@@ -294,7 +294,7 @@ TEST(VLETest, StreamingDecoderMultiByteValues) {
     VLEDecoder decoder;
     
     // Test 300 (2 bytes)
-    size_t size = vle_encode(300, buffer);
+    size_t size = vleEncode(300, buffer);
     for (size_t i = 0; i < size; ++i) {
         EXPECT_FALSE(decoder.is_complete()) << "Should not be complete at byte " << i;
         decoder.add_byte(buffer[i]);
@@ -306,7 +306,7 @@ TEST(VLETest, StreamingDecoderMultiByteValues) {
     // Test 8MB (4 bytes)
     decoder.reset();
     size_t value_8mb = 8ULL * 1024 * 1024;
-    size = vle_encode(value_8mb, buffer);
+    size = vleEncode(value_8mb, buffer);
     for (size_t i = 0; i < size; ++i) {
         decoder.add_byte(buffer[i]);
     }
@@ -320,7 +320,7 @@ TEST(VLETest, StreamingDecoderMaxValue) {
     std::vector<uint8_t> buffer(10);
     VLEDecoder decoder;
     
-    size_t size = vle_encode(UINT64_MAX, buffer);
+    size_t size = vleEncode(UINT64_MAX, buffer);
     EXPECT_EQ(size, 10);
     
     for (size_t i = 0; i < size; ++i) {
@@ -365,7 +365,7 @@ TEST(VLETest, StreamingDecoderBCSVUseCase) {
     
     // Encode all row lengths with offset (+1) into stream
     for (size_t len : row_lengths) {
-        size_t encoded_size = vle_encode(len + 1, temp);
+        size_t encoded_size = vleEncode(len + 1, temp);
         stream.insert(stream.end(), temp.begin(), temp.begin() + encoded_size);
     }
     
@@ -398,27 +398,27 @@ TEST(VLETest, BCSVRowLengthWithOffset) {
     
     // Test ZoH marker (rowLength=0)
     size_t row_length = 0;
-    size_t size = vle_encode(row_length + 1, buffer);  // VLE(1)
+    size_t size = vleEncode(row_length + 1, buffer);  // VLE(1)
     EXPECT_EQ(size, 1);
     EXPECT_EQ(buffer[0], 0x01);
     
     size_t decoded;
-    vle_decode(std::span(buffer.data(), size), decoded);
+    vleDecode(std::span(buffer.data(), size), decoded);
     EXPECT_EQ(decoded, 1);
     size_t actual_length = decoded - 1;  // Reader subtracts 1
     EXPECT_EQ(actual_length, 0);  // ZoH
     
     // Test actual row length (e.g., 150 bytes)
     row_length = 150;
-    size = vle_encode(row_length + 1, buffer);  // VLE(151)
-    vle_decode(std::span(buffer.data(), size), decoded);
+    size = vleEncode(row_length + 1, buffer);  // VLE(151)
+    vleDecode(std::span(buffer.data(), size), decoded);
     actual_length = decoded - 1;
     EXPECT_EQ(actual_length, 150);
     
     // Test large row length (8MB)
     row_length = 8ULL * 1024 * 1024;
-    size = vle_encode(row_length + 1, buffer);
-    vle_decode(std::span(buffer.data(), size), decoded);
+    size = vleEncode(row_length + 1, buffer);
+    vleDecode(std::span(buffer.data(), size), decoded);
     actual_length = decoded - 1;
     EXPECT_EQ(actual_length, 8ULL * 1024 * 1024);
 }
@@ -432,11 +432,11 @@ TEST(VLETest, BCSVMaxRowLengthWithOffset) {
     // Therefore max rowLength = UINT64_MAX - 1
     
     size_t max_row_length = UINT64_MAX - 1;
-    size_t size = vle_encode(max_row_length + 1, buffer);  // VLE(UINT64_MAX)
+    size_t size = vleEncode(max_row_length + 1, buffer);  // VLE(UINT64_MAX)
     EXPECT_EQ(size, 10);
     
     size_t decoded;
-    vle_decode(std::span(buffer.data(), size), decoded);
+    vleDecode(std::span(buffer.data(), size), decoded);
     size_t actual_length = decoded - 1;
     EXPECT_EQ(actual_length, max_row_length);
 }
@@ -449,23 +449,23 @@ TEST(VLETest, Performance) {
     // Test encoding performance
     auto start = std::chrono::steady_clock::now();
     for (size_t i = 0; i < ITERATIONS; ++i) {
-        vle_encode(i % 1000000, buffer);
+        vleEncode(i % 1000000, buffer);
     }
     auto end = std::chrono::steady_clock::now();
     auto encode_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
     
     // Test decoding performance (span-based)
-    vle_encode(123456, buffer);
+    vleEncode(123456, buffer);
     start = std::chrono::steady_clock::now();
     size_t value;
     for (size_t i = 0; i < ITERATIONS; ++i) {
-        vle_decode(buffer, value);
+        vleDecode(buffer, value);
     }
     end = std::chrono::steady_clock::now();
     auto decode_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
     
     // Test streaming decoder performance
-    vle_encode(123456, buffer);
+    vleEncode(123456, buffer);
     size_t encoded_size = vle_encoded_size(123456);
     start = std::chrono::steady_clock::now();
     for (size_t i = 0; i < ITERATIONS; ++i) {

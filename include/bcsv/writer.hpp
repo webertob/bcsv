@@ -33,14 +33,14 @@ namespace bcsv {
 
     template<LayoutConcept LayoutType, TrackingPolicy Policy>
     Writer<LayoutType, Policy>::Writer(const LayoutType& layout) 
-        : fileHeader_(layout.columnCount(), 1)
+        : file_header_(layout.columnCount(), 1)
         , row_(layout)
     {
     }
 
     template<LayoutConcept LayoutType, TrackingPolicy Policy>
     Writer<LayoutType, Policy>::~Writer() {
-        if (is_open()) {
+        if (isOpen()) {
             close();
         }
     }
@@ -54,23 +54,23 @@ namespace bcsv {
             return;
         }
         
-        if (packetOpen_) {
+        if (packet_open_) {
             closePacket();
         }
         
-        FileFooter footer(packetIndex_, rowCnt_);
+        FileFooter footer(packet_index_, row_cnt_);
         footer.write(stream_);
         
         stream_.close();
-        filePath_.clear();
-        lz4Stream_.reset();
-        rowBufferRaw_.clear();
-        rowBufferRaw_.shrink_to_fit();
-        rowBufferPrev_.clear();
-        rowBufferPrev_.shrink_to_fit();
-        packetIndex_.clear();
-        packetIndex_.shrink_to_fit();
-        rowCnt_ = 0;       
+        file_path_.clear();
+        lz4_stream_.reset();
+        row_buffer_raw_.clear();
+        row_buffer_raw_.shrink_to_fit();
+        row_buffer_prev_.clear();
+        row_buffer_prev_.shrink_to_fit();
+        packet_index_.clear();
+        packet_index_.shrink_to_fit();
+        row_cnt_ = 0;       
     }
 
     template<LayoutConcept LayoutType, TrackingPolicy Policy>
@@ -89,12 +89,12 @@ namespace bcsv {
      */
     template<LayoutConcept LayoutType, TrackingPolicy Policy>
     bool Writer<LayoutType, Policy>::open(const FilePath& filepath, bool overwrite, size_t compressionLevel, size_t blockSizeKB, FileFlags flags) {
-        errMsg_.clear();
+        err_msg_.clear();
         
-        if(is_open()) {
-            errMsg_ = "Warning: File is already open: " + filePath_.string();
+        if(isOpen()) {
+            err_msg_ = "Warning: File is already open: " + file_path_.string();
             if constexpr (DEBUG_OUTPUTS) {
-                std::cerr << errMsg_ << std::endl;
+                std::cerr << err_msg_ << std::endl;
             }
             return false;
         }
@@ -108,18 +108,18 @@ namespace bcsv {
             if (!parentDir.empty() && !std::filesystem::exists(parentDir)) {
                 std::error_code ec;
                 if (!std::filesystem::create_directories(parentDir, ec)) {
-                    errMsg_ = "Error: Cannot create directory: " + parentDir.string() +
+                    err_msg_ = "Error: Cannot create directory: " + parentDir.string() +
                               " (Error: " + ec.message() + ")";
-                    throw std::runtime_error(errMsg_);
+                    throw std::runtime_error(err_msg_);
                 }
             }
 
             // Check if file already exists
             if (std::filesystem::exists(absolutePath)) {
                 if (!overwrite) {
-                    errMsg_ = "Warning: File already exists: " + absolutePath.string() +
+                    err_msg_ = "Warning: File already exists: " + absolutePath.string() +
                               ". Use overwrite=true to replace it.";
-                    throw std::runtime_error(errMsg_);
+                    throw std::runtime_error(err_msg_);
                 }
             }
 
@@ -127,63 +127,63 @@ namespace bcsv {
             std::error_code ec;
             auto perms = std::filesystem::status(parentDir, ec).permissions();
             if (ec || (perms & std::filesystem::perms::owner_write) == std::filesystem::perms::none) {
-                errMsg_ = "Error: No write permission for directory: " + parentDir.string();
-                throw std::runtime_error(errMsg_);
+                err_msg_ = "Error: No write permission for directory: " + parentDir.string();
+                throw std::runtime_error(err_msg_);
             }
 
             // Open the binary file
             stream_.open(absolutePath, std::ios::binary);
             if (!stream_.good()) {
-                errMsg_ = "Error: Cannot open file for writing: " + absolutePath.string() +
+                err_msg_ = "Error: Cannot open file for writing: " + absolutePath.string() +
                           " (Check permissions and disk space)";
-                throw std::runtime_error(errMsg_);
+                throw std::runtime_error(err_msg_);
             }
 
             // Store file path
-            filePath_ = absolutePath;
+            file_path_ = absolutePath;
             if constexpr (isTrackingEnabled(Policy)) {
                 flags = flags | FileFlags::ZERO_ORDER_HOLD;
             } else if ((flags & FileFlags::ZERO_ORDER_HOLD) == FileFlags::ZERO_ORDER_HOLD) {
-                errMsg_ = "Error: ZERO_ORDER_HOLD requires TrackingPolicy::Enabled";
-                throw std::runtime_error(errMsg_);
+                err_msg_ = "Error: ZERO_ORDER_HOLD requires TrackingPolicy::Enabled";
+                throw std::runtime_error(err_msg_);
             }
-            fileHeader_ = FileHeader(layout().columnCount(), compressionLevel);
-            fileHeader_.setFlags(flags);
-            fileHeader_.setPacketSize(std::clamp(blockSizeKB*1024, size_t(MIN_PACKET_SIZE), size_t(MAX_PACKET_SIZE)));  // limit packet size to 64KB-1GB
-            fileHeader_.writeToBinary(stream_, layout());
-            rowCnt_ = 0;
+            file_header_ = FileHeader(layout().columnCount(), compressionLevel);
+            file_header_.setFlags(flags);
+            file_header_.setPacketSize(std::clamp(blockSizeKB*1024, size_t(MIN_PACKET_SIZE), size_t(MAX_PACKET_SIZE)));  // limit packet size to 64KB-1GB
+            file_header_.writeToBinary(stream_, layout());
+            row_cnt_ = 0;
                         
             // Initialize LZ4 streaming compression if enabled
             if (compressionLevel > 0) {
                 int acceleration = 10 - compressionLevel;  // Maps 1-9 to 9-1
-                lz4Stream_.emplace(acceleration);
+                lz4_stream_.emplace(acceleration);
             }
             
             // Initialize payload hasher for checksum chaining
-            packetHash_.reset();
-            packetIndex_.clear();            
+            packet_hash_.reset();
+            packet_index_.clear();            
             row_.clear();
             if constexpr (isTrackingEnabled(Policy)) {
                 row_.setChanges();
             }
-            rowBufferRaw_.clear();
-            rowBufferPrev_.clear(); // Start with empty previous row
+            row_buffer_raw_.clear();
+            row_buffer_prev_.clear(); // Start with empty previous row
             return true;
 
         } catch (const std::filesystem::filesystem_error& ex) {
-            if (errMsg_.empty()) {
-                errMsg_ = std::string("Filesystem error: ") + ex.what();
+            if (err_msg_.empty()) {
+                err_msg_ = std::string("Filesystem error: ") + ex.what();
             }
             if constexpr (DEBUG_OUTPUTS) {
-                std::cerr << errMsg_ << std::endl;
+                std::cerr << err_msg_ << std::endl;
             }
             return false;
         } catch (const std::exception& ex) {
-            if (errMsg_.empty()) {
-                errMsg_ = std::string("Error opening file: ") + ex.what();
+            if (err_msg_.empty()) {
+                err_msg_ = std::string("Error opening file: ") + ex.what();
             }
             if constexpr (DEBUG_OUTPUTS) {
-                std::cerr << errMsg_ << std::endl;
+                std::cerr << err_msg_ << std::endl;
             }
             return false;
         }
@@ -197,7 +197,7 @@ namespace bcsv {
             throw std::runtime_error("Error: File is not open");
         }
         
-        if(!packetOpen_) {
+        if(!packet_open_) {
             throw std::runtime_error("Error: No open packet to close");
         }
 
@@ -206,9 +206,9 @@ namespace bcsv {
         writeRowLength(PCKT_TERMINATOR);
 
         // 2. Finalize packet: write checksum
-        uint64_t hash = packetHash_.finalize();
+        uint64_t hash = packet_hash_.finalize();
         stream_.write(reinterpret_cast<const char*>(&hash), sizeof(hash));
-        packetOpen_ = false;
+        packet_open_ = false;
     }
 
     template<LayoutConcept LayoutType, TrackingPolicy Policy>
@@ -217,31 +217,31 @@ namespace bcsv {
             throw std::runtime_error("Error: File is not open");
         }
 
-        if(packetOpen_) {
+        if(packet_open_) {
             throw std::runtime_error("Error: Packet is already open");
         }
         
         // Record packet start position in index if needed
-        if(fileHeader_.hasFlag(FileFlags::NO_FILE_INDEX) == false) {
-            size_t packetOffset_ = stream_.tellp();
-            packetIndex_.emplace_back(packetOffset_, rowCnt_);
+        if(file_header_.hasFlag(FileFlags::NO_FILE_INDEX) == false) {
+            size_t packetOffset = stream_.tellp();
+            packet_index_.emplace_back(packetOffset, row_cnt_);
         }
         
         // Write packet header
-        PacketHeader::write(stream_, rowCnt_);
+        PacketHeader::write(stream_, row_cnt_);
 
         // Reset packet to initial state
-        packetSize_ = 0;
-        packetHash_.reset();
-        if (lz4Stream_.has_value()) {
-            lz4Stream_->reset();
+        packet_size_ = 0;
+        packet_hash_.reset();
+        if (lz4_stream_.has_value()) {
+            lz4_stream_->reset();
         }
-        rowBufferPrev_.clear();
-        rowBufferRaw_.clear();
+        row_buffer_prev_.clear();
+        row_buffer_raw_.clear();
         if constexpr (isTrackingEnabled(Policy)) {
             row_.setChanges();      // mark all as changed for first row
         }
-        packetOpen_ = true;
+        packet_open_ = true;
     }
 
     template<LayoutConcept LayoutType, TrackingPolicy Policy>
@@ -250,61 +250,61 @@ namespace bcsv {
             throw std::runtime_error("Error: File is not open");
         }
 
-        if(!packetOpen_) {
+        if(!packet_open_) {
             openPacket();
         }
 
         // 1. Serialize row to buffer
-        rowBufferRaw_.clear();
+        row_buffer_raw_.clear();
         std::span<std::byte> actRow;
-        if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
-            actRow = row_.serializeToZoH(rowBufferRaw_);
+        if(file_header_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
+            actRow = row_.serializeToZoH(row_buffer_raw_);
             if constexpr (isTrackingEnabled(Policy)) {
                 row_.resetChanges();
             }
         } else {
-            actRow = row_.serializeTo(rowBufferRaw_);
+            actRow = row_.serializeTo(row_buffer_raw_);
         }
 
         // 2. write row data to file
         if  (
-                fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD) 
+                file_header_.hasFlag(FileFlags::ZERO_ORDER_HOLD) 
             &&  (
                     actRow.size() == 0
                 ||  (
-                        actRow.size() == rowBufferPrev_.size() 
-                    &&  std::equal(actRow.begin(), actRow.end(), rowBufferPrev_.begin())
+                        actRow.size() == row_buffer_prev_.size() 
+                    &&  std::equal(actRow.begin(), actRow.end(), row_buffer_prev_.begin())
                     )
                 )
             )
         {
             //identical to previous row -> ZoH repeat
             writeRowLength(0);
-            rowBufferRaw_.resize(rowBufferRaw_.size()-actRow.size()); // clear actRow from buffer
-            //std::swap(rowBufferPrev_, rowBufferRaw_); --> ZoH repeat, keep previous row inplace
+            row_buffer_raw_.resize(row_buffer_raw_.size()-actRow.size()); // clear actRow from buffer
+            //std::swap(row_buffer_prev_, row_buffer_raw_); --> ZoH repeat, keep previous row inplace
         }
-        else if(lz4Stream_.has_value()) 
+        else if(lz4_stream_.has_value()) 
         {
             // compress data using LZ4 before writing
-            const auto compressedData= lz4Stream_->compressUseInternalBuffer(rowBufferRaw_);
+            const auto compressedData= lz4_stream_->compressUseInternalBuffer(row_buffer_raw_);
             writeRowLength(compressedData.size());
             stream_.write(reinterpret_cast<const char*>(compressedData.data()), compressedData.size());
-            packetHash_.update(compressedData);
-            packetSize_ += compressedData.size();
-            std::swap(rowBufferPrev_, rowBufferRaw_);
+            packet_hash_.update(compressedData);
+            packet_size_ += compressedData.size();
+            std::swap(row_buffer_prev_, row_buffer_raw_);
         } 
         else 
         {
             // Non-ZoH row, no compression, simply write raw data to stream
-            writeRowLength(rowBufferRaw_.size());
-            stream_.write(reinterpret_cast<const char*>(rowBufferRaw_.data()), rowBufferRaw_.size());
-            packetHash_.update(rowBufferRaw_);
-            packetSize_ += rowBufferRaw_.size();
-            std::swap(rowBufferPrev_, rowBufferRaw_);
+            writeRowLength(row_buffer_raw_.size());
+            stream_.write(reinterpret_cast<const char*>(row_buffer_raw_.data()), row_buffer_raw_.size());
+            packet_hash_.update(row_buffer_raw_);
+            packet_size_ += row_buffer_raw_.size();
+            std::swap(row_buffer_prev_, row_buffer_raw_);
         }
 
-        rowCnt_++;
-        if(packetSize_ >= fileHeader_.getPacketSize()) {
+        row_cnt_++;
+        if(packet_size_ >= file_header_.getPacketSize()) {
             closePacket();
         }
     }
@@ -313,18 +313,18 @@ namespace bcsv {
     void Writer<LayoutType, Policy>::writeRowLength(size_t length)
     {
         assert(stream_.is_open());
-        assert(packetOpen_);
+        assert(packet_open_);
 
         // Use unified VLE encoding (Block Length Encoding)
         uint64_t tempBuf;
-        size_t numBytes = vle_encode<uint64_t, true>(length, &tempBuf, sizeof(tempBuf));
+        size_t numBytes = vleEncode<uint64_t, true>(length, &tempBuf, sizeof(tempBuf));
         
         // Write encoded bytes directly to stream
         stream_.write(reinterpret_cast<const char*>(&tempBuf), numBytes);
         
         // Update packet checksum and size
-        packetHash_.update(reinterpret_cast<const char*>(&tempBuf), numBytes);
-        packetSize_ += numBytes;
+        packet_hash_.update(reinterpret_cast<const char*>(&tempBuf), numBytes);
+        packet_size_ += numBytes;
     }
 
 } // namespace bcsv

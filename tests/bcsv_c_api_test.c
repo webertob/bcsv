@@ -92,7 +92,7 @@ void test_layout_api() {
     TEST_ASSERT(bcsv_layout_column_count(cloned_layout) == 3, "Cloned layout has 3 columns");
     
     // Test layout compatibility
-    bool compatible = bcsv_layout_isCompatible(layout, cloned_layout);
+    bool compatible = bcsv_layout_is_compatible(layout, cloned_layout);
     TEST_ASSERT(compatible, "Layout compatibility check");
     
     // Test layout assignment

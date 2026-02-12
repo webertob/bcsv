@@ -127,14 +127,14 @@ namespace bcsv {
          */
         #pragma pack(push, 1)
         struct ConstSection {
-            uint32_t magic;            ///< Magic number: 0x56534342 ("BCSV" in ASCII)
-            uint8_t  versionMajor;     ///< Major version number (0-255)
-            uint8_t  versionMinor;     ///< Minor version number (0-255)
-            uint8_t  versionPatch;     ///< Patch version number (0-255)
-            uint8_t  compressionLevel; ///< Compression level (0=none, 1-9=LZ4 levels)
-            uint16_t flags;            ///< Feature flags bitfield
-            uint16_t columnCount;      ///< Number of columns in the file
-            uint32_t packetSize;       ///< Packet size in bytes used for compression
+            uint32_t magic;             ///< Magic number: 0x56534342 ("BCSV" in ASCII)
+            uint8_t  version_major;     ///< Major version number (0-255)
+            uint8_t  version_minor;     ///< Minor version number (0-255)
+            uint8_t  version_patch;     ///< Patch version number (0-255)
+            uint8_t  compression_level; ///< Compression level (0=none, 1-9=LZ4 levels)
+            uint16_t flags;             ///< Feature flags bitfield
+            uint16_t column_count;      ///< Number of columns in the file
+            uint32_t packet_size;       ///< Packet size in bytes used for compression
         };
         #pragma pack(pop)
         static_assert(sizeof(ConstSection) == 16, "BinaryHeader must be exactly 16 bytes");
@@ -152,34 +152,34 @@ namespace bcsv {
 
         // Version management
         void        setVersion(uint8_t major, uint8_t minor, uint8_t patch) 
-                                                        { constSection_.versionMajor = major;
-                                                          constSection_.versionMinor = minor;
-                                                          constSection_.versionPatch = patch; }
-        std::string versionString() const               { return    std::to_string(constSection_.versionMajor) + "." + 
-                                                                    std::to_string(constSection_.versionMinor) + "." + 
-                                                                    std::to_string(constSection_.versionPatch); }
-        uint8_t     versionMajor() const                { return constSection_.versionMajor; }
-        uint8_t     versionMinor() const                { return constSection_.versionMinor; }
-        uint8_t     versionPatch() const                { return constSection_.versionPatch; }
+                                                        { const_section_.version_major = major;
+                                                          const_section_.version_minor = minor;
+                                                          const_section_.version_patch = patch; }
+        std::string versionString() const               { return    std::to_string(const_section_.version_major) + "." + 
+                                                                    std::to_string(const_section_.version_minor) + "." + 
+                                                                    std::to_string(const_section_.version_patch); }
+        uint8_t     versionMajor() const                { return const_section_.version_major; }
+        uint8_t     versionMinor() const                { return const_section_.version_minor; }
+        uint8_t     versionPatch() const                { return const_section_.version_patch; }
 
         // Compression management
-        void        setCompressionLevel(size_t level)   { constSection_.compressionLevel = (level > 9) ? 9 : static_cast<uint8_t>(level); }
-        uint8_t     getCompressionLevel() const         { return constSection_.compressionLevel; }
+        void        setCompressionLevel(size_t level)   { const_section_.compression_level = (level > 9) ? 9 : static_cast<uint8_t>(level); }
+        uint8_t     getCompressionLevel() const         { return const_section_.compression_level; }
 
         // Packet size management
-        void        setPacketSize(size_t packetSize)    { constSection_.packetSize = static_cast<uint32_t>(packetSize); }
-        uint32_t    getPacketSize() const               { return constSection_.packetSize; }
+        void        setPacketSize(size_t packetSize)    { const_section_.packet_size = static_cast<uint32_t>(packetSize); }
+        uint32_t    getPacketSize() const               { return const_section_.packet_size; }
 
         // Flags management
         void        clearFlag(FileFlags flag)           { setFlag(flag, false); }
         bool        hasFlag(FileFlags flag) const       { return (getFlags() & flag) != FileFlags::NONE; }
-        FileFlags   getFlags() const                    { return static_cast<FileFlags>(constSection_.flags); }
-        void        setFlags(FileFlags flags)           { constSection_.flags = static_cast<uint16_t>(flags); }
+        FileFlags   getFlags() const                    { return static_cast<FileFlags>(const_section_.flags); }
+        void        setFlags(FileFlags flags)           { const_section_.flags = static_cast<uint16_t>(flags); }
         void        setFlag(FileFlags flag, bool value);
 
         // Magic number validation
-        bool        isValidMagic() const                { return constSection_.magic == BCSV_MAGIC; }
-        uint32_t    getMagic() const                    { return constSection_.magic; }
+        bool        isValidMagic() const                { return const_section_.magic == BCSV_MAGIC; }
+        uint32_t    getMagic() const                    { return const_section_.magic; }
 
         /**
          * @brief Binary I/O operations for complete file headers
@@ -231,7 +231,7 @@ namespace bcsv {
         void printBinaryLayout(const LayoutType& columnLayout) const;
 
     private:
-        ConstSection constSection_;
+        ConstSection const_section_;
     };
 
 } // namespace bcsv

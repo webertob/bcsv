@@ -32,12 +32,12 @@ namespace bcsv {
      */
     #pragma pack(push, 1)
     struct PacketIndexEntry {
-        uint64_t byteOffset_;   ///< Absolute file offset to PacketHeader (bytes from file start)
-        uint64_t firstRow_;     ///< First row index in this packet (0-based, file-wide)
+        uint64_t byte_offset;   ///< Absolute file offset to PacketHeader (bytes from file start)
+        uint64_t first_row;     ///< First row index in this packet (0-based, file-wide)
         
-        PacketIndexEntry() : byteOffset_(0), firstRow_(0) {}
+        PacketIndexEntry() : byte_offset(0), first_row(0) {}
         PacketIndexEntry(uint64_t byteOffset, uint64_t firstRow)
-            : byteOffset_(byteOffset), firstRow_(firstRow) {}
+            : byte_offset(byteOffset), first_row(firstRow) {}
     };
     #pragma pack(pop)
     static_assert(sizeof(PacketIndexEntry) == 16, "PacketIndexEntry must be exactly 16 bytes");
@@ -74,15 +74,15 @@ namespace bcsv {
     public: 
         #pragma pack(push, 1)
         struct ConstSection {
-            uint32_t startMagic;        ///< "EIDX" magic number
-            uint32_t startOffset;       ///< Bytes from EOF to "BIDX"
-            uint64_t rowCount;          ///< Total number of rows in file
-            uint64_t checksum;          ///< xxHash64 of entire index (from "BIDX" to totalRowCount)
+            uint32_t start_magic;      ///< "EIDX" magic number
+            uint32_t start_offset;     ///< Bytes from EOF to "BIDX"
+            uint64_t row_count;        ///< Total number of rows in file
+            uint64_t checksum;         ///< xxHash64 of entire index (from "BIDX" to totalRowCount)
             
-            ConstSection(uint32_t startOffset_ = 0, uint64_t totalRows_ = 0)
-                : startMagic(FOOTER_EIDX_MAGIC)
-                , startOffset(startOffset_)
-                , rowCount(totalRows_)
+            ConstSection(uint32_t startOffset = 0, uint64_t totalRows = 0)
+                : start_magic(FOOTER_EIDX_MAGIC)
+                , start_offset(startOffset)
+                , row_count(totalRows)
                 , checksum(0)
             {}
         };
@@ -93,16 +93,16 @@ namespace bcsv {
          * @brief Default constructor
          */
         FileFooter(PacketIndex index = PacketIndex(), uint64_t totalRowCount = 0)
-            : packetIndex_(std::move(index))
-            , constSection_(0, totalRowCount)
+            : packet_index_(std::move(index))
+            , const_section_(0, totalRowCount)
         {
-            constSection_.startOffset = static_cast<uint32_t>(encodedSize());
+            const_section_.start_offset = static_cast<uint32_t>(encodedSize());
         }
         
         bool hasValidIndex() const
         {
             // check if packeIndex size matches totalRowCount
-            return !packetIndex_.empty() && constSection_.rowCount > 0;
+            return !packet_index_.empty() && const_section_.row_count > 0;
         }
 
         /**
@@ -110,7 +110,7 @@ namespace bcsv {
          * @return reference to packetIndex
          */
         auto& packetIndex() {
-            return packetIndex_;
+            return packet_index_;
         }
 
         /**
@@ -118,7 +118,7 @@ namespace bcsv {
          * @return Const reference to packetIndex
          */
         const auto& packetIndex() const {
-            return packetIndex_;
+            return packet_index_;
         }
                 
         /**
@@ -126,7 +126,7 @@ namespace bcsv {
          * @param reference to totalRowCount
          */
         auto& rowCount() {
-            return constSection_.rowCount;
+            return const_section_.row_count;
         }
         
         /**
@@ -134,17 +134,17 @@ namespace bcsv {
          * @param const reference to totalRowCount
          */
         const auto& rowCount() const {
-            return constSection_.rowCount;
+            return const_section_.row_count;
         }
         
         /**
          * @brief Clear all index data
          */
         void clear() {
-            packetIndex_.clear();
-            constSection_.startOffset = encodedSize();
-            constSection_.rowCount = 0;
-            constSection_.checksum = 0;
+            packet_index_.clear();
+            const_section_.start_offset = encodedSize();
+            const_section_.row_count = 0;
+            const_section_.checksum = 0;
         }
                 
         /**
@@ -153,7 +153,7 @@ namespace bcsv {
          */
         size_t encodedSize() {
             return  4                                                   // "BIDX" magic
-                    + packetIndex_.size() * sizeof(PacketIndexEntry)    // Packet entries
+                    + packet_index_.size() * sizeof(PacketIndexEntry)    // Packet entries
                     + sizeof(ConstSection);                             // Footer
         }
         
@@ -178,19 +178,19 @@ namespace bcsv {
                 return false;
             }
             // Update indexStartOffset  
-            constSection_.startOffset = static_cast<uint32_t>(encodedSize());
+            const_section_.start_offset = static_cast<uint32_t>(encodedSize());
 
             // Calculate checksum
             Checksum::Streaming checksum;
             checksum.update(MAGIC_BYTES_FOOTER_BIDX, 4);
-            checksum.update(packetIndex_.data(), packetIndex_.size() * sizeof(PacketIndexEntry));
-            checksum.update(&constSection_, sizeof(ConstSection) - sizeof(constSection_.checksum));
-            constSection_.checksum = checksum.finalize();
+            checksum.update(packet_index_.data(), packet_index_.size() * sizeof(PacketIndexEntry));
+            checksum.update(&const_section_, sizeof(ConstSection) - sizeof(const_section_.checksum));
+            const_section_.checksum = checksum.finalize();
 
             // Write to stream
             stream.write(MAGIC_BYTES_FOOTER_BIDX, 4);
-            stream.write(reinterpret_cast<const char*>(packetIndex_.data()), packetIndex_.size() * sizeof(PacketIndexEntry));
-            stream.write(reinterpret_cast<const char*>(&constSection_), sizeof(ConstSection));
+            stream.write(reinterpret_cast<const char*>(packet_index_.data()), packet_index_.size() * sizeof(PacketIndexEntry));
+            stream.write(reinterpret_cast<const char*>(&const_section_), sizeof(ConstSection));
             return stream.good();
         }
         
@@ -215,16 +215,16 @@ namespace bcsv {
             stream.seekg(-static_cast<std::streamoff>(sizeof(ConstSection)), std::ios::end);
 
             // read FileFooter's ConstSection
-            stream.read(reinterpret_cast<char*>(&constSection_), sizeof(ConstSection));
+            stream.read(reinterpret_cast<char*>(&const_section_), sizeof(ConstSection));
             
-            if (!stream.good() || constSection_.startMagic != FOOTER_EIDX_MAGIC) {
+            if (!stream.good() || const_section_.start_magic != FOOTER_EIDX_MAGIC) {
                 std::cerr << "Error: Invalid file index footer" << std::endl;
                 stream.seekg(originalPos);
                 return false;
             }
 
             // Seek to index start
-            stream.seekg(-static_cast<int64_t>(constSection_.startOffset), std::ios::end);
+            stream.seekg(-static_cast<int64_t>(const_section_.start_offset), std::ios::end);
             
             // Read start magic
             char startMagic[4];
@@ -236,7 +236,7 @@ namespace bcsv {
             }
 
             // Calculate number of packet entries
-            size_t indexSize = constSection_.startOffset - sizeof(ConstSection) - sizeof(startMagic);
+            size_t indexSize = const_section_.start_offset - sizeof(ConstSection) - sizeof(startMagic);
             if (indexSize % sizeof(PacketIndexEntry) != 0) {
                 std::cerr << "Error: Invalid file index size" << std::endl;
                 stream.seekg(originalPos);
@@ -245,8 +245,8 @@ namespace bcsv {
             size_t entryCount = indexSize / sizeof(PacketIndexEntry);
 
             // Read packet entries
-            packetIndex_.resize(entryCount);
-            stream.read(reinterpret_cast<char*>(packetIndex_.data()), indexSize);
+            packet_index_.resize(entryCount);
+            stream.read(reinterpret_cast<char*>(packet_index_.data()), indexSize);
             if (!stream.good()) {
                 std::cerr << "Error: Failed to read packet index entries" << std::endl;
                 stream.seekg(originalPos);
@@ -256,21 +256,21 @@ namespace bcsv {
             // validate checksum
             Checksum::Streaming checksum;
             checksum.update(startMagic, 4);
-            checksum.update(packetIndex_.data(), indexSize);
-            checksum.update(&constSection_, sizeof(ConstSection) - sizeof(constSection_.checksum));
+            checksum.update(packet_index_.data(), indexSize);
+            checksum.update(&const_section_, sizeof(ConstSection) - sizeof(const_section_.checksum));
             uint64_t calculatedChecksum = checksum.finalize();
-            if (calculatedChecksum != constSection_.checksum) {
+            if (calculatedChecksum != const_section_.checksum) {
                 std::cerr << "Error: File index checksum mismatch" << std::endl;
                 stream.seekg(originalPos);
                 return false;
             }
-            constSection_.checksum = calculatedChecksum;
+            const_section_.checksum = calculatedChecksum;
             return true;
         }
                 
     private:
-        PacketIndex   packetIndex_;
-        ConstSection  constSection_;
+        PacketIndex   packet_index_;
+        ConstSection  const_section_;
     };
     
 } // namespace bcsv

@@ -27,12 +27,12 @@ TEST_F(FileFooterTest, PacketIndexEntrySize) {
 // Test: PacketIndexEntry construction
 TEST_F(FileFooterTest, PacketIndexEntryConstruction) {
     PacketIndexEntry entry1;
-    EXPECT_EQ(entry1.byteOffset_, 0);
-    EXPECT_EQ(entry1.firstRow_, 0);
+    EXPECT_EQ(entry1.byte_offset, 0);
+    EXPECT_EQ(entry1.first_row, 0);
     
     PacketIndexEntry entry2(1000, 5000);
-    EXPECT_EQ(entry2.byteOffset_, 1000);
-    EXPECT_EQ(entry2.firstRow_, 5000);
+    EXPECT_EQ(entry2.byte_offset, 1000);
+    EXPECT_EQ(entry2.first_row, 5000);
 }
 
 // Test: FileFooter default construction
@@ -53,14 +53,14 @@ TEST_F(FileFooterTest, AddPackets) {
     
     EXPECT_EQ(footer.packetIndex().size(), 3);
     
-    EXPECT_EQ(footer.packetIndex()[0].byteOffset_, 100);
-    EXPECT_EQ(footer.packetIndex()[0].firstRow_, 0);
+    EXPECT_EQ(footer.packetIndex()[0].byte_offset, 100);
+    EXPECT_EQ(footer.packetIndex()[0].first_row, 0);
     
-    EXPECT_EQ(footer.packetIndex()[1].byteOffset_, 5000);
-    EXPECT_EQ(footer.packetIndex()[1].firstRow_, 1000);
+    EXPECT_EQ(footer.packetIndex()[1].byte_offset, 5000);
+    EXPECT_EQ(footer.packetIndex()[1].first_row, 1000);
     
-    EXPECT_EQ(footer.packetIndex()[2].byteOffset_, 10000);
-    EXPECT_EQ(footer.packetIndex()[2].firstRow_, 2000);
+    EXPECT_EQ(footer.packetIndex()[2].byte_offset, 10000);
+    EXPECT_EQ(footer.packetIndex()[2].first_row, 2000);
 }
 
 // Test: Setting and getting properties
@@ -153,17 +153,17 @@ TEST_F(FileFooterTest, WriteReadWithPackets) {
     EXPECT_EQ(copy.rowCount(), 4000);
     
     // Verify packet entries
-    EXPECT_EQ(copy.packetIndex()[0].byteOffset_, 100);
-    EXPECT_EQ(copy.packetIndex()[0].firstRow_, 0);
+    EXPECT_EQ(copy.packetIndex()[0].byte_offset, 100);
+    EXPECT_EQ(copy.packetIndex()[0].first_row, 0);
     
-    EXPECT_EQ(copy.packetIndex()[1].byteOffset_, 5000);
-    EXPECT_EQ(copy.packetIndex()[1].firstRow_, 1000);
+    EXPECT_EQ(copy.packetIndex()[1].byte_offset, 5000);
+    EXPECT_EQ(copy.packetIndex()[1].first_row, 1000);
     
-    EXPECT_EQ(copy.packetIndex()[2].byteOffset_, 10000);
-    EXPECT_EQ(copy.packetIndex()[2].firstRow_, 2000);
+    EXPECT_EQ(copy.packetIndex()[2].byte_offset, 10000);
+    EXPECT_EQ(copy.packetIndex()[2].first_row, 2000);
     
-    EXPECT_EQ(copy.packetIndex()[3].byteOffset_, 15000);
-    EXPECT_EQ(copy.packetIndex()[3].firstRow_, 3000);
+    EXPECT_EQ(copy.packetIndex()[3].byte_offset, 15000);
+    EXPECT_EQ(copy.packetIndex()[3].first_row, 3000);
 }
 
 // Test: hasValidIndex with valid index
@@ -289,14 +289,14 @@ TEST_F(FileFooterTest, LargeIndex) {
     EXPECT_EQ(copy.rowCount(), 100000);
     
     // Spot check some entries
-    EXPECT_EQ(copy.packetIndex()[0].byteOffset_, 0);
-    EXPECT_EQ(copy.packetIndex()[0].firstRow_, 0);
+    EXPECT_EQ(copy.packetIndex()[0].byte_offset, 0);
+    EXPECT_EQ(copy.packetIndex()[0].first_row, 0);
     
-    EXPECT_EQ(copy.packetIndex()[500].byteOffset_, 5000000);
-    EXPECT_EQ(copy.packetIndex()[500].firstRow_, 50000);
+    EXPECT_EQ(copy.packetIndex()[500].byte_offset, 5000000);
+    EXPECT_EQ(copy.packetIndex()[500].first_row, 50000);
     
-    EXPECT_EQ(copy.packetIndex()[999].byteOffset_, 9990000);
-    EXPECT_EQ(copy.packetIndex()[999].firstRow_, 99900);
+    EXPECT_EQ(copy.packetIndex()[999].byte_offset, 9990000);
+    EXPECT_EQ(copy.packetIndex()[999].first_row, 99900);
 }
 
 // Test: Get packets vector
@@ -310,14 +310,14 @@ TEST_F(FileFooterTest, GetPacketsVector) {
     const auto& packets = footer.packetIndex();
     EXPECT_EQ(packets.size(), 3);
     
-    EXPECT_EQ(packets[0].byteOffset_, 100);
-    EXPECT_EQ(packets[0].firstRow_, 0);
+    EXPECT_EQ(packets[0].byte_offset, 100);
+    EXPECT_EQ(packets[0].first_row, 0);
     
-    EXPECT_EQ(packets[1].byteOffset_, 5000);
-    EXPECT_EQ(packets[1].firstRow_, 1000);
+    EXPECT_EQ(packets[1].byte_offset, 5000);
+    EXPECT_EQ(packets[1].first_row, 1000);
     
-    EXPECT_EQ(packets[2].byteOffset_, 10000);
-    EXPECT_EQ(packets[2].firstRow_, 2000);
+    EXPECT_EQ(packets[2].byte_offset, 10000);
+    EXPECT_EQ(packets[2].first_row, 2000);
 }
 
 // Test: Footer size constant
@@ -341,7 +341,7 @@ TEST_F(FileFooterTest, MaximumValues) {
     EXPECT_TRUE(copy.read(stream));
     
     EXPECT_EQ(copy.packetIndex().size(), 1);
-    EXPECT_EQ(copy.packetIndex()[0].byteOffset_, UINT64_MAX);
-    EXPECT_EQ(copy.packetIndex()[0].firstRow_, UINT64_MAX);
+    EXPECT_EQ(copy.packetIndex()[0].byte_offset, UINT64_MAX);
+    EXPECT_EQ(copy.packetIndex()[0].first_row, UINT64_MAX);
     EXPECT_EQ(copy.rowCount(), UINT64_MAX);
 }

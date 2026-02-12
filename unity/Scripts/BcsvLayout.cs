@@ -201,7 +201,7 @@ namespace BCSV
             if (other == null || other.Handle == IntPtr.Zero)
                 return false;
 
-            return NativeMethods.bcsv_layout_isCompatible(Handle, other.Handle);
+            return NativeMethods.bcsv_layout_is_compatible(Handle, other.Handle);
         }
 
         /// <summary>

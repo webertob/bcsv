@@ -564,7 +564,7 @@ namespace bcsv {
         } else {
             // Types differ: use memcmp for fast comparison
             const auto& other_types = other.columnTypes();
-            return std::memcmp(column_types_.data(), other_types.data(), N * sizeof(ColumnType)) == 0;
+            return std::memcmp(COLUMN_TYPES.data(), other_types.data(), N * sizeof(ColumnType)) == 0;
         }
     }
 

@@ -289,7 +289,7 @@ TEST_F(ErrorHandlingTest, Writer_DoubleOpen) {
     
     // Open first file
     ASSERT_TRUE(writer.open(test_file1, true));
-    EXPECT_TRUE(writer.is_open());
+    EXPECT_TRUE(writer.isOpen());
     
     // Try to open second file without closing first
     bool second_open = writer.open(test_file2, true);

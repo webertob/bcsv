@@ -15,7 +15,7 @@ namespace bcsv {
 // ===== Internal Helper Implementations =====
 
 template<size_t N>
-constexpr size_t bitset<N>::wordCount() const noexcept {
+constexpr size_t Bitset<N>::wordCount() const noexcept {
     if constexpr (IS_FIXED) {
         return WORD_COUNT_FIXED;
     }
@@ -23,12 +23,12 @@ constexpr size_t bitset<N>::wordCount() const noexcept {
 }
 
 template<size_t N>
-constexpr size_t bitset<N>::byteCount() const noexcept {
+constexpr size_t Bitset<N>::byteCount() const noexcept {
     return bitsToBytes(size());
 }
 
 template<size_t N>
-constexpr bool bitset<N>::usesInline() const noexcept {
+constexpr bool Bitset<N>::usesInline() const noexcept {
     if constexpr (IS_FIXED) {
         return false;
     } else {
@@ -37,7 +37,7 @@ constexpr bool bitset<N>::usesInline() const noexcept {
 }
 
 template<size_t N>
-constexpr typename bitset<N>::word_t* bitset<N>::wordData() noexcept {
+constexpr typename Bitset<N>::word_t* Bitset<N>::wordData() noexcept {
     if constexpr (IS_FIXED) {
         return data_.data();
     } else {
@@ -49,7 +49,7 @@ constexpr typename bitset<N>::word_t* bitset<N>::wordData() noexcept {
 }
 
 template<size_t N>
-constexpr const typename bitset<N>::word_t* bitset<N>::wordData() const noexcept {
+constexpr const typename Bitset<N>::word_t* Bitset<N>::wordData() const noexcept {
     if constexpr (IS_FIXED) {
         return data_.data();
     } else {
@@ -61,7 +61,7 @@ constexpr const typename bitset<N>::word_t* bitset<N>::wordData() const noexcept
 }
 
 template<size_t N>
-void bitset<N>::releaseHeap() noexcept {
+void Bitset<N>::releaseHeap() noexcept {
     if constexpr (!IS_FIXED) {
         if (!usesInline() && data_ != 0) {
             delete[] reinterpret_cast<word_t*>(data_);
@@ -71,7 +71,7 @@ void bitset<N>::releaseHeap() noexcept {
 }
 
 template<size_t N>
-void bitset<N>::resizeStorage(size_t old_size, size_t new_size, word_t value) {
+void Bitset<N>::resizeStorage(size_t old_size, size_t new_size, word_t value) {
     if constexpr (IS_FIXED) {
         (void)old_size;
         (void)new_size;
@@ -127,7 +127,7 @@ void bitset<N>::resizeStorage(size_t old_size, size_t new_size, word_t value) {
 }
 
 template<size_t N>
-constexpr void bitset<N>::clearUnusedBits() noexcept {
+constexpr void Bitset<N>::clearUnusedBits() noexcept {
     if (wordCount() == 0) return;
     
     const size_t bits_in_last = size() % WORD_BITS;
@@ -138,7 +138,7 @@ constexpr void bitset<N>::clearUnusedBits() noexcept {
 }
 
 template<size_t N>
-constexpr void bitset<N>::setFromValue(unsigned long long val) noexcept {
+constexpr void Bitset<N>::setFromValue(unsigned long long val) noexcept {
     const size_t words_to_set = std::min(
         sizeof(val) / WORD_SIZE,
         wordCount()
@@ -155,7 +155,7 @@ constexpr void bitset<N>::setFromValue(unsigned long long val) noexcept {
 
 template<size_t N>
 template<class CharT, class Traits, class Allocator>
-void bitset<N>::setFromString(
+void Bitset<N>::setFromString(
     const std::basic_string<CharT, Traits, Allocator>& str,
     typename std::basic_string<CharT, Traits, Allocator>::size_type pos,
     typename std::basic_string<CharT, Traits, Allocator>::size_type n,
@@ -168,7 +168,7 @@ void bitset<N>::setFromString(
         if (ch == one) {
             set(i);
         } else if (ch != zero) {
-            throw std::invalid_argument("bitset: invalid character in string");
+            throw std::invalid_argument("Bitset: invalid character in string");
         }
     }
 }
@@ -176,11 +176,11 @@ void bitset<N>::setFromString(
 // ===== Reference Proxy Implementation =====
 
 template<size_t N>
-bitset<N>::reference::reference(word_t* ptr, size_t bit_idx) 
+Bitset<N>::Reference::Reference(word_t* ptr, size_t bit_idx) 
     : word_ptr_(ptr), bit_index_(bit_idx) {}
 
 template<size_t N>
-typename bitset<N>::reference& bitset<N>::reference::operator=(bool value) {
+typename Bitset<N>::Reference& Bitset<N>::Reference::operator=(bool value) {
     if (value) {
         *word_ptr_ |= (word_t{1} << bit_index_);
     } else {
@@ -190,28 +190,28 @@ typename bitset<N>::reference& bitset<N>::reference::operator=(bool value) {
 }
 
 template<size_t N>
-typename bitset<N>::reference& bitset<N>::reference::operator=(const reference& other) {
+typename Bitset<N>::Reference& Bitset<N>::Reference::operator=(const Reference& other) {
     return *this = bool(other);
 }
 
 template<size_t N>
-bitset<N>::reference::operator bool() const {
+Bitset<N>::Reference::operator bool() const {
     return (*word_ptr_ & (word_t{1} << bit_index_)) != 0;
 }
 
 template<size_t N>
-bool bitset<N>::reference::operator~() const {
+bool Bitset<N>::Reference::operator~() const {
     return !bool(*this);
 }
 
 template<size_t N>
-typename bitset<N>::reference& bitset<N>::reference::flip() {
+typename Bitset<N>::Reference& Bitset<N>::Reference::flip() {
     *word_ptr_ ^= (word_t{1} << bit_index_);
     return *this;
 }
 
 template<size_t N>
-typename bitset<N>::reference& bitset<N>::reference::operator|=(bool value) {
+typename Bitset<N>::Reference& Bitset<N>::Reference::operator|=(bool value) {
     if (value) {
         *word_ptr_ |= (word_t{1} << bit_index_);
     }
@@ -219,7 +219,7 @@ typename bitset<N>::reference& bitset<N>::reference::operator|=(bool value) {
 }
 
 template<size_t N>
-typename bitset<N>::reference& bitset<N>::reference::operator&=(bool value) {
+typename Bitset<N>::Reference& Bitset<N>::Reference::operator&=(bool value) {
     if (!value) {
         *word_ptr_ &= ~(word_t{1} << bit_index_);
     }
@@ -227,7 +227,7 @@ typename bitset<N>::reference& bitset<N>::reference::operator&=(bool value) {
 }
 
 template<size_t N>
-typename bitset<N>::reference& bitset<N>::reference::operator^=(bool value) {
+typename Bitset<N>::Reference& Bitset<N>::Reference::operator^=(bool value) {
     if (value) {
         *word_ptr_ ^= (word_t{1} << bit_index_);
     }
@@ -238,18 +238,18 @@ typename bitset<N>::reference& bitset<N>::reference::operator^=(bool value) {
 
 // Fixed-size constructors
 template<size_t N>
-constexpr bitset<N>::bitset() noexcept requires(IS_FIXED) 
+constexpr Bitset<N>::Bitset() noexcept requires(IS_FIXED) 
     : data_{} {}
 
 template<size_t N>
-constexpr bitset<N>::bitset(unsigned long long val) noexcept requires(IS_FIXED)
+constexpr Bitset<N>::Bitset(unsigned long long val) noexcept requires(IS_FIXED)
     : data_{} { 
     setFromValue(val); 
 }
 
 template<size_t N>
 template<class CharT, class Traits, class Allocator>
-bitset<N>::bitset(
+Bitset<N>::Bitset(
     const std::basic_string<CharT, Traits, Allocator>& str,
     typename std::basic_string<CharT, Traits, Allocator>::size_type pos,
     typename std::basic_string<CharT, Traits, Allocator>::size_type n,
@@ -262,7 +262,7 @@ bitset<N>::bitset(
 
 // Dynamic-size constructors
 template<size_t N>
-bitset<N>::bitset(size_t num_bits) requires(!IS_FIXED)
+Bitset<N>::Bitset(size_t num_bits) requires(!IS_FIXED)
     : size_(num_bits)
     , data_(0)
 {
@@ -270,7 +270,7 @@ bitset<N>::bitset(size_t num_bits) requires(!IS_FIXED)
 }
 
 template<size_t N>
-bitset<N>::bitset(size_t num_bits, unsigned long long val) requires(!IS_FIXED)
+Bitset<N>::Bitset(size_t num_bits, unsigned long long val) requires(!IS_FIXED)
     : size_(num_bits)
     , data_(0)
 { 
@@ -279,7 +279,7 @@ bitset<N>::bitset(size_t num_bits, unsigned long long val) requires(!IS_FIXED)
 }
 
 template<size_t N>
-bitset<N>::bitset(size_t num_bits, bool value) requires(!IS_FIXED)
+Bitset<N>::Bitset(size_t num_bits, bool value) requires(!IS_FIXED)
     : size_(num_bits)
     , data_(0)
 {
@@ -289,7 +289,7 @@ bitset<N>::bitset(size_t num_bits, bool value) requires(!IS_FIXED)
 
 template<size_t N>
 template<class CharT, class Traits, class Allocator>
-bitset<N>::bitset(
+Bitset<N>::Bitset(
     size_t num_bits,
     const std::basic_string<CharT, Traits, Allocator>& str,
     typename std::basic_string<CharT, Traits, Allocator>::size_type pos,
@@ -306,7 +306,7 @@ bitset<N>::bitset(
 // Conversion: Fixed → Dynamic
 template<size_t N>
 template<size_t M>
-bitset<N>::bitset(const bitset<M>& other) requires(!IS_FIXED && M != dynamic_extent)
+Bitset<N>::Bitset(const Bitset<M>& other) requires(!IS_FIXED && M != DYNAMIC_EXTENT)
     : size_(M)
     , data_(0)
 {
@@ -317,7 +317,7 @@ bitset<N>::bitset(const bitset<M>& other) requires(!IS_FIXED && M != dynamic_ext
 // ===== Element Access Implementations =====
 
 template<size_t N>
-bitset<N>::bitset(const bitset& other) {
+Bitset<N>::Bitset(const Bitset& other) {
     if constexpr (IS_FIXED) {
         data_ = other.data_;
     } else {
@@ -331,7 +331,7 @@ bitset<N>::bitset(const bitset& other) {
 }
 
 template<size_t N>
-bitset<N>::bitset(bitset&& other) noexcept {
+Bitset<N>::Bitset(Bitset&& other) noexcept {
     if constexpr (IS_FIXED) {
         data_ = std::move(other.data_);
     } else {
@@ -347,7 +347,7 @@ bitset<N>::bitset(bitset&& other) noexcept {
 }
 
 template<size_t N>
-bitset<N>& bitset<N>::operator=(const bitset& other) {
+Bitset<N>& Bitset<N>::operator=(const Bitset& other) {
     if (this == &other) {
         return *this;
     }
@@ -366,7 +366,7 @@ bitset<N>& bitset<N>::operator=(const bitset& other) {
 }
 
 template<size_t N>
-bitset<N>& bitset<N>::operator=(bitset&& other) noexcept {
+Bitset<N>& Bitset<N>::operator=(Bitset&& other) noexcept {
     if (this == &other) {
         return *this;
     }
@@ -387,17 +387,17 @@ bitset<N>& bitset<N>::operator=(bitset&& other) noexcept {
 }
 
 template<size_t N>
-bitset<N>::~bitset() {
+Bitset<N>::~Bitset() {
     if constexpr (!IS_FIXED) {
         releaseHeap();
     }
 }
 
 template<size_t N>
-constexpr bool bitset<N>::operator[](size_t pos) const {
+constexpr bool Bitset<N>::operator[](size_t pos) const {
     // No bounds checking for performance (like std::vector::operator[])
     // Use test() for checked access
-    assert(pos < size() && "bitset::operator[]: index out of range");
+    assert(pos < size() && "Bitset::operator[]: index out of range");
     
     const size_t word_idx = bitToWordIndex(pos);
     const size_t bit_idx = bitToBitIndex(pos);
@@ -406,21 +406,21 @@ constexpr bool bitset<N>::operator[](size_t pos) const {
 }
 
 template<size_t N>
-typename bitset<N>::reference bitset<N>::operator[](size_t pos) {
+typename Bitset<N>::Reference Bitset<N>::operator[](size_t pos) {
     // No bounds checking for performance (like std::vector::operator[])
     // Use test() for checked access  
-    assert(pos < size() && "bitset::operator[]: index out of range");
+    assert(pos < size() && "Bitset::operator[]: index out of range");
     
     const size_t word_idx = bitToWordIndex(pos);
     const size_t bit_idx = bitToBitIndex(pos);
     
-    return reference(&wordData()[word_idx], bit_idx);
+    return Reference(&wordData()[word_idx], bit_idx);
 }
 
 template<size_t N>
-constexpr bool bitset<N>::test(size_t pos) const {
+constexpr bool Bitset<N>::test(size_t pos) const {
     if (pos >= size()) {
-        throw std::out_of_range("bitset::test: index out of range");
+        throw std::out_of_range("Bitset::test: index out of range");
     }
     return (*this)[pos];
 }
@@ -428,7 +428,7 @@ constexpr bool bitset<N>::test(size_t pos) const {
 // ===== Capacity Implementations =====
 
 template<size_t N>
-constexpr size_t bitset<N>::size() const noexcept {
+constexpr size_t Bitset<N>::size() const noexcept {
     if constexpr (IS_FIXED) {
         return N;
     } else {
@@ -437,42 +437,42 @@ constexpr size_t bitset<N>::size() const noexcept {
 }
 
 template<size_t N>
-constexpr size_t bitset<N>::sizeBytes() const noexcept {
+constexpr size_t Bitset<N>::sizeBytes() const noexcept {
     return byteCount();
 }
 
 template<size_t N>
-constexpr bool bitset<N>::empty() const noexcept {
+constexpr bool Bitset<N>::empty() const noexcept {
     return size() == 0;
 }
 
 template<size_t N>
-constexpr size_t bitset<N>::capacity() const noexcept {
+constexpr size_t Bitset<N>::capacity() const noexcept {
     return wordCount() * WORD_BITS;
 }
 
 // ===== Slice View Implementations =====
 
 template<size_t N>
-bitset<N>::const_slice_view::const_slice_view(
-    const bitset* owner,
+Bitset<N>::ConstSliceView::ConstSliceView(
+    const Bitset* owner,
     size_t start,
     size_t length)
     : owner_(owner), start_(start), length_(length) {}
 
 template<size_t N>
-size_t bitset<N>::const_slice_view::size() const noexcept {
+size_t Bitset<N>::ConstSliceView::size() const noexcept {
     return length_;
 }
 
 template<size_t N>
-bool bitset<N>::const_slice_view::empty() const noexcept {
+bool Bitset<N>::ConstSliceView::empty() const noexcept {
     return length_ == 0;
 }
 
 template<size_t N>
-typename bitset<N>::word_t
-bitset<N>::const_slice_view::loadWord(size_t index) const noexcept {
+typename Bitset<N>::word_t
+Bitset<N>::ConstSliceView::loadWord(size_t index) const noexcept {
     const size_t start_word = start_ / WORD_BITS;
     const size_t start_bit = start_ % WORD_BITS;
     const size_t word_count = (length_ + WORD_BITS - 1) / WORD_BITS;
@@ -493,21 +493,21 @@ bitset<N>::const_slice_view::loadWord(size_t index) const noexcept {
 }
 
 template<size_t N>
-bool bitset<N>::const_slice_view::operator[](size_t pos) const {
-    assert(pos < length_ && "bitset::slice_view::operator[]: index out of range");
+bool Bitset<N>::ConstSliceView::operator[](size_t pos) const {
+    assert(pos < length_ && "Bitset::SliceView::operator[]: index out of range");
     return (*owner_)[start_ + pos];
 }
 
 template<size_t N>
-bool bitset<N>::const_slice_view::test(size_t pos) const {
+bool Bitset<N>::ConstSliceView::test(size_t pos) const {
     if (pos >= length_) {
-        throw std::out_of_range("bitset::slice_view::test: index out of range");
+        throw std::out_of_range("Bitset::SliceView::test: index out of range");
     }
     return (*owner_)[start_ + pos];
 }
 
 template<size_t N>
-bool bitset<N>::const_slice_view::all() const noexcept {
+bool Bitset<N>::ConstSliceView::all() const noexcept {
     if (length_ == 0) {
         return true;
     }
@@ -546,7 +546,7 @@ bool bitset<N>::const_slice_view::all() const noexcept {
 }
 
 template<size_t N>
-bool bitset<N>::const_slice_view::any() const noexcept {
+bool Bitset<N>::ConstSliceView::any() const noexcept {
     if (length_ == 0) {
         return false;
     }
@@ -585,12 +585,12 @@ bool bitset<N>::const_slice_view::any() const noexcept {
 }
 
 template<size_t N>
-bool bitset<N>::const_slice_view::none() const noexcept {
+bool Bitset<N>::ConstSliceView::none() const noexcept {
     return !any();
 }
 
 template<size_t N>
-size_t bitset<N>::const_slice_view::count() const noexcept {
+size_t Bitset<N>::ConstSliceView::count() const noexcept {
     if (length_ == 0) {
         return 0;
     }
@@ -628,7 +628,7 @@ size_t bitset<N>::const_slice_view::count() const noexcept {
 }
 
 template<size_t N>
-bool bitset<N>::const_slice_view::all(const bitset& mask) const noexcept {
+bool Bitset<N>::ConstSliceView::all(const Bitset& mask) const noexcept {
     const size_t limit = std::min(length_, mask.size());
     for (size_t i = 0; i < limit; ++i) {
         if (mask.test(i) && !(*owner_)[start_ + i]) {
@@ -639,7 +639,7 @@ bool bitset<N>::const_slice_view::all(const bitset& mask) const noexcept {
 }
 
 template<size_t N>
-bool bitset<N>::const_slice_view::any(const bitset& mask) const noexcept {
+bool Bitset<N>::ConstSliceView::any(const Bitset& mask) const noexcept {
     const size_t limit = std::min(length_, mask.size());
     for (size_t i = 0; i < limit; ++i) {
         if (mask.test(i) && (*owner_)[start_ + i]) {
@@ -650,24 +650,24 @@ bool bitset<N>::const_slice_view::any(const bitset& mask) const noexcept {
 }
 
 template<size_t N>
-bitset<N> bitset<N>::const_slice_view::operator<<(size_t shift_amount) const noexcept {
-    bitset result = *owner_;
+Bitset<N> Bitset<N>::ConstSliceView::operator<<(size_t shift_amount) const noexcept {
+    Bitset result = *owner_;
     auto view = result.slice(start_, length_);
     view <<= shift_amount;
     return result;
 }
 
 template<size_t N>
-bitset<N> bitset<N>::const_slice_view::operator>>(size_t shift_amount) const noexcept {
-    bitset result = *owner_;
+Bitset<N> Bitset<N>::ConstSliceView::operator>>(size_t shift_amount) const noexcept {
+    Bitset result = *owner_;
     auto view = result.slice(start_, length_);
     view >>= shift_amount;
     return result;
 }
 
 template<size_t N>
-bitset<> bitset<N>::const_slice_view::toBitset() const {
-    bitset<> result(length_);
+Bitset<> Bitset<N>::ConstSliceView::toBitset() const {
+    Bitset<> result(length_);
     if (length_ == 0) {
         return result;
     }
@@ -681,25 +681,25 @@ bitset<> bitset<N>::const_slice_view::toBitset() const {
 }
 
 template<size_t N>
-bitset<> bitset<N>::const_slice_view::shiftedLeft(size_t shift_amount) const {
-    bitset<> result = toBitset();
+Bitset<> Bitset<N>::ConstSliceView::shiftedLeft(size_t shift_amount) const {
+    Bitset<> result = toBitset();
     result <<= shift_amount;
     return result;
 }
 
 template<size_t N>
-bitset<> bitset<N>::const_slice_view::shiftedRight(size_t shift_amount) const {
-    bitset<> result = toBitset();
+Bitset<> Bitset<N>::ConstSliceView::shiftedRight(size_t shift_amount) const {
+    Bitset<> result = toBitset();
     result >>= shift_amount;
     return result;
 }
 
 template<size_t N>
-bitset<N>::slice_view::slice_view(bitset* owner, size_t start, size_t length)
-    : const_slice_view(owner, start, length) {}
+Bitset<N>::SliceView::SliceView(Bitset* owner, size_t start, size_t length)
+    : ConstSliceView(owner, start, length) {}
 
 template<size_t N>
-void bitset<N>::slice_view::storeWord(
+void Bitset<N>::SliceView::storeWord(
     size_t index,
     word_t value,
     word_t slice_mask) noexcept
@@ -710,7 +710,7 @@ void bitset<N>::slice_view::storeWord(
     word_t masked_value = value & slice_mask;
     word_t low_mask = slice_mask << start_bit;
     word_t low_bits = masked_value << start_bit;
-    word_t* owner_data = (*const_cast<bitset*>(this->owner_)).wordData();
+    word_t* owner_data = (*const_cast<Bitset*>(this->owner_)).wordData();
     owner_data[base] = (owner_data[base] & ~low_mask) | low_bits;
 
     if (start_bit != 0 && base + 1 < this->owner_->wordCount()) {
@@ -723,13 +723,13 @@ void bitset<N>::slice_view::storeWord(
 }
 
 template<size_t N>
-typename bitset<N>::reference bitset<N>::slice_view::operator[](size_t pos) {
-    assert(pos < this->length_ && "bitset::slice_view::operator[]: index out of range");
-    return (*const_cast<bitset*>(this->owner_))[this->start_ + pos];
+typename Bitset<N>::Reference Bitset<N>::SliceView::operator[](size_t pos) {
+    assert(pos < this->length_ && "Bitset::SliceView::operator[]: index out of range");
+    return (*const_cast<Bitset*>(this->owner_))[this->start_ + pos];
 }
 
 template<size_t N>
-typename bitset<N>::slice_view& bitset<N>::slice_view::set() noexcept {
+typename Bitset<N>::SliceView& Bitset<N>::SliceView::set() noexcept {
     if (this->length_ == 0) {
         return *this;
     }
@@ -749,33 +749,33 @@ typename bitset<N>::slice_view& bitset<N>::slice_view::set() noexcept {
         if (end_bit != 0) {
             mask &= mask_from(end_bit);
         }
-        (*const_cast<bitset*>(this->owner_)).wordData()[start_word] |= mask;
+        (*const_cast<Bitset*>(this->owner_)).wordData()[start_word] |= mask;
         return *this;
     }
 
     word_t first_mask = ~word_t{0} << start_bit;
-    (*const_cast<bitset*>(this->owner_)).wordData()[start_word] |= first_mask;
+    (*const_cast<Bitset*>(this->owner_)).wordData()[start_word] |= first_mask;
 
     for (size_t w = start_word + 1; w < end_word; ++w) {
-        (*const_cast<bitset*>(this->owner_)).wordData()[w] = ~word_t{0};
+        (*const_cast<Bitset*>(this->owner_)).wordData()[w] = ~word_t{0};
     }
 
     word_t last_mask = end_bit == 0 ? ~word_t{0} : mask_from(end_bit);
-    (*const_cast<bitset*>(this->owner_)).wordData()[end_word] |= last_mask;
+    (*const_cast<Bitset*>(this->owner_)).wordData()[end_word] |= last_mask;
     return *this;
 }
 
 template<size_t N>
-typename bitset<N>::slice_view& bitset<N>::slice_view::set(size_t pos, bool val) {
+typename Bitset<N>::SliceView& Bitset<N>::SliceView::set(size_t pos, bool val) {
     if (pos >= this->length_) {
-        throw std::out_of_range("bitset::slice_view::set: index out of range");
+        throw std::out_of_range("Bitset::SliceView::set: index out of range");
     }
-    (*const_cast<bitset*>(this->owner_)).set(this->start_ + pos, val);
+    (*const_cast<Bitset*>(this->owner_)).set(this->start_ + pos, val);
     return *this;
 }
 
 template<size_t N>
-typename bitset<N>::slice_view& bitset<N>::slice_view::reset() noexcept {
+typename Bitset<N>::SliceView& Bitset<N>::SliceView::reset() noexcept {
     if (this->length_ == 0) {
         return *this;
     }
@@ -795,29 +795,29 @@ typename bitset<N>::slice_view& bitset<N>::slice_view::reset() noexcept {
         if (end_bit != 0) {
             mask &= mask_from(end_bit);
         }
-        (*const_cast<bitset*>(this->owner_)).wordData()[start_word] &= ~mask;
+        (*const_cast<Bitset*>(this->owner_)).wordData()[start_word] &= ~mask;
         return *this;
     }
 
     word_t first_mask = ~word_t{0} << start_bit;
-    (*const_cast<bitset*>(this->owner_)).wordData()[start_word] &= ~first_mask;
+    (*const_cast<Bitset*>(this->owner_)).wordData()[start_word] &= ~first_mask;
 
     for (size_t w = start_word + 1; w < end_word; ++w) {
-        (*const_cast<bitset*>(this->owner_)).wordData()[w] = 0;
+        (*const_cast<Bitset*>(this->owner_)).wordData()[w] = 0;
     }
 
     word_t last_mask = end_bit == 0 ? ~word_t{0} : mask_from(end_bit);
-    (*const_cast<bitset*>(this->owner_)).wordData()[end_word] &= ~last_mask;
+    (*const_cast<Bitset*>(this->owner_)).wordData()[end_word] &= ~last_mask;
     return *this;
 }
 
 template<size_t N>
-typename bitset<N>::slice_view& bitset<N>::slice_view::reset(size_t pos) {
+typename Bitset<N>::SliceView& Bitset<N>::SliceView::reset(size_t pos) {
     return set(pos, false);
 }
 
 template<size_t N>
-typename bitset<N>::slice_view& bitset<N>::slice_view::flip() noexcept {
+typename Bitset<N>::SliceView& Bitset<N>::SliceView::flip() noexcept {
     if (this->length_ == 0) {
         return *this;
     }
@@ -837,33 +837,33 @@ typename bitset<N>::slice_view& bitset<N>::slice_view::flip() noexcept {
         if (end_bit != 0) {
             mask &= mask_from(end_bit);
         }
-        (*const_cast<bitset*>(this->owner_)).wordData()[start_word] ^= mask;
+        (*const_cast<Bitset*>(this->owner_)).wordData()[start_word] ^= mask;
         return *this;
     }
 
     word_t first_mask = ~word_t{0} << start_bit;
-    (*const_cast<bitset*>(this->owner_)).wordData()[start_word] ^= first_mask;
+    (*const_cast<Bitset*>(this->owner_)).wordData()[start_word] ^= first_mask;
 
     for (size_t w = start_word + 1; w < end_word; ++w) {
-        (*const_cast<bitset*>(this->owner_)).wordData()[w] = ~(*const_cast<bitset*>(this->owner_)).wordData()[w];
+        (*const_cast<Bitset*>(this->owner_)).wordData()[w] = ~(*const_cast<Bitset*>(this->owner_)).wordData()[w];
     }
 
     word_t last_mask = end_bit == 0 ? ~word_t{0} : mask_from(end_bit);
-    (*const_cast<bitset*>(this->owner_)).wordData()[end_word] ^= last_mask;
+    (*const_cast<Bitset*>(this->owner_)).wordData()[end_word] ^= last_mask;
     return *this;
 }
 
 template<size_t N>
-typename bitset<N>::slice_view& bitset<N>::slice_view::flip(size_t pos) {
+typename Bitset<N>::SliceView& Bitset<N>::SliceView::flip(size_t pos) {
     if (pos >= this->length_) {
-        throw std::out_of_range("bitset::slice_view::flip: index out of range");
+        throw std::out_of_range("Bitset::SliceView::flip: index out of range");
     }
-    (*const_cast<bitset*>(this->owner_)).flip(this->start_ + pos);
+    (*const_cast<Bitset*>(this->owner_)).flip(this->start_ + pos);
     return *this;
 }
 
 template<size_t N>
-typename bitset<N>::slice_view& bitset<N>::slice_view::operator&=(const bitset& other) noexcept {
+typename Bitset<N>::SliceView& Bitset<N>::SliceView::operator&=(const Bitset& other) noexcept {
     const size_t start_bit = this->start_ % WORD_BITS;
     if (start_bit != 0) {
         const size_t word_count = (this->length_ + WORD_BITS - 1) / WORD_BITS;
@@ -889,19 +889,19 @@ typename bitset<N>::slice_view& bitset<N>::slice_view::operator&=(const bitset& 
         const word_t other_word = (i < other.wordCount()) ? other.wordData()[i] : word_t{0};
 
         if (i + 1 == word_count && tail_bits != 0) {
-            word_t* owner_data = (*const_cast<bitset*>(this->owner_)).wordData();
+            word_t* owner_data = (*const_cast<Bitset*>(this->owner_)).wordData();
             word_t current = owner_data[owner_word];
             word_t updated = (current & other_word) & tail_mask;
             owner_data[owner_word] = (current & ~tail_mask) | updated;
         } else {
-            (*const_cast<bitset*>(this->owner_)).wordData()[owner_word] &= other_word;
+            (*const_cast<Bitset*>(this->owner_)).wordData()[owner_word] &= other_word;
         }
     }
     return *this;
 }
 
 template<size_t N>
-typename bitset<N>::slice_view& bitset<N>::slice_view::operator|=(const bitset& other) noexcept {
+typename Bitset<N>::SliceView& Bitset<N>::SliceView::operator|=(const Bitset& other) noexcept {
     const size_t start_bit = this->start_ % WORD_BITS;
     if (start_bit != 0) {
         const size_t word_count = (this->length_ + WORD_BITS - 1) / WORD_BITS;
@@ -927,19 +927,19 @@ typename bitset<N>::slice_view& bitset<N>::slice_view::operator|=(const bitset& 
         const word_t other_word = (i < other.wordCount()) ? other.wordData()[i] : word_t{0};
 
         if (i + 1 == word_count && tail_bits != 0) {
-            word_t* owner_data = (*const_cast<bitset*>(this->owner_)).wordData();
+            word_t* owner_data = (*const_cast<Bitset*>(this->owner_)).wordData();
             word_t current = owner_data[owner_word];
             word_t updated = (current | other_word) & tail_mask;
             owner_data[owner_word] = (current & ~tail_mask) | updated;
         } else {
-            (*const_cast<bitset*>(this->owner_)).wordData()[owner_word] |= other_word;
+            (*const_cast<Bitset*>(this->owner_)).wordData()[owner_word] |= other_word;
         }
     }
     return *this;
 }
 
 template<size_t N>
-typename bitset<N>::slice_view& bitset<N>::slice_view::operator^=(const bitset& other) noexcept {
+typename Bitset<N>::SliceView& Bitset<N>::SliceView::operator^=(const Bitset& other) noexcept {
     const size_t start_bit = this->start_ % WORD_BITS;
     if (start_bit != 0) {
         const size_t word_count = (this->length_ + WORD_BITS - 1) / WORD_BITS;
@@ -965,55 +965,55 @@ typename bitset<N>::slice_view& bitset<N>::slice_view::operator^=(const bitset& 
         const word_t other_word = (i < other.wordCount()) ? other.wordData()[i] : word_t{0};
 
         if (i + 1 == word_count && tail_bits != 0) {
-            word_t* owner_data = (*const_cast<bitset*>(this->owner_)).wordData();
+            word_t* owner_data = (*const_cast<Bitset*>(this->owner_)).wordData();
             word_t current = owner_data[owner_word];
             word_t updated = (current ^ other_word) & tail_mask;
             owner_data[owner_word] = (current & ~tail_mask) | updated;
         } else {
-            (*const_cast<bitset*>(this->owner_)).wordData()[owner_word] ^= other_word;
+            (*const_cast<Bitset*>(this->owner_)).wordData()[owner_word] ^= other_word;
         }
     }
     return *this;
 }
 
 template<size_t N>
-typename bitset<N>::slice_view& bitset<N>::slice_view::operator&=(const const_slice_view& other) noexcept {
+typename Bitset<N>::SliceView& Bitset<N>::SliceView::operator&=(const ConstSliceView& other) noexcept {
     const size_t limit = std::min(this->length_, other.size());
     for (size_t i = 0; i < limit; ++i) {
         if (!other.test(i)) {
-            (*const_cast<bitset*>(this->owner_)).set(this->start_ + i, false);
+            (*const_cast<Bitset*>(this->owner_)).set(this->start_ + i, false);
         }
     }
     for (size_t i = limit; i < this->length_; ++i) {
-        (*const_cast<bitset*>(this->owner_)).set(this->start_ + i, false);
+        (*const_cast<Bitset*>(this->owner_)).set(this->start_ + i, false);
     }
     return *this;
 }
 
 template<size_t N>
-typename bitset<N>::slice_view& bitset<N>::slice_view::operator|=(const const_slice_view& other) noexcept {
+typename Bitset<N>::SliceView& Bitset<N>::SliceView::operator|=(const ConstSliceView& other) noexcept {
     const size_t limit = std::min(this->length_, other.size());
     for (size_t i = 0; i < limit; ++i) {
         if (other.test(i)) {
-            (*const_cast<bitset*>(this->owner_)).set(this->start_ + i, true);
+            (*const_cast<Bitset*>(this->owner_)).set(this->start_ + i, true);
         }
     }
     return *this;
 }
 
 template<size_t N>
-typename bitset<N>::slice_view& bitset<N>::slice_view::operator^=(const const_slice_view& other) noexcept {
+typename Bitset<N>::SliceView& Bitset<N>::SliceView::operator^=(const ConstSliceView& other) noexcept {
     const size_t limit = std::min(this->length_, other.size());
     for (size_t i = 0; i < limit; ++i) {
         if (other.test(i)) {
-            (*const_cast<bitset*>(this->owner_)).flip(this->start_ + i);
+            (*const_cast<Bitset*>(this->owner_)).flip(this->start_ + i);
         }
     }
     return *this;
 }
 
 template<size_t N>
-typename bitset<N>::slice_view& bitset<N>::slice_view::operator<<=(size_t shift_amount) noexcept {
+typename Bitset<N>::SliceView& Bitset<N>::SliceView::operator<<=(size_t shift_amount) noexcept {
     if (shift_amount == 0 || this->length_ == 0) {
         return *this;
     }
@@ -1058,27 +1058,27 @@ typename bitset<N>::slice_view& bitset<N>::slice_view::operator<<=(size_t shift_
         word_t value = 0;
         if (w >= word_shift) {
             const size_t src = w - word_shift;
-            word_t src_word = (*const_cast<bitset*>(this->owner_)).wordData()[start_word + src];
+            word_t src_word = (*const_cast<Bitset*>(this->owner_)).wordData()[start_word + src];
             if (src + 1 == word_count && tail_bits != 0) {
                 src_word &= tail_mask;
             }
             value = src_word << bit_shift;
             if (bit_shift != 0 && src > 0) {
-                word_t low_word = (*const_cast<bitset*>(this->owner_)).wordData()[start_word + src - 1];
+                word_t low_word = (*const_cast<Bitset*>(this->owner_)).wordData()[start_word + src - 1];
                 value |= low_word >> (WORD_BITS - bit_shift);
             }
         }
-        (*const_cast<bitset*>(this->owner_)).wordData()[start_word + w] = value;
+        (*const_cast<Bitset*>(this->owner_)).wordData()[start_word + w] = value;
     }
 
     if (tail_bits != 0) {
-        (*const_cast<bitset*>(this->owner_)).wordData()[start_word + word_count - 1] &= tail_mask;
+        (*const_cast<Bitset*>(this->owner_)).wordData()[start_word + word_count - 1] &= tail_mask;
     }
     return *this;
 }
 
 template<size_t N>
-typename bitset<N>::slice_view& bitset<N>::slice_view::operator>>=(size_t shift_amount) noexcept {
+typename Bitset<N>::SliceView& Bitset<N>::SliceView::operator>>=(size_t shift_amount) noexcept {
     if (shift_amount == 0 || this->length_ == 0) {
         return *this;
     }
@@ -1123,53 +1123,53 @@ typename bitset<N>::slice_view& bitset<N>::slice_view::operator>>=(size_t shift_
         word_t value = 0;
         const size_t src = w + word_shift;
         if (src < word_count) {
-            word_t src_word = (*const_cast<bitset*>(this->owner_)).wordData()[start_word + src];
+            word_t src_word = (*const_cast<Bitset*>(this->owner_)).wordData()[start_word + src];
             if (src + 1 == word_count && tail_bits != 0) {
                 src_word &= tail_mask;
             }
             value = src_word >> bit_shift;
             if (bit_shift != 0 && src + 1 < word_count) {
-                word_t high_word = (*const_cast<bitset*>(this->owner_)).wordData()[start_word + src + 1];
+                word_t high_word = (*const_cast<Bitset*>(this->owner_)).wordData()[start_word + src + 1];
                 if (src + 2 == word_count && tail_bits != 0) {
                     high_word &= tail_mask;
                 }
                 value |= high_word << (WORD_BITS - bit_shift);
             }
         }
-        (*const_cast<bitset*>(this->owner_)).wordData()[start_word + w] = value;
+        (*const_cast<Bitset*>(this->owner_)).wordData()[start_word + w] = value;
     }
 
     if (tail_bits != 0) {
-        (*const_cast<bitset*>(this->owner_)).wordData()[start_word + word_count - 1] &= tail_mask;
+        (*const_cast<Bitset*>(this->owner_)).wordData()[start_word + word_count - 1] &= tail_mask;
     }
     return *this;
 }
 
 template<size_t N>
-constexpr bool bitset<N>::isFixedSize() noexcept {
+constexpr bool Bitset<N>::isFixedSize() noexcept {
     return IS_FIXED;
 }
 
 template<size_t N>
-typename bitset<N>::slice_view bitset<N>::slice(size_t start, size_t length) {
+typename Bitset<N>::SliceView Bitset<N>::slice(size_t start, size_t length) {
     if (start > size() || length > size() - start) {
-        throw std::out_of_range("bitset::slice: range out of bounds");
+        throw std::out_of_range("Bitset::slice: range out of bounds");
     }
-    return slice_view(this, start, length);
+    return SliceView(this, start, length);
 }
 
 template<size_t N>
-typename bitset<N>::const_slice_view bitset<N>::slice(size_t start, size_t length) const {
+typename Bitset<N>::ConstSliceView Bitset<N>::slice(size_t start, size_t length) const {
     if (start > size() || length > size() - start) {
-        throw std::out_of_range("bitset::slice: range out of bounds");
+        throw std::out_of_range("Bitset::slice: range out of bounds");
     }
-    return const_slice_view(this, start, length);
+    return ConstSliceView(this, start, length);
 }
 
 // ===== Modifier Implementations =====
 
 template<size_t N>
-bitset<N>& bitset<N>::set() noexcept {
+Bitset<N>& Bitset<N>::set() noexcept {
     for (size_t i = 0; i < wordCount(); ++i) {
         wordData()[i] = ~word_t{0};
     }
@@ -1178,9 +1178,9 @@ bitset<N>& bitset<N>::set() noexcept {
 }
 
 template<size_t N>
-bitset<N>& bitset<N>::set(size_t pos, bool val) {
+Bitset<N>& Bitset<N>::set(size_t pos, bool val) {
     if (pos >= size()) {
-        throw std::out_of_range("bitset::set: index out of range");
+        throw std::out_of_range("Bitset::set: index out of range");
     }
     
     const size_t word_idx = bitToWordIndex(pos);
@@ -1195,7 +1195,7 @@ bitset<N>& bitset<N>::set(size_t pos, bool val) {
 }
 
 template<size_t N>
-bitset<N>& bitset<N>::reset() noexcept {
+Bitset<N>& Bitset<N>::reset() noexcept {
     for (size_t i = 0; i < wordCount(); ++i) {
         wordData()[i] = 0;
     }
@@ -1203,12 +1203,12 @@ bitset<N>& bitset<N>::reset() noexcept {
 }
 
 template<size_t N>
-bitset<N>& bitset<N>::reset(size_t pos) {
+Bitset<N>& Bitset<N>::reset(size_t pos) {
     return set(pos, false);
 }
 
 template<size_t N>
-bitset<N>& bitset<N>::flip() noexcept {
+Bitset<N>& Bitset<N>::flip() noexcept {
     for (size_t i = 0; i < wordCount(); ++i) {
         wordData()[i] = ~wordData()[i];
     }
@@ -1217,9 +1217,9 @@ bitset<N>& bitset<N>::flip() noexcept {
 }
 
 template<size_t N>
-bitset<N>& bitset<N>::flip(size_t pos) {
+Bitset<N>& Bitset<N>::flip(size_t pos) {
     if (pos >= size()) {
-        throw std::out_of_range("bitset::flip: index out of range");
+        throw std::out_of_range("Bitset::flip: index out of range");
     }
     
     const size_t word_idx = bitToWordIndex(pos);
@@ -1231,19 +1231,19 @@ bitset<N>& bitset<N>::flip(size_t pos) {
 
 // Dynamic-only modifiers
 template<size_t N>
-void bitset<N>::clear() noexcept requires(!IS_FIXED) {
+void Bitset<N>::clear() noexcept requires(!IS_FIXED) {
     releaseHeap();
     size_ = 0;
     data_ = 0;
 }
 
 template<size_t N>
-void bitset<N>::reserve(size_t bit_capacity) requires(!IS_FIXED) {
+void Bitset<N>::reserve(size_t bit_capacity) requires(!IS_FIXED) {
     (void)bit_capacity;
 }
 
 template<size_t N>
-void bitset<N>::resize(size_t new_size, bool value) requires(!IS_FIXED) {
+void Bitset<N>::resize(size_t new_size, bool value) requires(!IS_FIXED) {
     const size_t old_size = size_;
     const size_t new_word_count = bitsToWords(new_size);
     
@@ -1266,9 +1266,9 @@ void bitset<N>::resize(size_t new_size, bool value) requires(!IS_FIXED) {
 }
 
 template<size_t N>
-void bitset<N>::insert(size_t pos, bool value) requires(!IS_FIXED) {
+void Bitset<N>::insert(size_t pos, bool value) requires(!IS_FIXED) {
     if (pos > size()) {
-        throw std::out_of_range("bitset::insert: position out of range");
+        throw std::out_of_range("Bitset::insert: position out of range");
     }
     
     const size_t old_size = size();
@@ -1309,7 +1309,7 @@ void bitset<N>::insert(size_t pos, bool value) requires(!IS_FIXED) {
 }
 
 template<size_t N>
-void bitset<N>::shrinkToFit() requires(!IS_FIXED) {
+void Bitset<N>::shrinkToFit() requires(!IS_FIXED) {
     if (size_ <= WORD_BITS) {
         resizeStorage(size_, size_, 0);
         return;
@@ -1329,7 +1329,7 @@ void bitset<N>::shrinkToFit() requires(!IS_FIXED) {
 // ===== Operation Implementations =====
 
 template<size_t N>
-bool bitset<N>::all() const noexcept {
+bool Bitset<N>::all() const noexcept {
     const size_t wc = wordCount();
     if (wc == 0) return true;
     
@@ -1346,7 +1346,7 @@ bool bitset<N>::all() const noexcept {
 }
 
 template<size_t N>
-bool bitset<N>::any() const noexcept {
+bool Bitset<N>::any() const noexcept {
     // Simple early exit - fastest for sparse bitsets
     for (size_t i = 0; i < wordCount(); ++i) {
         if (wordData()[i]) {
@@ -1357,8 +1357,8 @@ bool bitset<N>::any() const noexcept {
 }
 
 template<size_t N>
-bool bitset<N>::all(const bitset& mask) const noexcept {
-    // Mask is truncated to this bitset's size; extra mask bits are ignored.
+bool Bitset<N>::all(const Bitset& mask) const noexcept {
+    // Mask is truncated to this Bitset's size; extra mask bits are ignored.
     const size_t wc = wordCount();
     const size_t mwc = std::min(wc, mask.wordCount());
     const word_t last_mask = lastWordMask(size());
@@ -1376,8 +1376,8 @@ bool bitset<N>::all(const bitset& mask) const noexcept {
 }
 
 template<size_t N>
-bool bitset<N>::any(const bitset& mask) const noexcept {
-    // Mask is truncated to this bitset's size; extra mask bits are ignored.
+bool Bitset<N>::any(const Bitset& mask) const noexcept {
+    // Mask is truncated to this Bitset's size; extra mask bits are ignored.
     const size_t wc = wordCount();
     const size_t mwc = std::min(wc, mask.wordCount());
     const word_t last_mask = lastWordMask(size());
@@ -1395,7 +1395,7 @@ bool bitset<N>::any(const bitset& mask) const noexcept {
 }
 
 template<size_t N>
-size_t bitset<N>::count() const noexcept {
+size_t Bitset<N>::count() const noexcept {
     size_t total = 0;
     for (size_t i = 0; i < wordCount(); ++i) {
         total += std::popcount(wordData()[i]);
@@ -1404,18 +1404,18 @@ size_t bitset<N>::count() const noexcept {
 }
 
 template<size_t N>
-bool bitset<N>::none() const noexcept {
+bool Bitset<N>::none() const noexcept {
     return !any();
 }
 
 // ===== Conversion Implementations =====
 
 template<size_t N>
-unsigned long bitset<N>::toUlong() const {
+unsigned long Bitset<N>::toUlong() const {
     if (size() > 32) {
         for (size_t i = 32; i < size(); ++i) {
             if ((*this)[i]) {
-                throw std::overflow_error("bitset::toUlong: value too large");
+                throw std::overflow_error("Bitset::toUlong: value too large");
             }
         }
     }
@@ -1434,11 +1434,11 @@ unsigned long bitset<N>::toUlong() const {
 }
 
 template<size_t N>
-unsigned long long bitset<N>::toUllong() const {
+unsigned long long Bitset<N>::toUllong() const {
     if (size() > 64) {
         for (size_t i = 64; i < size(); ++i) {
             if ((*this)[i]) {
-                throw std::overflow_error("bitset::toUllong: value too large");
+                throw std::overflow_error("Bitset::toUllong: value too large");
             }
         }
     }
@@ -1457,7 +1457,7 @@ unsigned long long bitset<N>::toUllong() const {
 }
 
 template<size_t N>
-std::string bitset<N>::toString(char zero, char one) const {
+std::string Bitset<N>::toString(char zero, char one) const {
     std::string result;
     result.reserve(size());
     
@@ -1470,15 +1470,15 @@ std::string bitset<N>::toString(char zero, char one) const {
 
 template<size_t N>
 template<size_t M>
-bitset<M> bitset<N>::toFixed() const requires(!IS_FIXED) {
+Bitset<M> Bitset<N>::toFixed() const requires(!IS_FIXED) {
     if (size() != M) {
         throw std::invalid_argument(
-            "bitset::toFixed: size mismatch (expected " + 
+            "Bitset::toFixed: size mismatch (expected " + 
             std::to_string(M) + ", got " + std::to_string(size()) + ")"
         );
     }
     
-    bitset<M> result;
+    Bitset<M> result;
     std::memcpy(result.data(), data(), byteCount());
     return result;
 }
@@ -1486,28 +1486,28 @@ bitset<M> bitset<N>::toFixed() const requires(!IS_FIXED) {
 // ===== I/O Implementations =====
 
 template<size_t N>
-std::byte* bitset<N>::data() noexcept {
+std::byte* Bitset<N>::data() noexcept {
     return reinterpret_cast<std::byte*>(wordData());
 }
 
 template<size_t N>
-const std::byte* bitset<N>::data() const noexcept {
+const std::byte* Bitset<N>::data() const noexcept {
     return reinterpret_cast<const std::byte*>(wordData());
 }
 
 template<size_t N>
-void bitset<N>::readFrom(const void* src, size_t available) {
+void Bitset<N>::readFrom(const void* src, size_t available) {
     if (available < byteCount()) {
-        throw std::out_of_range("bitset::readFrom: insufficient data");
+        throw std::out_of_range("Bitset::readFrom: insufficient data");
     }
     std::memcpy(data(), src, byteCount());
     clearUnusedBits();
 }
 
 template<size_t N>
-void bitset<N>::writeTo(void* dst, size_t capacity) const {
+void Bitset<N>::writeTo(void* dst, size_t capacity) const {
     if (capacity < byteCount()) {
-        throw std::out_of_range("bitset::writeTo: insufficient capacity");
+        throw std::out_of_range("Bitset::writeTo: insufficient capacity");
     }
     std::memcpy(dst, data(), byteCount());
 }
@@ -1515,15 +1515,15 @@ void bitset<N>::writeTo(void* dst, size_t capacity) const {
 // ===== Bitwise Operator Implementations =====
 
 template<size_t N>
-bitset<N> bitset<N>::operator~() const noexcept {
-    bitset result = *this;
+Bitset<N> Bitset<N>::operator~() const noexcept {
+    Bitset result = *this;
     result.flip();
     return result;
 }
 
 template<size_t N>
-bitset<N>& bitset<N>::operator&=(const bitset& other) noexcept {
-    // Truncate to this bitset's size; do not resize for mismatched operands.
+Bitset<N>& Bitset<N>::operator&=(const Bitset& other) noexcept {
+    // Truncate to this Bitset's size; do not resize for mismatched operands.
     const size_t other_wc = other.wordCount();
     const size_t wc = std::min(wordCount(), other_wc);
     for (size_t i = 0; i < wc; ++i) {
@@ -1538,8 +1538,8 @@ bitset<N>& bitset<N>::operator&=(const bitset& other) noexcept {
 }
 
 template<size_t N>
-bitset<N>& bitset<N>::operator|=(const bitset& other) noexcept {
-    // Truncate to this bitset's size; do not resize for mismatched operands.
+Bitset<N>& Bitset<N>::operator|=(const Bitset& other) noexcept {
+    // Truncate to this Bitset's size; do not resize for mismatched operands.
     const size_t other_wc = other.wordCount();
     const size_t wc = std::min(wordCount(), other_wc);
     for (size_t i = 0; i < wc; ++i) {
@@ -1550,8 +1550,8 @@ bitset<N>& bitset<N>::operator|=(const bitset& other) noexcept {
 }
 
 template<size_t N>
-bitset<N>& bitset<N>::operator^=(const bitset& other) noexcept {
-    // Truncate to this bitset's size; do not resize for mismatched operands.
+Bitset<N>& Bitset<N>::operator^=(const Bitset& other) noexcept {
+    // Truncate to this Bitset's size; do not resize for mismatched operands.
     const size_t other_wc = other.wordCount();
     const size_t wc = std::min(wordCount(), other_wc);
     for (size_t i = 0; i < wc; ++i) {
@@ -1562,7 +1562,7 @@ bitset<N>& bitset<N>::operator^=(const bitset& other) noexcept {
 }
 
 template<size_t N>
-bitset<N> bitset<N>::operator<<(size_t shift_amount) const noexcept {
+Bitset<N> Bitset<N>::operator<<(size_t shift_amount) const noexcept {
     // Early exits
     if (shift_amount == 0) {
         return *this;
@@ -1570,18 +1570,18 @@ bitset<N> bitset<N>::operator<<(size_t shift_amount) const noexcept {
     
     if (shift_amount >= size()) {
         if constexpr (IS_FIXED) {
-            return bitset();
+            return Bitset();
         } else {
-            return bitset(size());
+            return Bitset(size());
         }
     }
     
     // Create zero-initialized result, then copy shifted data into it
-    bitset result = [this]() {
+    Bitset result = [this]() {
         if constexpr (IS_FIXED) {
-            return bitset();
+            return Bitset();
         } else {
-            return bitset(size());
+            return Bitset(size());
         }
     }();
     
@@ -1619,13 +1619,13 @@ bitset<N> bitset<N>::operator<<(size_t shift_amount) const noexcept {
 }
 
 template<size_t N>
-bitset<N> bitset<N>::operator>>(size_t shift_amount) const noexcept {
+Bitset<N> Bitset<N>::operator>>(size_t shift_amount) const noexcept {
     // Early exits
     if (shift_amount >= size()) {
         if constexpr (IS_FIXED) {
-            return bitset();
+            return Bitset();
         } else {
-            return bitset(size());
+            return Bitset(size());
         }
     }
     
@@ -1634,7 +1634,7 @@ bitset<N> bitset<N>::operator>>(size_t shift_amount) const noexcept {
     }
     
     // Create result and copy data
-    bitset result = *this;
+    Bitset result = *this;
     
     const size_t word_shift = shift_amount / WORD_BITS;
     const size_t bit_shift = shift_amount % WORD_BITS;
@@ -1678,13 +1678,13 @@ bitset<N> bitset<N>::operator>>(size_t shift_amount) const noexcept {
 }
 
 template<size_t N>
-bitset<N>& bitset<N>::operator<<=(size_t shift_amount) noexcept {
+Bitset<N>& Bitset<N>::operator<<=(size_t shift_amount) noexcept {
     *this = *this << shift_amount;
     return *this;
 }
 
 template<size_t N>
-bitset<N>& bitset<N>::operator>>=(size_t shift_amount) noexcept {
+Bitset<N>& Bitset<N>::operator>>=(size_t shift_amount) noexcept {
     *this = *this >> shift_amount;
     return *this;
 }
@@ -1692,29 +1692,29 @@ bitset<N>& bitset<N>::operator>>=(size_t shift_amount) noexcept {
 // ===== Non-member Operator Implementations =====
 
 template<size_t N>
-bitset<N> operator&(const bitset<N>& lhs, const bitset<N>& rhs) noexcept {
-    bitset<N> result = lhs;
+Bitset<N> operator&(const Bitset<N>& lhs, const Bitset<N>& rhs) noexcept {
+    Bitset<N> result = lhs;
     result &= rhs;
     return result;
 }
 
 template<size_t N>
-bitset<N> operator|(const bitset<N>& lhs, const bitset<N>& rhs) noexcept {
-    bitset<N> result = lhs;
+Bitset<N> operator|(const Bitset<N>& lhs, const Bitset<N>& rhs) noexcept {
+    Bitset<N> result = lhs;
     result |= rhs;
     return result;
 }
 
 template<size_t N>
-bitset<N> operator^(const bitset<N>& lhs, const bitset<N>& rhs) noexcept {
-    bitset<N> result = lhs;
+Bitset<N> operator^(const Bitset<N>& lhs, const Bitset<N>& rhs) noexcept {
+    Bitset<N> result = lhs;
     result ^= rhs;
     return result;
 }
 
 template<size_t N>
-bool operator==(const bitset<N>& lhs, const bitset<N>& rhs) noexcept {
-    if constexpr (N == dynamic_extent) {
+bool operator==(const Bitset<N>& lhs, const Bitset<N>& rhs) noexcept {
+    if constexpr (N == DYNAMIC_EXTENT) {
         if (lhs.size() != rhs.size()) return false;
     }
     
@@ -1726,14 +1726,14 @@ bool operator==(const bitset<N>& lhs, const bitset<N>& rhs) noexcept {
 }
 
 template<size_t N>
-bool operator!=(const bitset<N>& lhs, const bitset<N>& rhs) noexcept {
+bool operator!=(const Bitset<N>& lhs, const Bitset<N>& rhs) noexcept {
     return !(lhs == rhs);
 }
 
 template<class CharT, class Traits, size_t N>
 std::basic_ostream<CharT, Traits>& operator<<(
     std::basic_ostream<CharT, Traits>& os, 
-    const bitset<N>& x) 
+    const Bitset<N>& x) 
 {
     return os << x.toString(CharT('0'), CharT('1'));
 }
@@ -1741,7 +1741,7 @@ std::basic_ostream<CharT, Traits>& operator<<(
 template<class CharT, class Traits, size_t N>
 std::basic_istream<CharT, Traits>& operator>>(
     std::basic_istream<CharT, Traits>& is, 
-    bitset<N>& x) 
+    Bitset<N>& x) 
 {
     std::basic_string<CharT, Traits> str;
     str.reserve(x.size());
@@ -1756,10 +1756,10 @@ std::basic_istream<CharT, Traits>& operator>>(
     }
     
     if (!str.empty()) {
-        if constexpr (N == dynamic_extent) {
-            x = bitset<>(str.length(), str);
+        if constexpr (N == DYNAMIC_EXTENT) {
+            x = Bitset<>(str.length(), str);
         } else {
-            x = bitset<N>(str);
+            x = Bitset<N>(str);
         }
     }
     
@@ -1772,8 +1772,8 @@ std::basic_istream<CharT, Traits>& operator>>(
 
 namespace std {
     template<size_t N>
-    struct hash<bcsv::bitset<N>> {
-        size_t operator()(const bcsv::bitset<N>& bs) const noexcept {
+    struct hash<bcsv::Bitset<N>> {
+        size_t operator()(const bcsv::Bitset<N>& bs) const noexcept {
             // FNV-1a hash algorithm
             constexpr size_t fnv_prime = sizeof(size_t) == 8 ? 1099511628211ULL : 16777619UL;
             constexpr size_t fnv_offset = sizeof(size_t) == 8 ? 14695981039346656037ULL : 2166136261UL;
@@ -1781,7 +1781,7 @@ namespace std {
             size_t result = fnv_offset;
             
             // Hash the bit count for dynamic bitsets
-            if constexpr (N == bcsv::dynamic_extent) {
+            if constexpr (N == bcsv::DYNAMIC_EXTENT) {
                 result ^= bs.size();
                 result *= fnv_prime;
             }

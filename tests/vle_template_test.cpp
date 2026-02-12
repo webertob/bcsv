@@ -13,32 +13,32 @@ using namespace bcsv;
 TEST(VLETemplateTest, Uint8Trivial) {
     std::stringstream ss;
     
-    EXPECT_EQ(vle_encode<uint8_t>(0, ss), 1);
-    EXPECT_EQ(vle_encode<uint8_t>(127, ss), 1);
-    EXPECT_EQ(vle_encode<uint8_t>(255, ss), 1);
+    EXPECT_EQ(vleEncode<uint8_t>(0, ss), 1);
+    EXPECT_EQ(vleEncode<uint8_t>(127, ss), 1);
+    EXPECT_EQ(vleEncode<uint8_t>(255, ss), 1);
     
     ss.seekg(0);
     uint8_t val;
-    EXPECT_EQ(vle_decode(ss, val), 1); EXPECT_EQ(val, 0);
-    EXPECT_EQ(vle_decode(ss, val), 1); EXPECT_EQ(val, 127);
-    EXPECT_EQ(vle_decode(ss, val), 1); EXPECT_EQ(val, 255);
+    EXPECT_EQ(vleDecode(ss, val), 1); EXPECT_EQ(val, 0);
+    EXPECT_EQ(vleDecode(ss, val), 1); EXPECT_EQ(val, 127);
+    EXPECT_EQ(vleDecode(ss, val), 1); EXPECT_EQ(val, 255);
 }
 
 // Test int8_t trivial encoding with zigzag/cast
 TEST(VLETemplateTest, Int8Trivial) {
     std::stringstream ss;
     
-    EXPECT_EQ(vle_encode<int8_t>(0, ss), 1);
-    EXPECT_EQ(vle_encode<int8_t>(-1, ss), 1);
-    EXPECT_EQ(vle_encode<int8_t>(127, ss), 1);
-    EXPECT_EQ(vle_encode<int8_t>(-128, ss), 1);
+    EXPECT_EQ(vleEncode<int8_t>(0, ss), 1);
+    EXPECT_EQ(vleEncode<int8_t>(-1, ss), 1);
+    EXPECT_EQ(vleEncode<int8_t>(127, ss), 1);
+    EXPECT_EQ(vleEncode<int8_t>(-128, ss), 1);
     
     ss.seekg(0);
     int8_t val;
-    EXPECT_EQ(vle_decode(ss, val), 1); EXPECT_EQ(val, 0);
-    EXPECT_EQ(vle_decode(ss, val), 1); EXPECT_EQ(val, -1);
-    EXPECT_EQ(vle_decode(ss, val), 1); EXPECT_EQ(val, 127);
-    EXPECT_EQ(vle_decode(ss, val), 1); EXPECT_EQ(val, -128);
+    EXPECT_EQ(vleDecode(ss, val), 1); EXPECT_EQ(val, 0);
+    EXPECT_EQ(vleDecode(ss, val), 1); EXPECT_EQ(val, -1);
+    EXPECT_EQ(vleDecode(ss, val), 1); EXPECT_EQ(val, 127);
+    EXPECT_EQ(vleDecode(ss, val), 1); EXPECT_EQ(val, -128);
 }
 
 // Test uint16_t encoding (Full mode: 2 bits len -> max 3 bytes)
@@ -46,25 +46,25 @@ TEST(VLETemplateTest, Uint16Full) {
     std::stringstream ss;
     
     // 0-63: 1 byte (6 bits data)
-    EXPECT_EQ((vle_encode<uint16_t, false>(0, ss)), 1);
-    EXPECT_EQ((vle_encode<uint16_t, false>(63, ss)), 1);
+    EXPECT_EQ((vleEncode<uint16_t, false>(0, ss)), 1);
+    EXPECT_EQ((vleEncode<uint16_t, false>(63, ss)), 1);
 
     // 64-16383: 2 bytes
-    EXPECT_EQ((vle_encode<uint16_t, false>(64, ss)), 2);
-    EXPECT_EQ((vle_encode<uint16_t, false>(16383, ss)), 2);
+    EXPECT_EQ((vleEncode<uint16_t, false>(64, ss)), 2);
+    EXPECT_EQ((vleEncode<uint16_t, false>(16383, ss)), 2);
     
     // 16384+: 3 bytes
-    EXPECT_EQ((vle_encode<uint16_t, false>(16384, ss)), 3);
-    EXPECT_EQ((vle_encode<uint16_t, false>(65535, ss)), 3);
+    EXPECT_EQ((vleEncode<uint16_t, false>(16384, ss)), 3);
+    EXPECT_EQ((vleEncode<uint16_t, false>(65535, ss)), 3);
     
     ss.seekg(0);
     uint16_t val;
-    (vle_decode<uint16_t, false>(ss, val)); EXPECT_EQ(val, 0);
-    (vle_decode<uint16_t, false>(ss, val)); EXPECT_EQ(val, 63);
-    (vle_decode<uint16_t, false>(ss, val)); EXPECT_EQ(val, 64);
-    (vle_decode<uint16_t, false>(ss, val)); EXPECT_EQ(val, 16383);
-    (vle_decode<uint16_t, false>(ss, val)); EXPECT_EQ(val, 16384);
-    (vle_decode<uint16_t, false>(ss, val)); EXPECT_EQ(val, 65535);
+    (vleDecode<uint16_t, false>(ss, val)); EXPECT_EQ(val, 0);
+    (vleDecode<uint16_t, false>(ss, val)); EXPECT_EQ(val, 63);
+    (vleDecode<uint16_t, false>(ss, val)); EXPECT_EQ(val, 64);
+    (vleDecode<uint16_t, false>(ss, val)); EXPECT_EQ(val, 16383);
+    (vleDecode<uint16_t, false>(ss, val)); EXPECT_EQ(val, 16384);
+    (vleDecode<uint16_t, false>(ss, val)); EXPECT_EQ(val, 65535);
 }
 
 // Test uint16_t encoding (Truncated mode: 1 bit len -> max 2 bytes)
@@ -72,30 +72,30 @@ TEST(VLETemplateTest, Uint16Truncated) {
     std::stringstream ss;
     
     // 0-127: 1 byte (7 bits data)
-    EXPECT_EQ((vle_encode<uint16_t, true>(0, ss)), 1);
-    EXPECT_EQ((vle_encode<uint16_t, true>(127, ss)), 1);
+    EXPECT_EQ((vleEncode<uint16_t, true>(0, ss)), 1);
+    EXPECT_EQ((vleEncode<uint16_t, true>(127, ss)), 1);
 
     // 128-32767: 2 bytes
-    EXPECT_EQ((vle_encode<uint16_t, true>(128, ss)), 2);
-    EXPECT_EQ((vle_encode<uint16_t, true>(32767, ss)), 2);
+    EXPECT_EQ((vleEncode<uint16_t, true>(128, ss)), 2);
+    EXPECT_EQ((vleEncode<uint16_t, true>(32767, ss)), 2);
     
     // > 32767: Overflow!
     uint8_t buf[16];
-    EXPECT_THROW((vle_encode<uint16_t, true>(32768, buf, 16)), std::overflow_error);
+    EXPECT_THROW((vleEncode<uint16_t, true>(32768, buf, 16)), std::overflow_error);
     
     ss.seekg(0);
     uint16_t val;
-    (vle_decode<uint16_t, true>(ss, val)); EXPECT_EQ(val, 0);
-    (vle_decode<uint16_t, true>(ss, val)); EXPECT_EQ(val, 127);
-    (vle_decode<uint16_t, true>(ss, val)); EXPECT_EQ(val, 128);
-    (vle_decode<uint16_t, true>(ss, val)); EXPECT_EQ(val, 32767);
+    (vleDecode<uint16_t, true>(ss, val)); EXPECT_EQ(val, 0);
+    (vleDecode<uint16_t, true>(ss, val)); EXPECT_EQ(val, 127);
+    (vleDecode<uint16_t, true>(ss, val)); EXPECT_EQ(val, 128);
+    (vleDecode<uint16_t, true>(ss, val)); EXPECT_EQ(val, 32767);
 }
 
 // Test generic API with buffer (uint16 Full)
 TEST(VLETemplateTest, BufferAPI) {
     uint8_t buf[8];
     // Encode 63 as uint16 Full (1 byte: (63 << 2) | 0 = 252 (0xFC))
-    size_t sz = vle_encode<uint16_t>(63, buf, 8);
+    size_t sz = vleEncode<uint16_t>(63, buf, 8);
     EXPECT_EQ(sz, 1);
     EXPECT_EQ(buf[0], 0xFC); 
     
@@ -103,14 +103,14 @@ TEST(VLETemplateTest, BufferAPI) {
     // 127 = 01111111
     // Encoded: (127 << 2) | 1 = 509 = 0x1FD
     // Little endian: FD 01
-    sz = vle_encode<uint16_t>(127, buf, 8);
+    sz = vleEncode<uint16_t>(127, buf, 8);
     EXPECT_EQ(sz, 2);
     EXPECT_EQ(buf[0], 0xFD);
     EXPECT_EQ(buf[1], 0x01);
     
     // Decode
     uint16_t val;
-    size_t consumed = vle_decode<uint16_t>(val, buf, 8);
+    size_t consumed = vleDecode<uint16_t>(val, buf, 8);
     EXPECT_EQ(consumed, 2);
     EXPECT_EQ(val, 127);
 }
@@ -118,7 +118,7 @@ TEST(VLETemplateTest, BufferAPI) {
 // Test ByteBuffer API
 TEST(VLETemplateTest, ByteBufferAPI) {
     ByteBuffer bb;
-    vle_encode<uint32_t>(123456, bb);
+    vleEncode<uint32_t>(123456, bb);
     // uint32 Full -> 3 bits len.
     // 123456 fits in 5+8+8 = 21 bits? No.
     // Data bits capacity:
@@ -130,7 +130,7 @@ TEST(VLETemplateTest, ByteBufferAPI) {
     
     // Decode using span
     std::span<std::byte> sp(bb.data(), bb.size());
-    uint32_t val = vle_decode<uint32_t>(sp);
+    uint32_t val = vleDecode<uint32_t>(sp);
     EXPECT_EQ(val, 123456);
     EXPECT_EQ(sp.size(), 0); 
 }
@@ -142,11 +142,11 @@ TEST(VLETemplateTest, LargeValues) {
     // 9 bytes: 4 bits header -> 4 data bits + 8*8 = 68 bits. Yes.
     
     uint64_t huge = 1ULL << 63; // Max bit
-    vle_encode<uint64_t>(huge, ss); // Should take 9 bytes
+    vleEncode<uint64_t>(huge, ss); // Should take 9 bytes
     
     ss.seekg(0);
     uint64_t val;
-    vle_decode<uint64_t>(ss, val);
+    vleDecode<uint64_t>(ss, val);
     EXPECT_EQ(val, huge);
 }
 
@@ -154,11 +154,11 @@ TEST(VLETemplateTest, LargeValues) {
 TEST(VLETemplateTest, Overflow) {
     // uint16 truncated max is 32767
     uint8_t buf[16];
-    EXPECT_THROW((vle_encode<uint16_t, true>(32768, buf, 16)), std::overflow_error);
+    EXPECT_THROW((vleEncode<uint16_t, true>(32768, buf, 16)), std::overflow_error);
     
     // uint64 truncated max
     // 8 bytes. 3 bits len. 
     // Max bits = 5 + 7*8 = 61.
     uint64_t tooBig = (1ULL << 62);
-    EXPECT_THROW((vle_encode<uint64_t, true>(tooBig, buf, 16)), std::overflow_error);
+    EXPECT_THROW((vleEncode<uint64_t, true>(tooBig, buf, 16)), std::overflow_error);
 }

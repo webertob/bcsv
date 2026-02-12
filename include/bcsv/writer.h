@@ -32,23 +32,23 @@ namespace bcsv {
         using RowType           = typename LayoutType::template RowType<Policy>;
         using FilePath          = std::filesystem::path;
 
-        std::string             errMsg_;                    // last error message description
-        FileHeader              fileHeader_;                // File header for accessing flags and metadata
-        FilePath                filePath_;                  // Always present
+        std::string             err_msg_;                    // last error message description
+        FileHeader              file_header_;                // File header for accessing flags and metadata
+        FilePath                file_path_;                  // Always present
         std::ofstream           stream_;                    // Always binary file stream
         std::optional<LZ4CompressionStreamInternalBuffer<MAX_ROW_LENGTH>> 
-                                lz4Stream_;                 // std::nullopt if compressionLevel == 0
+                                lz4_stream_;                 // std::nullopt if compressionLevel == 0
         
         // Packet management
-        PacketIndex             packetIndex_;               // Builds index in memory (if NO_FILE_INDEX not set)
-        Checksum::Streaming     packetHash_;                // Streaming payload checksum for current packet
-        bool                    packetOpen_ = false;        // Whether a packet has been started
-        size_t                  packetSize_;                // Bytes written in current packet payload
+        PacketIndex             packet_index_;               // Builds index in memory (if NO_FILE_INDEX not set)
+        Checksum::Streaming     packet_hash_;                // Streaming payload checksum for current packet
+        bool                    packet_open_ = false;        // Whether a packet has been started
+        size_t                  packet_size_;                // Bytes written in current packet payload
         
         // Buffers for streaming compression (pre-allocated, reused)
-        ByteBuffer              rowBufferRaw_;              // Serialized raw row
-        ByteBuffer              rowBufferPrev_;             // Previous row for ZoH comparison
-        uint64_t                rowCnt_;                    // Total rows written across all packets
+        ByteBuffer              row_buffer_raw_;              // Serialized raw row
+        ByteBuffer              row_buffer_prev_;             // Previous row for ZoH comparison
+        uint64_t                row_cnt_;                    // Total rows written across all packets
         RowType                 row_;
     public:
         Writer() = delete;
@@ -57,15 +57,15 @@ namespace bcsv {
 
         void                    close();
         void                    flush();
-        uint8_t                 compressionLevel() const        { return fileHeader_.getCompressionLevel(); }
-        const std::string&      getErrorMsg() const             { return errMsg_; }
-        const FilePath&         filePath() const                { return filePath_; }
+        uint8_t                 compressionLevel() const        { return file_header_.getCompressionLevel(); }
+        const std::string&      getErrorMsg() const             { return err_msg_; }
+        const FilePath&         filePath() const                { return file_path_; }
         const LayoutType&       layout() const                  { return row_.layout(); }
-        bool                    is_open() const                 { return stream_.is_open(); }
+        bool                    isOpen() const                  { return stream_.is_open(); }
         bool                    open(const FilePath& filepath, bool overwrite = false, size_t compressionLevel = 1, size_t blockSizeKB = 64, FileFlags flags = FileFlags::NONE);
         RowType&                row()                           { return row_; }
         const RowType&          row() const                     { return row_; }
-        size_t                  rowCount() const                { return rowCnt_; }
+        size_t                  rowCount() const                { return row_cnt_; }
         void                    writeRow();
 
     private:

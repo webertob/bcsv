@@ -70,7 +70,7 @@ void            bcsv_layout_set_column_type (bcsv_layout_t layout, size_t index,
 bool            bcsv_layout_add_column      (bcsv_layout_t layout, size_t index, const char* name, bcsv_type_t type);
 void            bcsv_layout_remove_column   (bcsv_layout_t layout, size_t index);
 void            bcsv_layout_clear           (bcsv_layout_t layout);
-bool            bcsv_layout_isCompatible    (const_bcsv_layout_t layout1, const_bcsv_layout_t layout2);
+bool            bcsv_layout_is_compatible    (const_bcsv_layout_t layout1, const_bcsv_layout_t layout2);
 void            bcsv_layout_assign          (bcsv_layout_t dest, const_bcsv_layout_t src);
 // Layout API - End
 

@@ -214,7 +214,7 @@ namespace bcsv {
  * where values remain constant for extended periods.
  * 
  * IMPORTANT: Boolean columns have special encoding in ZoH format:
- * - Boolean values are encoded directly in the change bitset bits
+ * - Boolean values are encoded directly in the change Bitset bits
  * - Bit value 0 = false, Bit value 1 = true
  * - Boolean columns never contribute data to the data section
  * - Boolean encoding is independent of whether the value changed
@@ -232,7 +232,7 @@ namespace bcsv {
  * CHANGE BITSET FORMAT
  * =============================================================================
  * 
- * The change bitset is a compact bitfield with different semantics per column type:
+ * The change Bitset is a compact bitfield with different semantics per column type:
  * 
  * Bit Layout (for N columns):
  * ┌─────────────────────────────────────────────────────────────────┐
@@ -245,7 +245,7 @@ namespace bcsv {
  * Bit Meanings:
  * - For NON-BOOL columns: Bit = 1 means changed, 0 means unchanged
  * - For BOOL columns: Bit directly encodes the boolean value (0=false, 1=true)
- *   IMPORTANT: Boolean values are ALWAYS encoded in the bitset, regardless of
+ *   IMPORTANT: Boolean values are ALWAYS encoded in the Bitset, regardless of
  *   whether they changed from the previous row. The bit represents the actual
  *   boolean value, not a change indicator.
  * 
@@ -262,7 +262,7 @@ namespace bcsv {
  * Data appears in layout order (column 0, column 1, ..., column N).
  * 
  * For BOOLEAN columns:
- * - No data in data section (value stored directly in change bitset)
+ * - No data in data section (value stored directly in change Bitset)
  * - Bit 0 = false, Bit 1 = true
  * - Boolean bits represent the actual value, not change status
  * - Booleans are always included in serialization regardless of changes
@@ -314,11 +314,11 @@ namespace bcsv {
  * │      30            │
  * └────────────────────┘
  * 
- * Total ZoH Row Size: 5 bytes (1 bitset + 4 data)
+ * Total ZoH Row Size: 5 bytes (1 Bitset + 4 data)
  * vs. Standard Row Size: 45 bytes (33 fixed + 12 variable)
  * Compression Ratio: 89% space savings!
  * 
- * Note: The bitset shows correct bit ordering with column 0 at bit position 0
+ * Note: The Bitset shows correct bit ordering with column 0 at bit position 0
  * (least significant bit) and padding at the most significant bits (left side).
  * 
  * =============================================================================
@@ -328,31 +328,31 @@ namespace bcsv {
  * 1. Check if any changes exist:
  *    if (!hasAnyChanges()) return; // Skip serialization entirely
  * 
- * 2. Reserve space for change bitset:
- *    bitset_size = (column_count + 7) / 8; // Round up to bytes
+ * 2. Reserve space for change Bitset:
+ *    bitset_size = (COLUMN_COUNT + 7) / 8; // Round up to bytes
  *    reserve_space(buffer, bitset_size);
  * 
  * 3. Process each column in layout order:
  *    for each column i:
  *        if column_type == BOOL:
- *            bitset[i] = boolean_value; // Store value directly in bitset
+ *            Bitset[i] = boolean_value; // Store value directly in Bitset
  *        else if changed[i]:
- *            bitset[i] = 1; // Mark as changed
+ *            Bitset[i] = 1; // Mark as changed
  *            if column_type == STRING:
  *                append(buffer, string_length_uint16);
  *                append(buffer, string_data);
  *            else:
  *                append(buffer, primitive_value);
  * 
- * 4. Write bitset to reserved location:
+ * 4. Write Bitset to reserved location:
  *    write_bitset_to_buffer(reserved_location);
  * 
  * =============================================================================
  * ZoH DESERIALIZATION ALGORITHM
  * =============================================================================
  * 
- * 1. Read change bitset:
- *    bitset_size = (column_count + 7) / 8;
+ * 1. Read change Bitset:
+ *    bitset_size = (COLUMN_COUNT + 7) / 8;
  *    read_bitset(buffer, bitset_size);
  *    data_start = buffer + bitset_size;
  * 
@@ -360,8 +360,8 @@ namespace bcsv {
  *    current_pos = data_start;
  *    for each column i:
  *        if column_type == BOOL:
- *            column_value[i] = bitset[i]; // Read boolean value directly from bitset
- *        else if bitset[i] == 1: // Column changed
+ *            column_value[i] = Bitset[i]; // Read boolean value directly from Bitset
+ *        else if Bitset[i] == 1: // Column changed
  *            if column_type == STRING:
  *                length = read_uint16(current_pos);
  *                current_pos += 2;
@@ -470,7 +470,7 @@ namespace bcsv {
     /* Dynamic row with flexible layout (runtime-defined)
      *
      * Storage is split into three type-family containers:
-     *   bits_  — bitset storing bool column values (and change flags when tracking enabled)
+     *   bits_  — Bitset storing bool column values (and change flags when tracking enabled)
      *   data_  — contiguous byte buffer for scalar/arithmetic column values (aligned)
      *   strg_  — vector of strings for string column values
      *
@@ -492,7 +492,7 @@ namespace bcsv {
         Layout                      layout_;               // Shared layout data with observer callbacks
 
         // Mutable data — three type-family storage containers
-        bitset<>                    bits_;                  // Bool values + change tracking (see class comment for semantics)
+        Bitset<>                    bits_;                  // Bool values + change tracking (see class comment for semantics)
         std::vector<std::byte>      data_;                 // Aligned scalar/arithmetic column values (no bools, no strings)
         std::vector<std::string>    strg_;                 // String column values
 
@@ -520,11 +520,11 @@ namespace bcsv {
         const Layout&               layout() const noexcept         { return layout_; }
         [[nodiscard]] bool          tracksChanges() const noexcept  { return isTrackingEnabled(Policy); }
 
-        /// Direct access to the underlying bits_ bitset (bool values + change flags).
+        /// Direct access to the underlying bits_ Bitset (bool values + change flags).
         /// When tracking enabled: bit[i] = bool value for BOOL columns, change flag for others.
         /// When tracking disabled: bit[k] = k-th bool column value.
-        [[nodiscard]] const bitset<>& changes() const noexcept      { return bits_; }
-        [[nodiscard]] bitset<>&       changes() noexcept            { return bits_; }
+        [[nodiscard]] const Bitset<>& changes() const noexcept      { return bits_; }
+        [[nodiscard]] Bitset<>&       changes() noexcept            { return bits_; }
 
         // Backward-compatible wrappers (used by Writer for RowImpl/RowStaticImpl uniformity)
         // Note: These only touch change-flag bits (non-BOOL columns). BOOL value bits are preserved.
@@ -544,7 +544,7 @@ namespace bcsv {
         [[nodiscard]] bool          get(size_t index, T &dst) const;                        // Flexible: allows type conversions, returns false on failure
 
                                     template<typename T>
-        [[nodiscard]] decltype(auto) ref(size_t index);                                      // get a mutable reference to the internal data (returns T& for scalars/strings, bitset<>::reference for bool, marks column as changed)
+        [[nodiscard]] decltype(auto) ref(size_t index);                                      // get a mutable reference to the internal data (returns T& for scalars/strings, Bitset<>::reference for bool, marks column as changed)
 
                                     template<detail::BcsvAssignable T>
         void                        set(size_t index, const T& value);
@@ -672,17 +672,17 @@ namespace bcsv {
     class RowStaticImpl {
     public:
         using LayoutType = LayoutStatic<ColumnTypes...>;
-        static constexpr size_t column_count = LayoutType::columnCount();
+        static constexpr size_t COLUMN_COUNT = LayoutType::columnCount();
         
         template<size_t Index>
         using column_type = std::tuple_element_t<Index, typename LayoutType::ColTypes>;
 
         // Helpers defining the layout of the wire format (serialized data)
         // serialized data: lengths/size of each column in [bytes]
-        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_lengths = { wireSizeOf<ColumnTypes>()... };
+        static constexpr std::array<size_t, sizeof...(ColumnTypes)> COLUMN_LENGTHS = { wireSizeOf<ColumnTypes>()... };
        
         // serialized data: offsets of each column in [bytes]
-        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_offsets = []() {
+        static constexpr std::array<size_t, sizeof...(ColumnTypes)> COLUMN_OFFSETS = []() {
             size_t off = 0; 
             return std::array<size_t, sizeof...(ColumnTypes)>{ 
                 std::exchange(off, off + wireSizeOf<ColumnTypes>())... 
@@ -690,7 +690,7 @@ namespace bcsv {
         }();
         
         // serialized data: offset to beginning of variable-length section in [bytes]
-        static constexpr size_t offset_var_ = (wireSizeOf<ColumnTypes>() + ... + 0);
+        static constexpr size_t OFFSET_VAR = (wireSizeOf<ColumnTypes>() + ... + 0);
 
     private:
         // Immutable after construction
@@ -698,7 +698,7 @@ namespace bcsv {
 
         // Mutable data
         typename LayoutType::ColTypes   data_;
-        bitset<column_count>            changes_;
+        Bitset<COLUMN_COUNT>            changes_;
 
     public:
         // Constructors
@@ -780,7 +780,7 @@ namespace bcsv {
         void                        serializeElements(ByteBuffer& buffer, const size_t& offRow, size_t& offVar) const;
 
                                     template<size_t Index>
-        void                        serializeElementsZoH(ByteBuffer& buffer, bitset<column_count>& bitHeader) const;
+        void                        serializeElementsZoH(ByteBuffer& buffer, Bitset<COLUMN_COUNT>& bitHeader) const;
 
                                     template<size_t Index>
         void                        deserializeElements(const std::span<const std::byte> &srcBuffer);
@@ -807,17 +807,17 @@ namespace bcsv {
     class RowViewStatic {
     public:
         using LayoutType = LayoutStatic<ColumnTypes...>;
-        static constexpr size_t column_count = LayoutType::columnCount();
+        static constexpr size_t COLUMN_COUNT = LayoutType::columnCount();
 
         template<size_t Index>
         using column_type = std::tuple_element_t<Index, typename LayoutType::ColTypes>;
 
         // Helpers defining the layout of the wire format (serialized data)
         // serialized data: lengths/size of each column in [bytes]
-        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_lengths = { wireSizeOf<ColumnTypes>()... };
+        static constexpr std::array<size_t, sizeof...(ColumnTypes)> COLUMN_LENGTHS = { wireSizeOf<ColumnTypes>()... };
        
         // serialized data: offsets of each column in [bytes]
-        static constexpr std::array<size_t, sizeof...(ColumnTypes)> column_offsets = []() {
+        static constexpr std::array<size_t, sizeof...(ColumnTypes)> COLUMN_OFFSETS = []() {
             size_t off = 0; 
             return std::array<size_t, sizeof...(ColumnTypes)>{ 
                 std::exchange(off, off + wireSizeOf<ColumnTypes>())... 
@@ -825,7 +825,7 @@ namespace bcsv {
         }();
         
         // serialized data: offset to beginning of variable-length section in [bytes]
-        static constexpr size_t offset_var_ = (wireSizeOf<ColumnTypes>() + ... + 0);
+        static constexpr size_t OFFSET_VAR = (wireSizeOf<ColumnTypes>() + ... + 0);
 
 
     private:

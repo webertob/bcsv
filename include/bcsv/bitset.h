@@ -22,33 +22,33 @@
 
 namespace bcsv {
 
-// Sentinel value for dynamic extent (like std::dynamic_extent for std::span)
-inline constexpr size_t dynamic_extent = std::numeric_limits<size_t>::max();
+// Sentinel value for dynamic extent (like std::DYNAMIC_EXTENT for std::span)
+inline constexpr size_t DYNAMIC_EXTENT = std::numeric_limits<size_t>::max();
 
 /**
- * @brief Unified bitset implementation supporting both compile-time and runtime sizes
+ * @brief Unified Bitset implementation supporting both compile-time and runtime sizes
  * 
- * This class provides a bitset that can be either:
- * - Fixed-size (compile-time): bitset<64> uses std::array, stack storage
- * - Dynamic-size (runtime): bitset<> or bitset<dynamic_extent> uses inline word or heap fallback
+ * This class provides a Bitset that can be either:
+ * - Fixed-size (compile-time): Bitset<64> uses std::array, stack storage
+ * - Dynamic-size (runtime): Bitset<> or Bitset<DYNAMIC_EXTENT> uses inline word or heap fallback
  * 
  * Storage uses platform-native word sizes (uintptr_t) for optimal performance.
  * Inline storage is word-aligned.
  * 
- * @tparam N Number of bits (compile-time) or dynamic_extent for runtime size
+ * @tparam N Number of bits (compile-time) or DYNAMIC_EXTENT for runtime size
  * 
  * Examples:
  * @code
- *   bitset<64> fixed;              // Fixed 64 bits, stack storage
- *   bitset<> dynamic(128);         // Dynamic 128 bits, inline/heap storage
- *   bitset<dynamic_extent> dyn;    // Explicit dynamic extent
+ *   Bitset<64> fixed;              // Fixed 64 bits, stack storage
+ *   Bitset<> dynamic(128);         // Dynamic 128 bits, inline/heap storage
+ *   Bitset<DYNAMIC_EXTENT> dyn;    // Explicit dynamic extent
  * @endcode
  */
-template<size_t N = dynamic_extent>
-class bitset {
+template<size_t N = DYNAMIC_EXTENT>
+class Bitset {
     private:
         using word_t = std::uintptr_t;
-        static constexpr bool IS_FIXED = (N != dynamic_extent);
+        static constexpr bool IS_FIXED = (N != DYNAMIC_EXTENT);
         static constexpr size_t WORD_SIZE = sizeof(word_t);
         static constexpr size_t WORD_BITS = WORD_SIZE * 8;
 
@@ -71,8 +71,8 @@ class bitset {
         [[no_unique_address]] StorageT data_{};
 
         // Friend declarations
-        template<size_t M> friend class bitset;
-        template<size_t M> friend bool operator==(const bitset<M>&, const bitset<M>&) noexcept;
+        template<size_t M> friend class Bitset;
+        template<size_t M> friend bool operator==(const Bitset<M>&, const Bitset<M>&) noexcept;
 
         // =====================================================================
         // Helpers (static)
@@ -121,27 +121,27 @@ class bitset {
         // =====================================================================
         // Reference and Slice Views
         // =====================================================================
-        class reference {
+        class Reference {
         public:
-            reference(word_t* ptr, size_t bit_idx);
+            Reference(word_t* ptr, size_t bit_idx);
 
-            reference& operator=(bool value);
-            reference& operator=(const reference& other);
-            reference& operator|=(bool value);
-            reference& operator&=(bool value);
-            reference& operator^=(bool value);
+            Reference& operator=(bool value);
+            Reference& operator=(const Reference& other);
+            Reference& operator|=(bool value);
+            Reference& operator&=(bool value);
+            Reference& operator^=(bool value);
             operator bool() const;
             bool operator~() const;
-            reference& flip();
+            Reference& flip();
 
         private:
             word_t* word_ptr_;
             size_t bit_index_;
         };
 
-        class const_slice_view {
+        class ConstSliceView {
         public:
-            const_slice_view(const bitset* owner, size_t start, size_t length);
+            ConstSliceView(const Bitset* owner, size_t start, size_t length);
 
             size_t size() const noexcept;
             bool empty() const noexcept;
@@ -154,49 +154,49 @@ class bitset {
             bool none() const noexcept;
             size_t count() const noexcept;
 
-            bool all(const bitset& mask) const noexcept;
-            bool any(const bitset& mask) const noexcept;
+            bool all(const Bitset& mask) const noexcept;
+            bool any(const Bitset& mask) const noexcept;
 
-            bitset operator<<(size_t shift_amount) const noexcept;
-            bitset operator>>(size_t shift_amount) const noexcept;
+            Bitset operator<<(size_t shift_amount) const noexcept;
+            Bitset operator>>(size_t shift_amount) const noexcept;
 
-            bitset<> toBitset() const;
-            bitset<> shiftedLeft(size_t shift_amount) const;
-            bitset<> shiftedRight(size_t shift_amount) const;
+            Bitset<> toBitset() const;
+            Bitset<> shiftedLeft(size_t shift_amount) const;
+            Bitset<> shiftedRight(size_t shift_amount) const;
 
         protected:
-            const bitset* owner_;
+            const Bitset* owner_;
             size_t start_;
             size_t length_;
 
             word_t loadWord(size_t index) const noexcept;
         };
 
-        class slice_view : public const_slice_view {
+        class SliceView : public ConstSliceView {
         public:
-            slice_view(bitset* owner, size_t start, size_t length);
+            SliceView(Bitset* owner, size_t start, size_t length);
 
-            reference operator[](size_t pos);
+            Reference operator[](size_t pos);
 
-            slice_view& set() noexcept;
-            slice_view& set(size_t pos, bool val = true);
+            SliceView& set() noexcept;
+            SliceView& set(size_t pos, bool val = true);
 
-            slice_view& reset() noexcept;
-            slice_view& reset(size_t pos);
+            SliceView& reset() noexcept;
+            SliceView& reset(size_t pos);
 
-            slice_view& flip() noexcept;
-            slice_view& flip(size_t pos);
+            SliceView& flip() noexcept;
+            SliceView& flip(size_t pos);
 
-            slice_view& operator&=(const bitset& other) noexcept;
-            slice_view& operator|=(const bitset& other) noexcept;
-            slice_view& operator^=(const bitset& other) noexcept;
+            SliceView& operator&=(const Bitset& other) noexcept;
+            SliceView& operator|=(const Bitset& other) noexcept;
+            SliceView& operator^=(const Bitset& other) noexcept;
 
-            slice_view& operator&=(const const_slice_view& other) noexcept;
-            slice_view& operator|=(const const_slice_view& other) noexcept;
-            slice_view& operator^=(const const_slice_view& other) noexcept;
+            SliceView& operator&=(const ConstSliceView& other) noexcept;
+            SliceView& operator|=(const ConstSliceView& other) noexcept;
+            SliceView& operator^=(const ConstSliceView& other) noexcept;
 
-            slice_view& operator<<=(size_t shift_amount) noexcept;
-            slice_view& operator>>=(size_t shift_amount) noexcept;
+            SliceView& operator<<=(size_t shift_amount) noexcept;
+            SliceView& operator>>=(size_t shift_amount) noexcept;
 
         private:
             void storeWord(size_t index, word_t value, word_t slice_mask) noexcept;
@@ -205,11 +205,11 @@ class bitset {
     // ===== Constructors and Assignment =====
     
     // Fixed-size constructors
-    constexpr bitset() noexcept requires(IS_FIXED);
-    constexpr bitset(unsigned long long val) noexcept requires(IS_FIXED);
+    constexpr Bitset() noexcept requires(IS_FIXED);
+    constexpr Bitset(unsigned long long val) noexcept requires(IS_FIXED);
     
     template<class CharT, class Traits, class Allocator>
-    explicit bitset(
+    explicit Bitset(
         const std::basic_string<CharT, Traits, Allocator>& str,
         typename std::basic_string<CharT, Traits, Allocator>::size_type pos = 0,
         typename std::basic_string<CharT, Traits, Allocator>::size_type n = 
@@ -218,12 +218,12 @@ class bitset {
         CharT one = CharT('1')) requires(IS_FIXED);
     
     // Dynamic-size constructors
-    explicit bitset(size_t num_bits = 0) requires(!IS_FIXED);
-    bitset(size_t num_bits, unsigned long long val) requires(!IS_FIXED);
-    bitset(size_t num_bits, bool value) requires(!IS_FIXED);
+    explicit Bitset(size_t num_bits = 0) requires(!IS_FIXED);
+    Bitset(size_t num_bits, unsigned long long val) requires(!IS_FIXED);
+    Bitset(size_t num_bits, bool value) requires(!IS_FIXED);
     
     template<class CharT, class Traits, class Allocator>
-    explicit bitset(
+    explicit Bitset(
         size_t num_bits,
         const std::basic_string<CharT, Traits, Allocator>& str,
         typename std::basic_string<CharT, Traits, Allocator>::size_type pos = 0,
@@ -232,22 +232,22 @@ class bitset {
         CharT zero = CharT('0'),
         CharT one = CharT('1')) requires(!IS_FIXED);
     
-    bitset(const bitset& other);
-    bitset(bitset&& other) noexcept;
-    bitset& operator=(const bitset& other);
-    bitset& operator=(bitset&& other) noexcept;
-    ~bitset();
+    Bitset(const Bitset& other);
+    Bitset(Bitset&& other) noexcept;
+    Bitset& operator=(const Bitset& other);
+    Bitset& operator=(Bitset&& other) noexcept;
+    ~Bitset();
     
     // Conversion: Fixed → Dynamic
     template<size_t M>
-    explicit bitset(const bitset<M>& other) requires(!IS_FIXED && M != dynamic_extent);
+    explicit Bitset(const Bitset<M>& other) requires(!IS_FIXED && M != DYNAMIC_EXTENT);
     
     // ===== Element Access =====
     // operator[] - Unchecked access (UB if out of bounds, debug assertion only)
     // test()     - Checked access (throws std::out_of_range if out of bounds)
     
     constexpr bool operator[](size_t pos) const;
-    reference operator[](size_t pos);
+    Reference operator[](size_t pos);
     constexpr bool test(size_t pos) const;
     
     // ===== Capacity =====
@@ -259,21 +259,21 @@ class bitset {
     static constexpr bool isFixedSize() noexcept;
 
     // ===== Views =====
-    // Throws std::out_of_range if the range exceeds the bitset size.
-    slice_view slice(size_t start, size_t length);
-    const_slice_view slice(size_t start, size_t length) const;
+    // Throws std::out_of_range if the range exceeds the Bitset size.
+    SliceView slice(size_t start, size_t length);
+    ConstSliceView slice(size_t start, size_t length) const;
     
     // ===== Modifiers =====
     // All single-bit modifiers (set/reset/flip with pos) throw std::out_of_range if out of bounds
     
-    bitset& set() noexcept;
-    bitset& set(size_t pos, bool val = true);  // Throws if pos >= size()
+    Bitset& set() noexcept;
+    Bitset& set(size_t pos, bool val = true);  // Throws if pos >= size()
     
-    bitset& reset() noexcept;
-    bitset& reset(size_t pos);  // Throws if pos >= size()
+    Bitset& reset() noexcept;
+    Bitset& reset(size_t pos);  // Throws if pos >= size()
     
-    bitset& flip() noexcept;
-    bitset& flip(size_t pos);  // Throws if pos >= size()
+    Bitset& flip() noexcept;
+    Bitset& flip(size_t pos);  // Throws if pos >= size()
     
     // Dynamic-only modifiers
     void clear() noexcept requires(!IS_FIXED);
@@ -290,9 +290,9 @@ class bitset {
     bool none() const noexcept;
 
     // Masked queries (avoid temporary bitsets)
-    // Mask is truncated to this bitset's size; extra mask bits are ignored.
-    bool all(const bitset& mask) const noexcept;
-    bool any(const bitset& mask) const noexcept;
+    // Mask is truncated to this Bitset's size; extra mask bits are ignored.
+    bool all(const Bitset& mask) const noexcept;
+    bool any(const Bitset& mask) const noexcept;
     
     // ===== Conversions =====
     
@@ -302,7 +302,7 @@ class bitset {
     
     // Dynamic → Fixed conversion (with validation)
     template<size_t M>
-    bitset<M> toFixed() const requires(!IS_FIXED);
+    Bitset<M> toFixed() const requires(!IS_FIXED);
     
     // ===== I/O and Binary Compatibility =====
     
@@ -313,47 +313,47 @@ class bitset {
     void writeTo(void* dst, size_t capacity) const;
     
     // ===== Bitwise Operators =====
-    // For dynamic bitsets, compound ops truncate to this bitset's size.
+    // For dynamic bitsets, compound ops truncate to this Bitset's size.
     
-    bitset operator~() const noexcept;
+    Bitset operator~() const noexcept;
     
-    bitset& operator&=(const bitset& other) noexcept;
-    bitset& operator|=(const bitset& other) noexcept;
-    bitset& operator^=(const bitset& other) noexcept;
+    Bitset& operator&=(const Bitset& other) noexcept;
+    Bitset& operator|=(const Bitset& other) noexcept;
+    Bitset& operator^=(const Bitset& other) noexcept;
     
-    bitset operator<<(size_t shift_amount) const noexcept;
-    bitset operator>>(size_t shift_amount) const noexcept;
+    Bitset operator<<(size_t shift_amount) const noexcept;
+    Bitset operator>>(size_t shift_amount) const noexcept;
     
-    bitset& operator<<=(size_t shift_amount) noexcept;
-    bitset& operator>>=(size_t shift_amount) noexcept;
+    Bitset& operator<<=(size_t shift_amount) noexcept;
+    Bitset& operator>>=(size_t shift_amount) noexcept;
 };
 
 // ===== Non-member Operators =====
 
 template<size_t N>
-bitset<N> operator&(const bitset<N>& lhs, const bitset<N>& rhs) noexcept;
+Bitset<N> operator&(const Bitset<N>& lhs, const Bitset<N>& rhs) noexcept;
 
 template<size_t N>
-bitset<N> operator|(const bitset<N>& lhs, const bitset<N>& rhs) noexcept;
+Bitset<N> operator|(const Bitset<N>& lhs, const Bitset<N>& rhs) noexcept;
 
 template<size_t N>
-bitset<N> operator^(const bitset<N>& lhs, const bitset<N>& rhs) noexcept;
+Bitset<N> operator^(const Bitset<N>& lhs, const Bitset<N>& rhs) noexcept;
 
 template<size_t N>
-bool operator==(const bitset<N>& lhs, const bitset<N>& rhs) noexcept;
+bool operator==(const Bitset<N>& lhs, const Bitset<N>& rhs) noexcept;
 
 template<size_t N>
-bool operator!=(const bitset<N>& lhs, const bitset<N>& rhs) noexcept;
+bool operator!=(const Bitset<N>& lhs, const Bitset<N>& rhs) noexcept;
 
 template<class CharT, class Traits, size_t N>
 std::basic_ostream<CharT, Traits>& operator<<(
     std::basic_ostream<CharT, Traits>& os, 
-    const bitset<N>& x);
+    const Bitset<N>& x);
 
 template<class CharT, class Traits, size_t N>
 std::basic_istream<CharT, Traits>& operator>>(
     std::basic_istream<CharT, Traits>& is, 
-    bitset<N>& x);
+    Bitset<N>& x);
 
 } // namespace bcsv
 

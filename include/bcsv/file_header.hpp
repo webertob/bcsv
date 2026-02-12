@@ -25,24 +25,24 @@
 namespace bcsv {
 
     inline FileHeader::FileHeader(size_t columnCount, size_t compressionLevel, uint8_t major, uint8_t minor, uint8_t patch) {
-        constSection_.magic = BCSV_MAGIC;
-        constSection_.versionMajor = major;
-        constSection_.versionMinor = minor;
-        constSection_.versionPatch = patch;
-        constSection_.compressionLevel = static_cast<uint8_t>( std::min(compressionLevel, size_t(9)) ); // Clamp to 0-9
-        constSection_.flags = 0;             // All flags reserved for future use
-        constSection_.columnCount = static_cast<uint16_t>( std::min(columnCount, MAX_COLUMN_COUNT));
-        constSection_.packetSize  = 8 * 1024 * 1024;  // Default 8MB packet size
-        if (constSection_.columnCount == MAX_COLUMN_COUNT) {
+        const_section_.magic = BCSV_MAGIC;
+        const_section_.version_major = major;
+        const_section_.version_minor = minor;
+        const_section_.version_patch = patch;
+        const_section_.compression_level = static_cast<uint8_t>( std::min(compressionLevel, size_t(9)) ); // Clamp to 0-9
+        const_section_.flags = 0;             // All flags reserved for future use
+        const_section_.column_count = static_cast<uint16_t>( std::min(columnCount, MAX_COLUMN_COUNT));
+        const_section_.packet_size  = 8 * 1024 * 1024;  // Default 8MB packet size
+        if (const_section_.column_count == MAX_COLUMN_COUNT) {
             std::cerr << "Warning: Maximum column count exceeded. Some columns may be ignored." << std::endl;
         }
     }          
 
     inline void FileHeader::setFlag(FileFlags flag, bool value) {
         if (value) {
-            constSection_.flags |= static_cast<uint16_t>(flag);
+            const_section_.flags |= static_cast<uint16_t>(flag);
         } else {
-            constSection_.flags &= ~static_cast<uint16_t>(flag);
+            const_section_.flags &= ~static_cast<uint16_t>(flag);
         }
     }
 
@@ -61,10 +61,10 @@ namespace bcsv {
     template<LayoutConcept LayoutType>
     inline void FileHeader::writeToBinary(std::ostream& stream, const LayoutType& layout) {
         // Update header with current column count
-        constSection_.columnCount = static_cast<uint16_t>(layout.columnCount());
+        const_section_.column_count = static_cast<uint16_t>(layout.columnCount());
 
         // Write fixed header
-        stream.write(reinterpret_cast<const char*>(&constSection_), sizeof(constSection_));
+        stream.write(reinterpret_cast<const char*>(&const_section_), sizeof(const_section_));
         if (!stream.good()) {
             throw std::runtime_error("Failed to write BCSV header to stream");
         }
@@ -103,39 +103,39 @@ namespace bcsv {
             columnLayout.clear();
             
             // Read fixed header
-            stream.read(reinterpret_cast<char*>(&constSection_), sizeof(constSection_));
+            stream.read(reinterpret_cast<char*>(&const_section_), sizeof(const_section_));
             if (!stream.good()) {
                 throw std::runtime_error("Failed to read BCSV header from stream");
             }
             
             if (!isValidMagic()) {
                 throw std::runtime_error("Invalid magic number in BCSV header. Expected: 0x" + 
-                                       std::to_string(BCSV_MAGIC) + ", Got: 0x" + std::to_string(constSection_.magic));
+                                       std::to_string(BCSV_MAGIC) + ", Got: 0x" + std::to_string(const_section_.magic));
             }
             
             // Validate column count
-            if (constSection_.columnCount > MAX_COLUMN_COUNT) {
-                throw std::runtime_error("Column count (" + std::to_string(constSection_.columnCount) + 
+            if (const_section_.column_count > MAX_COLUMN_COUNT) {
+                throw std::runtime_error("Column count (" + std::to_string(const_section_.column_count) + 
                                        ") exceeds maximum limit (" + std::to_string(MAX_COLUMN_COUNT) + ")");
             }
 
             // Read column data types
-            std::vector<ColumnType> columnTypes(constSection_.columnCount);
-            stream.read(reinterpret_cast<char*>(columnTypes.data()), constSection_.columnCount * sizeof(ColumnType));
-            if (stream.gcount() != static_cast<std::streamsize>(constSection_.columnCount * sizeof(ColumnType))) {
+            std::vector<ColumnType> columnTypes(const_section_.column_count);
+            stream.read(reinterpret_cast<char*>(columnTypes.data()), const_section_.column_count * sizeof(ColumnType));
+            if (stream.gcount() != static_cast<std::streamsize>(const_section_.column_count * sizeof(ColumnType))) {
                 throw std::runtime_error("Failed to read column data types");
             }
 
 
             // Read column name lengths
-            std::vector<uint16_t> nameLengths(constSection_.columnCount);
-            stream.read(reinterpret_cast<char*>(nameLengths.data()), constSection_.columnCount * sizeof(uint16_t));
-            if (stream.gcount() != static_cast<std::streamsize>(constSection_.columnCount * sizeof(uint16_t))) {
+            std::vector<uint16_t> nameLengths(const_section_.column_count);
+            stream.read(reinterpret_cast<char*>(nameLengths.data()), const_section_.column_count * sizeof(uint16_t));
+            if (stream.gcount() != static_cast<std::streamsize>(const_section_.column_count * sizeof(uint16_t))) {
                 throw std::runtime_error("Failed to read column name lengths");
             }
             
             // Validate name lengths
-            for (uint16_t i = 0; i < constSection_.columnCount; ++i) {
+            for (uint16_t i = 0; i < const_section_.column_count; ++i) {
                 if (nameLengths[i] > MAX_STRING_LENGTH) [[unlikely]] {
                     throw std::runtime_error("Column name length (" + std::to_string(nameLengths[i]) + 
                                            ") exceeds maximum (" + std::to_string(MAX_STRING_LENGTH) + 
@@ -144,8 +144,8 @@ namespace bcsv {
             }
 
             // Read column names
-            std::vector<std::string> columnNames(constSection_.columnCount);
-            for (uint16_t i = 0; i < constSection_.columnCount; ++i) {
+            std::vector<std::string> columnNames(const_section_.column_count);
+            for (uint16_t i = 0; i < const_section_.column_count; ++i) {
                 auto &name = columnNames[i];
                 if (nameLengths[i] > 0) [[likely]] {
                     name.resize(nameLengths[i]);
@@ -172,21 +172,21 @@ namespace bcsv {
     template<typename... ColumnTypes>
     void FileHeader::readFromBinary(std::istream& stream, LayoutStatic<ColumnTypes...>& layout) {
         // Read fixed header
-        stream.read(reinterpret_cast<char*>(&constSection_), sizeof(constSection_));
+        stream.read(reinterpret_cast<char*>(&const_section_), sizeof(const_section_));
         if (!stream.good()) {
             throw std::runtime_error("Failed to read BCSV header from stream");
         }
         
         if (!isValidMagic()) {
             throw std::runtime_error("Invalid magic number in BCSV header. Expected: 0x" + 
-                                   std::to_string(BCSV_MAGIC) + ", Got: 0x" + std::to_string(constSection_.magic));
+                                   std::to_string(BCSV_MAGIC) + ", Got: 0x" + std::to_string(const_section_.magic));
         }
         
         // Validate column count matches static definition (this also covers MAX_COLUMN_COUNT)
-        if (constSection_.columnCount != layout.columnCount()) {
+        if (const_section_.column_count != layout.columnCount()) {
             throw std::runtime_error("Column count mismatch. Static layout expects " + 
                                    std::to_string(layout.columnCount()) + " columns, but binary has " + 
-                                   std::to_string(constSection_.columnCount) + " columns");
+                                   std::to_string(const_section_.column_count) + " columns");
         }
 
         // Read column data types and validate against static definition
@@ -234,12 +234,12 @@ namespace bcsv {
     template<LayoutConcept LayoutType>
     inline void FileHeader::printBinaryLayout(const LayoutType& layout) const {
         std::cout << "FileHeader Binary Layout (" << getBinarySize(layout) << " bytes):\n";
-        std::cout << "  Magic:       0x" << std::hex << constSection_.magic << std::dec << " (" << sizeof(constSection_.magic) << " bytes)\n";
-        std::cout << "  Version:     " << static_cast<int>(constSection_.versionMajor) << "." 
-                  << static_cast<int>(constSection_.versionMinor) << "." 
-                  << static_cast<int>(constSection_.versionPatch) << " (3 bytes)\n";
-        std::cout << "  Compression: " << static_cast<int>(constSection_.compressionLevel) << " (1 byte)\n";
-        std::cout << "  Flags:       0x" << std::hex << constSection_.flags << std::dec << " (2 bytes)\n";
+        std::cout << "  Magic:       0x" << std::hex << const_section_.magic << std::dec << " (" << sizeof(const_section_.magic) << " bytes)\n";
+        std::cout << "  Version:     " << static_cast<int>(const_section_.version_major) << "." 
+                  << static_cast<int>(const_section_.version_minor) << "." 
+                  << static_cast<int>(const_section_.version_patch) << " (3 bytes)\n";
+        std::cout << "  Compression: " << static_cast<int>(const_section_.compression_level) << " (1 byte)\n";
+        std::cout << "  Flags:       0x" << std::hex << const_section_.flags << std::dec << " (2 bytes)\n";
         std::cout << "  Columns:     " << static_cast<uint16_t>(layout.columnCount()) << " (2 bytes)\n";
         std::cout << "  Column Data Types: " << layout.columnCount() * sizeof(ColumnType) << " bytes\n";
         for (size_t i = 0; i < layout.columnCount(); ++i) {

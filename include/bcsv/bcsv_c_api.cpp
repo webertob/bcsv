@@ -79,7 +79,7 @@ void bcsv_layout_clear(bcsv_layout_t layout) {
     static_cast<bcsv::Layout*>(layout)->clear();
 }
 
-bool bcsv_layout_isCompatible(const_bcsv_layout_t layout1, const_bcsv_layout_t layout2) {
+bool bcsv_layout_is_compatible(const_bcsv_layout_t layout1, const_bcsv_layout_t layout2) {
     auto& l1 = *static_cast<const bcsv::Layout*>(layout1);
     auto& l2 = *static_cast<const bcsv::Layout*>(layout2);
     return l1.isCompatible(l2);
@@ -189,7 +189,7 @@ bool bcsv_writer_open(bcsv_writer_t writer, const char* filename, bool overwrite
 }
 
 bool bcsv_writer_is_open(const_bcsv_writer_t writer) {
-    return static_cast<const bcsv::Writer<bcsv::Layout>*>(writer)->is_open();
+    return static_cast<const bcsv::Writer<bcsv::Layout>*>(writer)->isOpen();
 }
 
 #ifdef _WIN32

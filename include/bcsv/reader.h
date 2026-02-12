@@ -33,22 +33,22 @@ namespace bcsv {
         using RowType           = typename LayoutType::template RowType<Policy>;
         using FilePath          = std::filesystem::path;
 
-        std::string             errMsg_;                // last error message description
+        std::string             err_msg_;                // last error message description
 
-        FileHeader              fileHeader_;            // file header for accessing flags and metadata
-        FilePath                filePath_;              // points to the input file
+        FileHeader              file_header_;            // file header for accessing flags and metadata
+        FilePath                file_path_;              // points to the input file
         std::ifstream           stream_;                // input file binary stream
         std::optional< LZ4DecompressionStream< MAX_ROW_LENGTH> >
-                                lz4Stream_;             // packet level (de)-compression facility (nullopt if compressionLevel == 0)
+                                lz4_stream_;             // packet level (de)-compression facility (nullopt if compressionLevel == 0)
 
         // Current packet state
-        Checksum::Streaming     packetHash_;            // stream to validate payload using a checksum chain
-        bool                    packetOpen_{false};     // indicates if a packet is currently open for reading
-        std::streampos          packetPos_;             // position of the first byte of the current packet header in the file (PacketHeader MAGIC)
+        Checksum::Streaming     packet_hash_;            // stream to validate payload using a checksum chain
+        bool                    packet_open_{false};     // indicates if a packet is currently open for reading
+        std::streampos          packet_pos_;             // position of the first byte of the current packet header in the file (PacketHeader MAGIC)
 
         // Global row tracking
-        ByteBuffer              rowBuffer_;             // current row, encoded data (decompressed)
-        size_t                  rowPos_;                // postion of current row in file (0-based row counter)
+        ByteBuffer              row_buffer_;             // current row, encoded data (decompressed)
+        size_t                  row_pos_;                // postion of current row in file (0-based row counter)
         RowType                 row_;                   // current row, decoded data
         
     public:
@@ -60,16 +60,16 @@ namespace bcsv {
                                 ~Reader();
 
         void                    close();
-        uint8_t                 compressionLevel() const    { return fileHeader_.getCompressionLevel(); }
-        const FilePath&         filePath() const            { return filePath_; }
+        uint8_t                 compressionLevel() const    { return file_header_.getCompressionLevel(); }
+        const FilePath&         filePath() const            { return file_path_; }
         const LayoutType&       layout() const              { return row_.layout(); }
-        const std::string&      getErrorMsg() const         { return errMsg_; }
+        const std::string&      getErrorMsg() const         { return err_msg_; }
         
         bool                    isOpen() const              { return stream_.is_open(); }
         bool                    open(const FilePath& filepath);
         bool                    readNext();
         const RowType&          row() const                 { return row_; }
-        size_t                  rowPos() const              { return rowPos_; } // 0-based row index in file
+        size_t                  rowPos() const              { return row_pos_; } // 0-based row index in file
         
     protected:
         void                    closePacket();
@@ -90,7 +90,7 @@ namespace bcsv {
         using RowType           = typename LayoutType::template RowType<Policy>;
         using FilePath          = std::filesystem::path;
 
-        FileFooter  fileFooter_;
+        FileFooter  file_footer_;
 
         //ToDo: Develop a caching strategy to improve performance in Direct Access Mode (balance with memory requirement)
         //For now consider: piece wise sequential read as the targeted option. Still a file access. Load to RAW for fully random access, using your own use-case optimizes structures. 
@@ -101,8 +101,8 @@ namespace bcsv {
         void    close();
         bool    open(const FilePath& filepath, bool rebuildFooter = false);
         bool    read(size_t index);
-        size_t  rowCount()const             { return fileFooter_.rowCount(); }
-        const FileFooter& fileFooter()const { return fileFooter_; }
+        size_t  rowCount()const             { return file_footer_.rowCount(); }
+        const FileFooter& fileFooter()const { return file_footer_; }
 
     protected:
         void    buildFileFooter();

@@ -30,7 +30,7 @@ namespace bcsv {
 
     // Helper template for static_assert
     template<typename T>
-    constexpr bool always_false = false;
+    constexpr bool ALWAYS_FALSE = false;
 
     enum class TrackingPolicy : uint8_t {
         Disabled,
@@ -154,28 +154,28 @@ namespace bcsv {
         else if constexpr (std::is_same_v<T, double>)   return ColumnType::DOUBLE;
         else if constexpr (std::is_same_v<T, string>)   return ColumnType::STRING;
         else if constexpr (std::is_same_v<T, std::string_view>) return ColumnType::STRING;
-        else static_assert(always_false<T>, "Unsupported type");
+        else static_assert(ALWAYS_FALSE<T>, "Unsupported type");
     };
 
     // Base template
     template<ColumnType Type>
-    struct getTypeT {
+    struct GetTypeT {
         using type = void; // Invalid by default
     };
 
     // Specializations
-    template<> struct getTypeT< ColumnType::BOOL   > { using type = bool;     };
-    template<> struct getTypeT< ColumnType::UINT8  > { using type = uint8_t;  };
-    template<> struct getTypeT< ColumnType::UINT16 > { using type = uint16_t; };
-    template<> struct getTypeT< ColumnType::UINT32 > { using type = uint32_t; };
-    template<> struct getTypeT< ColumnType::UINT64 > { using type = uint64_t; };
-    template<> struct getTypeT< ColumnType::INT8   > { using type = int8_t;   };
-    template<> struct getTypeT< ColumnType::INT16  > { using type = int16_t;  };
-    template<> struct getTypeT< ColumnType::INT32  > { using type = int32_t;  };
-    template<> struct getTypeT< ColumnType::INT64  > { using type = int64_t;  };
-    template<> struct getTypeT< ColumnType::FLOAT  > { using type = float;    };
-    template<> struct getTypeT< ColumnType::DOUBLE > { using type = double;   };
-    template<> struct getTypeT< ColumnType::STRING > { using type = string;   };  
+    template<> struct GetTypeT< ColumnType::BOOL   > { using type = bool;     };
+    template<> struct GetTypeT< ColumnType::UINT8  > { using type = uint8_t;  };
+    template<> struct GetTypeT< ColumnType::UINT16 > { using type = uint16_t; };
+    template<> struct GetTypeT< ColumnType::UINT32 > { using type = uint32_t; };
+    template<> struct GetTypeT< ColumnType::UINT64 > { using type = uint64_t; };
+    template<> struct GetTypeT< ColumnType::INT8   > { using type = int8_t;   };
+    template<> struct GetTypeT< ColumnType::INT16  > { using type = int16_t;  };
+    template<> struct GetTypeT< ColumnType::INT32  > { using type = int32_t;  };
+    template<> struct GetTypeT< ColumnType::INT64  > { using type = int64_t;  };
+    template<> struct GetTypeT< ColumnType::FLOAT  > { using type = float;    };
+    template<> struct GetTypeT< ColumnType::DOUBLE > { using type = double;   };
+    template<> struct GetTypeT< ColumnType::STRING > { using type = string;   };  
 
     inline constexpr ColumnType toColumnType(const ValueType& value) {
         return std::visit([](auto&& arg) -> ColumnType {
@@ -312,7 +312,7 @@ namespace bcsv {
         } else if constexpr (std::is_same_v<Type, string>  ) {
             return string{};  // Empty string
         } else {
-            static_assert(always_false<Type>, "Unsupported type for defaultValueT");
+            static_assert(ALWAYS_FALSE<Type>, "Unsupported type for defaultValueT");
         }
     }
         
@@ -330,7 +330,7 @@ namespace bcsv {
         else if constexpr (std::is_same_v<T, float>   ) return sizeof(float);
         else if constexpr (std::is_same_v<T, double>  ) return sizeof(double);
         else if constexpr (std::is_same_v<T, string>  ) return sizeof(StringAddr); // StringAddress
-        else static_assert(always_false<T>, "Unsupported type");
+        else static_assert(ALWAYS_FALSE<T>, "Unsupported type");
     }
 
     // Helper function to get size for each column type

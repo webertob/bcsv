@@ -31,7 +31,7 @@ namespace bcsv {
     // Helper: Zigzag encoding for signed integers
     template<typename T>
         requires std::signed_integral<T>
-    constexpr auto zigzag_encode(T value) noexcept {
+    constexpr auto zigzagEncode(T value) noexcept {
         using U = std::make_unsigned_t<T>;
         constexpr size_t bits = sizeof(T) * 8;
         return static_cast<U>((value << 1) ^ (value >> (bits - 1)));
@@ -40,7 +40,7 @@ namespace bcsv {
     // Helper: Zigzag decoding for signed integers
     template<typename T>
         requires std::unsigned_integral<T>
-    constexpr auto zigzag_decode(T value) noexcept {
+    constexpr auto zigzagDecode(T value) noexcept {
         using S = std::make_signed_t<T>;
         return static_cast<S>((value >> 1) ^ -(value & 1));
     }
@@ -48,38 +48,38 @@ namespace bcsv {
     // Helper to calculate VLE limits
     template<typename T, size_t L_BITS>
     struct VLELimits {
-        static constexpr size_t LengthBits = L_BITS;
-        static constexpr size_t TypeBits = sizeof(T) * 8;
-        // If LengthBits == 0 (1 byte type), Capacity is 8.
-        // Else Capacity = (2^LengthBits * 8) - LengthBits.
-        static constexpr size_t MaxBytes = (1ULL << LengthBits);
-        static constexpr size_t CapBits = (MaxBytes * 8) - LengthBits;
-        static constexpr bool FullRange = (CapBits >= TypeBits);
+        static constexpr size_t LENGTH_BITS = L_BITS;
+        static constexpr size_t TYPE_BITS = sizeof(T) * 8;
+        // If LENGTH_BITS == 0 (1 byte type), Capacity is 8.
+        // Else Capacity = (2^LENGTH_BITS * 8) - LENGTH_BITS.
+        static constexpr size_t MAX_BYTES = (1ULL << LENGTH_BITS);
+        static constexpr size_t CAP_BITS = (MAX_BYTES * 8) - LENGTH_BITS;
+        static constexpr bool FULL_RANGE = (CAP_BITS >= TYPE_BITS);
 
-        static constexpr T max_value() {
-            if constexpr (FullRange) {
+        static constexpr T maxValue() {
+            if constexpr (FULL_RANGE) {
                 return std::numeric_limits<T>::max();
             } else {
                 if constexpr (std::is_signed_v<T>) {
                     // Zigzag max positive comes from (MAX_U - 1)
-                    // Max U = 2^CapBits - 1
+                    // Max U = 2^CAP_BITS - 1
                     // Max Pos = (Max U - 1) / 2
-                    // Note: (1ULL << CapBits) might overflow if CapBits >= 64, but FullRange check prevents this path
-                    return static_cast<T>(((1ULL << CapBits) - 2) / 2);
+                    // Note: (1ULL << CAP_BITS) might overflow if CAP_BITS >= 64, but FULL_RANGE check prevents this path
+                    return static_cast<T>(((1ULL << CAP_BITS) - 2) / 2);
                 } else {
-                    return static_cast<T>((1ULL << CapBits) - 1);
+                    return static_cast<T>((1ULL << CAP_BITS) - 1);
                 }
             }
         }
 
-        static constexpr T min_value() {
-            if constexpr (FullRange) {
+        static constexpr T minValue() {
+            if constexpr (FULL_RANGE) {
                 return std::numeric_limits<T>::min();
             } else {
                 if constexpr (std::is_signed_v<T>) {
                     // Zigzag min negative comes from MAX_U
-                    // Min Neg = zigzag_decode(MAX_U) = (MAX_U >> 1) ^ -1
-                    uint64_t max_u_shifted = ((1ULL << CapBits) - 1) >> 1;
+                    // Min Neg = zigzagDecode(MAX_U) = (MAX_U >> 1) ^ -1
+                    uint64_t max_u_shifted = ((1ULL << CAP_BITS) - 1) >> 1;
                     return static_cast<T>(static_cast<int64_t>(max_u_shifted) ^ -1);
                 } else {
                     return 0;
@@ -91,50 +91,50 @@ namespace bcsv {
     // Traits to determine Length Bits based on Type and Truncated mode
     template<typename T, bool Truncated>
     struct VLETraits {
-        static constexpr size_t LengthBits = 
+        static constexpr size_t LENGTH_BITS = 
             (sizeof(T) <= 2) ? (Truncated ? 1 : 2) :
             (sizeof(T) <= 4) ? (Truncated ? 2 : 3) :
             (Truncated ? 3 : 4);
             // Default 3/4 bits for 64-bit types
         
-        static constexpr size_t MaxEncodedBytes = (sizeof(T) * 8 + LengthBits + 7) / 8;
-        static constexpr T VLE_MAX_VALUE = VLELimits<T, LengthBits>::max_value();
-        static constexpr T VLE_MIN_VALUE = VLELimits<T, LengthBits>::min_value();
+        static constexpr size_t MAX_ENCODED_BYTES = (sizeof(T) * 8 + LENGTH_BITS + 7) / 8;
+        static constexpr T VLE_MAX_VALUE = VLELimits<T, LENGTH_BITS>::maxValue();
+        static constexpr T VLE_MIN_VALUE = VLELimits<T, LENGTH_BITS>::minValue();
 
         // Architectural optimization: Determine optimal register size (32 or 64 bit)
         // This ensures better performance on 32-bit MCUs (RISC-V 32, ARM Cortex-M)
-        static constexpr size_t BitsRequired = VLELimits<T, LengthBits>::CapBits + LengthBits;
-        using PacketType = std::conditional_t<(BitsRequired <= 32), uint32_t, uint64_t>;
-        static constexpr bool FitsInRegister = (BitsRequired <= sizeof(PacketType) * 8);
+        static constexpr size_t BITS_REQUIRED = VLELimits<T, LENGTH_BITS>::CAP_BITS + LENGTH_BITS;
+        using PacketType = std::conditional_t<(BITS_REQUIRED <= 32), uint32_t, uint64_t>;
+        static constexpr bool FITS_IN_REGISTER = (BITS_REQUIRED <= sizeof(PacketType) * 8);
     };
     
     // Explicit specialization for 1-byte types (trivial encoding handled in function, but for consistency)
     template<typename T> struct VLETraits<T, true> {
-        static constexpr size_t LengthBits = (sizeof(T) == 1) ? 0 : 
+        static constexpr size_t LENGTH_BITS = (sizeof(T) == 1) ? 0 : 
             (sizeof(T) <= 2) ? 1 :
             (sizeof(T) <= 4) ? 2 : 3;
         
-        static constexpr size_t MaxEncodedBytes = (sizeof(T) * 8 + LengthBits + 7) / 8;
-        static constexpr T VLE_MAX_VALUE = VLELimits<T, LengthBits>::max_value();
-        static constexpr T VLE_MIN_VALUE = VLELimits<T, LengthBits>::min_value();
+        static constexpr size_t MAX_ENCODED_BYTES = (sizeof(T) * 8 + LENGTH_BITS + 7) / 8;
+        static constexpr T VLE_MAX_VALUE = VLELimits<T, LENGTH_BITS>::maxValue();
+        static constexpr T VLE_MIN_VALUE = VLELimits<T, LENGTH_BITS>::minValue();
 
-        static constexpr size_t BitsRequired = VLELimits<T, LengthBits>::CapBits + LengthBits;
-        using PacketType = std::conditional_t<(BitsRequired <= 32), uint32_t, uint64_t>;
-        static constexpr bool FitsInRegister = (BitsRequired <= sizeof(PacketType) * 8);
+        static constexpr size_t BITS_REQUIRED = VLELimits<T, LENGTH_BITS>::CAP_BITS + LENGTH_BITS;
+        using PacketType = std::conditional_t<(BITS_REQUIRED <= 32), uint32_t, uint64_t>;
+        static constexpr bool FITS_IN_REGISTER = (BITS_REQUIRED <= sizeof(PacketType) * 8);
     };
     
     template<typename T> struct VLETraits<T, false> {
-        static constexpr size_t LengthBits = (sizeof(T) == 1) ? 0 : 
+        static constexpr size_t LENGTH_BITS = (sizeof(T) == 1) ? 0 : 
             (sizeof(T) <= 2) ? 2 :
             (sizeof(T) <= 4) ? 3 : 4;
 
-        static constexpr size_t MaxEncodedBytes = (sizeof(T) * 8 + LengthBits + 7) / 8;
-        static constexpr T VLE_MAX_VALUE = VLELimits<T, LengthBits>::max_value();
-        static constexpr T VLE_MIN_VALUE = VLELimits<T, LengthBits>::min_value();
+        static constexpr size_t MAX_ENCODED_BYTES = (sizeof(T) * 8 + LENGTH_BITS + 7) / 8;
+        static constexpr T VLE_MAX_VALUE = VLELimits<T, LENGTH_BITS>::maxValue();
+        static constexpr T VLE_MIN_VALUE = VLELimits<T, LENGTH_BITS>::minValue();
 
-        static constexpr size_t BitsRequired = VLELimits<T, LengthBits>::CapBits + LengthBits;
-        using PacketType = std::conditional_t<(BitsRequired <= 32), uint32_t, uint64_t>;
-        static constexpr bool FitsInRegister = (BitsRequired <= sizeof(PacketType) * 8);
+        static constexpr size_t BITS_REQUIRED = VLELimits<T, LENGTH_BITS>::CAP_BITS + LENGTH_BITS;
+        using PacketType = std::conditional_t<(BITS_REQUIRED <= 32), uint32_t, uint64_t>;
+        static constexpr bool FITS_IN_REGISTER = (BITS_REQUIRED <= sizeof(PacketType) * 8);
     };
 
 
@@ -145,7 +145,7 @@ namespace bcsv {
     * @tparam CheckBounds If true, throws std::overflow_error/length_error on bounds violation.
     */
     template<typename T, bool Truncated = false, bool CheckBounds = true>
-    inline size_t vle_encode(const T &value, void* dst, size_t dst_capacity) {
+    inline size_t vleEncode(const T &value, void* dst, size_t dst_capacity) {
         if constexpr (CheckBounds) {
             if (dst_capacity < 1) [[unlikely]]
                 throw std::length_error("Destination buffer too small for VLE encoding (1 byte)");
@@ -156,15 +156,15 @@ namespace bcsv {
             return 1;
         }
 
-        constexpr size_t LEN_BITS = VLETraits<T, Truncated>::LengthBits;
-        constexpr bool FitsInRegister = VLETraits<T, Truncated>::FitsInRegister;
+        constexpr size_t LEN_BITS = VLETraits<T, Truncated>::LENGTH_BITS;
+        constexpr bool FITS_IN_REGISTER = VLETraits<T, Truncated>::FITS_IN_REGISTER;
         using PacketType = typename VLETraits<T, Truncated>::PacketType;
         
         using U = std::make_unsigned_t<T>;
         U uval;
          
         if constexpr (std::is_signed_v<T>) {
-            uval = zigzag_encode(value);
+            uval = zigzagEncode(value);
         } else {
             uval = static_cast<U>(value);
         }
@@ -192,7 +192,7 @@ namespace bcsv {
             }
         }
 
-        if constexpr (FitsInRegister) {
+        if constexpr (FITS_IN_REGISTER) {
             PacketType packet = (static_cast<PacketType>(uval) << LEN_BITS) | (numBytes - 1);
             
             // Fast path: if capacity allows, write fully into buffer (overwriting potentially tail bytes, which is safe if sequential write)
@@ -228,9 +228,9 @@ namespace bcsv {
 
      // Appends the bytes to the ByteBuffer increasing its size
     template<typename T, bool Truncated = false, bool CheckBounds = true>
-    inline void vle_encode(const T &value, ByteBuffer &bufferToAppend) {
+    inline void vleEncode(const T &value, ByteBuffer &bufferToAppend) {
         uint8_t tempBuf[16]; // Increased safety buffer
-        size_t written = vle_encode<T, Truncated, CheckBounds>(value, tempBuf, 16);
+        size_t written = vleEncode<T, Truncated, CheckBounds>(value, tempBuf, 16);
         
         size_t currentSize = bufferToAppend.size();
         bufferToAppend.resize(currentSize + written);
@@ -239,19 +239,19 @@ namespace bcsv {
 
     // Helper for std::ostream
     template<typename T, bool Truncated = false, bool CheckBounds = true>
-    inline size_t vle_encode(const T &value, std::ostream& os) {
+    inline size_t vleEncode(const T &value, std::ostream& os) {
         uint8_t tempBuf[16];
-        size_t written = vle_encode<T, Truncated, CheckBounds>(value, tempBuf, 16);
+        size_t written = vleEncode<T, Truncated, CheckBounds>(value, tempBuf, 16);
         os.write(reinterpret_cast<char*>(tempBuf), written);
         return written;
     }
 
     // Returns the number of bytes consumed
     template<typename T, bool Truncated = false, bool CheckBounds = true>
-    inline size_t vle_decode(T &value, const void* src, size_t src_capacity) {
+    inline size_t vleDecode(T &value, const void* src, size_t src_capacity) {
         if constexpr (CheckBounds) {
             if (src_capacity == 0) [[unlikely]] {
-                throw std::runtime_error("Empty buffer in vle_decode");
+                throw std::runtime_error("Empty buffer in vleDecode");
             }
         } else {
              // If manual bounds checking is disabled, ensure we don't segfault on 0 cap check
@@ -265,9 +265,9 @@ namespace bcsv {
             return 1;
         }
         
-        constexpr size_t LEN_BITS = VLETraits<T, Truncated>::LengthBits;
+        constexpr size_t LEN_BITS = VLETraits<T, Truncated>::LENGTH_BITS;
         constexpr size_t LEN_MASK = (1 << LEN_BITS) - 1;
-        constexpr bool FitsInRegister = VLETraits<T, Truncated>::FitsInRegister;
+        constexpr bool FITS_IN_REGISTER = VLETraits<T, Truncated>::FITS_IN_REGISTER;
         using PacketType = typename VLETraits<T, Truncated>::PacketType;
 
         const uint8_t* bytes = static_cast<const uint8_t*>(src);
@@ -284,7 +284,7 @@ namespace bcsv {
         using U = std::make_unsigned_t<T>;
         U uval = 0;
 
-        if constexpr (FitsInRegister) {
+        if constexpr (FITS_IN_REGISTER) {
             PacketType packet = 0;
             
             // Fast path: over-read full register if buffer allows
@@ -320,7 +320,7 @@ namespace bcsv {
 
         // Assign to T
         if constexpr (std::is_signed_v<T>) {
-            value = zigzag_decode(static_cast<std::make_unsigned_t<T>>(uval));
+            value = zigzagDecode(static_cast<std::make_unsigned_t<T>>(uval));
         } else {
             value = static_cast<T>(uval);
         }
@@ -330,17 +330,17 @@ namespace bcsv {
 
     // Span gets updated
     template<typename T, bool Truncated = false, bool CheckBounds = true>
-    inline T vle_decode(std::span<std::byte> &bufferToRead) {
+    inline T vleDecode(std::span<std::byte> &bufferToRead) {
         T val;
-        size_t consumed = vle_decode<T, Truncated, CheckBounds>(val, bufferToRead.data(), bufferToRead.size());
+        size_t consumed = vleDecode<T, Truncated, CheckBounds>(val, bufferToRead.data(), bufferToRead.size());
         bufferToRead = bufferToRead.subspan(consumed);
         return val;
     }
     
     // Helper for std::istream
     template<typename T, bool Truncated = false, bool CheckBounds = true>
-    inline size_t vle_decode(std::istream& is, T& value, Checksum::Streaming* checksum = nullptr) {
-        constexpr size_t MAX_BYTES = VLETraits<T, Truncated>::MaxEncodedBytes;
+    inline size_t vleDecode(std::istream& is, T& value, Checksum::Streaming* checksum = nullptr) {
+        constexpr size_t MAX_BYTES = VLETraits<T, Truncated>::MAX_ENCODED_BYTES;
         // Align buffer for 64-bit register access optimization
         alignas(8) uint8_t buffer[MAX_BYTES];
         
@@ -348,7 +348,7 @@ namespace bcsv {
             throw std::runtime_error("VLE decode: unexpected end of stream");
         }
         
-        constexpr size_t LEN_BITS = VLETraits<T, Truncated>::LengthBits;
+        constexpr size_t LEN_BITS = VLETraits<T, Truncated>::LENGTH_BITS;
         constexpr size_t LEN_MASK = (1 << LEN_BITS) - 1;
 
         size_t numBytes = (buffer[0] & LEN_MASK) + 1;
@@ -374,7 +374,7 @@ namespace bcsv {
         
         // Delegate to pointer-based decode
         T val; 
-        vle_decode<T, Truncated>(val, buffer, numBytes);
+        vleDecode<T, Truncated>(val, buffer, numBytes);
         value = val;
         
         return numBytes;

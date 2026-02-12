@@ -82,9 +82,9 @@ namespace bcsv {
         public:
             // Describes a single column transformation during layout update
             struct Change {
-                uint16_t   index;     // Column index (post-transformation position for adds)
-                ColumnType oldType;   // Type before change (nullopt if column is being added)
-                ColumnType newType;   // Type after change (nullopt if column is being removed)
+                uint16_t   index;      // Column index (post-transformation position for adds)
+                ColumnType old_type;   // Type before change (nullopt if column is being added)
+                ColumnType new_type;   // Type after change (nullopt if column is being removed)
             };
 
             struct Callbacks {
@@ -97,8 +97,8 @@ namespace bcsv {
             ColumnNameIndex<0>                       column_index_;  // name --> column
             std::vector<ColumnType>                  column_types_;  // column --> type
             std::vector<uint32_t>                    offsets_;       // Unified per-column offsets into RowImpl's storage containers (bits_, data_, strg_). Meaning depends on columnType: BOOL→bit index in bits_, STRING→index in strg_, scalar→byte offset in data_ (aligned).
-            bitset<>                                 bool_mask_;     // Bit i set iff column i is BOOL. Size == columnCount.
-            bitset<>                                 tracked_mask_;  // Bit i set iff column i is NOT BOOL (inverse of bool_mask_). Size == columnCount.
+            Bitset<>                                 bool_mask_;     // Bit i set iff column i is BOOL. Size == columnCount.
+            Bitset<>                                 tracked_mask_;  // Bit i set iff column i is NOT BOOL (inverse of bool_mask_). Size == columnCount.
 
             // Internal helpers
             void rebuildColumnIndex();
@@ -125,8 +125,8 @@ namespace bcsv {
             bool isCompatible(const Data& other) const;
             uint32_t columnOffset(size_t index) const;
             const std::vector<uint32_t>& columnOffsets() const noexcept { return offsets_; }
-            const bitset<>& boolMask() const noexcept { return bool_mask_; }
-            const bitset<>& trackedMask() const noexcept { return tracked_mask_; }
+            const Bitset<>& boolMask() const noexcept { return bool_mask_; }
+            const Bitset<>& trackedMask() const noexcept { return tracked_mask_; }
 
             /// Compute unified offsets from a type vector. Used by Row's onLayoutUpdate to pre-compute new offsets
             /// before the layout has been updated. Returns total data_ byte size via out parameter.
@@ -219,11 +219,11 @@ namespace bcsv {
             return data_->columnOffsets();
         }
         
-        const bitset<>& boolMask() const noexcept {
+        const Bitset<>& boolMask() const noexcept {
             return data_->boolMask();
         }
         
-        const bitset<>& trackedMask() const noexcept {
+        const Bitset<>& trackedMask() const noexcept {
             return data_->trackedMask();
         }
         
@@ -333,7 +333,7 @@ namespace bcsv {
                                   template<size_t Index>
         using ColType           = std::tuple_element_t<Index, ColTypes>;
         using ColTypesArray     = std::array<ColumnType, sizeof...(ColumnTypes)>;
-        static constexpr ColTypesArray column_types_ = { toColumnType<ColumnTypes>()...  }; // column --> type
+        static constexpr ColTypesArray COLUMN_TYPES = { toColumnType<ColumnTypes>()...  }; // column --> type
 
         LayoutStatic();
         explicit LayoutStatic(DataPtr data);
@@ -352,11 +352,11 @@ namespace bcsv {
         size_t                          columnIndex(const std::string& name) const      { return data_->columnIndex(name); }
         const std::string&              columnName(size_t index) const                  { checkRange(index); return data_->columnName(index); }
                                         template<size_t Index>
-        static constexpr ColumnType     columnType()                                    { return column_types_[Index]; }          // compile-time version
+        static constexpr ColumnType     columnType()                                    { return COLUMN_TYPES[Index]; }          // compile-time version
 
-        static ColumnType               columnType(size_t index)                        { if (index >= sizeof...(ColumnTypes)) { throw std::out_of_range("LayoutStatic::columnType: Index out of range"); } return column_types_[index]; } // runtime version
+        static ColumnType               columnType(size_t index)                        { if (index >= sizeof...(ColumnTypes)) { throw std::out_of_range("LayoutStatic::columnType: Index out of range"); } return COLUMN_TYPES[index]; } // runtime version
         static constexpr const ColTypesArray& 
-                                        columnTypes() noexcept                          { return column_types_; }
+                                        columnTypes() noexcept                          { return COLUMN_TYPES; }
         bool                            hasColumn(const std::string& name) const        { return data_->hasColumn(name); }
                                         
                                         template<typename OtherLayout>

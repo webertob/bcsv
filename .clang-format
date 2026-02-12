@@ -1,0 +1,77 @@
+# BCSV Project — Clang Format Configuration
+# Captures observed conventions from the codebase.
+#
+# NOTE: This project uses extensive manual column alignment for member
+# declarations, enum values, template specializations, and switch/case.
+# Use  // clang-format off  /  // clang-format on  around manually
+# aligned blocks to preserve intentional formatting.
+
+Language: Cpp
+BasedOnStyle: LLVM
+
+# Indentation
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ContinuationIndentWidth: 4
+IndentCaseLabels: true
+NamespaceIndentation: All
+IndentWrappedFunctionNames: false
+AccessModifierOffset: -4
+
+# Braces
+BreakBeforeBraces: Attach
+
+# Line length — unlimited (project values column alignment over line limits)
+ColumnLimit: 0
+
+# Alignment — key project convention
+AlignConsecutiveDeclarations: true
+AlignConsecutiveAssignments: true
+AlignTrailingComments: true
+AlignOperands: true
+AlignAfterOpenBracket: Align
+
+# Pointers and references
+PointerAlignment: Left
+ReferenceAlignment: Left
+DerivePointerAlignment: false
+
+# Spaces
+SpaceBeforeParens: ControlStatements
+SpacesInAngles: false
+SpaceAfterTemplateKeyword: false
+SpaceBeforeCpp11BracedList: false
+SpaceBeforeRangeBasedForLoopColon: true
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+
+# Includes — preserve existing grouping
+SortIncludes: false
+IncludeBlocks: Preserve
+
+# Templates
+AlwaysBreakTemplateDeclarations: Yes
+
+# Short forms
+AllowShortFunctionsOnASingleLine: Inline
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Empty
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortLambdasOnASingleLine: Inline
+AllowShortEnumsOnASingleLine: false
+
+# Breaking
+BreakConstructorInitializers: BeforeColon
+ConstructorInitializerIndentWidth: 4
+BinPackArguments: true
+BinPackParameters: true
+BreakBeforeBinaryOperators: None
+
+# Misc
+Cpp11BracedListStyle: true
+FixNamespaceComments: true
+MaxEmptyLinesToKeep: 2
+ReflowComments: false
+SortUsingDeclarations: false

@@ -38,15 +38,15 @@ namespace bcsv {
 
     template<LayoutConcept LayoutType, TrackingPolicy Policy>
     Reader<LayoutType, Policy>::Reader() 
-    : errMsg_()
-    , fileHeader_()
-    , filePath_()
+    : err_msg_()
+    , file_header_()
+    , file_path_()
     , stream_()
-    , lz4Stream_()
-    , packetHash_()
-    , packetOpen_(false)
-    , packetPos_()
-    , rowPos_(0)
+    , lz4_stream_()
+    , packet_hash_()
+    , packet_open_(false)
+    , packet_pos_()
+    , row_pos_(0)
     , row_(LayoutType())
 
     {
@@ -68,16 +68,16 @@ namespace bcsv {
             return;
         }
 
-        filePath_.clear();
+        file_path_.clear();
         stream_.close();
-        lz4Stream_.reset();
-        packetHash_.reset();
-        packetPos_ = 0;
-        rowPos_ = 0;
-        rowBuffer_.clear();
-        rowBuffer_.shrink_to_fit();
+        lz4_stream_.reset();
+        packet_hash_.reset();
+        packet_pos_ = 0;
+        row_pos_ = 0;
+        row_buffer_.clear();
+        row_buffer_.shrink_to_fit();
         row_.clear();
-        packetOpen_ = false;
+        packet_open_ = false;
     }
 
     /**
@@ -87,7 +87,7 @@ namespace bcsv {
      */
     template<LayoutConcept LayoutType, TrackingPolicy Policy>
     bool Reader<LayoutType, Policy>::open(const FilePath& filepath) {
-        errMsg_.clear();
+        err_msg_.clear();
         if(isOpen())
             close();
 
@@ -118,7 +118,7 @@ namespace bcsv {
                 throw std::runtime_error("Error: Cannot open file for reading: " + absolutePath.string());
             }
             
-            filePath_ = absolutePath;
+            file_path_ = absolutePath;
             
             // Read file header
             if(!readFileHeader()) {
@@ -127,19 +127,19 @@ namespace bcsv {
 
             // create LZ4 decompression stream if needed
             if (compressionLevel() > 0) {
-                lz4Stream_.emplace();
+                lz4_stream_.emplace();
             }
 
             // Open the first packet to prepare for reading rows
-            packetOpen_ = openPacket();
-            rowPos_ = 0;
+            packet_open_ = openPacket();
+            row_pos_ = 0;
 
         } catch (const std::exception& ex) {
-            errMsg_ = ex.what();
+            err_msg_ = ex.what();
             if (stream_.is_open()) {
                 stream_.close();
             }
-            filePath_.clear();
+            file_path_.clear();
             return false;
         }
         return true;
@@ -151,37 +151,37 @@ namespace bcsv {
     template<LayoutConcept LayoutType, TrackingPolicy Policy>
     bool Reader<LayoutType, Policy>::readFileHeader() {
         if (!stream_) {
-            errMsg_ = "Error: Stream is not open";
+            err_msg_ = "Error: Stream is not open";
             return false;
         }
         
         try {
             LayoutType layout;
-            fileHeader_.readFromBinary(stream_, layout);
+            file_header_.readFromBinary(stream_, layout);
             
             // Check version compatibility (v1.3.0 only)
-            if (fileHeader_.versionMajor() != BCSV_FORMAT_VERSION_MAJOR || 
-                fileHeader_.versionMinor() != BCSV_FORMAT_VERSION_MINOR) {
+            if (file_header_.versionMajor() != BCSV_FORMAT_VERSION_MAJOR || 
+                file_header_.versionMinor() != BCSV_FORMAT_VERSION_MINOR) {
                 std::ostringstream oss;
                 oss << "Error: Incompatible file version: "
-                    << static_cast<int>(fileHeader_.versionMajor()) << "."
-                    << static_cast<int>(fileHeader_.versionMinor())
+                    << static_cast<int>(file_header_.versionMajor()) << "."
+                    << static_cast<int>(file_header_.versionMinor())
                     << " (Expected: " << static_cast<int>(BCSV_FORMAT_VERSION_MAJOR) << "." 
                     << static_cast<int>(BCSV_FORMAT_VERSION_MINOR) << ")";
-                errMsg_ = oss.str();
+                err_msg_ = oss.str();
                 if constexpr (DEBUG_OUTPUTS) {
-                    std::cerr << errMsg_ << "\n";
+                    std::cerr << err_msg_ << "\n";
                 }
                 return false;
             }
             
             if constexpr (isTrackingEnabled(Policy)) {
-                if (!fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
-                    errMsg_ = "Error: TrackingPolicy::Enabled requires ZERO_ORDER_HOLD file";
+                if (!file_header_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
+                    err_msg_ = "Error: TrackingPolicy::Enabled requires ZERO_ORDER_HOLD file";
                     return false;
                 }
-            } else if (fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
-                errMsg_ = "Error: ZERO_ORDER_HOLD requires TrackingPolicy::Enabled";
+            } else if (file_header_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
+                err_msg_ = "Error: ZERO_ORDER_HOLD requires TrackingPolicy::Enabled";
                 return false;
             }
 
@@ -189,9 +189,9 @@ namespace bcsv {
             return true;
             
         } catch (const std::exception& ex) {
-            errMsg_ = std::string("Error: Failed to read file header: ") + ex.what();
+            err_msg_ = std::string("Error: Failed to read file header: ") + ex.what();
             if constexpr (DEBUG_OUTPUTS) {
-                std::cerr << errMsg_ << "\n";
+                std::cerr << err_msg_ << "\n";
             }
             return false;
         }
@@ -208,7 +208,7 @@ namespace bcsv {
             throw std::runtime_error("Error: Failed to read packet checksum");
         }
         
-        uint64_t calculatedHash = packetHash_.finalize();
+        uint64_t calculatedHash = packet_hash_.finalize();
         if (calculatedHash != expectedHash) {
             throw std::runtime_error("Error: Packet checksum mismatch");
         }
@@ -221,28 +221,28 @@ namespace bcsv {
     bool Reader<LayoutType, Policy>::openPacket() {
         assert(stream_);
 
-        packetPos_ = stream_.tellg();
+        packet_pos_ = stream_.tellg();
         PacketHeader header;
         bool success = header.read(stream_, true);
 
         // Initialize LZ4 decompression if needed
-        if (lz4Stream_.has_value()) {
-            lz4Stream_->reset();
+        if (lz4_stream_.has_value()) {
+            lz4_stream_->reset();
         }
         
         // Reset payload hasher for checksum validation
-        packetHash_.reset();
+        packet_hash_.reset();
 
         if (!success) {
             if(header.magic == FOOTER_BIDX_MAGIC) {
                 stream_.clear();           // clear fail state
-                stream_.seekg(packetPos_); // reset to previous position
+                stream_.seekg(packet_pos_); // reset to previous position
                 return false;   // end of file reached, normal exit condition
             } else if(stream_.eof()) {
                 return false;   // end of file reached, normal exit condition
             } else {
                 stream_.clear();           // clear fail state
-                stream_.seekg(packetPos_); // reset to previous position
+                stream_.seekg(packet_pos_); // reset to previous position
                 throw std::runtime_error("Error: Failed to read packet header");
             }
         }
@@ -254,7 +254,7 @@ namespace bcsv {
      */
     template<LayoutConcept LayoutType, TrackingPolicy Policy>
     bool Reader<LayoutType, Policy>::readNext() {
-        if (!isOpen() || !packetOpen_) {
+        if (!isOpen() || !packet_open_) {
             return false;
         }
 
@@ -264,62 +264,62 @@ namespace bcsv {
 
         //reade row length
         size_t rowLen;
-        vle_decode<uint64_t, true>(stream_, rowLen, &packetHash_);
+        vleDecode<uint64_t, true>(stream_, rowLen, &packet_hash_);
 
         // check for terminator
         while (rowLen == PCKT_TERMINATOR) {
             // End of packet reached
             closePacket();
-            packetOpen_ = openPacket();
-            if(!packetOpen_) {
+            packet_open_ = openPacket();
+            if(!packet_open_) {
                 return false;
             }
-            vle_decode<uint64_t, true>(stream_, rowLen, &packetHash_);
+            vleDecode<uint64_t, true>(stream_, rowLen, &packet_hash_);
         }
 
         if (rowLen == 0) {
             // repeat previous row
-            if(!fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD) && row_.layout().columnCount() > 0) 
+            if(!file_header_.hasFlag(FileFlags::ZERO_ORDER_HOLD) && row_.layout().columnCount() > 0) 
             {
                 throw std::runtime_error("Error: ZERO_ORDER_HOLD flag not set, but repeat row encountered");
             }
 
-            if( rowBuffer_.empty() && row_.layout().columnCount() > 0 ) 
+            if( row_buffer_.empty() && row_.layout().columnCount() > 0 ) 
             {
                 throw std::runtime_error("Error: Cannot repeat previous row, no previous row data available");
             }
-            rowPos_++;
+            row_pos_++;
             return true;
         }
 
         // read row data
-        rowBuffer_.resize(rowLen);
-        stream_.read(reinterpret_cast<char*>(rowBuffer_.data()), rowLen);
+        row_buffer_.resize(rowLen);
+        stream_.read(reinterpret_cast<char*>(row_buffer_.data()), rowLen);
         if (!stream_ || stream_.gcount() != static_cast<std::streamsize>(rowLen)) {
             throw std::runtime_error("Error: Failed to read row data");
         }
-        packetHash_.update(rowBuffer_);
-        std::span<const std::byte> rowRawData(rowBuffer_);
+        packet_hash_.update(row_buffer_);
+        std::span<const std::byte> rowRawData(row_buffer_);
 
         // decompress if needed
-        if(lz4Stream_.has_value()) {
-            rowRawData = lz4Stream_->decompress(rowBuffer_);
+        if(lz4_stream_.has_value()) {
+            rowRawData = lz4_stream_->decompress(row_buffer_);
         }
 
         // deserialize row
-        if(fileHeader_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
+        if(file_header_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
             row_.deserializeFromZoH(rowRawData);
         } else {
             row_.deserializeFrom(rowRawData);
         }
-        rowPos_++;
+        row_pos_++;
         return true;        
     }
 
     template<LayoutConcept LayoutType, TrackingPolicy Policy>
     void ReaderDirectAccess<LayoutType, Policy>::close() {
         Base::close();
-        fileFooter_.clear();
+        file_footer_.clear();
     }
 
     template<LayoutConcept LayoutType, TrackingPolicy Policy>
@@ -332,27 +332,27 @@ namespace bcsv {
 
         // additionally read file footer
         try {
-            if(!fileFooter_.read(Base::stream_)) {
+            if(!file_footer_.read(Base::stream_)) {
                 if(!rebuildFooter) {
-                    Base::errMsg_ = "Error: FileFooter missing or invalid (use rebuildFooter=true to reconstruct)";
+                    Base::err_msg_ = "Error: FileFooter missing or invalid (use rebuildFooter=true to reconstruct)";
                     if constexpr (DEBUG_OUTPUTS) {
-                        std::cerr << Base::errMsg_ << "\n";
+                        std::cerr << Base::err_msg_ << "\n";
                     }
                     Base::stream_.seekg(originalPos);
                     return false;
                 } else {
-                    Base::errMsg_ = "Warning: FileFooter missing or invalid, attempting to rebuild index";
+                    Base::err_msg_ = "Warning: FileFooter missing or invalid, attempting to rebuild index";
                     if constexpr (DEBUG_OUTPUTS) {
-                        std::cerr << Base::errMsg_ << "\n";
+                        std::cerr << Base::err_msg_ << "\n";
                     }
                     buildFileFooter();
-                    Base::errMsg_.clear();  // Clear warning after successful rebuild
+                    Base::err_msg_.clear();  // Clear warning after successful rebuild
                 }
             }
         } catch (const std::exception& ex) {
-            Base::errMsg_ = std::string("Error: Exception reading FileFooter: ") + ex.what();
+            Base::err_msg_ = std::string("Error: Exception reading FileFooter: ") + ex.what();
             if constexpr (DEBUG_OUTPUTS) {
-                std::cerr << Base::errMsg_ << std::endl;
+                std::cerr << Base::err_msg_ << std::endl;
             }
             Base::stream_.seekg(originalPos);
             return false;
@@ -366,13 +366,13 @@ namespace bcsv {
     template<LayoutConcept LayoutType, TrackingPolicy Policy>
     void ReaderDirectAccess<LayoutType, Policy>::buildFileFooter() {
         assert(Base::stream_);
-        fileFooter_.clear();
+        file_footer_.clear();
 
         // Store original position
         std::streampos originalPos = Base::stream_.tellg();
 
         // Jump to first packet (after file header + layout)
-        Base::stream_.seekg(Base::fileHeader_.getBinarySize(Base::layout()), std::ios::beg);
+        Base::stream_.seekg(Base::file_header_.getBinarySize(Base::layout()), std::ios::beg);
 
         // Decision: We build a sequential algorithms to rebuild the file footer. 
         // ToDo: A parallel one would be perfectly possible, but put this to the future
@@ -395,11 +395,11 @@ namespace bcsv {
 
         PacketHeader header;
         std::streampos pktPos = Base::stream_.tellg();
-        std::streamoff stepSize = static_cast<std::streamoff>(Base::fileHeader_.getPacketSize() + sizeof(PacketHeader));
+        std::streamoff stepSize = static_cast<std::streamoff>(Base::file_header_.getPacketSize() + sizeof(PacketHeader));
         while (header.readNext(Base::stream_, pktPos)) {
-            fileFooter_.packetIndex().emplace_back(
+            file_footer_.packetIndex().emplace_back(
                 static_cast<uint64_t>(pktPos),
-                header.firstRowIndex
+                header.first_row_index
             );
 
             // Skip packet payload (estimate using block size)
@@ -412,14 +412,14 @@ namespace bcsv {
         // 2. skip packet header
         // 3. Read row sizes (skip row data) until terminator reached, count rows
         // 4. total rows = first row of last packet + counted rows in last packet
-        if (fileFooter_.packetIndex().empty()) {
-            fileFooter_.rowCount() = 0;
+        if (file_footer_.packetIndex().empty()) {
+            file_footer_.rowCount() = 0;
         } else {
-            const auto& lastPacket = fileFooter_.packetIndex().back();
+            const auto& lastPacket = file_footer_.packetIndex().back();
 
             // Seek to last packet payload (skip header) and count rows by jumping through VLE sizes
             Base::stream_.clear();
-            Base::stream_.seekg(static_cast<std::streamoff>(lastPacket.byteOffset_) + sizeof(PacketHeader));
+            Base::stream_.seekg(static_cast<std::streamoff>(lastPacket.byte_offset) + sizeof(PacketHeader));
 
             size_t rowCntLstPkt = 0;
             size_t rowLen;
@@ -427,7 +427,7 @@ namespace bcsv {
             // Count rows within last packet using row lengths
             while (Base::stream_) {
                 try {
-                    vle_decode<uint64_t, true>(Base::stream_, rowLen, nullptr);
+                    vleDecode<uint64_t, true>(Base::stream_, rowLen, nullptr);
 
                     if (rowLen == 0) {
                         // ZoH repeat - no payload, just count
@@ -454,7 +454,7 @@ namespace bcsv {
                     break;
                 }
             }
-            fileFooter_.rowCount() = lastPacket.firstRow_ + rowCntLstPkt;
+            file_footer_.rowCount() = lastPacket.first_row + rowCntLstPkt;
         }
         
         // Restore original position

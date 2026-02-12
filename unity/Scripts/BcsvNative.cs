@@ -85,7 +85,7 @@ namespace BCSV
         internal static extern void bcsv_layout_clear(IntPtr layout);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern bool bcsv_layout_isCompatible(IntPtr layout1, IntPtr layout2);
+        internal static extern bool bcsv_layout_is_compatible(IntPtr layout1, IntPtr layout2);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void bcsv_layout_assign(IntPtr dest, IntPtr src);

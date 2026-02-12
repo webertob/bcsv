@@ -58,7 +58,7 @@ namespace bcsv {
     template<typename T>
     struct has_is_open_method {
         template<typename U>
-        static auto test(int) -> decltype(std::declval<U>().is_open(), std::true_type{});
+        static auto test(int) -> decltype(std::declval<U>().isOpen(), std::true_type{});
         template<typename>
         static std::false_type test(...);
         using type = decltype(test<T>(0));

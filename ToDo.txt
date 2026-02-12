@@ -160,7 +160,7 @@ background:
         [x] CPU pinning: taskset -c 0 wrapper in run_benchmarks.py (--no-pin to disable)
         [x] Warm-up run: 100-row warmup iteration runs automatically before measurement
 
-9.b For better AI/Co-development create persitent information on the project:
+[x] 9.b Do improve efficency on AI Co-development create persitent information about the project, supports AI-agents to quickly onboard and understand the goals, codes and infrastrutcure.
     - build skill
     - test skill
     - benchmark skill
@@ -168,10 +168,35 @@ background:
     - project constrains
     - code formation rules & preferences
     - project structure / file structure
+    DONE — Created:
+        SKILLS.md (root)        — master AI onboarding doc (build, test, API, naming, priming prompt)
+        tests/SKILLS.md         — test build/run/sanitizer commands, test file inventory
+        examples/SKILLS.md      — example targets, CLI tools quick reference
+        python/SKILLS.md        — Python build/install/test, header sync, API
+        unity/SKILLS.md         — Unity/C# architecture, P/Invoke, memory management
+        .clang-format           — project formatting rules (LLVM base, indent 4, braces Attach)
+    Naming convention enforcement (snake_case_ private members, snake_case public struct members, lowerCamelCase functions, UpperCamelCase classes, CAPITAL_SNAKE_CASE constants):
+        Wave 1: definitions.h (ALWAYS_FALSE, GetTypeT), vle.hpp (all functions+constants), bitset (class Bitset, DYNAMIC_EXTENT, Reference, SliceView)
+        Wave 2: binary struct members (FileHeader/PacketHeader/FileFooter ConstSection, PacketIndexEntry)
+        Wave 3: layout.h (ColumnDefinition, Change, Callbacks members; LayoutStatic COLUMN_TYPES)
+        Wave 4: row.h (COLUMN_COUNT, COLUMN_LENGTHS, COLUMN_OFFSETS, OFFSET_VAR)
+        Wave 5: reader/writer members (~15 camelCase_ → snake_case_), constSection_ → const_section_, is_open() → isOpen()
+        Wave 6: C API bcsv_layout_isCompatible → bcsv_layout_is_compatible
+    Public struct member refinement: removed trailing underscores from public struct members (snake_case, not snake_case_).
+        Affected: FileHeader::ConstSection (8), PacketHeader (3), FileFooter::ConstSection (4), PacketIndexEntry (2), ColumnDefinition (2), Change (3), Callbacks (1).
+        Private members (const_section_, packet_index_, callbacks_, etc.) correctly retain trailing underscore.
+        Updated SKILLS.md naming table to distinguish public vs private member convention.
+    All 327 GTest + 76 C API + Row API tests pass on both debug and release builds.
 
-10. Change flat wire format: Each row is encoded as: bits_ (contains bool columns only), data_(packed / without padding / no alignment), strg_lengths [vector of uint16_t], strg_data [vector of const char*]
+10. Change "flat" (none-ZoH) wire format to optimize compression and read & write performance
+        Porpoposal new format should look like this: 
+            - bits_ (directly write Bitset to buffer, using Bitset.writeTo() and Bitset.readFrom() functions. Aligns to single byte boundary.
+            - data_ (all primivites / arithmetics, but remove padding, no alignment)
+            - strg_lengths [vector(sequenc) of uint16_t] (as many entries as string columns defined in layout
+            - strg_data [vector of const char*, strings payload]
         - faster serializatzion / deserialization as wire format is closer to Row format, no need to calculate strAddr.
         - small footprint (bool to be stored as bits), no strAddr no offsets stored and calculated
+
 
 11. Restructure Interaction between Row(classes) and Reader/Writer. Proposal: Introduce a Serializer / Deserializier layer within the API that is going to allow us to support different Encoding schemas, limiting the impact on Row, Reader and Writer classes.
         Issue: Currently serializer and deserailizer functionalities are tightly integrated with row, this:
