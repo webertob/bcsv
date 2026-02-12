@@ -1,0 +1,4 @@
+# Benchmark results are machine-specific and not committed
+runs/
+results/
+__pycache__/

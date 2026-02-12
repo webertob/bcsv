@@ -5,6 +5,11 @@
  * 
  * Licensed under the MIT License. See LICENSE file in the project root 
  * for full license information.
+ *
+ * DEPRECATED: This benchmark is superseded by the modular benchmark suite.
+ * Use bench_macro_datasets and bench_micro_types instead.
+ * Build with -DBCSV_ENABLE_LEGACY_BENCHMARKS=ON to compile this file.
+ * Will be removed in a future version.
  */
 
 #include <iostream>

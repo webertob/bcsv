@@ -36,6 +36,8 @@ struct Config {
     bool help = false;
     bool force_delimiter = false;  // True if user explicitly set delimiter
     bool use_zoh = true;  // Use Zero-Order Hold compression by default
+    bool benchmark = false;  // Print timing stats to stderr
+    bool json_output = false;  // Emit JSON timing blob to stdout
 };
 
 // Enhanced data type detection with range analysis
@@ -491,6 +493,8 @@ void printUsage(const char* program_name) {
     std::cout << "  --decimal-separator CHAR  Decimal separator: '.' or ',' (default: '.')\n";
     std::cout << "  --no-zoh               Disable Zero-Order Hold compression (default: enabled)\n";
     std::cout << "  -v, --verbose           Enable verbose output\n";
+    std::cout << "  --benchmark             Print timing stats (wall clock, rows/s, MB/s) to stderr\n";
+    std::cout << "  --json                  With --benchmark: emit JSON timing blob to stdout\n";
     std::cout << "  -h, --help              Show this help message\n\n";
     std::cout << "Examples:\n";
     std::cout << "  " << program_name << " data.csv\n";
@@ -528,6 +532,10 @@ Config parseArgs(int argc, char* argv[]) {
             config.use_zoh = false;
         } else if (arg == "-v" || arg == "--verbose") {
             config.verbose = true;
+        } else if (arg == "--benchmark") {
+            config.benchmark = true;
+        } else if (arg == "--json") {
+            config.json_output = true;
         } else if (arg == "--decimal-separator") {
             if (i + 1 < argc) {
                 std::string sep = argv[++i];
@@ -845,6 +853,32 @@ int main(int argc, char* argv[]) {
             std::cout << "  Additional space used: " << (output_file_size - input_file_size) << " bytes" << std::endl;
         }
         std::cout << "  Compression mode: " << (config.use_zoh ? "ZoH enabled" : "Standard") << std::endl;
+
+        // --benchmark: structured timing output
+        if (config.benchmark) {
+            if (config.json_output) {
+                // JSON blob to stdout
+                std::cout << "{\"tool\":\"csv2bcsv\""
+                          << ",\"input_file\":\"" << config.input_file << "\""
+                          << ",\"output_file\":\"" << config.output_file << "\""
+                          << ",\"rows\":" << row_count
+                          << ",\"columns\":" << headers.size()
+                          << ",\"input_bytes\":" << input_file_size
+                          << ",\"output_bytes\":" << output_file_size
+                          << ",\"wall_ms\":" << duration_ms
+                          << ",\"throughput_mb_s\":" << std::fixed << std::setprecision(2) << throughput_mb_s
+                          << ",\"rows_per_sec\":" << std::fixed << std::setprecision(0) << rows_per_sec
+                          << ",\"compression_ratio\":" << std::fixed << std::setprecision(1) << compression_ratio
+                          << ",\"zoh\":" << (config.use_zoh ? "true" : "false")
+                          << "}" << std::endl;
+            } else {
+                std::cerr << "[benchmark] csv2bcsv: "
+                          << row_count << " rows, "
+                          << duration_ms << " ms, "
+                          << std::fixed << std::setprecision(2) << throughput_mb_s << " MB/s, "
+                          << std::fixed << std::setprecision(0) << rows_per_sec << " rows/s\n";
+            }
+        }
         
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;

@@ -1,4 +1,15 @@
-Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment is not considered, as we favor small file size. For temporary data and algorithms, higher-order alignment should be used.
+background:
+-  we are developing the bcsv library. The Binary-CSV (BCSV) library that tries to combine the flexibility of CSV-files with the speed and size efficency of a binary format. See README.md and ARCHITECTURE.md ffor background.
+- bcsv sources are located in ./include/bcsv
+- examples demonstrating usage of the BCSV, also used for debugging and quality assurance are located in ./examples
+- test are located in ./tests
+- ./tmp provides space for temporary experiments and runs and is not version controlled (ignored) by git
+- we are using cmake & ninja for builds
+- we are using google test for tests ./tests/bcsv_gtest
+- benchmark suite is located under:
+- documentation (also on the API) is provided here:
+
+
 
 [x] 0.  Write project mission statement, upload to git hub
     Aims on combining the easy usage of CSV files with the performance and file size of a binary format. It should perform specifically well for large time series data sets and also cover small embedded platforms. Therefore it is an explicit requirement that we support files that are larger than the available memory (RAM), thus the file is read in chunks or rows. For the same reason the computational effort should be reasonable small. In order to support real-time processing the call time to write or read data should be constant. 
@@ -121,7 +132,48 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
                   columns is only valid until the next get(size_t) call for a bool column on the same thread.
             Tested: 299/299 tests pass (debug + release). All examples and benchmarks verified.
 
-9 Restructure Interaction between Row(classes) and Reader/Writer. Proposal: Introduce a Serializer / Deserializier layer within the API that is going to allow us to support different Encoding schemas, limiting the impact on Row, Reader and Writer classes.
+[x] 9. Improve benchmark suite — see benchmark/BENCHMARK_PLAN.md for authoritative plan
+    [x] Phase 1 — MVP: Fair CSV + Key Datasets + JSON Output + Basic Report
+        - fair CSV baseline using Row::visitConst() + std::to_chars() (no ostream overhead)  
+        - CsvReader using std::from_chars() for all types including float/double
+        - 4 dataset profiles: mixed_generic, sparse_events, sensor_noisy, string_heavy
+        - bench_macro_datasets: CSV / BCSV Flexible / BCSV ZoH, round-trip validation, JSON output
+        - bench_micro_types: Google Benchmark per-type Get/Set/Visit/Serialize
+        - Python orchestrator (benchmark/run_benchmarks.py) + report generator
+        - Files: tests/bench_common.hpp, bench_datasets.hpp, bench_macro_datasets.cpp, bench_micro_types.cpp
+    [x] Phase 2 — Full Dataset Coverage + CLI Tool Benchmarks + Persistence
+        - add 5 dataset profiles: bool_heavy, arithmetic_wide, simulation_smooth, weather_timeseries, high_cardinality_string
+        - add --size=S|M|L|XL flag (10K/100K/500K/2M rows)
+        - add --benchmark flag to bcsv2csv and csv2bcsv CLI tools
+        - integrate CLI tool benchmarks into orchestrator (csv→bcsv→csv round-trip)
+        - persistent result storage in benchmark/runs/<hostname>/<timestamp>/, cleanup temp files
+    [x] Phase 3 — External Comparison, Reporting, Regression Detection
+        - optional external CSV lib benchmark (vincentlaucsb/csv-parser via FetchContent)
+        - enhanced Python reporting: bar charts, speedup tables, compression ratios
+        - benchmark/compare_runs.py: regression detection, persistent leaderboard
+    [x] Phase 4 — Polish, CI Integration, Documentation
+        - GitHub Actions workflow: sweep on PR, full on release
+        - update README.md and tests/README.md with benchmark docs
+        - deprecate legacy benchmark_large.cpp and benchmark_performance.cpp
+    Follow-ups (from Phase 2 analysis):
+        [ ] Multi-repetition support: add --repeat=N flag to bench_macro_datasets with mean ± stddev reporting
+        [x] CPU pinning: taskset -c 0 wrapper in run_benchmarks.py (--no-pin to disable)
+        [x] Warm-up run: 100-row warmup iteration runs automatically before measurement
+
+9.b For better AI/Co-development create persitent information on the project:
+    - build skill
+    - test skill
+    - benchmark skill
+    - project goals
+    - project constrains
+    - code formation rules & preferences
+    - project structure / file structure
+
+10. Change flat wire format: Each row is encoded as: bits_ (contains bool columns only), data_(packed / without padding / no alignment), strg_lengths [vector of uint16_t], strg_data [vector of const char*]
+        - faster serializatzion / deserialization as wire format is closer to Row format, no need to calculate strAddr.
+        - small footprint (bool to be stored as bits), no strAddr no offsets stored and calculated
+
+11. Restructure Interaction between Row(classes) and Reader/Writer. Proposal: Introduce a Serializer / Deserializier layer within the API that is going to allow us to support different Encoding schemas, limiting the impact on Row, Reader and Writer classes.
         Issue: Currently serializer and deserailizer functionalities are tightly integrated with row, this:
             - makes row heavier (memory) and more complex than required, as it stores data required for serilization/deserialization, e.g. (wire)offsets_ within RowView and offset_var_ in all Row classes.
               which in many use cases may not be needed and limits rows ability to be used as lightweight facility to collect and transfer information within an application.
@@ -164,7 +216,7 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
             - run&pass benchmarks
             - build examples and CLI tools
 
-10. Implement CSV write and read functionality using the BCSV interface
+12. Implement CSV write and read functionality using the BCSV interface
     10.a: Restructure BCSV Reader/ Writer API
         - Create a ReadAPI and WriterAPI class that defined the basic functionality each Reader and Writer needs to support.
         - Prepare for spars rows (RowView and direct access)
@@ -178,38 +230,20 @@ Decisions: The file format uses 8-bit/1-byte alignment. Higher-order alignment i
     10.c: Update CLI tools csv-to-bcsv and bcsv2csv to use new CSV Reader/Writer
     10.b: Update Benchmarks to use new CSV Reader/Writer
         
-10. Improve benchmarks (more realistic use cases, better coverage, better insights)
-    - ensure csv code in benchmark_large is comprable quality -> not cheating
-    - update generic data set for ZoH, to be more represntative
-    - indroduce official data sets (references)
-    - add csv-to-bcsv to large_scale_benchmark
-    - add bcsv-to-csv to large_scale_benchmark
-    - add performance metrics to bcsv2csv and csv2bcsv tools
-    - python based benchmark suite:
-        - use the CLI tools
-        - Generate reporting --> MatPlot, MarkUps. --> Human and machine readable
-        - store reports with data and machine/host information for later reference
-        - compare against: https://github.com/vincentlaucsb/csv-parser
 
-12. Change flat wire format: Each row is encoded as: bits_ (contains bool columns only), data_(packed / without padding / no alignment), strg_lengths [vector of uint16_t], strg_data [vector of const char*]
-        - faster serializatzion / deserialization as wire format is closer to Row format, no need to calculate strAddr.
-        - small footprint (bool to be stored as bits), no strAddr no offsets stored and calculated
-
-Samstag
-Samstag
-11. Update Tools and Libraries to use new API
+13. Update Tools and Libraries to use new API
     update and test CLI tool to use new C_API
     Update CLI tools to auto-detect FileFlags::ZERO_ORDER_HOLD and switch to ReaderZoH (or surface a clear message). 
     Medium: CLI tools don’t support ZoH outputs by default, while csv2bcsv still defaults to ZoH. The CLI tools (bcsvHeader, bcsvHead, bcsvTail, bcsv2csv) construct Reader<Layout> with Tracking disabled, which will refuse ZoH files. This is a UX/documentation mismatch: the default csv2bcsv output is not readable by those tools without --no-zoh. See csv2bcsv default in csv2bcsv.cpp:31-40 and the default reader usage in
     update and test python libraries
+        - add python benchmarks
     update and test C# (Unity)
+        - add C# benchmarks
+        - add Unity / bcsv benchmark
 
 Sonntag API freez
 Sonntag: Switch Gears Dr
-Sonntag API freez
-Sonntag: Switch Gears Dr
-
-13. Implement new row encoding schema, using variable length encoding for float and integer values
+14. Implement new row encoding schema, using variable length encoding for float and integer values
     Main usage of bcsv is the handling of time-series data. Thus we expect many rcurring or constantly falling or raising values and values that are similar to previouse values. In many cases the full extend of a variable type is not required to encode the actual value.
     This feature is working on a per row level, not only a single cell/value as the current vle_encode / vle_decode functions do. It tries to provide a better balance between computational effort and compression and takes advantange on previouse data (time-series).
     

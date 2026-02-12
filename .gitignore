@@ -85,3 +85,10 @@ venv/pyvenv.cfg
 .cache/
 scratch/
 tmp/
+
+# Ignore test/benchmark temporaries
+Testing/
+bcsv_test_files/
+leaderboard.json
+benchmark/results/
+benchmark/runs/

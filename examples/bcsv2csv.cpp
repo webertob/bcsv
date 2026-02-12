@@ -21,7 +21,7 @@
 #include <sstream>
 #include <filesystem>
 #include <iomanip>
-#include <climits>
+#include <chrono>
 #include <cstdint>
 #include <vector>
 #include <bcsv/bcsv.h>
@@ -47,6 +47,10 @@ struct Config {
     int64_t slice_stop = INT64_MIN;   // INT64_MIN = not specified
     int64_t slice_step = 1;
     bool slice_parsed = false;
+
+    // Benchmark mode
+    bool benchmark = false;  // Print timing stats to stderr
+    bool json_output = false;  // Emit JSON timing blob to stdout
 };
 
 // Escape CSV field if necessary
@@ -242,6 +246,8 @@ void printUsage(const char* program_name) {
     std::cout << "  --lastRow N             End at row N (0-based, inclusive, default: last)\n";
     std::cout << "  --slice SLICE           Python-style slice notation (overrides firstRow/lastRow)\n";
     std::cout << "  -v, --verbose           Enable verbose output\n";
+    std::cout << "  --benchmark             Print timing stats (wall clock, rows/s, MB/s) to stderr\n";
+    std::cout << "  --json                  With --benchmark: emit JSON timing blob to stdout\n";
     std::cout << "  -h, --help              Show this help message\n\n";
     std::cout << "Row Selection Examples:\n";
     std::cout << "  --firstRow 100 --lastRow 200    # Rows 100-200 (inclusive)\n";
@@ -320,6 +326,10 @@ Config parseArgs(int argc, char* argv[]) {
             }
         } else if (arg == "-v" || arg == "--verbose") {
             config.verbose = true;
+        } else if (arg == "--benchmark") {
+            config.benchmark = true;
+        } else if (arg == "--json") {
+            config.json_output = true;
         } else if (arg.starts_with("-")) {
             throw std::runtime_error("Unknown option: " + arg);
         } else {
@@ -387,7 +397,10 @@ int main(int argc, char* argv[]) {
         if (!std::filesystem::exists(config.input_file)) {
             throw std::runtime_error("Input file does not exist: " + config.input_file);
         }
-        
+
+        auto input_file_size = std::filesystem::file_size(config.input_file);
+        auto bench_start = std::chrono::steady_clock::now();
+
         // Open BCSV file and get layout information
         bcsv::ReaderDirectAccess<bcsv::Layout> reader;
         reader.open(config.input_file);
@@ -563,6 +576,14 @@ int main(int argc, char* argv[]) {
         reader.close();
         output.flush();  // Ensure all data is written to file
         output.close();  // Close the output file
+
+        auto bench_end = std::chrono::steady_clock::now();
+        auto bench_dur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(bench_end - bench_start).count();
+        if (bench_dur_ms == 0) bench_dur_ms = 1;
+        double bench_sec = bench_dur_ms / 1000.0;
+        auto output_file_size = std::filesystem::file_size(config.output_file);
+        double throughput_mb_s = (static_cast<double>(input_file_size) / (1024.0 * 1024.0)) / bench_sec;
+        double rows_per_sec = static_cast<double>(output_rows_written) / bench_sec;
         
         std::cout << "Successfully converted " << output_rows_written << " rows to " << config.output_file;
         if (total_rows_read != output_rows_written) {
@@ -573,6 +594,30 @@ int main(int argc, char* argv[]) {
         if (config.verbose) {
             auto x = std::filesystem::file_size(config.output_file);
             std::cout << "Output file size: " << x << " bytes" << std::endl;
+        }
+
+        // --benchmark: print timing stats to stderr
+        if (config.benchmark) {
+            if (config.json_output) {
+                // JSON blob to stdout
+                std::cout << "{\"tool\":\"bcsv2csv\""
+                          << ",\"input_file\":\"" << config.input_file << "\""
+                          << ",\"output_file\":\"" << config.output_file << "\""
+                          << ",\"rows\":" << output_rows_written
+                          << ",\"columns\":" << layout.columnCount()
+                          << ",\"input_bytes\":" << input_file_size
+                          << ",\"output_bytes\":" << output_file_size
+                          << ",\"wall_ms\":" << bench_dur_ms
+                          << ",\"throughput_mb_s\":" << std::fixed << std::setprecision(2) << throughput_mb_s
+                          << ",\"rows_per_sec\":" << std::fixed << std::setprecision(0) << rows_per_sec
+                          << "}" << std::endl;
+            } else {
+                std::cerr << "[benchmark] bcsv2csv: "
+                          << output_rows_written << " rows, "
+                          << bench_dur_ms << " ms, "
+                          << std::fixed << std::setprecision(2) << throughput_mb_s << " MB/s, "
+                          << std::fixed << std::setprecision(0) << rows_per_sec << " rows/s\n";
+            }
         }
         
     } catch (const std::exception& e) {

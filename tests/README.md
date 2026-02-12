@@ -393,9 +393,9 @@ Use this checklist when adding new Row API functionality:
    - [ ] Cross-platform CI (Windows, macOS, ARM)
 
 3. **Long-term (Ongoing)**
-   - [ ] Performance regression tracking
+   - [x] Performance regression tracking (benchmark/compare_runs.py)
    - [ ] Memory leak detection in CI (Valgrind/ASan)
-   - [ ] Benchmark dashboard
+   - [x] Benchmark dashboard (benchmark/report_generator.py + CI workflow)
 
 ---
 
@@ -440,11 +440,93 @@ EXPECT_EQ(42, value);  // What failed? Which column? Which row?
 
 ---
 
-## Performance Benchmarks
+## Benchmark Suite
 
-### Vectorized Access Performance
+The modular benchmark suite provides comprehensive performance measurement across
+multiple dimensions. See [benchmark/BENCHMARK_PLAN.md](../benchmark/BENCHMARK_PLAN.md)
+for the full architecture and plan.
+
+### Architecture
+
+```
+bench_macro_datasets    Macro: full write→read→validate cycles per dataset profile
+bench_micro_types       Micro: per-type Get/Set, VisitConst, Serialize (Google Benchmark)
+bench_generate_csv      Utility: generates reference CSV files from dataset profiles
+bench_external_csv      External: BCSV CsvReader vs vincentlaucsb/csv-parser (optional)
+```
+
+Orchestrated by **`benchmark/run_benchmarks.py`** which builds, runs, collects JSON
+results, and invokes the CLI tool round-trip benchmark.
+
+### Dataset Profiles (9 profiles)
+
+| Profile | Columns | Character |
+|---------|---------|-----------|
+| `mixed_generic` | 72 | General-purpose mix of all types |
+| `sparse_events` | 100 | Many empty/zero columns, burst data |
+| `sensor_noisy` | 50 | High-entropy floats, ZoH-unfriendly |
+| `string_heavy` | 30 | Predominantly string columns |
+| `bool_heavy` | 128+ | Mostly bool columns, bitset-friendly |
+| `arithmetic_wide` | 200 | Pure numeric, wide rows |
+| `simulation_smooth` | 100 | Slowly-drifting floats, ZoH-optimal |
+| `weather_timeseries` | 40 | Realistic mixed weather telemetry |
+| `high_cardinality_string` | 50 | UUID strings, worst-case compression |
+
+### Running Benchmarks
+
+```bash
+# Quick smoke test (S size, ~30 sec)
+python3 benchmark/run_benchmarks.py --mode=sweep --size=S --build-type=Release
+
+# Standard run (M size, ~2 min)
+python3 benchmark/run_benchmarks.py --mode=sweep --size=M --build-type=Release
+
+# Full benchmark (L size, ~90 sec at -O3 on Ryzen 9 5900X)
+python3 benchmark/run_benchmarks.py --mode=sweep --size=L --build-type=Release \
+  --output-dir=benchmark/results/$(hostname)/$(date +%Y.%m.%d_%H.%M)
+
+# Generate charts and markdown report
+python3 benchmark/report_generator.py <output-dir>
+
+# Compare two runs for regressions (5% threshold)
+python3 benchmark/compare_runs.py <baseline-dir> <candidate-dir>
+```
+
+### Size Variants
+
+| Flag | Rows | Typical Duration | Use Case |
+|------|------|-----------------|----------|
+| `--size=S` | 10K | ~1 sec/profile | CI, quick smoke test |
+| `--size=M` | 100K | ~10 sec/profile | Development iteration |
+| `--size=L` | 500K | ~10 sec/profile at -O3 | Release benchmarks |
+| `--size=XL` | 2M | ~40 sec/profile | Stress testing |
+
+### CMake Options
+
+| Option | Default | Purpose |
+|--------|---------|---------|
+| `BCSV_ENABLE_BENCHMARKS` | ON | Build macro/micro/generator benchmarks |
+| `BCSV_ENABLE_MICRO_BENCHMARKS` | ON | Build Google Benchmark micro-benchmarks |
+| `BCSV_ENABLE_EXTERNAL_CSV_BENCH` | OFF | Build external csv-parser comparison |
+
+### Output Files
+
+All outputs are JSON for machine consumption:
+
+| File | Producer | Contents |
+|------|----------|----------|
+| `macro_results.json` | `bench_macro_datasets` | Write/read times, file sizes, validation |
+| `micro_results.json` | `bench_micro_types` | Per-type latency (ns/op) |
+| `cli_results.json` | orchestrator | CLI tool round-trip timing |
+| `external_results.json` | `bench_external_csv` | BCSV vs csv-parser read comparison |
+| `platform.json` | orchestrator | CPU, RAM, OS, git version |
+| `report.md` | `report_generator.py` | Markdown report with inline charts |
+
+### Performance Benchmarks
+
+#### Vectorized Access Performance
 - **Individual access:** 152ms for 1M get/set operations
-- **Bulk access:** 63ms for 1M get/set operations  
+- **Bulk access:** 63ms for 1M get/set operations
 - **Speedup:** 2.39x
 
 ### ZoH Compression Effectiveness
@@ -506,6 +588,6 @@ For questions or issues with tests:
 
 ---
 
-**Last Updated:** February 4, 2026  
+**Last Updated:** February 12, 2026  
 **Test Suite Version:** 1.3.0  
 **Maintained by:** BCSV Development Team

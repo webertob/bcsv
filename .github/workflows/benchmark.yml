@@ -1,0 +1,255 @@
+# Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+#
+# This file is part of the BCSV library.
+#
+# Licensed under the MIT License. See LICENSE file in the project root
+# for full license information.
+
+name: Benchmark Suite
+
+on:
+  pull_request:
+    branches: [ main, master ]
+    paths:
+      - 'include/**'
+      - 'tests/**'
+      - 'examples/**'
+      - 'CMakeLists.txt'
+      - 'tests/CMakeLists.txt'
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      size:
+        description: 'Dataset size (S/M/L/XL)'
+        required: false
+        default: 'S'
+      mode:
+        description: 'Benchmark mode (sweep or full)'
+        required: false
+        default: 'sweep'
+        type: choice
+        options:
+          - sweep
+          - full
+
+permissions:
+  contents: read
+  pull-requests: write
+
+env:
+  BUILD_TYPE: Release
+  CXX_FLAGS: "-O3"
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────
+  # Quick benchmark on every PR (S size, ~30 seconds)
+  # ──────────────────────────────────────────────────────────────────
+  benchmark-pr:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+    - name: Checkout PR
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y -q ninja-build python3-matplotlib
+
+    - name: Configure CMake (Release)
+      run: |
+        cmake -S . -B build \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+          -DCMAKE_CXX_FLAGS="${{ env.CXX_FLAGS }}" \
+          -DBCSV_ENABLE_BENCHMARKS=ON \
+          -DBCSV_ENABLE_MICRO_BENCHMARKS=ON
+
+    - name: Build benchmarks
+      run: cmake --build build --target bench_macro_datasets bench_micro_types bench_generate_csv -j$(nproc)
+
+    - name: Build CLI tools
+      run: cmake --build build --target csv2bcsv bcsv2csv -j$(nproc)
+
+    - name: Run benchmark sweep (S size)
+      run: |
+        python3 benchmark/run_benchmarks.py \
+          --mode=sweep \
+          --size=S \
+          --build-type=Release \
+          --output-dir=${{ runner.temp }}/bench_results
+
+    - name: Generate report
+      run: |
+        python3 benchmark/report_generator.py \
+          ${{ runner.temp }}/bench_results
+
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results-pr-${{ github.event.number }}
+        path: |
+          ${{ runner.temp }}/bench_results/*.json
+          ${{ runner.temp }}/bench_results/report.md
+          ${{ runner.temp }}/bench_results/*.png
+        retention-days: 30
+
+    - name: Post summary to PR
+      if: always()
+      run: |
+        REPORT="${{ runner.temp }}/bench_results/report.md"
+        if [ -f "$REPORT" ]; then
+          # Extract the speedup summary table for a concise PR comment
+          echo "## Benchmark Results (S size — PR #${{ github.event.number }})" > comment.md
+          echo "" >> comment.md
+          echo "<details><summary>Speedup Summary (BCSV vs CSV)</summary>" >> comment.md
+          echo "" >> comment.md
+          # Extract from first table header to the next blank line after the table
+          sed -n '/^## Speedup Summary/,/^$/p' "$REPORT" >> comment.md
+          echo "" >> comment.md
+          echo "</details>" >> comment.md
+          echo "" >> comment.md
+          echo "<details><summary>Compression Ratios</summary>" >> comment.md
+          echo "" >> comment.md
+          sed -n '/^## Compression Ratios/,/^$/p' "$REPORT" >> comment.md
+          echo "" >> comment.md
+          echo "</details>" >> comment.md
+          echo "" >> comment.md
+          echo "*Full report available in [workflow artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})*" >> comment.md
+          cat comment.md >> "$GITHUB_STEP_SUMMARY"
+        else
+          echo "⚠️ Benchmark report not generated" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+  # ──────────────────────────────────────────────────────────────────
+  # Full benchmark on release tags (L size, ~2 minutes)
+  # ──────────────────────────────────────────────────────────────────
+  benchmark-release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout release
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y -q ninja-build python3-matplotlib
+
+    - name: Configure CMake (Release)
+      run: |
+        cmake -S . -B build \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+          -DCMAKE_CXX_FLAGS="${{ env.CXX_FLAGS }}" \
+          -DBCSV_ENABLE_BENCHMARKS=ON \
+          -DBCSV_ENABLE_MICRO_BENCHMARKS=ON \
+          -DBCSV_ENABLE_EXTERNAL_CSV_BENCH=ON
+
+    - name: Build all benchmarks
+      run: cmake --build build -j$(nproc)
+
+    - name: Run full benchmark sweep (L size)
+      run: |
+        python3 benchmark/run_benchmarks.py \
+          --mode=sweep \
+          --size=L \
+          --build-type=Release \
+          --output-dir=${{ runner.temp }}/bench_results
+
+    - name: Generate report
+      run: |
+        python3 benchmark/report_generator.py \
+          ${{ runner.temp }}/bench_results
+
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results-${{ github.ref_name }}
+        path: |
+          ${{ runner.temp }}/bench_results/*.json
+          ${{ runner.temp }}/bench_results/report.md
+          ${{ runner.temp }}/bench_results/*.png
+        retention-days: 90
+
+    - name: Post release summary
+      run: |
+        REPORT="${{ runner.temp }}/bench_results/report.md"
+        if [ -f "$REPORT" ]; then
+          echo "## Benchmark Results — ${{ github.ref_name }} (L size)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+        fi
+
+  # ──────────────────────────────────────────────────────────────────
+  # Manual dispatch — configurable size and mode
+  # ──────────────────────────────────────────────────────────────────
+  benchmark-manual:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y -q ninja-build python3-matplotlib
+
+    - name: Configure CMake (Release)
+      run: |
+        cmake -S . -B build \
+          -G Ninja \
+          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
+          -DCMAKE_CXX_FLAGS="${{ env.CXX_FLAGS }}" \
+          -DBCSV_ENABLE_BENCHMARKS=ON \
+          -DBCSV_ENABLE_MICRO_BENCHMARKS=ON \
+          -DBCSV_ENABLE_EXTERNAL_CSV_BENCH=ON
+
+    - name: Build all benchmarks
+      run: cmake --build build -j$(nproc)
+
+    - name: Run benchmarks (${{ inputs.mode }}, ${{ inputs.size }})
+      run: |
+        python3 benchmark/run_benchmarks.py \
+          --mode=${{ inputs.mode }} \
+          --size=${{ inputs.size }} \
+          --build-type=Release \
+          --output-dir=${{ runner.temp }}/bench_results
+
+    - name: Generate report
+      run: |
+        python3 benchmark/report_generator.py \
+          ${{ runner.temp }}/bench_results
+
+    - name: Upload results
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results-manual-${{ inputs.mode }}-${{ inputs.size }}
+        path: |
+          ${{ runner.temp }}/bench_results/*.json
+          ${{ runner.temp }}/bench_results/report.md
+          ${{ runner.temp }}/bench_results/*.png
+        retention-days: 90
+
+    - name: Post summary
+      run: |
+        REPORT="${{ runner.temp }}/bench_results/report.md"
+        if [ -f "$REPORT" ]; then
+          echo "## Benchmark (${{ inputs.mode }}, size=${{ inputs.size }})" >> "$GITHUB_STEP_SUMMARY"
+          cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
+        fi
