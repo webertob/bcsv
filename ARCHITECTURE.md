@@ -212,10 +212,10 @@ Technical design, requirements, and implementation roadmap
 │ ┌─────────────────────────────────────────────────────┐ │
 │ │            Compressed Payload (LZ4)                 │ │
 │ │  ┌───────────────────────────────────────────────┐  │ │
-│ │  │  Row 1 data (fixed size per layout)           │  │ │
-│ │  │  Row 2 data                                   │  │ │
+│ │  │  Row 1: [bits_][data_][strg_lengths][strg_data]│  │ │
+│ │  │  Row 2: [bits_][data_][strg_lengths][strg_data]│  │ │
 │ │  │  ...                                          │  │ │
-│ │  │  Row N data                                   │  │ │
+│ │  │  Row N: [bits_][data_][strg_lengths][strg_data]│  │ │
 │ │  └───────────────────────────────────────────────┘  │ │
 │ └─────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────┘
@@ -235,6 +235,26 @@ Technical design, requirements, and implementation roadmap
 - Simple offset calculation
 - Portable across all platforms
 - Higher-order alignment used only for temporary/in-memory data
+
+### Row Wire Format (Flat Encoding)
+
+Each row is serialized as four consecutive sections:
+
+```
+[bits_][data_][strg_lengths][strg_data]
+```
+
+| Section | Size | Content |
+|---------|------|---------|
+| `bits_` | ⌈bool_count / 8⌉ bytes | Bit-packed boolean values in layout order |
+| `data_` | Σ sizeOf(scalar_type) | Tightly packed scalars (no alignment padding) |
+| `strg_lengths` | string_count × 2 bytes | uint16_t length per string column |
+| `strg_data` | Σ string lengths | Concatenated string payloads |
+
+Sections with zero elements contribute zero bytes.
+Scalar values are packed with no alignment — access uses memcpy.
+Boolean values use 1 bit each (not 1 byte). String offsets are
+derived from cumulative sum of lengths (no explicit offsets stored).
 
 **In-memory processing**:
 - Row buffers use natural alignment (8/16-byte)

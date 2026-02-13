@@ -42,8 +42,10 @@ namespace bcsv {
         , column_index_(other.column_index_)
         , column_types_(other.column_types_)
         , offsets_(other.offsets_)
-        , bool_mask_(other.bool_mask_)
         , tracked_mask_(other.tracked_mask_)
+        , wire_bits_size_(other.wire_bits_size_)
+        , wire_data_size_(other.wire_data_size_)
+        , wire_strg_size_(other.wire_strg_size_)
     {
         callbacks_.reserve(64);
     }
@@ -95,30 +97,34 @@ namespace bcsv {
     inline void Layout::Data::rebuildOffsets() {
         const size_t n = column_types_.size();
         offsets_.resize(n);
-        bool_mask_.resize(n);
-        bool_mask_.reset();
         tracked_mask_.resize(n);
         tracked_mask_.reset();
 
         uint32_t bitIdx  = 0;
         uint32_t dataOff = 0;
         uint32_t strgIdx = 0;
+        uint32_t wireOff = 0;  // packed wire-format data offset (no alignment)
         for (size_t i = 0; i < n; ++i) {
             ColumnType type = column_types_[i];
             if (type == ColumnType::BOOL) {
                 offsets_[i] = bitIdx++;
-                bool_mask_.set(i);
             } else if (type == ColumnType::STRING) {
                 offsets_[i] = strgIdx++;
-                tracked_mask_.set(i);
+                tracked_mask_[i] = true;
             } else {
                 uint32_t alignment = static_cast<uint32_t>(alignOf(type));
+                uint32_t size = static_cast<uint32_t>(sizeOf(type));
                 dataOff = (dataOff + (alignment - 1)) & ~(alignment - 1);
                 offsets_[i] = dataOff;
-                dataOff += static_cast<uint32_t>(sizeOf(type));
-                tracked_mask_.set(i);
+                dataOff += size;
+                wireOff += size;
+                tracked_mask_[i] = true;
             }
         }
+        // Update wire-format metadata
+        wire_bits_size_ = (bitIdx + 7) >> 3;    // ⌈bool_count / 8⌉
+        wire_data_size_ = wireOff;              // packed scalars (no alignment padding)
+        wire_strg_size_ = strgIdx;              // number of string columns
     }
 
     inline const std::string& Layout::Data::columnName(size_t index) const {
@@ -156,8 +162,8 @@ namespace bcsv {
         const bool isAppend = (position == column_types_.size() - 1); // we already inserted into column_types_
         if (type == ColumnType::BOOL) {
             if (isAppend) {
-                // O(1): offset = count of existing BOOL columns (already tracked in bool_mask_)
-                offsets_.push_back(static_cast<uint32_t>(bool_mask_.count()));
+                // O(1): offset = count of existing BOOL columns = total - tracked
+                offsets_.push_back(static_cast<uint32_t>(tracked_mask_.size() - tracked_mask_.count()));
             } else {
                 uint32_t boolIdx = 0;
                 for (size_t i = 0; i < position; ++i) {
@@ -168,7 +174,6 @@ namespace bcsv {
                     if (column_types_[i] == ColumnType::BOOL) offsets_[i]++;
                 }
             }
-            bool_mask_.insert(position, true);
             tracked_mask_.insert(position, false);
         } else if (type == ColumnType::STRING) {
             // String offset = sequential string index (count of STRING columns before us).
@@ -187,7 +192,6 @@ namespace bcsv {
                     }
                 }
             }
-            bool_mask_.insert(position, false);
             tracked_mask_.insert(position, true);
         } else {
             // Scalar: byte offset depends on alignment
@@ -214,8 +218,17 @@ namespace bcsv {
                     }
                 }
             }
-            bool_mask_.insert(position, false);
             tracked_mask_.insert(position, true);
+        }
+
+        // Update wire-format metadata incrementally
+        const uint32_t boolCount = static_cast<uint32_t>(tracked_mask_.size() - tracked_mask_.count());
+        if (type == ColumnType::BOOL) {
+            wire_bits_size_ = (boolCount + 7) >> 3;
+        } else if (type == ColumnType::STRING) {
+            wire_strg_size_++;
+        } else {
+            wire_data_size_ += static_cast<uint32_t>(sizeOf(type));
         }
     }
 
@@ -230,11 +243,47 @@ namespace bcsv {
         // Notify observers BEFORE making changes
         notifyUpdate(changes);
         
+        // Capture removed column info for incremental update
+        const ColumnType removedType = column_types_[index];
+
         // Now update the layout
         column_index_.remove(column_names_[index]);
         column_names_.erase(column_names_.begin() + index);
         column_types_.erase(column_types_.begin() + index);
-        rebuildOffsets();
+
+        // Incremental offset/mask update.
+        tracked_mask_.erase(index);
+        offsets_.erase(offsets_.begin() + index);
+
+        if (removedType == ColumnType::BOOL) {
+            // Re-number BOOL indices after the removed position
+            for (size_t i = index; i < column_types_.size(); ++i) {
+                if (column_types_[i] == ColumnType::BOOL) offsets_[i]--;
+            }
+            const uint32_t boolCount = static_cast<uint32_t>(tracked_mask_.size() - tracked_mask_.count());
+            wire_bits_size_ = (boolCount + 7) >> 3;
+        } else if (removedType == ColumnType::STRING) {
+            // Re-number STRING indices after the removed position
+            for (size_t i = index; i < column_types_.size(); ++i) {
+                if (column_types_[i] == ColumnType::STRING) offsets_[i]--;
+            }
+            wire_strg_size_--;
+        } else {
+            // Scalar: recompute all scalar offsets (alignment-dependent)
+            uint32_t dataOff = 0;
+            uint32_t wireOff = 0;
+            for (size_t i = 0; i < column_types_.size(); ++i) {
+                ColumnType t = column_types_[i];
+                if (t != ColumnType::BOOL && t != ColumnType::STRING) {
+                    uint32_t a = static_cast<uint32_t>(alignOf(t));
+                    dataOff = (dataOff + (a - 1)) & ~(a - 1);
+                    offsets_[i] = dataOff;
+                    dataOff += static_cast<uint32_t>(sizeOf(t));
+                    wireOff += static_cast<uint32_t>(sizeOf(t));
+                }
+            }
+            wire_data_size_ = wireOff;
+        }
     }
 
     inline void Layout::Data::setColumnName(size_t index, std::string name) {
@@ -351,8 +400,10 @@ namespace bcsv {
         column_index_.clear();
         column_types_.clear();
         offsets_.clear();
-        bool_mask_.resize(0);
         tracked_mask_.resize(0);
+        wire_bits_size_ = 0;
+        wire_data_size_ = 0;
+        wire_strg_size_ = 0;
         // Note: clear() doesn't trigger notifications
     }
 

@@ -293,6 +293,9 @@ namespace bcsv {
         }
 
         // read row data
+        if (rowLen > MAX_ROW_LENGTH) [[unlikely]] {
+            throw std::runtime_error("Error: Row length exceeds MAX_ROW_LENGTH (" + std::to_string(rowLen) + " > " + std::to_string(MAX_ROW_LENGTH) + ")");
+        }
         row_buffer_.resize(rowLen);
         stream_.read(reinterpret_cast<char*>(row_buffer_.data()), rowLen);
         if (!stream_ || stream_.gcount() != static_cast<std::streamsize>(rowLen)) {

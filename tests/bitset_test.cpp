@@ -891,6 +891,167 @@ TEST_F(DynamicBitsetTest, Modifiers_Insert_BoundariesAndMiddle) {
     insert_and_check(bs.size() / 2, true);
 }
 
+// ============================================================================
+// Erase Tests
+// ============================================================================
+
+TEST_F(DynamicBitsetTest, Modifiers_Erase_SingleElement) {
+    // Erase from a 1-element bitset
+    Bitset<> bs(1);
+    bs.set(0);
+    EXPECT_EQ(bs.size(), 1u);
+    EXPECT_TRUE(bs[0]);
+
+    bs.erase(0);
+    EXPECT_EQ(bs.size(), 0u);
+}
+
+TEST_F(DynamicBitsetTest, Modifiers_Erase_Front) {
+    // Erase first element, remaining bits shift down
+    Bitset<> bs(8);
+    std::vector<bool> model(8, false);
+    // Set pattern: 1 0 1 1 0 0 1 0
+    for (size_t i : {0, 2, 3, 6}) { bs.set(i); model[i] = true; }
+    ExpectMatchesModel(bs, model);
+
+    bs.erase(0);
+    model.erase(model.begin());
+    ExpectMatchesModel(bs, model);
+}
+
+TEST_F(DynamicBitsetTest, Modifiers_Erase_Back) {
+    // Erase last element
+    Bitset<> bs(8);
+    std::vector<bool> model(8, false);
+    for (size_t i : {0, 2, 3, 6}) { bs.set(i); model[i] = true; }
+
+    bs.erase(7);
+    model.erase(model.begin() + 7);
+    ExpectMatchesModel(bs, model);
+}
+
+TEST_F(DynamicBitsetTest, Modifiers_Erase_Middle) {
+    // Erase from middle — tests carry chain across same word
+    Bitset<> bs(8);
+    std::vector<bool> model(8, false);
+    for (size_t i : {0, 2, 3, 6}) { bs.set(i); model[i] = true; }
+
+    bs.erase(4);
+    model.erase(model.begin() + 4);
+    ExpectMatchesModel(bs, model);
+}
+
+TEST_F(DynamicBitsetTest, Modifiers_Erase_WordBoundary) {
+    // Erase at position 63 in a 128-bit bitset — tests carry from word 1 to word 0
+    Bitset<> bs(128);
+    std::vector<bool> model(128, false);
+    // Set bits near the boundary
+    for (size_t i : {62, 63, 64, 65}) { bs.set(i); model[i] = true; }
+    ExpectMatchesModel(bs, model);
+
+    bs.erase(63);
+    model.erase(model.begin() + 63);
+    ExpectMatchesModel(bs, model);
+    // After erase: old bit 64 (true) should now be at position 63
+    EXPECT_TRUE(bs[63]);
+}
+
+TEST_F(DynamicBitsetTest, Modifiers_Erase_MultipleSequential) {
+    // Repeated erase to drain a bitset, comparing against model at each step
+    Bitset<> bs(65);
+    std::vector<bool> model(65, false);
+    // Set alternating bits
+    for (size_t i = 0; i < 65; i += 2) { bs.set(i); model[i] = true; }
+    ExpectMatchesModel(bs, model);
+
+    // Erase from various positions
+    auto erase_and_check = [&](size_t pos) {
+        bs.erase(pos);
+        model.erase(model.begin() + static_cast<std::ptrdiff_t>(pos));
+        ExpectMatchesModel(bs, model);
+    };
+
+    erase_and_check(0);            // front
+    erase_and_check(bs.size() - 1); // back
+    erase_and_check(32);           // near word boundary
+    erase_and_check(bs.size() / 2); // middle
+}
+
+TEST_F(DynamicBitsetTest, Modifiers_Erase_AllOnes) {
+    // Erase from a bitset with all bits set — carry chain must propagate 1s correctly
+    Bitset<> bs(130);
+    std::vector<bool> model(130, true);
+    for (size_t i = 0; i < 130; ++i) bs.set(i);
+    ExpectMatchesModel(bs, model);
+
+    bs.erase(64);  // word boundary
+    model.erase(model.begin() + 64);
+    ExpectMatchesModel(bs, model);
+    EXPECT_EQ(bs.count(), 129u);
+}
+
+// ============================================================================
+// PushBack Tests
+// ============================================================================
+
+TEST_F(DynamicBitsetTest, Modifiers_PushBack_GrowFromEmpty) {
+    Bitset<> bs(0);
+    std::vector<bool> model;
+
+    for (size_t i = 0; i < 130; ++i) {
+        bool val = (i % 3 == 0);
+        bs.pushBack(val);
+        model.push_back(val);
+        ExpectMatchesModel(bs, model);
+    }
+}
+
+TEST_F(DynamicBitsetTest, Modifiers_PushBack_AppendToExisting) {
+    Bitset<> bs(64, 0xDEADBEEF12345678ULL);
+    std::vector<bool> model(64, false);
+    for (size_t i = 0; i < 64; ++i) {
+        model[i] = (0xDEADBEEF12345678ULL >> i) & 1;
+    }
+    ExpectMatchesModel(bs, model);
+
+    // Push some values across the word boundary
+    bs.pushBack(true);   model.push_back(true);
+    bs.pushBack(false);  model.push_back(false);
+    bs.pushBack(true);   model.push_back(true);
+    ExpectMatchesModel(bs, model);
+    EXPECT_EQ(bs.size(), 67u);
+}
+
+TEST_F(DynamicBitsetTest, Modifiers_EraseAndPushBack_RoundTrip) {
+    // Insert then erase, pushBack then erase — verify model consistency
+    Bitset<> bs(0);
+    std::vector<bool> model;
+
+    // Build up with pushBack
+    for (int i = 0; i < 20; ++i) {
+        bs.pushBack(i & 1);
+        model.push_back(i & 1);
+    }
+    ExpectMatchesModel(bs, model);
+
+    // Erase from middle several times
+    for (int i = 0; i < 5; ++i) {
+        size_t pos = bs.size() / 2;
+        bs.erase(pos);
+        model.erase(model.begin() + static_cast<std::ptrdiff_t>(pos));
+    }
+    ExpectMatchesModel(bs, model);
+    EXPECT_EQ(bs.size(), 15u);
+
+    // Push back more
+    for (int i = 0; i < 10; ++i) {
+        bs.pushBack(!(i & 1));
+        model.push_back(!(i & 1));
+    }
+    ExpectMatchesModel(bs, model);
+    EXPECT_EQ(bs.size(), 25u);
+}
+
 TEST_F(DynamicBitsetTest, Operations_AllowSameAsFixed) {
     // Verify dynamic bitsets support all operations that fixed bitsets do
     Bitset<> bs(64, 0xABCDEF0123456789ULL);
@@ -1376,7 +1537,7 @@ TEST(BitsetSummaryTest, AllSizesWork) {
     std::cout << "✓ Bitwise operators: &, |, ^, ~, <<, >>\n";
     std::cout << "✓ Conversions: toUlong, toUllong, toString, toFixed\n";
     std::cout << "✓ I/O operations: data, readFrom, writeTo\n";
-    std::cout << "✓ Dynamic operations: resize, reserve, clear, shrinkToFit, insert\n";
+    std::cout << "✓ Dynamic operations: resize, reserve, clear, shrinkToFit, insert, erase, pushBack\n";
     std::cout << "✓ Edge cases: word boundaries, partial words, out of range\n";
     std::cout << "✓ Std::Bitset parity: sizes 0-130, shifts, bitwise ops\n";
     std::cout << "✓ Interoperability: fixed ↔ dynamic conversions\n";

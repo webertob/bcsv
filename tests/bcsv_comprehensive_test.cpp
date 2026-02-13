@@ -3366,16 +3366,13 @@ TEST_F(BCSVBoundaryTests, ProgressiveSizes) {
 }
 
 TEST_F(BCSVBoundaryTests, RowSizeLimit_16MB_StressTest) {
-    // Test that we can write rows up to ~16MB
+    // Test that we can write and read back rows with large total string payload.
+    // The flat wire format removed the StringAddr 64KB offset limit,
+    // so large string rows (up to MAX_ROW_LENGTH ~16MB) should now work.
     const std::string filepath = getTestFilePath("row_size_16mb_stress");
     
-    // Create a layout with many string columns to reach 16MB
-    // 16MB = 16 * 1024 * 1024 = 16,777,216 bytes
-    // Max string length = 65535
-    // We need approx 256 columns of max length strings to reach 16MB
-    
     const size_t num_columns = 260;
-    const size_t string_len = 60000; // 60KB per string
+    const size_t string_len = 60000; // 60KB per string, total ~15.6MB
     
     bcsv::Layout layout;
     for (size_t i = 0; i < num_columns; ++i) {
@@ -3393,20 +3390,25 @@ TEST_F(BCSVBoundaryTests, RowSizeLimit_16MB_StressTest) {
         row.set(i, large_string);
     }
     
-            // This will fail because StringAddr uses 16-bit offsets (max 64KB string heap per row)
-    EXPECT_THROW(writer.writeRow(), std::overflow_error);
+    // With flat wire format, this should succeed (total < MAX_ROW_LENGTH ~16MB)
+    EXPECT_NO_THROW(writer.writeRow());
     
     writer.close();
     
-    // Verify - file should be readable but empty or partial?
-    // Since writeRow threw, the row wasn't written.
-    // If we close, we get a valid file with 0 rows (if no other rows written).
-    
+    // Verify the row can be read back and string content matches
     bcsv::Reader<bcsv::Layout> reader;
-    if (reader.open(filepath)) {
-        ASSERT_FALSE(reader.readNext());
-        reader.close();
+    ASSERT_TRUE(reader.open(filepath));
+    ASSERT_TRUE(reader.readNext());
+    
+    for (size_t i = 0; i < num_columns; ++i) {
+        auto sv = reader.row().get<std::string_view>(i);
+        EXPECT_EQ(sv.size(), string_len) << "Column " << i << " string size mismatch";
+        if (!sv.empty()) {
+            EXPECT_EQ(sv[0], 'Z') << "Column " << i << " string content mismatch";
+        }
     }
+    
+    reader.close();
 }
 
 // ==================================================================================

@@ -1309,6 +1309,61 @@ void Bitset<N>::insert(size_t pos, bool value) requires(!IS_FIXED) {
 }
 
 template<size_t N>
+void Bitset<N>::erase(size_t pos) requires(!IS_FIXED) {
+    if (pos >= size()) {
+        throw std::out_of_range("Bitset::erase: position out of range");
+    }
+
+    const size_t old_size = size();
+
+    // Trivial: removing the last (only remaining) bit
+    if (old_size == 1) {
+        resize(0);
+        return;
+    }
+
+    // Shift all bits from (pos, old_size) one position to the left.
+    const size_t pos_word = bitToWordIndex(pos);
+    const size_t pos_bit  = bitToBitIndex(pos);
+    const size_t last_word = bitToWordIndex(old_size - 1);
+
+    word_t* data_ptr = wordData();
+
+    // Handle the word containing pos: keep lower bits, shift upper bits down
+    if (pos_bit == WORD_BITS - 1) {
+        // Erasing the MSB of this word — just clear it, carry from next word below
+        data_ptr[pos_word] &= (word_t{1} << pos_bit) - 1;
+    } else {
+        const word_t lower_mask = (word_t{1} << pos_bit) - 1;
+        const word_t lower_bits = data_ptr[pos_word] & lower_mask;
+        const word_t upper_bits = data_ptr[pos_word] >> (pos_bit + 1);
+        data_ptr[pos_word] = lower_bits | (upper_bits << pos_bit);
+    }
+
+    // Carry LSB from each subsequent word into the MSB of the previous word
+    for (size_t w = pos_word; w < last_word; ++w) {
+        const word_t next = data_ptr[w + 1];
+        // Set MSB of current word to LSB of next word
+        if (next & 1) {
+            data_ptr[w] |= word_t{1} << (WORD_BITS - 1);
+        } else {
+            data_ptr[w] &= ~(word_t{1} << (WORD_BITS - 1));
+        }
+        data_ptr[w + 1] = next >> 1;
+    }
+
+    resize(old_size - 1);
+}
+
+template<size_t N>
+void Bitset<N>::pushBack(bool value) requires(!IS_FIXED) {
+    const size_t old_size = size();
+    resize(old_size + 1);
+    // operator[] is unchecked — safe here since we just resized
+    (*this)[old_size] = value;
+}
+
+template<size_t N>
 void Bitset<N>::shrinkToFit() requires(!IS_FIXED) {
     if (size_ <= WORD_BITS) {
         resizeStorage(size_, size_, 0);

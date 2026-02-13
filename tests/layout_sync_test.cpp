@@ -396,3 +396,61 @@ TEST_F(LayoutSyncTest, Layout_RenameBackAndForth_Sync) {
     EXPECT_EQ("a", layout.columnName(0));
     EXPECT_EQ("b", layout.columnName(1));
 }
+
+// ============================================================================
+// Layout Wire Metadata Tests
+// ============================================================================
+
+TEST_F(LayoutSyncTest, Clone_PreservesWireMetadata) {
+    // Layout with all column types: bool, scalar, string
+    bcsv::Layout layout;
+    layout.addColumn({"flag1", bcsv::ColumnType::BOOL});
+    layout.addColumn({"flag2", bcsv::ColumnType::BOOL});
+    layout.addColumn({"val_i32", bcsv::ColumnType::INT32});
+    layout.addColumn({"val_f64", bcsv::ColumnType::DOUBLE});
+    layout.addColumn({"name", bcsv::ColumnType::STRING});
+    layout.addColumn({"desc", bcsv::ColumnType::STRING});
+
+    // Verify original has non-zero wire metadata
+    EXPECT_GT(layout.wireBitsSize(), 0u) << "Original wireBitsSize should be > 0 (2 bools)";
+    EXPECT_GT(layout.wireDataSize(), 0u) << "Original wireDataSize should be > 0 (int32 + double)";
+    EXPECT_EQ(layout.wireStrgCount(), 2u) << "Original wireStrgCount should be 2";
+
+    // Clone and verify metadata is preserved
+    bcsv::Layout cloned = layout.clone();
+    EXPECT_EQ(cloned.wireBitsSize(), layout.wireBitsSize())
+        << "Cloned wireBitsSize must match original";
+    EXPECT_EQ(cloned.wireDataSize(), layout.wireDataSize())
+        << "Cloned wireDataSize must match original";
+    EXPECT_EQ(cloned.wireStrgCount(), layout.wireStrgCount())
+        << "Cloned wireStrgCount must match original";
+    EXPECT_EQ(cloned.wireFixedSize(), layout.wireFixedSize())
+        << "Cloned wireFixedSize must match original";
+
+    // Also verify basic layout properties survived
+    EXPECT_EQ(cloned.columnCount(), layout.columnCount());
+    validateSync(cloned, "After clone");
+}
+
+TEST_F(LayoutSyncTest, Clone_WireMetadata_AfterRemoveColumn) {
+    // Build layout, remove a column, clone — metadata must still be correct
+    bcsv::Layout layout;
+    layout.addColumn({"b1", bcsv::ColumnType::BOOL});
+    layout.addColumn({"x",  bcsv::ColumnType::INT32});
+    layout.addColumn({"s",  bcsv::ColumnType::STRING});
+    layout.addColumn({"b2", bcsv::ColumnType::BOOL});
+
+    layout.removeColumn(1);  // remove "x" (INT32)
+    // Now: b1(BOOL), s(STRING), b2(BOOL) — no scalars, 2 bools, 1 string
+
+    EXPECT_EQ(layout.wireDataSize(), 0u) << "No scalars after removing INT32";
+    EXPECT_EQ(layout.wireStrgCount(), 1u) << "One string column remains";
+    EXPECT_GT(layout.wireBitsSize(), 0u) << "Two bools remain";
+
+    bcsv::Layout cloned = layout.clone();
+    EXPECT_EQ(cloned.wireBitsSize(), layout.wireBitsSize());
+    EXPECT_EQ(cloned.wireDataSize(), layout.wireDataSize());
+    EXPECT_EQ(cloned.wireStrgCount(), layout.wireStrgCount());
+    EXPECT_EQ(cloned.wireFixedSize(), layout.wireFixedSize());
+    validateSync(cloned, "After removeColumn + clone");
+}

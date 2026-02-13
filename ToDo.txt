@@ -188,7 +188,7 @@ background:
         Updated SKILLS.md naming table to distinguish public vs private member convention.
     All 327 GTest + 76 C API + Row API tests pass on both debug and release builds.
 
-10. Change "flat" (none-ZoH) wire format to optimize compression and read & write performance
+[x] 10. Change "flat" (none-ZoH) wire format to optimize compression and read & write performance
         Porpoposal new format should look like this: 
             - bits_ (directly write Bitset to buffer, using Bitset.writeTo() and Bitset.readFrom() functions. Aligns to single byte boundary.
             - data_ (all primivites / arithmetics, but remove padding, no alignment)
@@ -196,6 +196,24 @@ background:
             - strg_data [vector of const char*, strings payload]
         - faster serializatzion / deserialization as wire format is closer to Row format, no need to calculate strAddr.
         - small footprint (bool to be stored as bits), no strAddr no offsets stored and calculated
+        Delivered:
+            - Four-section wire format: [bits_][data_][strg_lengths][strg_data]
+            - Bit-packed bools (ceil(bool_count/8) bytes), packed scalars (no alignment gaps),
+              uint16_t string lengths, concatenated string payloads
+            - Wire metadata (wireBitsSize, wireDataSize, wireStrgCount, wireFixedSize) in Layout::Data
+              NOTE: These should move to Serializer class in item 11.
+            - Updated: RowImpl, RowStaticImpl, RowView, RowViewStatic (serialize/deserialize, get, set, visit, validate)
+            - Removed StringAddr from flat wire path; COLUMN_OFFSETS/COLUMN_LENGTHS/OFFSET_VAR replaced
+              with WIRE_OFFSETS/WIRE_BITS_SIZE/WIRE_DATA_SIZE/WIRE_STRG_COUNT/WIRE_FIXED_SIZE
+            - RowView/RowViewStatic: bool_scratch_ for single-bit extraction, string cursor scanning
+            - Mask refactoring: removed bool_mask_ from Layout::Data, kept tracked_mask_,
+              boolMask() derived via ~tracked_mask_ (returned by value)
+            - Bitset::erase() and pushBack() added; removeColumn() made incremental via erase()
+            - Single-loop serialize/deserialize rewrite: -15% serialize, -25.5% deserialize, -16.5% visit
+            - Layout::Data copy constructor fixed to copy wire metadata (wire_bits_size_, wire_data_size_, wire_strg_size_)
+            - Bounds checking: all visit/visitConst overloads check endIndex > columnCount (was startIndex-only in RowView/RowViewStatic)
+            - Defensive std::min(str.size(), MAX_STRING_LENGTH) in all flat serializeTo paths
+    All 339 GTest + 76 C API + Row API tests pass on both debug and release builds.
 
 
 11. Restructure Interaction between Row(classes) and Reader/Writer. Proposal: Introduce a Serializer / Deserializier layer within the API that is going to allow us to support different Encoding schemas, limiting the impact on Row, Reader and Writer classes.
@@ -209,6 +227,10 @@ background:
             - Reader & Writer are API relevant interaction points, that should be kept stable, there fore Serilaization/Deserialization 
             - Row implementation grows complex --> currently ~3500 lines of code in row.hpp, we should split for maintain ability. --> Take serialization/deserilization out.
             - In order to provide backward compatibility to support older file formats, Reader/Writter should be able to switch the serialization/deserialiozation engine
+        Note from item 10: Wire metadata (wireBitsSize_, wireDataSize_, wireStrgCount_ and derived
+            wireFixedSize()) currently lives in Layout::Data. This should move to the Serializer class
+            as part of this restructuring. Similarly, WIRE_OFFSETS[] and related constexpr in
+            RowStaticImpl/RowViewStatic should become Serializer template parameters.
         Proposal: Implement a Serializer and Deserailizier layer providing a stable interface towards Reader/Writer and Row(s) to enable different encoding schemas (i.e. flat (ToDo 12.), ZoH, delta (ToDo 13.)), with little to now impact on Row(s), Writers and Readers.
             Ideas:
                 A. Serializer/Deserializer to operate on uncompressed data. Thus, it is callers job to manage compression and packkage structure. --> Still a considerable amount of complexity remains within Reader/Writer

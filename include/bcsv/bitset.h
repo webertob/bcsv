@@ -78,7 +78,7 @@ class Bitset {
         // Helpers (static)
         // =====================================================================
         static constexpr size_t bitsToBytes(size_t bit_count) noexcept {
-            return (bit_count + 7) / 8;
+            return (bit_count + 7) >> 3;
         }
 
         static constexpr size_t bitToWordIndex(size_t bit_pos) noexcept {
@@ -280,6 +280,8 @@ class Bitset {
     void reserve(size_t bit_capacity) requires(!IS_FIXED);
     void resize(size_t new_size, bool value = false) requires(!IS_FIXED);
     void insert(size_t pos, bool value = false) requires(!IS_FIXED);  // Insert bit at pos, shifting subsequent bits right
+    void erase(size_t pos) requires(!IS_FIXED);                        // Erase bit at pos, shifting subsequent bits left
+    void pushBack(bool value = false) requires(!IS_FIXED);             // Append bit at end
     void shrinkToFit() requires(!IS_FIXED);
     
     // ===== Operations =====

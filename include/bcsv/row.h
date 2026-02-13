@@ -27,183 +27,169 @@ namespace bcsv {
 /**
  * @brief BCSV Binary Row Format Documentation
  * 
- * The BCSV row format uses a two-section layout optimized for performance and compression:
- * 1. Fixed Section: Contains all fixed-size data and string addresses
- * 2. Variable Section: Contains actual string payloads
+ * The BCSV flat wire format uses a four-section layout that mirrors the Row's
+ * in-memory storage (bits_, data_, strg_). Sections are written sequentially,
+ * enabling near-memcpy serialization and simple zero-copy RowView access.
  * 
  * =============================================================================
- * ROW BINARY FORMAT LAYOUT
+ * FLAT ROW WIRE FORMAT LAYOUT
  * =============================================================================
  * 
- * [Fixed Section] [Variable Section]
- * |              | |              |
- * | Col1 | Col2  | | Str1 | Str2  |
- * |      | Col3  | |      | Str3  |
- * |      | ...   | |      | ...   |
+ * [bits_section][data_section][strg_lengths][strg_data]
+ * 
+ * Section 1: bits_         Bit-packed boolean values, layout order
+ * Section 2: data_         Tightly packed scalars (non-bool, non-string), layout order
+ * Section 3: strg_lengths  uint16_t per string column, layout order
+ * Section 4: strg_data     Concatenated string payloads, layout order
+ * 
+ * All sections are byte-aligned (no padding between them). A section with
+ * zero elements contributes zero bytes to the wire format.
  * 
  * =============================================================================
- * FIXED SECTION FORMAT
+ * SECTION 1: BITS_ (Boolean values)
  * =============================================================================
  * 
- * The fixed section contains one entry per column in layout order:
+ * Size: ⌈bool_count / 8⌉ bytes  (0 bytes if no bool columns)
  * 
- * For STRING columns:
+ * Bool columns are stored as individual bits in layout order:
+ *   - Bit 0 = first bool column in layout, Bit 1 = second, etc.
+ *   - Within each byte: bit 0 is least significant (rightmost).
+ *   - Padding bits (above bool_count) are zero-filled to byte boundary.
+ * 
  * ┌─────────────────────────────────────────────────────────────────┐
- * │                    StringAddress (64-bit)                       │
- * ├─────────────────────────────────────┬───────────────────────────┤
- * │         Payload Offset (48-bit)     │    Length (16-bit)        │
- * │              Bits 16-63             │     Bits 0-15             │
- * └─────────────────────────────────────┴───────────────────────────┘
- * 
- * Payload Offset: Absolute byte offset from start of row to string data
- * Length:        String length in bytes (max 65,535)
- * 
- * For PRIMITIVE columns (INT8, INT16, INT32, INT64, UINT8, UINT16, UINT32, UINT64, FLOAT, DOUBLE, BOOL):
- * ┌─────────────────────────────────────────────────────────────────┐
- * │                     Raw Value Data                              │
- * │                (1, 2, 4, or 8 bytes)                            │
+ * │   Byte 0: [pad|pad|pad|bool4|bool3|bool2|bool1|bool0]         │
+ * │   Byte 1: [bool15|...|bool8]  (if bool_count > 8)             │
  * └─────────────────────────────────────────────────────────────────┘
  * 
+ * For RowImpl with TrackingPolicy::Disabled, bits_ can be memcpy'd directly
+ * (size == ⌈bool_count / 8⌉). For TrackingPolicy::Enabled, bool values are
+ * extracted via the layout's boolMask() (derived from ~tracked_mask_) since bits_ also holds change flags.
+ * 
  * =============================================================================
- * VARIABLE SECTION FORMAT
+ * SECTION 2: DATA_ (Scalar values)
  * =============================================================================
  * 
- * The variable section contains string payloads in the order they appear:
+ * Size: sum of sizeOf(type) for all non-bool, non-string columns
  * 
- * ┌─────────────────┬─────────────────┬─────────────────┬─────────────┐
- * │   String 1      │   String 2      │   String 3      │    ...      │
- * │   Payload       │   Payload       │   Payload       │             │
- * └─────────────────┴─────────────────┴─────────────────┴─────────────┘
+ * Scalars are packed tightly in layout order with NO alignment padding:
+ * ┌──────────┬──────────┬──────────┬──────────┐
+ * │ INT8(1B) │DOUBLE(8B)│UINT16(2B)│ FLOAT(4B)│
+ * └──────────┴──────────┴──────────┴──────────┘
  * 
- * - No length prefixes (lengths are in StringAddress)
- * - No null terminators (lengths are explicit)
- * - Strings are tightly packed with no padding
- * - Empty strings contribute 0 bytes to variable section
+ * Access uses memcpy to handle misalignment safely. The in-memory Row data_
+ * vector uses aligned offsets (for SIMD-friendliness), so serialize/deserialize
+ * copies each scalar individually — not a single memcpy of the whole section.
+ * 
+ * =============================================================================
+ * SECTION 3: STRG_LENGTHS (String lengths)
+ * =============================================================================
+ * 
+ * Size: string_count × sizeof(uint16_t) bytes  (0 bytes if no string columns)
+ * 
+ * One uint16_t per string column in layout order, giving the byte length of
+ * each string payload in section 4. Max string length: 65,535 bytes.
+ * 
+ * ┌──────────────────┬──────────────────┬──────────────────┐
+ * │  len_0 (uint16)  │  len_1 (uint16)  │  len_2 (uint16)  │
+ * └──────────────────┴──────────────────┴──────────────────┘
+ * 
+ * String offsets into strg_data are derived by cumulative sum of lengths;
+ * no explicit offsets are stored. RowView pre-computes these at construction.
+ * 
+ * =============================================================================
+ * SECTION 4: STRG_DATA (String payloads)
+ * =============================================================================
+ * 
+ * Size: sum of all string lengths
+ * 
+ * Concatenated raw string bytes in layout order. No null terminators,
+ * no length prefixes, no delimiters. Empty strings contribute 0 bytes.
+ * 
+ * ┌────────────────┬────────────────┬────────────────┐
+ * │  "Hello" (5B)  │  "" (0B)       │  "World" (5B)  │
+ * └────────────────┴────────────────┴────────────────┘
  * 
  * =============================================================================
  * EXAMPLE: Row with ["John", 25, "Engineer", 3.14, true]
  * =============================================================================
  * 
  * Layout: [STRING, INT32, STRING, DOUBLE, BOOL]
+ *   bool columns:   col 4             → bool_count = 1
+ *   scalar columns: col 1 (INT32), col 3 (DOUBLE) → data_size = 12
+ *   string columns: col 0, col 2      → string_count = 2
  * 
- * Fixed Section (33 bytes):
- * ┌────────────┬────────────┬────────────┬────────────┬────────────┐
- * │StringAddr1 │   INT32    │StringAddr2 │  DOUBLE    │   BOOL     │
- * │  (8 bytes) │ (4 bytes)  │ (8 bytes)  │ (8 bytes)  │ (1 byte)   │
- * │   Offset:33│    25      │  Offset:37 │    3.14    │   true     │
- * │   Length:4 │            │  Length:8  │            │            │
- * └────────────┴────────────┴────────────┴────────────┴────────────┘
+ * bits_ (1 byte):    [0000000|true]           = 0x01
+ * data_ (12 bytes):  [INT32: 25][DOUBLE: 3.14]
+ * strg_lengths (4B): [0x0004][0x0008]
+ * strg_data (12B):   "JohnEngineer"
  * 
- * Variable Section (12 bytes):
- * ┌────────────┬────────────────────┐
- * │   "John"   │    "Engineer"      │
- * │  (4 bytes) │    (8 bytes)       │
- * └────────────┴────────────────────┘
- * 
- * Total Row Size: 45 bytes
- * 
- * =============================================================================
- * STRING ADDRESS ENCODING DETAILS
- * =============================================================================
- * 
- * StringAddress struct layout:
- * 
- * Bit Layout (64-bit little-endian):
- * ┌─────────────────────────────────────────────────────────────────┐
- * │ 63  56  48  40  32  24  16   8   0                              │
- * ├──────────────────────────────────┬──────────────────────────────┤
- * │        Payload Offset            │         Length               │
- * │         (48 bits)                │        (16 bits)             │
- * └──────────────────────────────────┴──────────────────────────────┘
- * 
- * Encoding Algorithm:
- * packed_value = ((offset & 0xFFFFFFFFFFFF) << 16) | (length & 0xFFFF)
- * 
- * Decoding Algorithm:
- * offset = (packed_value >> 16) & 0xFFFFFFFFFFFF
- * length = packed_value & 0xFFFF
- * 
- * Limits:
- * - Maximum offset: 281,474,976,710,655 bytes (281 TB)
- * - Maximum length: 65,535 bytes (64 KB)
+ * Total: 1 + 12 + 4 + 12 = 29 bytes
  * 
  * =============================================================================
  * SERIALIZATION ALGORITHM
  * =============================================================================
  * 
- * 1. Calculate Fixed Section Size:
- *    - For each column: add sizeof(StringAddress) for strings, sizeof(T) for primitives
+ * 1. Write bits_ section:
+ *    - Pack bool column values into ⌈bool_count/8⌉ bytes (bit-packed, layout order)
  * 
- * 2. Calculate Variable Section Size:
- *    - Sum lengths of all string values (truncated to MAX_STRING_LENGTH)
+ * 2. Write data_ section:
+ *    - For each non-bool, non-string column in layout order:
+ *        memcpy(buffer, &value, sizeOf(type))
  * 
- * 3. Write Fixed Section:
- *    current_payload_offset = fixed_section_size
- *    for each column:
- *        if STRING:
- *            string_length = min(string.length(), MAX_STRING_LENGTH)
- *            string_address = pack(current_payload_offset, string_length)
- *            write(string_address, 8 bytes)
- *            current_payload_offset += string_length
- *        else:
- *            write(primitive_value, sizeof(primitive_value))
+ * 3. Write strg_lengths section:
+ *    - For each string column in layout order:
+ *        write uint16_t(min(string.length(), MAX_STRING_LENGTH))
  * 
- * 5. Write Variable Section:
- *    for each string column (in layout order):
- *        write(string_data, truncated_length)
+ * 4. Write strg_data section:
+ *    - For each string column in layout order:
+ *        write string payload bytes (no terminator)
  * 
- * 6. Write Padding Section:
- *    write(0x00, padding_bytes)
+ * Note: Steps 3 and 4 can be combined into a single pass over string columns.
  * 
  * =============================================================================
  * DESERIALIZATION ALGORITHM
  * =============================================================================
  * 
- * 1. Parse Fixed Section:
- *    fixed_ptr = row_start
- *    for each column:
- *        if STRING:
- *            string_address = read_uint64(fixed_ptr)
- *            (offset, length) = unpack(string_address)
- *            store_string_info(offset, length)
- *            fixed_ptr += 8
- *        else:
- *            value = read_primitive(fixed_ptr, column_type)
- *            store_value(value)
- *            fixed_ptr += sizeof(column_type)
+ * 1. Compute section boundaries from layout wire-format metadata:
+ *      bits_start   = 0
+ *      data_start   = wire_bits_size
+ *      strg_l_start = wire_bits_size + wire_data_size
+ *      strg_d_start = wire_bits_size + wire_data_size + wire_strg_count * 2
  * 
- * 2. Parse Variable Section:
- *    for each string column:
- *        string_data = read_bytes(row_start + offset, length)
- *        store_string(string_data)
+ * 2. Read bits_ section → set bool column values
+ * 
+ * 3. Read data_ section → set scalar column values (memcpy each)
+ * 
+ * 4. Read strg_lengths → read strg_data → assign string column values
+ *    (cumulative sum of lengths gives each string's offset in strg_data)
+ * 
+ * 5. Validate buffer size at each section boundary.
  * 
  * =============================================================================
  * PERFORMANCE CHARACTERISTICS
  * =============================================================================
  * 
  * Benefits:
- * - Fixed-size access patterns for non-string data
- * - String pointers enable zero-copy string views
- * - Optimal for columnar processing (skip string parsing if not needed)
- * - Efficient compression (fixed section compresses well)
- * - Cache-friendly for numeric operations
- * - Memory-mapped file friendly
- * - Compact representation with no padding overhead
+ * - Wire format mirrors in-memory Row storage (bits_, data_, strg_)
+ * - Bool columns use 1 bit instead of 1 byte (87.5% savings per bool)
+ * - No StringAddr computation — lengths stored directly, offsets derived
+ * - Scalar section is contiguous — good LZ4 compression, cache-friendly
+ * - String lengths section enables O(1) skip of all strings if not needed
+ * - Zero-copy RowView: bit-level bool access (>>3 for byte, &7 for bit)
  * 
  * Trade-offs:
- * - Two-pass parsing required for complete row reconstruction
- * - String access requires offset arithmetic
- * - Not optimal for row-at-a-time processing of mixed data
+ * - RowView bool access requires bit-level addressing (trivial shift+mask)
+ * - String access in RowView requires pre-computed cumulative offsets
+ * - In-memory data_ is aligned but wire data_ is packed — per-column copy
  * 
  * =============================================================================
  * MEMORY LAYOUT CONSIDERATIONS
  * =============================================================================
  * 
- * - All StringAddress values are 8-byte aligned within the fixed section
- * - Primitive values follow their natural alignment within fixed section
- * - Variable section has no alignment requirements (byte-packed)
- * - Row boundaries are not enforced to any specific alignment
- * - Compact storage with no padding between sections or rows
+ * - No alignment padding in wire format (minimizes file size)
+ * - All access uses memcpy for alignment safety
+ * - In-memory Row data_ has natural alignment (via Layout::Data offsets_)
+ * - RowView stores section start offsets + per-column section-relative offsets
  * 
  * =============================================================================
  * ZERO ORDER HOLD (ZoH) COMPRESSION FORMAT
@@ -600,11 +586,14 @@ namespace bcsv {
     class RowView {
         // Immutable after construction
         Layout                  layout_;        // Shared layout data (no callbacks needed for views)
-        std::vector<uint32_t>   offsets_;       // offsets data buffer to access actual data for each column during serialization/deserialization (packed binary format, special handling for strings (variable length types))
-        uint32_t                offset_var_;    // begin of variable section in buffer_     
+        std::vector<uint32_t>   offsets_;       // Per-column section-relative offset (bool: bit index, scalar: byte offset in data section, string: string index)
+        uint32_t                wire_data_off_;   // byte offset from buffer start to data section (= wireBitsSize)
+        uint32_t                wire_lens_off_;   // byte offset from buffer start to strg_lengths section
+        uint32_t                wire_fixed_size_; // total fixed-size section bytes (bits + data + strg_lengths)
+        mutable bool            bool_scratch_;    // scratch for raw get() returning span on BOOL columns
 
         // Mutable data
-        std::span<std::byte>    buffer_;        // serilized data buffer (fixed + variable section, packed binary format)
+        std::span<std::byte>    buffer_;        // serialized data buffer (flat wire format)
 
     
     public:
@@ -677,20 +666,34 @@ namespace bcsv {
         template<size_t Index>
         using column_type = std::tuple_element_t<Index, typename LayoutType::ColTypes>;
 
-        // Helpers defining the layout of the wire format (serialized data)
-        // serialized data: lengths/size of each column in [bytes]
-        static constexpr std::array<size_t, sizeof...(ColumnTypes)> COLUMN_LENGTHS = { wireSizeOf<ColumnTypes>()... };
-       
-        // serialized data: offsets of each column in [bytes]
-        static constexpr std::array<size_t, sizeof...(ColumnTypes)> COLUMN_OFFSETS = []() {
-            size_t off = 0; 
-            return std::array<size_t, sizeof...(ColumnTypes)>{ 
-                std::exchange(off, off + wireSizeOf<ColumnTypes>())... 
-            }; 
+        // ── Flat wire-format helpers (constexpr) ───────────────────────
+        // Type-family counts
+        static constexpr size_t BOOL_COUNT   = (0 + ... + (std::is_same_v<ColumnTypes, bool> ? 1 : 0));
+        static constexpr size_t STRING_COUNT = (0 + ... + (std::is_same_v<ColumnTypes, std::string> ? 1 : 0));
+
+        // Section sizes  [bits_][data_][strg_lengths][strg_data]
+        static constexpr size_t WIRE_BITS_SIZE  = (BOOL_COUNT + 7) / 8;
+        static constexpr size_t WIRE_DATA_SIZE  = (0 + ... + (!std::is_same_v<ColumnTypes, bool> && !std::is_same_v<ColumnTypes, std::string> ? sizeof(ColumnTypes) : 0));
+        static constexpr size_t WIRE_STRG_COUNT = STRING_COUNT;
+        static constexpr size_t WIRE_FIXED_SIZE = WIRE_BITS_SIZE + WIRE_DATA_SIZE + WIRE_STRG_COUNT * sizeof(uint16_t);
+
+        // Per-column offset within its section:
+        //   bool   → sequential bit index (0, 1, 2, …)
+        //   scalar → byte offset from start of data section
+        //   string → sequential string index (0, 1, 2, …)
+        static constexpr std::array<size_t, sizeof...(ColumnTypes)> WIRE_OFFSETS = []() {
+            std::array<size_t, sizeof...(ColumnTypes)> r{};
+            size_t bi = 0, di = 0, si = 0, idx = 0;
+            auto assign = [&](auto tag) {
+                using T = typename decltype(tag)::type;
+                if constexpr (std::is_same_v<T, bool>)             r[idx] = bi++;
+                else if constexpr (std::is_same_v<T, std::string>) r[idx] = si++;
+                else { r[idx] = di; di += sizeof(T); }
+                ++idx;
+            };
+            (assign(std::type_identity<ColumnTypes>{}), ...);
+            return r;
         }();
-        
-        // serialized data: offset to beginning of variable-length section in [bytes]
-        static constexpr size_t OFFSET_VAR = (wireSizeOf<ColumnTypes>() + ... + 0);
 
     private:
         // Immutable after construction
@@ -777,13 +780,15 @@ namespace bcsv {
 
     private:
                                     template<size_t Index>
-        void                        serializeElements(ByteBuffer& buffer, const size_t& offRow, size_t& offVar) const;
+        void                        serializeElements(ByteBuffer& buffer, size_t offRow,
+                                                       size_t& boolIdx, size_t& dataOff, size_t& lenOff, size_t& payOff) const;
 
                                     template<size_t Index>
         void                        serializeElementsZoH(ByteBuffer& buffer, Bitset<COLUMN_COUNT>& bitHeader) const;
 
                                     template<size_t Index>
-        void                        deserializeElements(const std::span<const std::byte> &srcBuffer);
+        void                        deserializeElements(const std::span<const std::byte> &srcBuffer,
+                                                         size_t& boolIdx, size_t& dataOff, size_t& lenOff, size_t& payOff);
 
                                     template<size_t Index>
         void                        deserializeElementsZoH(std::span<const std::byte> &srcBuffer);
@@ -812,20 +817,34 @@ namespace bcsv {
         template<size_t Index>
         using column_type = std::tuple_element_t<Index, typename LayoutType::ColTypes>;
 
-        // Helpers defining the layout of the wire format (serialized data)
-        // serialized data: lengths/size of each column in [bytes]
-        static constexpr std::array<size_t, sizeof...(ColumnTypes)> COLUMN_LENGTHS = { wireSizeOf<ColumnTypes>()... };
-       
-        // serialized data: offsets of each column in [bytes]
-        static constexpr std::array<size_t, sizeof...(ColumnTypes)> COLUMN_OFFSETS = []() {
-            size_t off = 0; 
-            return std::array<size_t, sizeof...(ColumnTypes)>{ 
-                std::exchange(off, off + wireSizeOf<ColumnTypes>())... 
-            }; 
+        // ── Flat wire-format helpers (constexpr) ───────────────────────
+        // Type-family counts
+        static constexpr size_t BOOL_COUNT   = (0 + ... + (std::is_same_v<ColumnTypes, bool> ? 1 : 0));
+        static constexpr size_t STRING_COUNT = (0 + ... + (std::is_same_v<ColumnTypes, std::string> ? 1 : 0));
+
+        // Section sizes  [bits_][data_][strg_lengths][strg_data]
+        static constexpr size_t WIRE_BITS_SIZE  = (BOOL_COUNT + 7) / 8;
+        static constexpr size_t WIRE_DATA_SIZE  = (0 + ... + (!std::is_same_v<ColumnTypes, bool> && !std::is_same_v<ColumnTypes, std::string> ? sizeof(ColumnTypes) : 0));
+        static constexpr size_t WIRE_STRG_COUNT = STRING_COUNT;
+        static constexpr size_t WIRE_FIXED_SIZE = WIRE_BITS_SIZE + WIRE_DATA_SIZE + WIRE_STRG_COUNT * sizeof(uint16_t);
+
+        // Per-column offset within its section:
+        //   bool   → sequential bit index (0, 1, 2, …)
+        //   scalar → byte offset from start of data section
+        //   string → sequential string index (0, 1, 2, …)
+        static constexpr std::array<size_t, sizeof...(ColumnTypes)> WIRE_OFFSETS = []() {
+            std::array<size_t, sizeof...(ColumnTypes)> r{};
+            size_t bi = 0, di = 0, si = 0, idx = 0;
+            auto assign = [&](auto tag) {
+                using T = typename decltype(tag)::type;
+                if constexpr (std::is_same_v<T, bool>)             r[idx] = bi++;
+                else if constexpr (std::is_same_v<T, std::string>) r[idx] = si++;
+                else { r[idx] = di; di += sizeof(T); }
+                ++idx;
+            };
+            (assign(std::type_identity<ColumnTypes>{}), ...);
+            return r;
         }();
-        
-        // serialized data: offset to beginning of variable-length section in [bytes]
-        static constexpr size_t OFFSET_VAR = (wireSizeOf<ColumnTypes>() + ... + 0);
 
 
     private:
@@ -834,6 +853,7 @@ namespace bcsv {
 
         // Mutable data
         std::span<std::byte>    buffer_;
+        mutable bool            bool_scratch_{false};   // scratch for raw get() returning span on BOOL columns
 
     public:
 
