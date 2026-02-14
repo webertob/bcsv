@@ -77,7 +77,7 @@ python3 benchmark/run_benchmarks.py --size=S --no-report --quiet --quiet-summary
 
 The orchestrator auto-discovers executables in `build_release/bin/`, clean-rebuilds all
 targets, runs macro/micro/CLI/external benchmarks with CPU pinning, generates a Markdown
-report with 4 charts, updates the leaderboard, and prints a compressed summary.
+report, writes condensed KPI sidecars, updates the leaderboard, and prints a compressed summary.
 
 When `--repeat > 1`, per-run raw outputs are kept under `repeats/run_XXX/` and top-level
 `*_results.json` files contain medians for stable comparisons/reporting.
@@ -125,7 +125,14 @@ Notes:
 build_release/bin/bench_macro_datasets --rows=100000 --profile=mixed_generic \
   --output=results.json
 
-# Macro benchmark: all 9 profiles
+# Macro benchmark: run only selected sparse scenarios
+build_release/bin/bench_macro_datasets --rows=100000 --profile=mixed_generic \
+  --scenario=baseline,predicate_selectivity_10 --output=results.json
+
+# Discover available sparse scenario IDs
+build_release/bin/bench_macro_datasets --list-scenarios
+
+# Macro benchmark: all profiles
 build_release/bin/bench_macro_datasets --rows=100000 --output=results.json
 
 # Micro benchmark (Google Benchmark JSON output)
@@ -137,7 +144,7 @@ build_release/bin/bench_external_csv --rows=100000 --profile=mixed_generic
 
 ## Size Presets
 
-| Flag | Rows | Duration (all 9 profiles) | Use Case |
+| Flag | Rows | Duration (all profiles) | Use Case |
 |------|------|--------------------------|----------|
 | `--size=S` | 10,000 | ~30 sec | CI, smoke test |
 | `--size=M` | 100,000 | ~2 min | Development |
@@ -160,7 +167,19 @@ build_release/bin/bench_external_csv --rows=100000 --profile=mixed_generic
 | `realistic_measurement` | 38 | Mixed: float/double/int/bool/string | DAQ session with phases + multi-rate sensors |
 | `rtl_waveform` | 290 | 256 bool + uint8/16/32/64 | RTL simulation waveform capture |
 
-Each profile runs 3 modes: **CSV**, **BCSV Flexible**, **BCSV Flexible ZoH** = 33 benchmarks.
+Each profile now runs baseline + sparse-read scenarios across 3 modes: **CSV**, **BCSV Flexible**, **BCSV Flexible ZoH**.
+
+`mixed_generic` additionally emits static interface modes:
+- `BCSV Static`
+- `BCSV Static ZoH`
+
+Static modes are intentionally limited to `mixed_generic` in the current macro suite.
+
+Sparse scenarios currently emitted in `macro_results.json`:
+- `baseline`
+- `sparse_columns_k1`, `sparse_columns_k3`, `sparse_columns_k8`
+- `sample_every_n10`, `sample_every_n100`
+- `predicate_selectivity_1`, `predicate_selectivity_10`, `predicate_selectivity_25`
 
 ## Output Files
 
@@ -169,12 +188,15 @@ Default location: `benchmark/results/<hostname>/<timestamp>/` (override with `--
 | File | Content |
 |------|---------|
 | `platform.json` | CPU, RAM, OS, git version, timestamp |
-| `macro_results.json` | Array of 27 results with write_ms, read_ms, file_size, validation |
+| `macro_results.json` | Macro results incl. sparse metadata (`scenario_id`, `access_path`, `selected_columns`, `processed_row_ratio`) |
+| `condensed_metrics.json` | Condensed KPI table payload (median + stdev for compression, dense rows/s, sparse cells/s) |
+| `condensed_metrics.csv` | CSV export of condensed KPI metrics for CI/plot tooling |
 | `micro_results.json` | Google Benchmark JSON (per-type ns/op) |
 | `cli_results.json` | CLI tool round-trip timing |
 | `external_results.json` | BCSV CsvReader vs csv-parser (if available) |
-| `report.md` | Markdown report with inline chart references |
-| `chart_*.png` | 4 chart images (total_time, file_size, throughput, compression) |
+| `report.md` | Markdown report including condensed matrices and comparison deltas |
+| `macro_stdout.log`, `macro_stderr.log` | Raw macro benchmark process output (kept out of terminal stream) |
+| `micro_stdout.log`, `micro_stderr.log` | Raw micro benchmark process output (kept out of terminal stream) |
 
 ## JSON Schema (macro_results.json)
 
@@ -244,7 +266,7 @@ python3 benchmark/compare_runs.py <baseline> <candidate> --update-leaderboard
 | `tests/bench_generate_csv.cpp` | ~100 | CSV file generator from profiles |
 | `benchmark/run_benchmarks.py` | ~650 | Python orchestrator (full 360) |
 | `benchmark/prepare_benchmark_worktree.py` | ~220 | Git worktree setup for historical benchmark runs |
-| `benchmark/report_generator.py` | ~560 | Markdown + Matplotlib report generator |
+| `benchmark/report_generator.py` | ~560 | Markdown report generator + condensed KPI sidecars |
 | `benchmark/compare_runs.py` | ~440 | Regression detector + leaderboard |
 | `benchmark/BENCHMARK_PLAN.md` | ~160 | Architecture plan + decision log |
 

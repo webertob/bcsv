@@ -185,6 +185,12 @@ struct BenchmarkResult {
     size_t      num_rows     = 0;
     size_t      num_columns  = 0;
 
+    // Sparse-access metadata (optional; baseline-compatible defaults)
+    std::string scenario_id = "baseline";   // e.g. "baseline", "sparse_columns_k3"
+    std::string access_path = "deserialize_first"; // current reader behavior
+    size_t      selected_columns = 0;         // 0 = all columns / not applicable
+    double      processed_row_ratio = 1.0;    // fraction of rows semantically processed
+
     double      write_time_ms = 0;  // milliseconds
     double      read_time_ms  = 0;
     size_t      file_size     = 0;  // bytes
@@ -219,6 +225,10 @@ struct BenchmarkResult {
            << "      \"mode\": \"" << mode << "\",\n"
            << "      \"num_rows\": " << num_rows << ",\n"
            << "      \"num_columns\": " << num_columns << ",\n"
+           << "      \"scenario_id\": \"" << scenario_id << "\",\n"
+           << "      \"access_path\": \"" << access_path << "\",\n"
+           << "      \"selected_columns\": " << selected_columns << ",\n"
+           << "      \"processed_row_ratio\": " << std::setprecision(4) << processed_row_ratio << ",\n"
            << "      \"write_time_ms\": " << std::setprecision(2) << write_time_ms << ",\n"
            << "      \"read_time_ms\": " << std::setprecision(2) << read_time_ms << ",\n"
            << "      \"file_size\": " << file_size << ",\n"

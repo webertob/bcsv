@@ -5,7 +5,7 @@ BCSV Benchmark Orchestrator — full 360
 By default performs the complete benchmark cycle:
   1. Clean rebuild of all benchmark targets (all cores)
   2. Run full benchmark with warmup and CPU pinning (single core)
-  3. Generate Markdown + chart report
+    3. Generate Markdown report
   4. Update the leaderboard
   5. Print compressed summary with file paths
 
@@ -334,6 +334,8 @@ def run_macro_benchmark(executable, output_dir, mode="full", profile=None, rows=
                          build_type="Release", no_cleanup=False, pin=True, quiet=False):
     """Run the macro benchmark executable."""
     output_file = output_dir / "macro_results.json"
+    stdout_log = output_dir / "macro_stdout.log"
+    stderr_log = output_dir / "macro_stderr.log"
     
     cmd = [str(executable), f"--output={output_file}", f"--build-type={build_type}"]
     
@@ -358,26 +360,46 @@ def run_macro_benchmark(executable, output_dir, mode="full", profile=None, rows=
     result = subprocess.run(
         cmd,
         timeout=1800,
-        stdout=subprocess.DEVNULL if quiet else None,
+        stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
+
+    stdout_log.write_text(result.stdout or "")
+    stderr_log.write_text(result.stderr or "")
     
     if result.returncode != 0:
         print(f"WARNING: Macro benchmark exited with code {result.returncode}")
         if result.stderr:
             print(f"  stderr: {result.stderr[:1000]}")
-        # Save stderr log
-        (output_dir / "macro_stderr.log").write_text(result.stderr or "")
     
     if output_file.exists():
-        return json.loads(output_file.read_text())
+        data = json.loads(output_file.read_text())
+        if not quiet:
+            try:
+                rows_out = data.get("results", [])
+                mode_stats = {}
+                for row in rows_out:
+                    mode = row.get("mode", "?")
+                    total = float(row.get("write_time_ms", 0)) + float(row.get("read_time_ms", 0))
+                    mode_stats.setdefault(mode, []).append(total)
+                summary = ", ".join(
+                    f"{m}: med {statistics.median(v):.1f} ms"
+                    for m, v in sorted(mode_stats.items()) if v
+                )
+                print(f"  Macro summary ({len(rows_out)} rows): {summary}")
+                print(f"  Raw logs: {stdout_log.name}, {stderr_log.name}")
+            except Exception:
+                print(f"  Macro summary unavailable; see {stdout_log.name}/{stderr_log.name}")
+        return data
     return None
 
 
 def run_micro_benchmark(executable, output_dir, pin=True, quiet=False):
     """Run the Google Benchmark micro-benchmark executable."""
     output_file = output_dir / "micro_results.json"
+    stdout_log = output_dir / "micro_stdout.log"
+    stderr_log = output_dir / "micro_stderr.log"
     
     cmd = [
         str(executable),
@@ -395,19 +417,26 @@ def run_micro_benchmark(executable, output_dir, pin=True, quiet=False):
     result = subprocess.run(
         cmd,
         timeout=600,
-        stdout=subprocess.DEVNULL if quiet else None,
+        stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
+
+    stdout_log.write_text(result.stdout or "")
+    stderr_log.write_text(result.stderr or "")
     
     if result.returncode != 0:
         print(f"WARNING: Micro benchmark exited with code {result.returncode}")
         if result.stderr:
             print(f"  stderr: {result.stderr[:1000]}")
-        (output_dir / "micro_stderr.log").write_text(result.stderr or "")
     
     if output_file.exists():
-        return json.loads(output_file.read_text())
+        data = json.loads(output_file.read_text())
+        if not quiet:
+            benches = data.get("benchmarks", [])
+            print(f"  Micro summary: {len(benches)} benchmark entries")
+            print(f"  Raw logs: {stdout_log.name}, {stderr_log.name}")
+        return data
     return None
 
 
@@ -570,20 +599,37 @@ def print_summary(macro_data, micro_data, platform_info, output_dir, cli_data=No
     print()
     
     if macro_data and "results" in macro_data:
-        print(f"{'Dataset/Mode':<40} {'Total(ms)':>10} {'Write':>8} {'Read':>8} {'Size':>8} {'Ok':>4}")
-        print("-" * 80)
-        for r in macro_data["results"]:
-            size_mb = r.get("file_size", 0) / (1024 * 1024)
-            valid = "OK" if r.get("validation_passed", False) else "FAIL"
-            label = f"{r.get('dataset', '?')}/{r.get('mode', '?')}"
-            total = r.get("write_time_ms", 0) + r.get("read_time_ms", 0)
-            print(f"{label:<40} {total:>10.1f} {r.get('write_time_ms', 0):>8.1f} "
-                  f"{r.get('read_time_ms', 0):>8.1f} {size_mb:>7.1f}M {valid:>4}")
+        rows = macro_data["results"]
+        if len(rows) > 30:
+            print(f"{'Mode':<24} {'Rows':>6} {'Total med(ms)':>14} {'Write med(ms)':>14} {'Read med(ms)':>13} {'Size med(MB)':>13}")
+            print("-" * 92)
+            by_mode = {}
+            for r in rows:
+                by_mode.setdefault(r.get("mode", "?"), []).append(r)
+
+            for mode, mode_rows in sorted(by_mode.items()):
+                totals = [float(x.get("write_time_ms", 0)) + float(x.get("read_time_ms", 0)) for x in mode_rows]
+                writes = [float(x.get("write_time_ms", 0)) for x in mode_rows]
+                reads = [float(x.get("read_time_ms", 0)) for x in mode_rows]
+                sizes = [float(x.get("file_size", 0)) / (1024 * 1024) for x in mode_rows]
+                print(f"{mode:<24} {len(mode_rows):>6} {statistics.median(totals):>14.1f}"
+                      f" {statistics.median(writes):>14.1f} {statistics.median(reads):>13.1f} {statistics.median(sizes):>13.2f}")
+            print("  (Condensed view shown; full per-scenario rows are in macro_results.json/report.md)")
+        else:
+            print(f"{'Dataset/Mode':<40} {'Total(ms)':>10} {'Write':>8} {'Read':>8} {'Size':>8} {'Ok':>4}")
+            print("-" * 80)
+            for r in rows:
+                size_mb = r.get("file_size", 0) / (1024 * 1024)
+                valid = "OK" if r.get("validation_passed", False) else "FAIL"
+                label = f"{r.get('dataset', '?')}/{r.get('mode', '?')}"
+                total = r.get("write_time_ms", 0) + r.get("read_time_ms", 0)
+                print(f"{label:<40} {total:>10.1f} {r.get('write_time_ms', 0):>8.1f} "
+                      f"{r.get('read_time_ms', 0):>8.1f} {size_mb:>7.1f}M {valid:>4}")
 
         # Compute average BCSV vs CSV speedup
         csv_totals = []
         bcsv_totals = []
-        for r in macro_data["results"]:
+        for r in rows:
             total = r.get("write_time_ms", 0) + r.get("read_time_ms", 0)
             mode = r.get("mode", "")
             if mode == "CSV":
@@ -1006,7 +1052,7 @@ def main():
     
         # ── Step 3: Generate report ───────────────────────────────────
         if not args.no_report:
-            print(f"\n[3/5] Generating report + charts")
+            print(f"\n[3/5] Generating report")
             if generate_report(output_dir):
                 print(f"      Report: {output_dir / 'report.md'}")
 

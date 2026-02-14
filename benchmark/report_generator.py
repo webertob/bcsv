@@ -9,8 +9,6 @@ Reads JSON result files from a benchmark run directory and generates:
 - Micro-benchmark summary
 - CLI tool timing summary
 - External CSV comparison table (if available)
-- Bar charts (matplotlib): time, throughput, file size, compression
-- Inline PNG chart references in Markdown
 
 Usage:
     python report_generator.py <results_dir>
@@ -18,21 +16,26 @@ Usage:
 """
 
 import json
+import statistics
 import sys
 from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 
-# Try to import matplotlib; gracefully degrade if not available
-try:
-    import matplotlib
-    matplotlib.use('Agg')  # Non-interactive backend
-    import matplotlib.pyplot as plt
-    import matplotlib.ticker as ticker
-    HAS_MATPLOTLIB = True
-except ImportError:
-    HAS_MATPLOTLIB = False
-    print("NOTE: matplotlib not available — charts will be skipped")
+MODE_ALIASES = OrderedDict([
+    ("CSV", ["CSV"]),
+    ("BCSV Flex Flat (Standard)", ["BCSV Flexible", "BCSV Flat", "BCSV Standard", "BCSV Flexible Flat"]),
+    ("BCSV Flex-ZoH", ["BCSV Flexible ZoH", "BCSV ZoH", "BCSV Flexible-ZoH"]),
+    ("BCSV Static Flat (Standard)", ["BCSV Static", "BCSV Static Flat", "BCSV Static Standard"]),
+    ("BCSV Static-ZoH", ["BCSV Static ZoH", "BCSV Static-ZoH"]),
+])
+
+
+def _fmt_med_std_pair(median_val, stdev_val, decimals=2):
+    if median_val is None:
+        return "—"
+    stdev = 0.0 if stdev_val is None else stdev_val
+    return f"{median_val:.{decimals}f} ± {stdev:.{decimals}f}"
 
 
 # ============================================================================
@@ -95,10 +98,10 @@ def gen_macro_detail_tables(lines, datasets):
     for ds_name, ds_results in datasets.items():
         _header(lines, f"Dataset: `{ds_name}`", level=3)
 
-        lines.append("| Mode | Write (ms) | Read (ms) | Total (ms) | Size (MB)"
-                      " | W Mrow/s | R Mrow/s | Compression | Valid |")
-        lines.append("|------|-----------|----------|-----------|----------"
-                      "|---------|---------|-------------|-------|")
+        lines.append("| Mode | Scenario | Access | Proc Rows | Sel Cols | Write (ms) | Read (ms) | Total (ms) | Size (MB)"
+                  " | W Mrow/s | R Mrow/s | Compression | Valid |")
+        lines.append("|------|----------|--------|----------:|---------:|-----------|----------|-----------|----------"
+                  "|---------|---------|-------------|-------|")
 
         for r in ds_results:
             write_ms = r.get("write_time_ms", 0)
@@ -110,9 +113,14 @@ def gen_macro_detail_tables(lines, datasets):
             comp = r.get("compression_ratio", 0)
             valid = "PASS" if r.get("validation_passed", False) else "FAIL"
             comp_str = f"{comp:.2%}" if comp > 0 else "—"
+            scenario = r.get("scenario_id", "baseline")
+            access = r.get("access_path", "-")
+            processed_ratio = r.get("processed_row_ratio", 1.0) * 100.0
+            selected_cols = r.get("selected_columns", r.get("num_columns", 0))
 
             lines.append(
-                f"| {r.get('mode', '?')} | {write_ms:.1f} | {read_ms:.1f}"
+                f"| {r.get('mode', '?')} | {scenario} | {access}"
+                f" | {processed_ratio:.1f}% | {selected_cols} | {write_ms:.1f} | {read_ms:.1f}"
                 f" | {total_ms:.1f} | {file_mb:.2f}"
                 f" | {w_mrows:.3f} | {r_mrows:.3f}"
                 f" | {comp_str} | {valid} |"
@@ -122,7 +130,7 @@ def gen_macro_detail_tables(lines, datasets):
 
 def gen_speedup_table(lines, datasets):
     """Cross-dataset speedup summary: BCSV vs CSV for write/read/total/size."""
-    _header(lines, "Speedup Summary (BCSV vs CSV)")
+    _header(lines, "BCSV vs CSV Comparison")
 
     lines.append("| Dataset | Mode | Write | Read | Total | File size |")
     lines.append("|---------|------|------:|-----:|------:|----------:|")
@@ -181,6 +189,296 @@ def gen_compression_table(lines, datasets):
             f" | {zoh_mb:.1f} | {zoh_pct:.1f}% |"
         )
     lines.append("")
+
+
+def gen_sparse_summary(lines, results):
+    """Compact sparse scenario summary aggregated across datasets."""
+    if not results:
+        return
+
+    by_scenario = OrderedDict()
+    for r in results:
+        scenario = r.get("scenario_id", "baseline")
+        by_scenario.setdefault(scenario, []).append(r)
+
+    # Only show section when sparse metadata is actually present.
+    if len(by_scenario) <= 1 and "baseline" in by_scenario:
+        return
+
+    _header(lines, "Sparse Summary")
+    lines.append("| Scenario | Avg Proc Rows | Avg Sel Cols | Flex Speedup | ZoH Speedup | Flex Size | ZoH Size |")
+    lines.append("|----------|--------------:|-------------:|-------------:|------------:|----------:|---------:|")
+
+    def median_or_none(values):
+        return statistics.median(values) if values else None
+
+    def scenario_sort_key(name):
+        return (0 if name == "baseline" else 1, name)
+
+    for scenario in sorted(by_scenario.keys(), key=scenario_sort_key):
+        rows = by_scenario[scenario]
+        proc_ratios = [r.get("processed_row_ratio", 1.0) for r in rows]
+        sel_cols = [r.get("selected_columns", r.get("num_columns", 0)) for r in rows]
+
+        csv_totals = [r.get("write_time_ms", 0) + r.get("read_time_ms", 0) for r in rows if r.get("mode") == "CSV"]
+        flex_totals = [r.get("write_time_ms", 0) + r.get("read_time_ms", 0) for r in rows if r.get("mode") == "BCSV Flexible"]
+        zoh_totals = [r.get("write_time_ms", 0) + r.get("read_time_ms", 0) for r in rows if r.get("mode") == "BCSV Flexible ZoH"]
+
+        csv_sizes = [r.get("file_size", 0) for r in rows if r.get("mode") == "CSV"]
+        flex_sizes = [r.get("file_size", 0) for r in rows if r.get("mode") == "BCSV Flexible"]
+        zoh_sizes = [r.get("file_size", 0) for r in rows if r.get("mode") == "BCSV Flexible ZoH"]
+
+        csv_total = median_or_none(csv_totals)
+        flex_total = median_or_none(flex_totals)
+        zoh_total = median_or_none(zoh_totals)
+
+        csv_size = median_or_none(csv_sizes)
+        flex_size = median_or_none(flex_sizes)
+        zoh_size = median_or_none(zoh_sizes)
+
+        flex_speedup = f"{(csv_total / max(flex_total, 0.001)):.2f}x" if csv_total and flex_total else "—"
+        zoh_speedup = f"{(csv_total / max(zoh_total, 0.001)):.2f}x" if csv_total and zoh_total else "—"
+        flex_size_pct = f"{(flex_size / max(csv_size, 1) * 100):.1f}%" if csv_size and flex_size is not None else "—"
+        zoh_size_pct = f"{(zoh_size / max(csv_size, 1) * 100):.1f}%" if csv_size and zoh_size is not None else "—"
+
+        lines.append(
+            f"| {scenario} | {statistics.mean(proc_ratios) * 100:.1f}%"
+            f" | {statistics.mean(sel_cols):.1f}"
+            f" | {flex_speedup} | {zoh_speedup} | {flex_size_pct} | {zoh_size_pct} |"
+        )
+
+    lines.append("")
+
+
+def gen_condensed_progress_table(lines, results):
+    """Condensed development KPI table across all macro tests."""
+    if not results:
+        return
+
+    _header(lines, "Condensed Performance Matrix")
+
+    rows = compute_condensed_progress_metrics(results)
+    if not rows:
+        lines.append("No macro KPI data available.\n")
+        return
+
+    metrics_by_mode = {row["mode"]: row for row in rows}
+
+    lines.append("| Mode | Compression Ratio vs CSV | Dense Write (rows/s) | Dense Read (rows/s) | Sparse Write (cells/s) | Sparse Read (cells/s) |")
+    lines.append("|------|---------------------------:|---------------------:|--------------------:|-----------------------:|----------------------:|")
+
+    for display_mode in MODE_ALIASES.keys():
+        row = metrics_by_mode.get(display_mode, {})
+
+        lines.append(
+            f"| {display_mode}"
+            f" | {_fmt_med_std_pair(row.get('compression_ratio_median'), row.get('compression_ratio_stdev'), decimals=3)}"
+            f" | {_fmt_med_std_pair(row.get('dense_write_rows_per_sec_median'), row.get('dense_write_rows_per_sec_stdev'), decimals=0)}"
+            f" | {_fmt_med_std_pair(row.get('dense_read_rows_per_sec_median'), row.get('dense_read_rows_per_sec_stdev'), decimals=0)}"
+            f" | {_fmt_med_std_pair(row.get('sparse_write_cells_per_sec_median'), row.get('sparse_write_cells_per_sec_stdev'), decimals=0)}"
+            f" | {_fmt_med_std_pair(row.get('sparse_read_cells_per_sec_median'), row.get('sparse_read_cells_per_sec_stdev'), decimals=0)} |"
+        )
+
+    lines.append("")
+
+
+def load_previous_macro_results(results_dir: Path, max_runs: int = 3):
+    """Load up to N previous sibling run macro results (newest first)."""
+    parent = results_dir.parent
+    if not parent.exists():
+        return []
+
+    candidates = []
+    for child in parent.iterdir():
+        if child == results_dir or not child.is_dir():
+            continue
+        macro_path = child / "macro_results.json"
+        if macro_path.exists():
+            candidates.append((child.stat().st_mtime, child, macro_path))
+
+    candidates.sort(key=lambda x: x[0], reverse=True)
+
+    previous = []
+    for _, run_dir, macro_path in candidates[:max_runs]:
+        try:
+            payload = json.loads(macro_path.read_text())
+            rows = payload.get("results", [])
+            if rows:
+                previous.append((run_dir.name, rows))
+        except json.JSONDecodeError:
+            continue
+    return previous
+
+
+def gen_condensed_performance_comparison(lines, current_results, previous_runs):
+    """Comparison matrix: delta current vs best of previous runs."""
+    _header(lines, "Condensed Performance Matrix Comparison")
+    lines.append("Interpretation: for throughput metrics (rows/s, cells/s), **positive % is better**; for compression ratio, **positive % is better** (smaller ratio than previous best).")
+    lines.append("")
+
+    current_rows = compute_condensed_progress_metrics(current_results)
+    if not current_rows:
+        lines.append("No current macro data available for comparison.\n")
+        return
+    if not previous_runs:
+        lines.append("No previous run data found (need at least one sibling run with `macro_results.json`).\n")
+        return
+
+    previous_condensed = []
+    for _, rows in previous_runs:
+        previous_condensed.append(compute_condensed_progress_metrics(rows))
+
+    by_mode_prev = {}
+    for table in previous_condensed:
+        for row in table:
+            by_mode_prev.setdefault(row["mode"], []).append(row)
+
+    lines.append("| Mode | Compression Ratio vs CSV | Dense Write (rows/s) | Dense Read (rows/s) | Sparse Write (cells/s) | Sparse Read (cells/s) |")
+    lines.append("|------|---------------------------:|---------------------:|--------------------:|-----------------------:|----------------------:|")
+
+    def best_prev(rows, key, higher_is_better):
+        vals = [r.get(key) for r in rows if r.get(key) is not None]
+        if not vals:
+            return None
+        return max(vals) if higher_is_better else min(vals)
+
+    def fmt_delta(current, prev_best, higher_is_better):
+        if current is None or prev_best is None or prev_best == 0:
+            return "—"
+        if higher_is_better:
+            delta = ((current - prev_best) / prev_best) * 100.0
+        else:
+            delta = ((prev_best - current) / prev_best) * 100.0
+        return f"{delta:+.1f}%"
+
+    for cur in current_rows:
+        mode = cur["mode"]
+        prev_rows = by_mode_prev.get(mode, [])
+
+        lines.append(
+            f"| {mode}"
+            f" | {fmt_delta(cur.get('compression_ratio_median'), best_prev(prev_rows, 'compression_ratio_median', False), False)}"
+            f" | {fmt_delta(cur.get('dense_write_rows_per_sec_median'), best_prev(prev_rows, 'dense_write_rows_per_sec_median', True), True)}"
+            f" | {fmt_delta(cur.get('dense_read_rows_per_sec_median'), best_prev(prev_rows, 'dense_read_rows_per_sec_median', True), True)}"
+            f" | {fmt_delta(cur.get('sparse_write_cells_per_sec_median'), best_prev(prev_rows, 'sparse_write_cells_per_sec_median', True), True)}"
+            f" | {fmt_delta(cur.get('sparse_read_cells_per_sec_median'), best_prev(prev_rows, 'sparse_read_cells_per_sec_median', True), True)} |"
+        )
+
+    labels = ", ".join(name for name, _ in previous_runs)
+    lines.append("")
+    lines.append(f"Compared against best value from previous runs: {labels}.")
+    lines.append("")
+
+
+def compute_condensed_progress_metrics(results):
+    """Compute condensed KPI metrics and return structured rows for sidecar export."""
+    if not results:
+        return []
+
+    def pick_mode_rows(rows, aliases):
+        return [r for r in rows if r.get("mode") in aliases]
+
+    def med_std(values):
+        if not values:
+            return None, None
+        med = statistics.median(values)
+        stdev = statistics.stdev(values) if len(values) > 1 else 0.0
+        return med, stdev
+
+    csv_size_by_key = {}
+    for r in results:
+        if r.get("mode") == "CSV":
+            key = (r.get("dataset"), r.get("scenario_id", "baseline"))
+            csv_size_by_key[key] = r.get("file_size", 0)
+
+    rows_out = []
+    for display_mode, aliases in MODE_ALIASES.items():
+        mode_rows = pick_mode_rows(results, aliases)
+        dense_rows = [r for r in mode_rows if r.get("scenario_id", "baseline") == "baseline"]
+        sparse_rows = [r for r in mode_rows if r.get("scenario_id", "baseline") != "baseline"]
+
+        dense_write_rows_s = [r.get("write_rows_per_sec", 0.0) for r in dense_rows if r.get("write_rows_per_sec")]
+        dense_read_rows_s = [r.get("read_rows_per_sec", 0.0) for r in dense_rows if r.get("read_rows_per_sec")]
+
+        sparse_write_cells_s = []
+        sparse_read_cells_s = []
+        for r in sparse_rows:
+            num_rows = float(r.get("num_rows", 0) or 0)
+            proc_ratio = float(r.get("processed_row_ratio", 1.0) or 0)
+            sel_cols = float(r.get("selected_columns", r.get("num_columns", 0)) or 0)
+            eff_cells = num_rows * proc_ratio * sel_cols
+            w_ms = float(r.get("write_time_ms", 0) or 0)
+            rd_ms = float(r.get("read_time_ms", 0) or 0)
+            if w_ms > 0 and eff_cells > 0:
+                sparse_write_cells_s.append(eff_cells / (w_ms / 1000.0))
+            if rd_ms > 0 and eff_cells > 0:
+                sparse_read_cells_s.append(eff_cells / (rd_ms / 1000.0))
+
+        comp_ratios = []
+        for r in mode_rows:
+            if r.get("mode") == "CSV":
+                comp_ratios.append(1.0)
+                continue
+            key = (r.get("dataset"), r.get("scenario_id", "baseline"))
+            csv_size = csv_size_by_key.get(key, 0)
+            mode_size = r.get("file_size", 0)
+            if csv_size and mode_size is not None:
+                comp_ratios.append(float(mode_size) / float(csv_size))
+
+        comp_med, comp_std = med_std(comp_ratios)
+        dw_med, dw_std = med_std(dense_write_rows_s)
+        dr_med, dr_std = med_std(dense_read_rows_s)
+        sw_med, sw_std = med_std(sparse_write_cells_s)
+        sr_med, sr_std = med_std(sparse_read_cells_s)
+
+        rows_out.append({
+            "mode": display_mode,
+            "compression_ratio_median": comp_med,
+            "compression_ratio_stdev": comp_std,
+            "dense_write_rows_per_sec_median": dw_med,
+            "dense_write_rows_per_sec_stdev": dw_std,
+            "dense_read_rows_per_sec_median": dr_med,
+            "dense_read_rows_per_sec_stdev": dr_std,
+            "sparse_write_cells_per_sec_median": sw_med,
+            "sparse_write_cells_per_sec_stdev": sw_std,
+            "sparse_read_cells_per_sec_median": sr_med,
+            "sparse_read_cells_per_sec_stdev": sr_std,
+        })
+
+    return rows_out
+
+
+def write_condensed_progress_artifacts(output_dir, results):
+    """Write condensed KPI sidecars (JSON + CSV)."""
+    rows = compute_condensed_progress_metrics(results)
+    if not rows:
+        return
+
+    out_dir = Path(output_dir)
+    json_path = out_dir / "condensed_metrics.json"
+    csv_path = out_dir / "condensed_metrics.csv"
+
+    json_path.write_text(json.dumps({"rows": rows}, indent=2))
+
+    headers = [
+        "mode",
+        "compression_ratio_median", "compression_ratio_stdev",
+        "dense_write_rows_per_sec_median", "dense_write_rows_per_sec_stdev",
+        "dense_read_rows_per_sec_median", "dense_read_rows_per_sec_stdev",
+        "sparse_write_cells_per_sec_median", "sparse_write_cells_per_sec_stdev",
+        "sparse_read_cells_per_sec_median", "sparse_read_cells_per_sec_stdev",
+    ]
+
+    def fmt(v):
+        return "" if v is None else f"{v:.6f}" if isinstance(v, float) else str(v)
+
+    lines = [",".join(headers)]
+    for row in rows:
+        lines.append(",".join(fmt(row.get(h)) for h in headers))
+    csv_path.write_text("\n".join(lines) + "\n")
+
+    print(f"Condensed metrics written to: {json_path}")
+    print(f"Condensed metrics written to: {csv_path}")
 
 
 def gen_micro_section(lines, micro_data):
@@ -276,20 +574,20 @@ def generate_markdown(data, output_path):
     if "platform" in data:
         gen_platform_section(lines, data["platform"])
 
+    # Condensed matrices directly below platform
+    if "macro" in data and "results" in data["macro"]:
+        results_dir = Path(output_path).parent
+        previous_runs = load_previous_macro_results(results_dir, max_runs=3)
+        gen_condensed_progress_table(lines, data["macro"]["results"])
+        gen_condensed_performance_comparison(lines, data["macro"]["results"], previous_runs)
+
     # Macro benchmarks
     datasets = None
     if "macro" in data and "results" in data["macro"]:
         datasets = group_by_dataset(data["macro"]["results"])
         gen_speedup_table(lines, datasets)
         gen_compression_table(lines, datasets)
-
-        # Inline chart references
-        if HAS_MATPLOTLIB:
-            _header(lines, "Charts")
-            lines.append("![Total Time](chart_total_time.png)\n")
-            lines.append("![File Size](chart_file_size.png)\n")
-            lines.append("![Throughput](chart_throughput.png)\n")
-            lines.append("![Compression](chart_compression.png)\n")
+        gen_sparse_summary(lines, data["macro"]["results"])
 
         gen_macro_detail_tables(lines, datasets)
 
@@ -317,211 +615,6 @@ def generate_markdown(data, output_path):
 
 
 # ============================================================================
-# Chart generation (matplotlib)
-# ============================================================================
-
-# Consistent color palette
-MODE_COLORS = {
-    "CSV": "#E53935",
-    "BCSV Flexible": "#1E88E5",
-    "BCSV Flexible ZoH": "#43A047",
-    "BCSV CsvReader": "#1E88E5",
-    "External csv-parser": "#FB8C00",
-}
-
-
-def _color_for(mode):
-    return MODE_COLORS.get(mode, "#757575")
-
-
-def _short_mode(mode):
-    """Shorten mode names for axis labels."""
-    return mode.replace("BCSV Flexible ", "BCSV ").replace("BCSV Flexible", "BCSV Flex")
-
-
-def chart_total_time(datasets, output_dir):
-    """Stacked bar chart: write + read time per mode per dataset."""
-    ds_names = list(datasets.keys())
-    n_ds = len(ds_names)
-    fig, axes = plt.subplots(1, n_ds, figsize=(max(4 * n_ds, 12), 5), squeeze=False)
-    fig.suptitle("Total Time (Write + Read)", fontsize=14, fontweight="bold")
-
-    for idx, ds_name in enumerate(ds_names):
-        ax = axes[0][idx]
-        ds_results = datasets[ds_name]
-        modes = [_short_mode(r["mode"]) for r in ds_results]
-        writes = [r.get("write_time_ms", 0) for r in ds_results]
-        reads = [r.get("read_time_ms", 0) for r in ds_results]
-        colors = [_color_for(r["mode"]) for r in ds_results]
-
-        x = range(len(modes))
-        ax.bar(x, writes, color=colors, alpha=0.85, label="Write")
-        ax.bar(x, reads, bottom=writes, color=colors, alpha=0.50, label="Read")
-
-        # Add total time labels on top
-        for i, (w, rd) in enumerate(zip(writes, reads)):
-            total = w + rd
-            ax.text(i, total + total * 0.02, f"{total:.0f}", ha="center",
-                    va="bottom", fontsize=7)
-
-        ax.set_xticks(list(x))
-        ax.set_xticklabels(modes, rotation=35, ha="right", fontsize=7)
-        ax.set_ylabel("Time (ms)")
-        ax.set_title(ds_name, fontsize=9)
-        ax.yaxis.set_major_formatter(ticker.FuncFormatter(lambda v, _: f"{v:.0f}"))
-
-    # Legend for write/read distinction
-    from matplotlib.patches import Patch
-    legend_elements = [Patch(facecolor="#888", alpha=0.85, label="Write"),
-                       Patch(facecolor="#888", alpha=0.50, label="Read")]
-    fig.legend(handles=legend_elements, loc="upper right", fontsize=8)
-
-    plt.tight_layout(rect=[0, 0, 1, 0.93])
-    path = output_dir / "chart_total_time.png"
-    plt.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"  Chart: {path}")
-
-
-def chart_file_size(datasets, output_dir):
-    """Bar chart: file size in MB per mode, per dataset."""
-    ds_names = list(datasets.keys())
-    n_ds = len(ds_names)
-    fig, axes = plt.subplots(1, n_ds, figsize=(max(4 * n_ds, 12), 5), squeeze=False)
-    fig.suptitle("File Size Comparison", fontsize=14, fontweight="bold")
-
-    for idx, ds_name in enumerate(ds_names):
-        ax = axes[0][idx]
-        ds_results = datasets[ds_name]
-        modes = [_short_mode(r["mode"]) for r in ds_results]
-        sizes = [r.get("file_size", 0) / (1024 * 1024) for r in ds_results]
-        colors = [_color_for(r["mode"]) for r in ds_results]
-
-        ax.bar(range(len(modes)), sizes, color=colors, alpha=0.85)
-        for i, sz in enumerate(sizes):
-            label = f"{sz:.1f}" if sz >= 1 else f"{sz:.2f}"
-            ax.text(i, sz + max(sizes) * 0.02, label, ha="center",
-                    va="bottom", fontsize=7)
-
-        ax.set_xticks(range(len(modes)))
-        ax.set_xticklabels(modes, rotation=35, ha="right", fontsize=7)
-        ax.set_ylabel("File Size (MB)")
-        ax.set_title(ds_name, fontsize=9)
-
-    plt.tight_layout(rect=[0, 0, 1, 0.93])
-    path = output_dir / "chart_file_size.png"
-    plt.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"  Chart: {path}")
-
-
-def chart_throughput(datasets, output_dir):
-    """Grouped bar chart: write/read throughput in M rows/sec."""
-    ds_names = list(datasets.keys())
-    n_ds = len(ds_names)
-    fig, axes = plt.subplots(1, n_ds, figsize=(max(4 * n_ds, 12), 5), squeeze=False)
-    fig.suptitle("Throughput (M rows/sec)", fontsize=14, fontweight="bold")
-
-    for idx, ds_name in enumerate(ds_names):
-        ax = axes[0][idx]
-        ds_results = datasets[ds_name]
-        modes = [_short_mode(r["mode"]) for r in ds_results]
-        w_tput = [r.get("write_rows_per_sec", 0) / 1e6 for r in ds_results]
-        r_tput = [r.get("read_rows_per_sec", 0) / 1e6 for r in ds_results]
-
-        x = list(range(len(modes)))
-        width = 0.35
-        ax.bar([xi - width / 2 for xi in x], w_tput, width, label="Write",
-               color="#1565C0", alpha=0.85)
-        ax.bar([xi + width / 2 for xi in x], r_tput, width, label="Read",
-               color="#EF6C00", alpha=0.85)
-        ax.set_xticks(x)
-        ax.set_xticklabels(modes, rotation=35, ha="right", fontsize=7)
-        ax.set_ylabel("M rows/sec")
-        ax.set_title(ds_name, fontsize=9)
-        if idx == 0:
-            ax.legend(fontsize=7)
-
-    plt.tight_layout(rect=[0, 0, 1, 0.93])
-    path = output_dir / "chart_throughput.png"
-    plt.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"  Chart: {path}")
-
-
-def chart_compression(datasets, output_dir):
-    """Horizontal bar chart: compression ratio across all datasets."""
-    ds_names = []
-    flex_pcts = []
-    zoh_pcts = []
-
-    for ds_name, ds_results in datasets.items():
-        csv_r = next((r for r in ds_results if r.get("mode") == "CSV"), None)
-        flex_r = next((r for r in ds_results
-                       if "Flexible" in r.get("mode", "") and "ZoH" not in r.get("mode", "")), None)
-        zoh_r = next((r for r in ds_results if "ZoH" in r.get("mode", "")), None)
-        if not csv_r or csv_r.get("file_size", 0) == 0:
-            continue
-
-        csv_sz = csv_r["file_size"]
-        ds_names.append(ds_name)
-        flex_pcts.append(flex_r["file_size"] / csv_sz * 100 if flex_r else 0)
-        zoh_pcts.append(zoh_r["file_size"] / csv_sz * 100 if zoh_r else 0)
-
-    if not ds_names:
-        return
-
-    fig, ax = plt.subplots(figsize=(10, max(3, len(ds_names) * 0.6)))
-    y = range(len(ds_names))
-    height = 0.35
-
-    bars_flex = ax.barh([yi - height / 2 for yi in y], flex_pcts, height,
-                         label="BCSV Flexible", color="#1E88E5", alpha=0.85)
-    bars_zoh = ax.barh([yi + height / 2 for yi in y], zoh_pcts, height,
-                        label="BCSV ZoH", color="#43A047", alpha=0.85)
-
-    for bar, pct in zip(bars_flex, flex_pcts):
-        ax.text(bar.get_width() + 1, bar.get_y() + bar.get_height() / 2,
-                f"{pct:.1f}%", va="center", fontsize=7)
-    for bar, pct in zip(bars_zoh, zoh_pcts):
-        ax.text(bar.get_width() + 1, bar.get_y() + bar.get_height() / 2,
-                f"{pct:.1f}%", va="center", fontsize=7)
-
-    ax.set_yticks(list(y))
-    ax.set_yticklabels(ds_names, fontsize=8)
-    ax.set_xlabel("File Size (% of CSV)")
-    ax.set_title("Compression: File Size Relative to CSV",
-                 fontsize=12, fontweight="bold")
-    ax.legend(fontsize=8)
-    ax.set_xlim(0, max(max(flex_pcts, default=100), 100) * 1.15)
-
-    plt.tight_layout()
-    path = output_dir / "chart_compression.png"
-    plt.savefig(path, dpi=150, bbox_inches="tight")
-    plt.close()
-    print(f"  Chart: {path}")
-
-
-def generate_charts(data, output_dir):
-    """Generate all charts from benchmark data."""
-    if not HAS_MATPLOTLIB:
-        return
-
-    output_dir = Path(output_dir)
-
-    if "macro" not in data or "results" not in data["macro"]:
-        return
-
-    datasets = group_by_dataset(data["macro"]["results"])
-
-    print("Generating charts...")
-    chart_total_time(datasets, output_dir)
-    chart_file_size(datasets, output_dir)
-    chart_throughput(datasets, output_dir)
-    chart_compression(datasets, output_dir)
-
-
-# ============================================================================
 # Main entry point
 # ============================================================================
 
@@ -546,8 +639,8 @@ def main():
     report_path = results_dir / "report.md"
     generate_markdown(data, report_path)
 
-    # Generate charts
-    generate_charts(data, results_dir)
+    if "macro" in data and "results" in data["macro"]:
+        write_condensed_progress_artifacts(results_dir, data["macro"]["results"])
 
     print(f"\nReport complete. See: {results_dir}")
     return 0

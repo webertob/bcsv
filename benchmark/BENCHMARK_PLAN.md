@@ -30,7 +30,7 @@
 - [x] **CMake integration** — `BCSV_ENABLE_BENCHMARKS`, `BCSV_ENABLE_MICRO_BENCHMARKS`,
   Google Benchmark v1.8.3 via FetchContent
 - [x] **Python orchestrator** (`benchmark/run_benchmarks.py`) — build, run, collect, summarize
-- [x] **Python report generator** (`benchmark/report_generator.py`) — Markdown + Matplotlib
+- [x] **Python report generator** (`benchmark/report_generator.py`) — Markdown + condensed KPI sidecars
 
 ### Files
 | File | Purpose |
@@ -41,7 +41,7 @@
 | `tests/bench_micro_types.cpp` | Google Benchmark micro-benchmarks |
 | `tests/CMakeLists.txt` | Build targets (modified) |
 | `benchmark/run_benchmarks.py` | Python orchestrator |
-| `benchmark/report_generator.py` | Matplotlib + Markdown report |
+| `benchmark/report_generator.py` | Markdown report + condensed KPI sidecars |
 
 ---
 
@@ -97,14 +97,14 @@ Add `--size=S|M|L|XL` CLI flag to `bench_macro_datasets`:
 
 ### 3.2 — Enhanced reporting
 - [x] Python report generator produces:
-  - Bar charts: total_time (stacked), file_size, throughput (grouped), compression (horizontal)
+  - Condensed KPI matrix + comparison matrix
+  - Sparse summary section
   - Speedup table: BCSV vs CSV (write/read/total/size)
   - Compression ratio table
   - Micro-benchmark summary
   - CLI tool timing summary
   - External CSV comparison table
-- [x] Markdown output embeds chart PNGs inline
-- [x] Consistent color palette across all chart types
+- [x] Sidecar KPI artifacts: `condensed_metrics.json`, `condensed_metrics.csv`
 
 ### 3.3 — Regression detection
 - [x] `benchmark/compare_runs.py` script:
@@ -127,7 +127,7 @@ Add `--size=S|M|L|XL` CLI flag to `bench_macro_datasets`:
 - [x] Runs `sweep` mode on every PR (S size, ~30 sec)
 - [x] Runs `sweep` mode on release tags (L size) with external CSV comparison
 - [x] Manual dispatch with configurable `--size` and `--mode`
-- [x] Uploads JSON results + report + charts as artifacts
+- [x] Uploads JSON results + report as artifacts
 - [x] Posts summary to PR via `$GITHUB_STEP_SUMMARY`
 
 ### 4.2 — Documentation
@@ -155,6 +155,31 @@ Add `--size=S|M|L|XL` CLI flag to `bench_macro_datasets`:
 | 2026-02-12 | CsvWriter → to_chars buffer | 2.3-3.4x faster CSV write; eliminates ostream locale/vtable overhead |
 | 2026-02-12 | CsvReader → from_chars for float/double | Zero heap alloc per numeric cell; C++20 GCC 11+ supported |
 | 2026-02-13 | csv-parser v2.3.0 via FetchContent | Popular C++ CSV lib with mmap I/O; used get_sv+from_chars for fairness |
-| 2026-02-13 | Phase 3 complete | External comparison, enhanced charts, regression detection all validated |
+| 2026-02-13 | Phase 3 complete | External comparison, enhanced reporting, regression detection all validated |
 | 2026-02-13 | Phase 4 complete | CI workflow, docs, legacy deprecation, JSON version stamp |
 | 2026-02-13 | Full-360 orchestrator | `run_benchmarks.py` default: clean rebuild → run (pinned) → report → leaderboard → summary. Flags inverted: `--no-build`, `--no-report`, `--no-pin` |
+| 2026-02-14 | Report simplification | Removed chart generation paths; standardized on markdown + condensed KPI artifacts |
+
+---
+
+## Phase 5 — Sparse Read Extensions
+**Status: DONE**
+
+### Scope
+- [x] Extend macro benchmark coverage with sparse-read scenarios while keeping CSV + BCSV parity.
+- [x] Keep validation enabled for all scenarios.
+- [x] Add predicate selectivity tiers (1% / 10% / 25%).
+- [x] Preserve existing pipeline contract (`macro_results.json`) with additive metadata.
+- [x] Add scenario controls (`--list-scenarios`, `--scenario=...`) for focused runs.
+
+### Sparse scenario IDs
+- `baseline`
+- `sparse_columns_k1`, `sparse_columns_k3`, `sparse_columns_k8`
+- `sample_every_n10`, `sample_every_n100`
+- `predicate_selectivity_1`, `predicate_selectivity_10`, `predicate_selectivity_25`
+
+### Added result metadata (macro)
+- `scenario_id`
+- `access_path`
+- `selected_columns`
+- `processed_row_ratio`
