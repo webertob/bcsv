@@ -48,7 +48,6 @@ set_target_properties(xxhash PROPERTIES
 # Optimize xxHash performance
 target_compile_definitions(xxhash PUBLIC
     XXH_INLINE_ALL           # Inline functions for better performance
-    XXH_STATIC_LINKING_ONLY  # Remove dynamic linking overhead
 )
 
 # ============================================================================

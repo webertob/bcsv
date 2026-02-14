@@ -13,6 +13,7 @@
 #include <string>
 #include <sstream>
 #include <cmath>
+#include <cstring>
 
 using namespace bcsv;
 
@@ -610,6 +611,104 @@ TEST(VisitTest, RowViewStaticMutableVisit) {
     // Verify changes
     EXPECT_EQ(rowView.get<0>(), 20);
     EXPECT_NEAR(rowView.get<1>(), 3.0, 0.01);
+    EXPECT_FALSE(rowView.get<2>());
+}
+
+TEST(VisitTest, RowViewMutableVisitPrimitivesMisalignedBuffer) {
+    Layout layout({
+        {"id", ColumnType::INT32},
+        {"value", ColumnType::DOUBLE},
+        {"flag", ColumnType::BOOL}
+    });
+
+    Row row(layout);
+    row.set(0, int32_t(11));
+    row.set(1, 1.25);
+    row.set(2, true);
+
+    ByteBuffer aligned;
+    auto serialized = row.serializeTo(aligned);
+
+    ByteBuffer misaligned(aligned.size() + 1);
+    std::memcpy(misaligned.data() + 1, serialized.data(), serialized.size());
+    std::span<std::byte> misaligned_span(misaligned.data() + 1, serialized.size());
+
+    RowView rowView(layout, misaligned_span);
+
+    EXPECT_NO_THROW(rowView.visit([&](size_t, auto& value, bool&) {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, int32_t>) {
+            value = 101;
+        } else if constexpr (std::is_same_v<T, double>) {
+            value = 9.5;
+        } else if constexpr (std::is_same_v<T, bool>) {
+            value = false;
+        }
+    }));
+
+    EXPECT_EQ(rowView.get<int32_t>(0), 101);
+    EXPECT_DOUBLE_EQ(rowView.get<double>(1), 9.5);
+    EXPECT_FALSE(rowView.get<bool>(2));
+}
+
+TEST(VisitTest, RowViewMutableVisitInt8UInt8) {
+    Layout layout({
+        {"i8", ColumnType::INT8},
+        {"u8", ColumnType::UINT8}
+    });
+
+    Row row(layout);
+    row.set(0, int8_t(41));
+    row.set(1, uint8_t(201));
+
+    ByteBuffer buffer;
+    auto serialized = row.serializeTo(buffer);
+    RowView rowView(layout, std::span<std::byte>(serialized));
+
+    rowView.visit([&](size_t, auto& value, bool&) {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, int8_t>) {
+            value = 42;
+        } else if constexpr (std::is_same_v<T, uint8_t>) {
+            value = 200;
+        }
+    });
+
+    EXPECT_EQ(rowView.get<int8_t>(0), int8_t(42));
+    EXPECT_EQ(rowView.get<uint8_t>(1), uint8_t(200));
+}
+
+TEST(VisitTest, RowViewStaticMutableVisitMisalignedBuffer) {
+    using LayoutType = LayoutStatic<int32_t, double, bool>;
+    LayoutType layout({"id", "value", "flag"});
+
+    RowStatic<int32_t, double, bool> row(layout);
+    row.set<0>(10);
+    row.set<1>(2.5);
+    row.set<2>(true);
+
+    ByteBuffer aligned;
+    auto serialized = row.serializeTo(aligned);
+
+    ByteBuffer misaligned(aligned.size() + 1);
+    std::memcpy(misaligned.data() + 1, serialized.data(), serialized.size());
+    std::span<std::byte> misaligned_span(misaligned.data() + 1, serialized.size());
+
+    RowViewStatic<int32_t, double, bool> rowView(layout, misaligned_span);
+
+    EXPECT_NO_THROW(rowView.visit([&](auto, auto& value, bool&) {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, int32_t>) {
+            value = 20;
+        } else if constexpr (std::is_same_v<T, double>) {
+            value = 5.0;
+        } else if constexpr (std::is_same_v<T, bool>) {
+            value = false;
+        }
+    }));
+
+    EXPECT_EQ(rowView.get<0>(), 20);
+    EXPECT_DOUBLE_EQ(rowView.get<1>(), 5.0);
     EXPECT_FALSE(rowView.get<2>());
 }
 

@@ -16,6 +16,8 @@
 #include <variant>
 #include <limits>
 #include <span>
+#include <cstring>
+#include <type_traits>
 #include "string_addr.h"
 
 // Include auto-generated version information
@@ -31,6 +33,20 @@ namespace bcsv {
     // Helper template for static_assert
     template<typename T>
     constexpr bool ALWAYS_FALSE = false;
+
+    template<typename T>
+    inline T unalignedRead(const void *src) {
+        static_assert(std::is_trivially_copyable_v<T>, "unalignedRead requires trivially copyable type");
+        T value{};
+        std::memcpy(&value, src, sizeof(T));
+        return value;
+    }
+
+    template<typename T>
+    inline void unalignedWrite(void *dst, const T& value) {
+        static_assert(std::is_trivially_copyable_v<T>, "unalignedWrite requires trivially copyable type");
+        std::memcpy(dst, &value, sizeof(T));
+    }
 
     enum class TrackingPolicy : uint8_t {
         Disabled,

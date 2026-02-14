@@ -249,6 +249,16 @@ reader.close();
 | Python bindings | python/SKILLS.md | Build, test, publish Python package |
 | Unity / C# | unity/SKILLS.md | Architecture, prerequisites, key files |
 
+## Lean Architecture Gate
+
+Use `docs/LEAN_CHECKLIST.md` for every non-trivial item (especially wire format, serialization, Reader/Writer, and API changes).
+
+Recommended cadence:
+- **Before coding:** run sections A-C to validate scope and ownership
+- **Before merge:** run sections D-H and add the summary template to commit/PR notes
+
+This keeps complexity proportional to requested scope and prevents drift in ownership/layering.
+
 ## AI Agent Priming
 
 **Copy-paste this block at the start of a new AI session:**

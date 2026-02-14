@@ -29,6 +29,8 @@
 
 #include <sstream>
 #include <string>
+#include <vector>
+#include <cstring>
 
 // ============================================================================
 // Shared fixture: a warm row with mixed types
@@ -193,7 +195,8 @@ static void BM_Get_String(benchmark::State& state) {
     fillMicroRow(row);
     for (auto _ : state) {
         const std::string& v = row.get<std::string>(11);
-        benchmark::DoNotOptimize(v);
+        benchmark::DoNotOptimize(v.data());
+        benchmark::DoNotOptimize(v.size());
     }
 }
 BENCHMARK(BM_Get_String);
@@ -343,7 +346,7 @@ static void BM_VisitConst_12col(benchmark::State& state) {
     
     for (auto _ : state) {
         size_t checksum = 0;
-        row.visitConst([&checksum](size_t index, const auto& value) {
+        row.visitConst([&checksum](size_t, const auto& value) {
             using T = std::decay_t<decltype(value)>;
             if constexpr (std::is_arithmetic_v<T>) {
                 checksum += static_cast<size_t>(value);
@@ -364,7 +367,7 @@ static void BM_VisitConst_72col(benchmark::State& state) {
     
     for (auto _ : state) {
         size_t checksum = 0;
-        row.visitConst([&checksum](size_t index, const auto& value) {
+        row.visitConst([&checksum](size_t, const auto& value) {
             using T = std::decay_t<decltype(value)>;
             if constexpr (std::is_arithmetic_v<T>) {
                 checksum += static_cast<size_t>(value);
@@ -376,6 +379,118 @@ static void BM_VisitConst_72col(benchmark::State& state) {
     }
 }
 BENCHMARK(BM_VisitConst_72col);
+
+// ============================================================================
+// RowView::visit() — mutable iteration throughput (aligned vs misaligned)
+// ============================================================================
+
+static void BM_RowViewVisit_Int8UInt8_Aligned(benchmark::State& state) {
+    bcsv::Layout layout;
+    layout.addColumn({"c_int8", bcsv::ColumnType::INT8});
+    layout.addColumn({"c_uint8", bcsv::ColumnType::UINT8});
+
+    bcsv::Row row(layout);
+    row.set(0, static_cast<int8_t>(41));
+    row.set(1, static_cast<uint8_t>(201));
+
+    bcsv::ByteBuffer buffer;
+    auto serialized = row.serializeTo(buffer);
+    bcsv::RowView view(layout, std::span<std::byte>(serialized));
+
+    for (auto _ : state) {
+        view.visit([&](size_t, auto& value, bool&) {
+            using T = std::decay_t<decltype(value)>;
+            if constexpr (std::is_same_v<T, int8_t>) {
+                value = (value == static_cast<int8_t>(41)) ? static_cast<int8_t>(42) : static_cast<int8_t>(41);
+            } else if constexpr (std::is_same_v<T, uint8_t>) {
+                value = (value == static_cast<uint8_t>(201)) ? static_cast<uint8_t>(200) : static_cast<uint8_t>(201);
+            }
+        });
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(BM_RowViewVisit_Int8UInt8_Aligned);
+
+static void BM_RowViewVisit_Int8UInt8_Misaligned(benchmark::State& state) {
+    bcsv::Layout layout;
+    layout.addColumn({"c_int8", bcsv::ColumnType::INT8});
+    layout.addColumn({"c_uint8", bcsv::ColumnType::UINT8});
+
+    bcsv::Row row(layout);
+    row.set(0, static_cast<int8_t>(41));
+    row.set(1, static_cast<uint8_t>(201));
+
+    bcsv::ByteBuffer aligned;
+    auto serialized = row.serializeTo(aligned);
+
+    std::vector<std::byte> misaligned_storage(serialized.size() + 1);
+    std::memcpy(misaligned_storage.data() + 1, serialized.data(), serialized.size());
+    std::span<std::byte> misaligned_span(misaligned_storage.data() + 1, serialized.size());
+    bcsv::RowView view(layout, misaligned_span);
+
+    for (auto _ : state) {
+        view.visit([&](size_t, auto& value, bool&) {
+            using T = std::decay_t<decltype(value)>;
+            if constexpr (std::is_same_v<T, int8_t>) {
+                value = (value == static_cast<int8_t>(41)) ? static_cast<int8_t>(42) : static_cast<int8_t>(41);
+            } else if constexpr (std::is_same_v<T, uint8_t>) {
+                value = (value == static_cast<uint8_t>(201)) ? static_cast<uint8_t>(200) : static_cast<uint8_t>(201);
+            }
+        });
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(BM_RowViewVisit_Int8UInt8_Misaligned);
+
+static void BM_RowViewVisit_Int32_Aligned(benchmark::State& state) {
+    bcsv::Layout layout;
+    layout.addColumn({"c_int32", bcsv::ColumnType::INT32});
+
+    bcsv::Row row(layout);
+    row.set(0, static_cast<int32_t>(123456));
+
+    bcsv::ByteBuffer buffer;
+    auto serialized = row.serializeTo(buffer);
+    bcsv::RowView view(layout, std::span<std::byte>(serialized));
+
+    for (auto _ : state) {
+        view.visit([&](size_t, auto& value, bool&) {
+            using T = std::decay_t<decltype(value)>;
+            if constexpr (std::is_same_v<T, int32_t>) {
+                value ^= 1;
+            }
+        });
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(BM_RowViewVisit_Int32_Aligned);
+
+static void BM_RowViewVisit_Int32_Misaligned(benchmark::State& state) {
+    bcsv::Layout layout;
+    layout.addColumn({"c_int32", bcsv::ColumnType::INT32});
+
+    bcsv::Row row(layout);
+    row.set(0, static_cast<int32_t>(123456));
+
+    bcsv::ByteBuffer aligned;
+    auto serialized = row.serializeTo(aligned);
+
+    std::vector<std::byte> misaligned_storage(serialized.size() + 1);
+    std::memcpy(misaligned_storage.data() + 1, serialized.data(), serialized.size());
+    std::span<std::byte> misaligned_span(misaligned_storage.data() + 1, serialized.size());
+    bcsv::RowView view(layout, misaligned_span);
+
+    for (auto _ : state) {
+        view.visit([&](size_t, auto& value, bool&) {
+            using T = std::decay_t<decltype(value)>;
+            if constexpr (std::is_same_v<T, int32_t>) {
+                value ^= 1;
+            }
+        });
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(BM_RowViewVisit_Int32_Misaligned);
 
 // ============================================================================
 // CsvWriter via visitConst() — measures the CSV serialization path
@@ -436,10 +551,10 @@ static void BM_DeserializeFrom_12col(benchmark::State& state) {
     bcsv::Row row(g_microLayout);
     fillMicroRow(row);
     bcsv::ByteBuffer buffer;
-    row.serializeTo(buffer);
-    
+    auto serialized = row.serializeTo(buffer);
+
     bcsv::Row target(g_microLayout);
-    std::span<const std::byte> data(buffer.data(), buffer.size());
+    std::span<const std::byte> data(serialized.data(), serialized.size());
     
     for (auto _ : state) {
         target.deserializeFrom(data);

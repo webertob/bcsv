@@ -9,6 +9,24 @@ background:
 - benchmark suite is located under:
 - documentation (also on the API) is provided here:
 
+Lean checklist gate (for every non-trivial item):
+- Run docs/LEAN_CHECKLIST.md before coding (A-C) and before merge (D-H)
+- Add a short status block to the item:
+    Lean Checklist Summary
+    - Scope fit: PASS/FAIL
+    - Ownership clarity: PASS/FAIL
+    - Layering: PASS/FAIL
+    - Duplication budget: PASS/FAIL
+    - Complexity budget: PASS/FAIL
+    - Safety guardrails: PASS/FAIL
+    - Compatibility impact: PASS/FAIL
+    High risks:
+    1) ...
+    2) ...
+    Mitigations / follow-ups:
+    1) ...
+    2) ...
+
 
 
 [x] 0.  Write project mission statement, upload to git hub
@@ -216,6 +234,34 @@ background:
     All 339 GTest + 76 C API + Row API tests pass on both debug and release builds.
 
 
+[x] 10 (Fix). Harden Item 10 implementation (flat wire format)
+        Critical findings (brief):
+        - RowView mutable scalar access uses reinterpret_cast on packed (potentially unaligned) wire data.
+        - Multiple RowView paths read string-length/scalar bytes without consistent pre-checks for buffer bounds.
+        - RowView vectorized get/set contract is inconsistent (bool-return API but may still throw via range/type path).
+        - setColumns(columnNames, columnTypes) can desync attached rows (missing observer notification in bulk path).
+        - Keep behavior/API unchanged while fixing safety and consistency; validate with focused RowView/Layout tests.
+
+    Lean Checklist Summary (Item 10 closeout)
+    - Scope fit: PASS (changes limited to flat wire safety/consistency + warning cleanup in benchmark harness)
+    - Ownership clarity: PASS (fixed section size checks centralized per API entry point; payload checks remain local)
+    - Layering: PASS (no API layering expansion; Reader/Writer unchanged)
+    - Duplication budget: PASS (aligned similar RowView/RowViewStatic paths)
+    - Complexity budget: PASS (targeted edits, no new abstraction layer)
+    - Safety guardrails: PASS (unaligned scalar access hardened, bounds checks consolidated, tests green)
+    - Compatibility impact: PASS (public API/ABI unchanged; behavior preserved)
+
+    Validation (2026-02-14):
+    - Clean Release rebuild from scratch: PASS
+    - Full gtest suite: 343/343 PASS
+    - C API suite: 76/76 PASS
+    - Row API executable: PASS
+    - Example executables built + smoke run: example, example_static, example_zoh, example_zoh_static, visitor_examples, c_api_vectorized_example (all exit 0)
+    - Benchmark validation:
+        - Focused micro: BM_RowViewVisit_Int8UInt8_Aligned/Misaligned in expected ~4.1-4.3 ns range
+        - Suite smoke: benchmark/run_benchmarks.py --size=S --no-build --no-report PASS
+
+
 11. Restructure Interaction between Row(classes) and Reader/Writer. Proposal: Introduce a Serializer / Deserializier layer within the API that is going to allow us to support different Encoding schemas, limiting the impact on Row, Reader and Writer classes.
         Issue: Currently serializer and deserailizer functionalities are tightly integrated with row, this:
             - makes row heavier (memory) and more complex than required, as it stores data required for serilization/deserialization, e.g. (wire)offsets_ within RowView and offset_var_ in all Row classes.
@@ -262,6 +308,23 @@ background:
             - run&pass tests
             - run&pass benchmarks
             - build examples and CLI tools
+
+        Lean Checklist Summary (Item 11 baseline, before implementation)
+        - Scope fit: PASS (item explicitly targets serializer/deserializer extraction)
+        - Ownership clarity: FAIL (wire metadata and offsets currently duplicated across Layout/Row/Views)
+        - Layering: FAIL (Reader/Writer still own encoding-path branching)
+        - Duplication budget: FAIL (flat/ZoH logic duplicated across Row, RowStatic, RowView, RowViewStatic)
+        - Complexity budget: FAIL (row.hpp monolith, mixed responsibilities)
+        - Safety guardrails: PARTIAL (tests pass; buffer-boundary and unaligned-access hardening still open)
+        - Compatibility impact: PARTIAL (C API / Unity / Python impact must be checked for serializer boundary changes)
+
+        High risks:
+        1) Serializer extraction introduces regressions if flat/ZoH behavior diverges between dynamic/static/view paths.
+        2) Ownership migration of wire metadata causes stale caches / inconsistent offsets across types.
+
+        Mitigations / follow-ups:
+        1) Introduce serializer interfaces first, then migrate one encoding path at a time with parity tests.
+        2) Establish single source of truth for wire metadata and validate with focused row/view roundtrip tests.
 
 12. Implement CSV write and read functionality using the BCSV interface
     10.a: Restructure BCSV Reader/ Writer API

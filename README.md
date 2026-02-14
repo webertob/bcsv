@@ -106,6 +106,7 @@ int main() {
 
 ### 📊 Performance & Benchmarks
 
+- **[benchmark/README.md](benchmark/README.md)** - Benchmark quick-start and script-friendly run options
 - **[tests/PERFORMANCE_COMPARISON.md](tests/PERFORMANCE_COMPARISON.md)** - Detailed benchmarks and comparisons
 - **[benchmark/BENCHMARK_PLAN.md](benchmark/BENCHMARK_PLAN.md)** - Benchmark suite architecture and plan
 - **Typical speeds:** 3.6M rows/sec (flexible), 7.5M rows/sec (static), 127K rows/sec (1000 columns)

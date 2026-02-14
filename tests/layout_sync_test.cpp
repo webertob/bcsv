@@ -397,6 +397,39 @@ TEST_F(LayoutSyncTest, Layout_RenameBackAndForth_Sync) {
     EXPECT_EQ("b", layout.columnName(1));
 }
 
+TEST_F(LayoutSyncTest, Layout_SetColumns_NamesTypes_UpdatesAttachedRow) {
+    bcsv::Layout layout;
+    layout.addColumn({"a", bcsv::ColumnType::INT32});
+    layout.addColumn({"b", bcsv::ColumnType::FLOAT});
+
+    bcsv::Row row(layout);
+    row.set(0, int32_t(1));
+    row.set(1, 2.0f);
+
+    const std::vector<std::string> names = {"x", "y", "z"};
+    const std::vector<bcsv::ColumnType> types = {
+        bcsv::ColumnType::UINT16,
+        bcsv::ColumnType::DOUBLE,
+        bcsv::ColumnType::STRING
+    };
+
+    layout.setColumns(names, types);
+    validateSync(layout, "After setColumns(names, types)");
+
+    EXPECT_EQ(layout.columnCount(), row.layout().columnCount());
+    EXPECT_EQ(layout.columnType(0), row.layout().columnType(0));
+    EXPECT_EQ(layout.columnType(1), row.layout().columnType(1));
+    EXPECT_EQ(layout.columnType(2), row.layout().columnType(2));
+
+    EXPECT_NO_THROW(row.set(0, uint16_t(7)));
+    EXPECT_NO_THROW(row.set(1, 3.5));
+    EXPECT_NO_THROW(row.set(2, std::string("ok")));
+
+    EXPECT_EQ(row.get<uint16_t>(0), uint16_t(7));
+    EXPECT_DOUBLE_EQ(row.get<double>(1), 3.5);
+    EXPECT_EQ(row.get<std::string>(2), "ok");
+}
+
 // ============================================================================
 // Layout Wire Metadata Tests
 // ============================================================================

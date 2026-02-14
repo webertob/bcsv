@@ -1,7 +1,7 @@
 # BCSV Benchmark Suite — AI Skills Reference
 
 > Quick-reference for AI agents to build, run, and interpret the benchmark suite.
-> For humans, see also: tests/README.md and benchmark/BENCHMARK_PLAN.md
+> For humans, start with: benchmark/OPERATOR_GUIDE.md
 
 ## Build
 
@@ -48,11 +48,75 @@ python3 benchmark/run_benchmarks.py --size=S --no-report
 
 # Disable CPU pinning
 python3 benchmark/run_benchmarks.py --size=S --no-pin
+
+# Repeat runs and aggregate medians (canonical JSONs are medians)
+python3 benchmark/run_benchmarks.py --size=S --repeat=5
+
+# Benchmark current suite against older include/bcsv from git revision
+python3 benchmark/run_benchmarks.py --size=S --git-commit=v1.1.0
+python3 benchmark/run_benchmarks.py --size=M --git-commit=HEAD~3 --repeat=3
+
+# Use a specific harness ref for overlay (default is HEAD)
+python3 benchmark/run_benchmarks.py --size=S --git-commit=v1.0.0 --bench-ref=main
+
+# Keep worktree for manual debugging/backport commits
+python3 benchmark/run_benchmarks.py --size=S --git-commit=v1.0.0 --keep-worktree
+
+# Keep worktree only if run fails
+python3 benchmark/run_benchmarks.py --size=S --git-commit=v1.0.0 --keep-worktree-on-fail
+
+# Print prepared worktree path and exit (for manual backport workflows)
+python3 benchmark/run_benchmarks.py --git-commit=v1.0.0 --print-worktree-path-only
+
+# Machine-friendly: print only the path
+python3 benchmark/run_benchmarks.py --git-commit=v1.0.0 --print-worktree-path-only --quiet
+
+# Script-minimal output: keep run artifacts but suppress final summary table/listing
+python3 benchmark/run_benchmarks.py --size=S --no-report --quiet --quiet-summary
 ```
 
 The orchestrator auto-discovers executables in `build_release/bin/`, clean-rebuilds all
 targets, runs macro/micro/CLI/external benchmarks with CPU pinning, generates a Markdown
 report with 4 charts, updates the leaderboard, and prints a compressed summary.
+
+When `--repeat > 1`, per-run raw outputs are kept under `repeats/run_XXX/` and top-level
+`*_results.json` files contain medians for stable comparisons/reporting.
+
+When `--git-commit` is used, benchmarking runs in an isolated git worktree under system `/tmp`
+(`bcsv_bench_worktrees`) and never mutates your active workspace. Worktrees are auto-pruned,
+keeping the most recent 5 by default (`--sandbox-keep`).
+
+Use `--keep-worktree` to preserve the prepared worktree after the run for investigation
+or manual backport commits; default behavior remains auto-cleanup.
+Use `--keep-worktree-on-fail` to keep worktrees only for failed runs.
+Use `--print-worktree-path-only` to only prepare and print the worktree path, then exit.
+Use `--quiet` with print-only mode for path-only stdout suitable for scripts.
+Use `--quiet-summary` to suppress the final summary and file listing for script-oriented runs.
+
+## Operator Protocol (Reproducible Comparison)
+
+Use this exact flow when comparing versions:
+
+```bash
+# 1) Start clean: remove stale/misleading run data
+rm -rf benchmark/results/<hostname>/*
+
+# 2) Run current worktree (small + large)
+python3 benchmark/run_benchmarks.py --size=S --repeat=3 --no-report --output-dir benchmark/results/<hostname>/clean_current_S
+python3 benchmark/run_benchmarks.py --size=L --repeat=3 --no-report --output-dir benchmark/results/<hostname>/clean_current_L
+
+# 3) Run historical commits using current harness (small + large)
+python3 benchmark/run_benchmarks.py --git-commit=<sha1> --bench-ref=HEAD --size=S --repeat=3 --no-report --output-dir benchmark/results/<hostname>/clean_<sha1>_S
+python3 benchmark/run_benchmarks.py --git-commit=<sha1> --bench-ref=HEAD --size=L --repeat=3 --no-report --output-dir benchmark/results/<hostname>/clean_<sha1>_L
+
+python3 benchmark/run_benchmarks.py --git-commit=<sha2> --bench-ref=HEAD --size=S --repeat=3 --no-report --output-dir benchmark/results/<hostname>/clean_<sha2>_S
+python3 benchmark/run_benchmarks.py --git-commit=<sha2> --bench-ref=HEAD --size=L --repeat=3 --no-report --output-dir benchmark/results/<hostname>/clean_<sha2>_L
+```
+
+Notes:
+- `--repeat=3` writes median top-level JSONs and preserves raw repeats under `repeats/`.
+- `--size=S` and `--size=L` cover both small and large row counts; profile set covers small and large column counts.
+- `--bench-ref=HEAD` ensures one consistent benchmark harness across compared commits.
 
 ## Run (Individual Executables)
 
@@ -179,6 +243,7 @@ python3 benchmark/compare_runs.py <baseline> <candidate> --update-leaderboard
 | `tests/bench_external_csv.cpp` | ~450 | External csv-parser read comparison |
 | `tests/bench_generate_csv.cpp` | ~100 | CSV file generator from profiles |
 | `benchmark/run_benchmarks.py` | ~650 | Python orchestrator (full 360) |
+| `benchmark/prepare_benchmark_worktree.py` | ~220 | Git worktree setup for historical benchmark runs |
 | `benchmark/report_generator.py` | ~560 | Markdown + Matplotlib report generator |
 | `benchmark/compare_runs.py` | ~440 | Regression detector + leaderboard |
 | `benchmark/BENCHMARK_PLAN.md` | ~160 | Architecture plan + decision log |

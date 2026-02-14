@@ -83,6 +83,24 @@ def load_external_results(run_dir):
     return results
 
 
+def find_row_count_mismatches(baseline, candidate):
+    """Return list of (dataset, mode, baseline_rows, candidate_rows) mismatches."""
+    mismatches = []
+    shared_keys = set(baseline.keys()) & set(candidate.keys())
+    for key in sorted(shared_keys):
+        base_rows = baseline[key].get("num_rows")
+        cand_rows = candidate[key].get("num_rows")
+
+        # Only enforce when both sides provide row metadata.
+        if base_rows is None or cand_rows is None:
+            continue
+        if base_rows != cand_rows:
+            ds, mode = key
+            mismatches.append((ds, mode, base_rows, cand_rows))
+
+    return mismatches
+
+
 # ============================================================================
 # Comparison
 # ============================================================================
@@ -343,6 +361,8 @@ def main():
                         help="Write report to file (default: stdout)")
     parser.add_argument("--json", action="store_true",
                         help="Output JSON instead of Markdown")
+    parser.add_argument("--allow-mismatched-rows", action="store_true",
+                        help="Allow comparison when dataset/mode num_rows differ")
 
     args = parser.parse_args()
     runs_dir = get_runs_dir(args.hostname)
@@ -386,6 +406,18 @@ def main():
     if not candidate:
         print(f"ERROR: No macro results in candidate: {candidate_dir}")
         return 1
+
+    mismatches = find_row_count_mismatches(baseline, candidate)
+    if mismatches and not args.allow_mismatched_rows:
+        print("ERROR: Workload mismatch detected (num_rows differs for matching dataset/mode).")
+        print("Refusing to compare to avoid false regression reports.")
+        print("Use --allow-mismatched-rows to override.")
+        print("\nExamples:")
+        for ds, mode, base_rows, cand_rows in mismatches[:10]:
+            print(f"  - {ds}/{mode}: baseline={base_rows}, candidate={cand_rows}")
+        if len(mismatches) > 10:
+            print(f"  ... and {len(mismatches) - 10} more")
+        return 2
 
     # Compare
     comparisons = compare_results(baseline, candidate, args.threshold)

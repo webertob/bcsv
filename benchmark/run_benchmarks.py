@@ -12,6 +12,13 @@ By default performs the complete benchmark cycle:
 Usage:
     python run_benchmarks.py                       # full 360 (default)
     python run_benchmarks.py --size=S              # quick smoke test
+    python run_benchmarks.py --size=S --repeat=5   # 5 runs + median outputs
+    python run_benchmarks.py --git-commit=v1.1.0   # run current suite on a historical git worktree
+    python run_benchmarks.py --git-commit=v1.1.0 --keep-worktree  # keep sandbox for debugging
+    python run_benchmarks.py --git-commit=v1.1.0 --keep-worktree-on-fail  # keep sandbox only on failures
+    python run_benchmarks.py --git-commit=v1.1.0 --print-worktree-path-only  # print prepared worktree path and exit
+    python run_benchmarks.py --git-commit=v1.1.0 --print-worktree-path-only --quiet  # path-only output
+    python run_benchmarks.py --size=S --no-report --quiet --quiet-summary  # minimal script output
     python run_benchmarks.py --no-build --no-report  # just run
     python run_benchmarks.py --profile=mixed_generic --size=L
     python run_benchmarks.py --list                # show available profiles
@@ -21,7 +28,18 @@ Options:
     --build-type=TYPE     CMake build type (default: Release)
     --size=S|M|L|XL       Row count preset: S=10K M=100K L=500K XL=2M
     --rows=N              Override row count directly
+    --repeat=N            Repeat benchmark execution N times, emit median results
     --profile=NAME        Run only this dataset profile
+    --git-commit=REV      Benchmark historical revision in isolated git worktree
+    --bench-ref=REF       Ref providing benchmark harness overlay (default: HEAD)
+    --sandbox-keep=N      Keep last N temp worktrees (default: 5)
+    --keep-worktree       Keep prepared worktree after run (debugging/backporting)
+    --keep-worktree-on-fail
+                           Keep prepared worktree only if run fails
+    --print-worktree-path-only
+                           Print prepared worktree path and exit (implies keeping it)
+    --quiet               Reduce console output (path-only output with --print-worktree-path-only)
+    --quiet-summary       Suppress final summary and output file listing
     --output-dir=PATH     Custom output directory
     --no-build            Skip rebuild step
     --no-report           Skip report generation + leaderboard
@@ -41,6 +59,7 @@ import os
 import platform
 import shutil
 import socket
+import statistics
 import subprocess
 import sys
 from datetime import datetime
@@ -94,20 +113,27 @@ def discover_executables(build_dir):
     return executables
 
 
-def create_output_dir(project_root, custom_path=None):
+def create_output_dir(project_root, custom_path=None, suffix=None):
     """Create timestamped output directory."""
     if custom_path:
         out = Path(custom_path)
     else:
         hostname = socket.gethostname()
         timestamp = datetime.now().strftime("%Y.%m.%d_%H.%M")
+        if suffix:
+            timestamp = f"{timestamp}_{suffix}"
         out = project_root / "benchmark" / "results" / hostname / timestamp
     
     out.mkdir(parents=True, exist_ok=True)
     return out
 
 
-def write_platform_json(output_dir, build_type):
+def write_json_file(path, data):
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def write_platform_json(output_dir, build_type, git_cwd=None):
     """Write platform information to JSON."""
     info = {
         "hostname": socket.gethostname(),
@@ -132,6 +158,7 @@ def write_platform_json(output_dir, build_type):
     try:
         result = subprocess.run(
             ["git", "describe", "--tags", "--always", "--dirty"],
+            cwd=str(git_cwd) if git_cwd else None,
             capture_output=True, text=True, timeout=5
         )
         if result.returncode == 0:
@@ -140,10 +167,158 @@ def write_platform_json(output_dir, build_type):
         pass
     
     path = output_dir / "platform.json"
-    with open(path, "w") as f:
-        json.dump(info, f, indent=2)
+    write_json_file(path, info)
     
     return info
+
+
+def _coerce_median(values):
+    med = statistics.median(values)
+    if all(isinstance(v, int) and not isinstance(v, bool) for v in values):
+        return int(round(med))
+    return float(med)
+
+
+def _aggregate_dicts_by_median(samples):
+    if not samples:
+        return {}
+
+    out = dict(samples[0])
+    all_keys = set()
+    for s in samples:
+        all_keys.update(s.keys())
+
+    for key in all_keys:
+        values = [s.get(key) for s in samples if key in s]
+        if len(values) != len(samples):
+            continue
+        if all(isinstance(v, bool) for v in values):
+            out[key] = all(values)
+        elif all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in values):
+            out[key] = _coerce_median(values)
+        else:
+            out[key] = values[0]
+
+    return out
+
+
+def aggregate_macro_like_runs(run_payloads):
+    if not run_payloads:
+        return None
+
+    template = dict(run_payloads[0])
+    result_map = {}
+    for payload in run_payloads:
+        for row in payload.get("results", []):
+            key = (row.get("dataset", "?"), row.get("mode", "?"))
+            result_map.setdefault(key, []).append(row)
+
+    merged_rows = []
+    for key in sorted(result_map.keys()):
+        merged_rows.append(_aggregate_dicts_by_median(result_map[key]))
+
+    totals = [p.get("total_time_sec") for p in run_payloads
+              if isinstance(p.get("total_time_sec"), (int, float))]
+    if totals:
+        template["total_time_sec"] = _coerce_median(totals)
+
+    template["results"] = merged_rows
+    template["aggregation"] = {
+        "method": "median",
+        "repeat": len(run_payloads),
+    }
+    return template
+
+
+def aggregate_micro_runs(run_payloads):
+    if not run_payloads:
+        return None
+
+    template = dict(run_payloads[0])
+    bench_map = {}
+    for payload in run_payloads:
+        for bench in payload.get("benchmarks", []):
+            key = bench.get("name", "?")
+            bench_map.setdefault(key, []).append(bench)
+
+    merged_bench = []
+    for key in sorted(bench_map.keys()):
+        merged_bench.append(_aggregate_dicts_by_median(bench_map[key]))
+
+    template["benchmarks"] = merged_bench
+    template["aggregation"] = {
+        "method": "median",
+        "repeat": len(run_payloads),
+    }
+    return template
+
+
+def aggregate_cli_runs(run_payloads):
+    if not run_payloads:
+        return None
+
+    template = dict(run_payloads[0])
+    merged_tools = {}
+    tool_names = set()
+    for payload in run_payloads:
+        tool_names.update((payload.get("tools") or {}).keys())
+
+    for tool in sorted(tool_names):
+        tool_samples = []
+        for payload in run_payloads:
+            td = (payload.get("tools") or {}).get(tool)
+            if isinstance(td, dict):
+                tool_samples.append(td)
+        if tool_samples:
+            merged_tools[tool] = _aggregate_dicts_by_median(tool_samples)
+
+    template["tools"] = merged_tools
+    bool_fields = ["row_count_match"]
+    for field in bool_fields:
+        vals = [p.get(field) for p in run_payloads if isinstance(p.get(field), bool)]
+        if vals:
+            template[field] = all(vals)
+    template["aggregation"] = {
+        "method": "median",
+        "repeat": len(run_payloads),
+    }
+    return template
+
+
+def prepare_git_worktree(project_root, git_commit, bench_ref, keep_last):
+    script = Path(__file__).resolve().parent / "prepare_benchmark_worktree.py"
+    if not script.exists():
+        raise RuntimeError(f"Missing helper script: {script}")
+
+    cmd = [
+        sys.executable,
+        str(script),
+        "--project-root", str(project_root),
+        "--git-commit", git_commit,
+        "--bench-ref", bench_ref,
+        "--keep", str(keep_last),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "worktree preparation failed")
+    return json.loads(proc.stdout.strip())
+
+
+def cleanup_git_worktree(project_root, worktree_path, keep_last):
+    if not worktree_path:
+        return
+    subprocess.run(
+        ["git", "-C", str(project_root), "worktree", "remove", "--force", str(worktree_path)],
+        capture_output=True,
+        text=True,
+    )
+    if Path(worktree_path).exists():
+        shutil.rmtree(worktree_path, ignore_errors=True)
+    subprocess.run(
+        ["git", "-C", str(project_root), "worktree", "prune"],
+        capture_output=True,
+        text=True,
+    )
 
 
 def pin_cmd(cmd, pin=True):
@@ -156,7 +331,7 @@ def pin_cmd(cmd, pin=True):
 
 
 def run_macro_benchmark(executable, output_dir, mode="full", profile=None, rows=None,
-                         build_type="Release", no_cleanup=False, pin=True):
+                         build_type="Release", no_cleanup=False, pin=True, quiet=False):
     """Run the macro benchmark executable."""
     output_file = output_dir / "macro_results.json"
     
@@ -175,11 +350,18 @@ def run_macro_benchmark(executable, output_dir, mode="full", profile=None, rows=
     
     cmd = pin_cmd(cmd, pin)
     
-    print(f"\n{'='*60}")
-    print(f"Running macro benchmark: {' '.join(cmd)}")
-    print(f"{'='*60}\n")
+    if not quiet:
+        print(f"\n{'='*60}")
+        print(f"Running macro benchmark: {' '.join(cmd)}")
+        print(f"{'='*60}\n")
     
-    result = subprocess.run(cmd, timeout=1800, stderr=subprocess.PIPE, text=True)
+    result = subprocess.run(
+        cmd,
+        timeout=1800,
+        stdout=subprocess.DEVNULL if quiet else None,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
     
     if result.returncode != 0:
         print(f"WARNING: Macro benchmark exited with code {result.returncode}")
@@ -193,7 +375,7 @@ def run_macro_benchmark(executable, output_dir, mode="full", profile=None, rows=
     return None
 
 
-def run_micro_benchmark(executable, output_dir, pin=True):
+def run_micro_benchmark(executable, output_dir, pin=True, quiet=False):
     """Run the Google Benchmark micro-benchmark executable."""
     output_file = output_dir / "micro_results.json"
     
@@ -205,11 +387,18 @@ def run_micro_benchmark(executable, output_dir, pin=True):
     
     cmd = pin_cmd(cmd, pin)
     
-    print(f"\n{'='*60}")
-    print(f"Running micro benchmark: {' '.join(cmd)}")
-    print(f"{'='*60}\n")
+    if not quiet:
+        print(f"\n{'='*60}")
+        print(f"Running micro benchmark: {' '.join(cmd)}")
+        print(f"{'='*60}\n")
     
-    result = subprocess.run(cmd, timeout=600, stderr=subprocess.PIPE, text=True)
+    result = subprocess.run(
+        cmd,
+        timeout=600,
+        stdout=subprocess.DEVNULL if quiet else None,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
     
     if result.returncode != 0:
         print(f"WARNING: Micro benchmark exited with code {result.returncode}")
@@ -222,12 +411,13 @@ def run_micro_benchmark(executable, output_dir, pin=True):
     return None
 
 
-def build_targets(project_root, build_dir, build_type, clean=True):
+def build_targets(project_root, build_dir, build_type, clean=True, quiet=False):
     """Clean-rebuild benchmark targets using all available cores."""
     nproc = str(multiprocessing.cpu_count())
     
     if clean and build_dir.exists():
-        print(f"  Cleaning {build_dir} ...")
+        if not quiet:
+            print(f"  Cleaning {build_dir} ...")
         shutil.rmtree(build_dir, ignore_errors=True)
     
     # Configure
@@ -238,7 +428,8 @@ def build_targets(project_root, build_dir, build_type, clean=True):
         f"-DCMAKE_CXX_FLAGS={cxx_flags}",
         "-DBCSV_ENABLE_EXTERNAL_CSV_BENCH=ON",
     ]
-    print(f"  Configuring: {' '.join(cmd)}")
+    if not quiet:
+        print(f"  Configuring: {' '.join(cmd)}")
     subprocess.run(cmd, check=True, capture_output=True, text=True)
     
     # Build all benchmark targets + CLI tools in one pass
@@ -246,15 +437,17 @@ def build_targets(project_root, build_dir, build_type, clean=True):
                 "bench_external_csv", "csv2bcsv", "bcsv2csv"]
     cmd = ["cmake", "--build", str(build_dir), "-j", nproc, "--"]
     cmd.extend(targets)
-    print(f"  Building {len(targets)} targets with -j{nproc} ...")
+    if not quiet:
+        print(f"  Building {len(targets)} targets with -j{nproc} ...")
     result = subprocess.run(cmd, capture_output=True, text=True)
     # Report per-target status
-    for target in targets:
-        exe = build_dir / "bin" / target
-        if exe.exists():
-            print(f"    {target:<28} OK")
-        else:
-            print(f"    {target:<28} FAILED")
+    if not quiet:
+        for target in targets:
+            exe = build_dir / "bin" / target
+            if exe.exists():
+                print(f"    {target:<28} OK")
+            else:
+                print(f"    {target:<28} FAILED")
     if result.returncode != 0:
         # Print last 10 lines of error
         stderr_lines = (result.stderr or "").strip().split("\n")
@@ -263,7 +456,7 @@ def build_targets(project_root, build_dir, build_type, clean=True):
         print(f"  WARNING: Build returned {result.returncode} (some targets may have failed)")
 
 
-def run_cli_benchmark(executables, output_dir, profile="mixed_generic", rows=50000):
+def run_cli_benchmark(executables, output_dir, profile="mixed_generic", rows=50000, quiet=False):
     """Run CLI-tool round-trip benchmark: generate CSV → csv2bcsv → bcsv2csv → validate.
     
     Requires: bench_generate_csv, csv2bcsv, bcsv2csv in executables dict.
@@ -271,7 +464,8 @@ def run_cli_benchmark(executables, output_dir, profile="mixed_generic", rows=500
     required = ["bench_generate_csv", "csv2bcsv", "bcsv2csv"]
     missing = [k for k in required if k not in executables]
     if missing:
-        print(f"  Skipping CLI benchmark (missing: {', '.join(missing)})")
+        if not quiet:
+            print(f"  Skipping CLI benchmark (missing: {', '.join(missing)})")
         return None
 
     import tempfile
@@ -284,7 +478,8 @@ def run_cli_benchmark(executables, output_dir, profile="mixed_generic", rows=500
 
     try:
         # 1. Generate reference CSV
-        print(f"  Generating reference CSV ({profile}, {rows} rows)...")
+        if not quiet:
+            print(f"  Generating reference CSV ({profile}, {rows} rows)...")
         cmd = [str(executables["bench_generate_csv"]),
                f"--profile={profile}", f"--rows={rows}", f"--output={ref_csv}"]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -296,7 +491,8 @@ def run_cli_benchmark(executables, output_dir, profile="mixed_generic", rows=500
 
         # 2. csv2bcsv --benchmark --json (without ZoH, since bcsv2csv uses
         #    ReaderDirectAccess which doesn't support ZoH files yet)
-        print(f"  Running csv2bcsv --benchmark --json ...")
+        if not quiet:
+            print(f"  Running csv2bcsv --benchmark --json ...")
         cmd = [str(executables["csv2bcsv"]), "--benchmark", "--json",
                "--no-zoh", ref_csv, bcsv_file]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
@@ -314,7 +510,8 @@ def run_cli_benchmark(executables, output_dir, profile="mixed_generic", rows=500
                     break
 
         # 3. bcsv2csv --benchmark --json
-        print(f"  Running bcsv2csv --benchmark --json ...")
+        if not quiet:
+            print(f"  Running bcsv2csv --benchmark --json ...")
         cmd = [str(executables["bcsv2csv"]), "--benchmark", "--json", bcsv_file, rt_csv]
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         if r.returncode != 0:
@@ -457,6 +654,171 @@ def update_leaderboard_from(output_dir):
             print(f"  {line}")
 
 
+def run_repeated_benchmarks(args, executables, output_dir, pin, quiet=False):
+    macro_runs = []
+    micro_runs = []
+    cli_runs = []
+    external_runs = []
+
+    cli_profile = args.profile or "mixed_generic"
+    cli_rows = args.rows or (10000 if args.mode == "sweep" else 50000)
+
+    for run_idx in range(1, args.repeat + 1):
+        if args.repeat > 1:
+            run_dir = output_dir / "repeats" / f"run_{run_idx:03d}"
+            run_dir.mkdir(parents=True, exist_ok=True)
+            if not quiet:
+                print(f"\n  Repeat {run_idx}/{args.repeat}: {run_dir}")
+        else:
+            run_dir = output_dir
+
+        if "bench_macro_datasets" in executables:
+            macro_data = run_macro_benchmark(
+                executables["bench_macro_datasets"],
+                run_dir,
+                mode=args.mode,
+                profile=args.profile,
+                rows=args.rows,
+                build_type=args.build_type,
+                no_cleanup=args.no_cleanup,
+                pin=pin,
+                quiet=quiet,
+            )
+            if macro_data:
+                macro_runs.append(macro_data)
+
+        if "bench_micro_types" in executables:
+            micro_data = run_micro_benchmark(
+                executables["bench_micro_types"],
+                run_dir,
+                pin=pin,
+                quiet=quiet,
+            )
+            if micro_data:
+                micro_runs.append(micro_data)
+
+        if all(k in executables for k in ["bench_generate_csv", "csv2bcsv", "bcsv2csv"]):
+            if not quiet:
+                print(f"\n  CLI tool round-trip ({cli_profile}, {cli_rows} rows)")
+            cli_data = run_cli_benchmark(
+                executables, run_dir,
+                profile=cli_profile, rows=cli_rows,
+                quiet=quiet,
+            )
+            if cli_data:
+                cli_runs.append(cli_data)
+
+        if "bench_external_csv" in executables:
+            external_output = run_dir / "external_results.json"
+            ext_cmd = [
+                str(executables["bench_external_csv"]),
+                f"--output={external_output}",
+                f"--build-type={args.build_type}",
+            ]
+            if args.mode == "sweep":
+                ext_cmd.append("--rows=10000")
+            elif args.rows:
+                ext_cmd.append(f"--rows={args.rows}")
+            if args.profile:
+                ext_cmd.append(f"--profile={args.profile}")
+            ext_cmd = pin_cmd(ext_cmd, pin)
+
+            if not quiet:
+                print(f"\n  External CSV comparison")
+            result = subprocess.run(ext_cmd, timeout=1800, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"  WARNING: External CSV benchmark exited with code {result.returncode}")
+            if external_output.exists():
+                try:
+                    external_runs.append(json.loads(external_output.read_text()))
+                except json.JSONDecodeError:
+                    print(f"  WARNING: Failed to parse external results JSON")
+
+    return macro_runs, micro_runs, cli_runs, external_runs
+
+
+def finalize_run_payloads(output_dir, repeat, macro_runs, micro_runs, cli_runs, external_runs):
+    macro_data = None
+    micro_data = None
+    cli_data = None
+    external_data = None
+
+    if repeat == 1:
+        macro_data = macro_runs[0] if macro_runs else None
+        micro_data = micro_runs[0] if micro_runs else None
+        cli_data = cli_runs[0] if cli_runs else None
+        external_data = external_runs[0] if external_runs else None
+    else:
+        macro_data = aggregate_macro_like_runs(macro_runs)
+        micro_data = aggregate_micro_runs(micro_runs)
+        cli_data = aggregate_cli_runs(cli_runs)
+        external_data = aggregate_macro_like_runs(external_runs)
+
+        if macro_data:
+            write_json_file(output_dir / "macro_results.json", macro_data)
+        if micro_data:
+            write_json_file(output_dir / "micro_results.json", micro_data)
+        if cli_data:
+            write_json_file(output_dir / "cli_results.json", cli_data)
+        if external_data:
+            write_json_file(output_dir / "external_results.json", external_data)
+
+    return macro_data, micro_data, cli_data, external_data
+
+
+def write_manifest_file(
+    output_dir,
+    args,
+    platform_info,
+    macro_data,
+    micro_data,
+    cli_data,
+    external_data,
+    git_commit_resolved,
+    bench_ref_resolved,
+    sandbox_root,
+    sandbox_dir,
+):
+    manifest = {
+        "timestamp": datetime.now().isoformat(),
+        "mode": args.mode,
+        "profile_filter": args.profile,
+        "row_override": args.rows,
+        "repeat": args.repeat,
+        "cpu_pinning": platform_info.get("cpu_pinning", False),
+        "git_commit_requested": args.git_commit,
+        "git_commit_resolved": git_commit_resolved,
+        "bench_ref": args.bench_ref,
+        "bench_ref_resolved": bench_ref_resolved,
+        "sandbox_root": str(sandbox_root) if sandbox_root else None,
+        "sandbox_dir": str(sandbox_dir) if sandbox_dir else None,
+        "keep_worktree": args.keep_worktree,
+        "keep_worktree_on_fail": args.keep_worktree_on_fail,
+        "files": sorted(f.name for f in output_dir.iterdir() if f.is_file()),
+        "has_macro": macro_data is not None,
+        "has_micro": micro_data is not None,
+        "has_cli": cli_data is not None,
+        "has_external": external_data is not None,
+    }
+    write_json_file(output_dir / "manifest.json", manifest)
+
+
+def print_output_files(output_dir, quiet=False):
+    if quiet:
+        return
+    print(f"  Output directory: {output_dir}")
+    print(f"  Files:")
+    for f in sorted(output_dir.iterdir()):
+        if f.is_file():
+            size = f.stat().st_size
+            if size > 1024 * 1024:
+                print(f"    {f.name:<30} {size / (1024*1024):.1f} MB")
+            elif size > 1024:
+                print(f"    {f.name:<30} {size / 1024:.1f} KB")
+            else:
+                print(f"    {f.name:<30} {size} B")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="BCSV Benchmark Orchestrator — full 360",
@@ -470,8 +832,26 @@ def main():
                         help="Run only this dataset profile")
     parser.add_argument("--rows", type=int, default=None,
                         help="Override row count")
+    parser.add_argument("--repeat", type=int, default=1,
+                        help="Repeat benchmark execution N times and emit medians")
     parser.add_argument("--size", choices=["S", "M", "L", "XL"], default=None,
                         help="Dataset size preset: S=10K, M=100K, L=500K, XL=2M rows")
+    parser.add_argument("--git-commit", default=None,
+                        help="Benchmark historical revision in isolated git worktree")
+    parser.add_argument("--bench-ref", default="HEAD",
+                        help="Ref providing benchmark harness overlay (default: HEAD)")
+    parser.add_argument("--sandbox-keep", type=int, default=5,
+                        help="Keep last N temporary worktrees (default: 5)")
+    parser.add_argument("--keep-worktree", action="store_true",
+                        help="Keep prepared worktree after run for debugging/backporting")
+    parser.add_argument("--keep-worktree-on-fail", action="store_true",
+                        help="Keep prepared worktree only when benchmark run fails")
+    parser.add_argument("--print-worktree-path-only", action="store_true",
+                        help="Print prepared worktree path and exit (implies keeping it)")
+    parser.add_argument("--quiet", action="store_true",
+                        help="Reduce console output")
+    parser.add_argument("--quiet-summary", action="store_true",
+                        help="Suppress final summary and output file listing")
     parser.add_argument("--output-dir", default=None,
                         help="Custom output directory")
     parser.add_argument("--no-build", action="store_true",
@@ -487,162 +867,186 @@ def main():
     
     args = parser.parse_args()
 
+    if args.repeat < 1:
+        print("ERROR: --repeat must be >= 1")
+        return 1
+    if args.sandbox_keep < 1:
+        print("ERROR: --sandbox-keep must be >= 1")
+        return 1
+
+    if args.keep_worktree and args.keep_worktree_on_fail:
+        if not args.quiet:
+            print("NOTE: --keep-worktree overrides --keep-worktree-on-fail")
+    if args.print_worktree_path_only and not args.git_commit:
+        print("ERROR: --print-worktree-path-only requires --git-commit")
+        return 1
+
+    keep_for_print_only = args.print_worktree_path_only
+
     # --size is a convenience alias for --rows
     SIZE_MAP = {"S": 10_000, "M": 100_000, "L": 500_000, "XL": 2_000_000}
     if args.size and not args.rows:
         args.rows = SIZE_MAP[args.size]
     
     project_root = get_project_root()
-    build_dir = get_build_dir(project_root, args.build_type)
+    run_project_root = project_root
+    git_commit_resolved = None
+    sandbox_dir = None
+    sandbox_root = None
+    bench_ref_resolved = None
+
+    if args.git_commit:
+        try:
+            worktree_info = prepare_git_worktree(
+                project_root,
+                args.git_commit,
+                args.bench_ref,
+                args.sandbox_keep,
+            )
+            git_commit_resolved = worktree_info["target_sha"]
+            bench_ref_resolved = worktree_info.get("bench_sha")
+            sandbox_dir = worktree_info["sandbox_dir"]
+            sandbox_root = worktree_info["sandbox_root"]
+            run_project_root = Path(sandbox_dir)
+        except Exception as e:
+            print(f"ERROR: Failed to prepare git worktree: {e}")
+            return 1
+
+    build_dir = get_build_dir(run_project_root, args.build_type)
     pin = not args.no_pin
     
     # ── Step 1: Build ─────────────────────────────────────────────
-    if not args.no_build:
-        print(f"\n[1/5] Clean rebuild ({args.build_type}, -j{multiprocessing.cpu_count()})")
-        build_targets(project_root, build_dir, args.build_type, clean=True)
-    else:
-        print(f"\n[1/5] Build: skipped (--no-build)")
+    if args.git_commit:
+        if not args.quiet:
+            print(f"\nWorktree mode: target {args.git_commit} ({git_commit_resolved[:12]})")
+            if bench_ref_resolved:
+                print(f"  Benchmark harness from {args.bench_ref} ({bench_ref_resolved[:12]})")
+            print(f"  Sandbox root: {sandbox_root}")
+            print(f"  Active worktree: {sandbox_dir}")
+
+    run_succeeded = False
+
+    try:
+        if args.print_worktree_path_only:
+            print(str(sandbox_dir))
+            run_succeeded = True
+            return 0
+
+        if not args.no_build:
+            print(f"\n[1/5] Clean rebuild ({args.build_type}, -j{multiprocessing.cpu_count()})")
+            build_targets(run_project_root, build_dir, args.build_type, clean=True, quiet=args.quiet)
+        else:
+            print(f"\n[1/5] Build: skipped (--no-build)")
+
+        executables = discover_executables(build_dir)
     
-    executables = discover_executables(build_dir)
+        if args.list:
+            print("Available executables:")
+            for name, path in executables.items():
+                print(f"  {name}: {path}")
+            if "bench_macro_datasets" in executables:
+                result = subprocess.run(
+                    [str(executables["bench_macro_datasets"]), "--list"],
+                    capture_output=True, text=True
+                )
+                print(f"\nAvailable profiles:")
+                print(f"  {result.stdout.strip()}")
+            return 0
     
-    if args.list:
-        print("Available executables:")
-        for name, path in executables.items():
-            print(f"  {name}: {path}")
-        if "bench_macro_datasets" in executables:
-            result = subprocess.run(
-                [str(executables["bench_macro_datasets"]), "--list"],
-                capture_output=True, text=True
-            )
-            print(f"\nAvailable profiles:")
-            print(f"  {result.stdout.strip()}")
+        if not executables:
+            print("ERROR: No benchmark executables found. Build first (remove --no-build).")
+            return 1
+    
+        # Create output directory
+        suffix = f"g{git_commit_resolved[:7]}" if git_commit_resolved else None
+        output_dir = create_output_dir(project_root, args.output_dir, suffix=suffix)
+    
+        # Write platform info
+        platform_info = write_platform_json(output_dir, args.build_type, git_cwd=run_project_root)
+        platform_info["cpu_pinning"] = pin and shutil.which("taskset") is not None
+        if git_commit_resolved:
+            platform_info["bench_source"] = "current-suite+historic-worktree"
+            platform_info["bench_source_git_commit"] = git_commit_resolved
+            platform_info["bench_source_git_commit_requested"] = args.git_commit
+            platform_info["bench_source_bench_ref"] = args.bench_ref
+            platform_info["bench_source_bench_ref_resolved"] = bench_ref_resolved
+            write_json_file(output_dir / "platform.json", platform_info)
+    
+        # ── Step 2: Run benchmarks ────────────────────────────────────
+        repeat_suffix = f", repeat={args.repeat}" if args.repeat > 1 else ""
+        print(f"\n[2/5] Running benchmarks {'(pinned to CPU 0)' if pin else '(no pinning)'}{repeat_suffix}")
+        print(f"      Output: {output_dir}")
+
+        macro_runs, micro_runs, cli_runs, external_runs = run_repeated_benchmarks(
+            args, executables, output_dir, pin, quiet=args.quiet
+        )
+
+        macro_data, micro_data, cli_data, external_data = finalize_run_payloads(
+            output_dir,
+            args.repeat,
+            macro_runs,
+            micro_runs,
+            cli_runs,
+            external_runs,
+        )
+
+        write_manifest_file(
+            output_dir,
+            args,
+            platform_info,
+            macro_data,
+            micro_data,
+            cli_data,
+            external_data,
+            git_commit_resolved,
+            bench_ref_resolved,
+            sandbox_root,
+            sandbox_dir,
+        )
+    
+        # ── Step 3: Generate report ───────────────────────────────────
+        if not args.no_report:
+            print(f"\n[3/5] Generating report + charts")
+            if generate_report(output_dir):
+                print(f"      Report: {output_dir / 'report.md'}")
+
+            # ── Step 4: Update leaderboard ────────────────────────────
+            print(f"\n[4/5] Updating leaderboard")
+            update_leaderboard_from(output_dir)
+        else:
+            print(f"\n[3/5] Report: skipped (--no-report)")
+            print(f"[4/5] Leaderboard: skipped (--no-report)")
+    
+        # ── Step 5: Summary ───────────────────────────────────────────
+        if not args.quiet_summary:
+            print(f"\n[5/5] Summary")
+            print_summary(macro_data, micro_data, platform_info, output_dir, cli_data)
+        elif not args.quiet:
+            print(f"\n[5/5] Summary: skipped (--quiet-summary)")
+    
+        # File listing
+        print_output_files(output_dir, quiet=(args.quiet or args.quiet_summary))
+    
+        report_file = output_dir / "report.md"
+        if report_file.exists():
+            print(f"\n  Open report:  {report_file}")
+
+        run_succeeded = True
         return 0
-    
-    if not executables:
-        print("ERROR: No benchmark executables found. Build first (remove --no-build).")
-        return 1
-    
-    # Create output directory
-    output_dir = create_output_dir(project_root, args.output_dir)
-    
-    # Write platform info
-    platform_info = write_platform_json(output_dir, args.build_type)
-    platform_info["cpu_pinning"] = pin and shutil.which("taskset") is not None
-    
-    # ── Step 2: Run benchmarks ────────────────────────────────────
-    print(f"\n[2/5] Running benchmarks {'(pinned to CPU 0)' if pin else '(no pinning)'}")
-    print(f"      Output: {output_dir}")
-    
-    macro_data = None
-    if "bench_macro_datasets" in executables:
-        macro_data = run_macro_benchmark(
-            executables["bench_macro_datasets"],
-            output_dir,
-            mode=args.mode,
-            profile=args.profile,
-            rows=args.rows,
-            build_type=args.build_type,
-            no_cleanup=args.no_cleanup,
-            pin=pin,
-        )
-    
-    micro_data = None
-    if "bench_micro_types" in executables:
-        micro_data = run_micro_benchmark(
-            executables["bench_micro_types"],
-            output_dir,
-            pin=pin,
-        )
-    
-    # CLI tool round-trip
-    cli_data = None
-    cli_profile = args.profile or "mixed_generic"
-    cli_rows = args.rows or (10000 if args.mode == "sweep" else 50000)
-    if all(k in executables for k in ["bench_generate_csv", "csv2bcsv", "bcsv2csv"]):
-        print(f"\n  CLI tool round-trip ({cli_profile}, {cli_rows} rows)")
-        cli_data = run_cli_benchmark(
-            executables, output_dir,
-            profile=cli_profile, rows=cli_rows,
-        )
-    
-    # External CSV comparison
-    external_data = None
-    if "bench_external_csv" in executables:
-        external_output = output_dir / "external_results.json"
-        ext_cmd = [
-            str(executables["bench_external_csv"]),
-            f"--output={external_output}",
-            f"--build-type={args.build_type}",
-        ]
-        if args.mode == "sweep":
-            ext_cmd.append("--rows=10000")
-        elif args.rows:
-            ext_cmd.append(f"--rows={args.rows}")
-        if args.profile:
-            ext_cmd.append(f"--profile={args.profile}")
-        ext_cmd = pin_cmd(ext_cmd, pin)
-
-        print(f"\n  External CSV comparison")
-        result = subprocess.run(ext_cmd, timeout=1800, capture_output=True, text=True)
-        if result.returncode != 0:
-            print(f"  WARNING: External CSV benchmark exited with code {result.returncode}")
-        if external_output.exists():
-            try:
-                external_data = json.loads(external_output.read_text())
-            except json.JSONDecodeError:
-                print(f"  WARNING: Failed to parse external results JSON")
-
-    # Write manifest
-    manifest = {
-        "timestamp": datetime.now().isoformat(),
-        "mode": args.mode,
-        "profile_filter": args.profile,
-        "row_override": args.rows,
-        "cpu_pinning": platform_info.get("cpu_pinning", False),
-        "files": sorted(f.name for f in output_dir.iterdir() if f.is_file()),
-        "has_macro": macro_data is not None,
-        "has_micro": micro_data is not None,
-        "has_cli": cli_data is not None,
-        "has_external": external_data is not None,
-    }
-    with open(output_dir / "manifest.json", "w") as f:
-        json.dump(manifest, f, indent=2)
-    
-    # ── Step 3: Generate report ───────────────────────────────────
-    if not args.no_report:
-        print(f"\n[3/5] Generating report + charts")
-        if generate_report(output_dir):
-            print(f"      Report: {output_dir / 'report.md'}")
-        
-        # ── Step 4: Update leaderboard ────────────────────────────
-        print(f"\n[4/5] Updating leaderboard")
-        update_leaderboard_from(output_dir)
-    else:
-        print(f"\n[3/5] Report: skipped (--no-report)")
-        print(f"[4/5] Leaderboard: skipped (--no-report)")
-    
-    # ── Step 5: Summary ───────────────────────────────────────────
-    print(f"\n[5/5] Summary")
-    print_summary(macro_data, micro_data, platform_info, output_dir, cli_data)
-    
-    # File listing
-    print(f"  Output directory: {output_dir}")
-    print(f"  Files:")
-    for f in sorted(output_dir.iterdir()):
-        if f.is_file():
-            size = f.stat().st_size
-            if size > 1024 * 1024:
-                print(f"    {f.name:<30} {size / (1024*1024):.1f} MB")
-            elif size > 1024:
-                print(f"    {f.name:<30} {size / 1024:.1f} KB")
+    finally:
+        if sandbox_dir:
+            keep_effective = keep_for_print_only or args.keep_worktree or (args.keep_worktree_on_fail and not run_succeeded)
+            if keep_effective:
+                if keep_for_print_only:
+                    reason = "print-only requested"
+                elif args.keep_worktree:
+                    reason = "requested"
+                else:
+                    reason = "run failed"
+                if not args.quiet:
+                    print(f"\nKeeping worktree for inspection ({reason}): {sandbox_dir}")
             else:
-                print(f"    {f.name:<30} {size} B")
-    
-    report_file = output_dir / "report.md"
-    if report_file.exists():
-        print(f"\n  Open report:  {report_file}")
-    
-    return 0
+                cleanup_git_worktree(project_root, sandbox_dir, args.sandbox_keep)
 
 
 if __name__ == "__main__":

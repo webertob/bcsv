@@ -360,20 +360,15 @@ namespace bcsv {
         if (columnNames.size() != columnTypes.size()) {
             throw std::invalid_argument("Column names and types size mismatch");
         }
-        clear();
 
-        if (columnNames.size() == 0) {
-            return;
+        std::vector<ColumnDefinition> columns;
+        columns.reserve(columnNames.size());
+        for (size_t i = 0; i < columnNames.size(); ++i) {
+            columns.push_back({columnNames[i], columnTypes[i]});
         }
 
-        // Prepare storage
-        column_index_.reserve(columnNames.size());
-        column_names_ = columnNames;
-        column_types_ = columnTypes;
-        column_index_.build(column_names_);
-        rebuildOffsets();
-        
-        // Note: Bulk setColumns doesn't trigger individual notifications
+        // Delegate to notifying overload to keep observer behavior consistent.
+        setColumns(columns);
     }
 
     
