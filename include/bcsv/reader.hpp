@@ -175,17 +175,12 @@ namespace bcsv {
                 return false;
             }
             
-            if constexpr (isTrackingEnabled(Policy)) {
-                if (!file_header_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
-                    err_msg_ = "Error: TrackingPolicy::Enabled requires ZERO_ORDER_HOLD file";
-                    return false;
-                }
-            } else if (file_header_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
-                err_msg_ = "Error: ZERO_ORDER_HOLD requires TrackingPolicy::Enabled";
-                return false;
-            }
-
             row_ = RowType(layout);
+
+            // Initialize codec dispatch — selects Flat001 or ZoH001 based on
+            // file flags. TrackingPolicy and codec are orthogonal (Item 11 §7).
+            codec_.selectCodec(file_header_.getFlags(), row_.layout());
+
             return true;
             
         } catch (const std::exception& ex) {
@@ -232,6 +227,9 @@ namespace bcsv {
         
         // Reset payload hasher for checksum validation
         packet_hash_.reset();
+
+        // Reset codec state at packet boundary (Item 11)
+        codec_.reset();
 
         if (!success) {
             if(header.magic == FOOTER_BIDX_MAGIC) {
@@ -309,12 +307,8 @@ namespace bcsv {
             rowRawData = lz4_stream_->decompress(row_buffer_);
         }
 
-        // deserialize row
-        if(file_header_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
-            row_.deserializeFromZoH(rowRawData);
-        } else {
-            row_.deserializeFrom(rowRawData);
-        }
+        // deserialize row via codec (Item 11)
+        codec_.deserialize(rowRawData, row_);
         row_pos_++;
         return true;        
     }

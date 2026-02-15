@@ -218,9 +218,9 @@ Lean checklist gate (for every non-trivial item):
             - Four-section wire format: [bits_][data_][strg_lengths][strg_data]
             - Bit-packed bools (ceil(bool_count/8) bytes), packed scalars (no alignment gaps),
               uint16_t string lengths, concatenated string payloads
-            - Wire metadata (wireBitsSize, wireDataSize, wireStrgCount, wireFixedSize) in Layout::Data
-              NOTE: These should move to Serializer class in item 11.
-            - Updated: RowImpl, RowStaticImpl, RowView, RowViewStatic (serialize/deserialize, get, set, visit, validate)
+            - Wire metadata (wireBitsSize, wireDataSize, wireStrgCount, wireFixedSize) now owned by
+              RowCodecFlat001/RowCodecZoH001 (moved from Layout::Data in item 11).
+            - Updated: RowImpl, RowStaticImpl, RowView, RowViewStatic (get, set, visit, validate)
             - Removed StringAddr from flat wire path; COLUMN_OFFSETS/COLUMN_LENGTHS/OFFSET_VAR replaced
               with WIRE_OFFSETS/WIRE_BITS_SIZE/WIRE_DATA_SIZE/WIRE_STRG_COUNT/WIRE_FIXED_SIZE
             - RowView/RowViewStatic: bool_scratch_ for single-bit extraction, string cursor scanning
@@ -262,7 +262,7 @@ Lean checklist gate (for every non-trivial item):
         - Suite smoke: benchmark/run_benchmarks.py --size=S --no-build --no-report PASS
 
 
-11. Restructure Interaction between Row(classes) and Reader/Writer. Proposal: Introduce a Serializer / Deserializier layer within the API that is going to allow us to support different Encoding schemas, limiting the impact on Row, Reader and Writer classes.
+[x] 11. Restructure Interaction between Row(classes) and Reader/Writer. Proposal: Introduce a Serializer / Deserializier layer within the API that is going to allow us to support different Encoding schemas, limiting the impact on Row, Reader and Writer classes.
         Issue: Currently serializer and deserailizer functionalities are tightly integrated with row, this:
             - makes row heavier (memory) and more complex than required, as it stores data required for serilization/deserialization, e.g. (wire)offsets_ within RowView and offset_var_ in all Row classes.
               which in many use cases may not be needed and limits rows ability to be used as lightweight facility to collect and transfer information within an application.
@@ -325,6 +325,69 @@ Lean checklist gate (for every non-trivial item):
         Mitigations / follow-ups:
         1) Introduce serializer interfaces first, then migrate one encoding path at a time with parity tests.
         2) Establish single source of truth for wire metadata and validate with focused row/view roundtrip tests.
+
+        Implementation completed: 2026-02-15
+
+        Deliverables:
+        - New files: row_codec_flat001.h/hpp (555 lines), row_codec_zoh001.h/hpp (478 lines),
+          row_codec_detail.h (58 lines), row_codec_variant.h (51 lines),
+          row_codec_flat001_test.cpp (677 lines), row_codec_zoh001_test.cpp (631 lines)
+        - Removed from Row: serializeTo, deserializeFrom, serializeToZoH, deserializeFromZoH
+          (~520 lines of implementations + declarations)
+        - Removed from RowStatic: WIRE_* constexpr block, serialize/deserialize helpers
+          (~240 lines of implementations + declarations)
+        - Removed from Layout: wire_bits_size_, wire_data_size_, wire_strg_size_ members,
+          wireBitsSize/wireDataSize/wireStrgCount/wireFixedSize accessors (~56 lines)
+        - row.hpp reduced from ~3818 to ~3297 lines (-14%)
+        - Net codebase change: 18 files, +294 / -855 lines (net -561)
+        - Reader/Writer use std::variant<RowCodecFlat001, RowCodecZoH001> dispatch via std::visit
+        - RowView/RowViewStatic use embedded codec for zero-copy column access
+        - Wire metadata owned exclusively by codec classes (single source of truth)
+
+        Validation (2026-02-15):
+        - Full gtest suite: 391/391 PASS
+        - C API suite: 76/76 PASS
+        - Row API executable: PASS
+        - All example executables built + smoke run: example, example_static, example_zoh,
+          example_zoh_static, visitor_examples, c_api_vectorized_example, bcsv2csv, csv2bcsv,
+          bcsvHead, bcsvTail, bcsvHeader (all exit 0)
+        - Benchmark validation: bench_micro_types BM_SerializeTo_12col ~25 ns (no regression)
+
+        Lean Checklist Summary (Item 11, post-implementation)
+        - Scope fit: PASS (codec extraction as specified; no speculative abstractions)
+        - Ownership clarity: PASS (wire metadata single source of truth in codec classes;
+          Layout no longer caches wire sizes; Row no longer owns serialization)
+        - Layering: PASS (Row = state/access, Codec = wire format, Reader/Writer = stream lifecycle)
+        - Duplication budget: PASS (serialize/deserialize logic exists once per format in codec;
+          no duplication across Row/RowStatic/RowView/RowViewStatic)
+        - Complexity budget: PASS (row.hpp reduced by 14%; new codec files are focused single-purpose)
+        - Safety guardrails: PASS (all existing tests pass; buffer-boundary checks preserved in codec)
+        - Compatibility impact: PASS (public API unchanged; C API / Python / Unity unaffected;
+          76/76 C API tests pass; all examples build and run)
+
+11.B Clean-up, performance, hardening
+    [x] ensure correctness and test coverage (404 GTest + 76 C API + Row API — all pass)
+    [x] remove 3 redundant scalar caches from RowView (wire_data_off_, wire_lens_off_, wire_fixed_size_)
+        - saved 12 bytes per RowView instance, simplified ctors and assignment operators
+        - only offsets_ptr_ (per-iteration inner-loop pointer, 8 call sites) retained
+    [x] fix const_cast in deserializeElementsZoH — signature changed to RowType&
+    [x] pre-fetch layout accessor optimization (11 visit/get functions)
+        - replaced per-iteration layout_.columnType(i) / layout_.columnOffset(i)
+          (shared_ptr chase → checkRange → array[i]) with pre-fetched raw pointers
+        - added missing out_of_range bounds check in RowImpl::get(span)
+    [x] update ARCHITECTURE.md with RowView ↔ Codec relationship
+    [x] update ITEM_11_PLAN.md with post-implementation assessment
+    [ ] clean up (dead code), i.e. remove StringAddr
+    [ ] clean up includes (regain compile speed, avoid cyclic dependencies, keep clangd happy)
+    [ ] regain speed — benchmark pre-fetch impact, investigate remaining VisitConst_72col regression
+    [ ] Compare memory footprint
+    [ ] Consider Refactorings (redundant layout_ in codecs, setLayout() public, naming, reset() no-op)
+    Known remaining deferred issues (from ITEM_11_PLAN.md):
+        - Redundant layout_ in ZoH (also in flat_) — low, wasted pointer
+        - setLayout() public on Flat001 dynamic — low, API footgun
+        - sizeOf() vs wireSizeOf() naming inconsistency — low
+        - reset() is no-op in both codecs — low, dead code path in CodecDispatch
+        - ZoH serialize incremental resize — low, perf not correctness
 
 12. Implement CSV write and read functionality using the BCSV interface
     10.a: Restructure BCSV Reader/ Writer API

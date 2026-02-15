@@ -130,6 +130,8 @@ Users interact with these types (declared in `include/bcsv/`):
 | `RowViewStatic<Types...>` | row.h | Zero-copy view for static layouts. |
 | `Reader<LayoutType, Policy>` | reader.h | Stream-based BCSV file reader with LZ4 decompression. |
 | `Writer<LayoutType, Policy>` | writer.h | Stream-based BCSV file writer with LZ4 compression, optional ZoH. |
+| `RowCodecFlat001<Layout, Policy>` | row_codec_flat001.h | Dense flat row codec — serialize, deserialize, zero-copy column access. |
+| `RowCodecZoH001<Layout, Policy>` | row_codec_zoh001.h | Zero-Order-Hold codec — delta-encodes unchanged columns. |
 
 > **Note:** `RowImpl<Policy>` is an internal implementation detail — never mention it in user-facing code or docs.
 
@@ -171,6 +173,11 @@ reader.close();
 | `row_visitors.h` | C++20 concepts for visitor pattern: `ConstRowVisitor`, `MutableRowVisitor` |
 | `reader.h` | `Reader<>` — streaming file reader with LZ4 decompression |
 | `writer.h` | `Writer<>` — streaming file writer with LZ4 compression |
+| `row_codec_flat001.h` | `RowCodecFlat001<>` — dense flat row codec (serialize, deserialize, column access) |
+| `row_codec_zoh001.h` | `RowCodecZoH001<>` — ZoH delta codec (composes Flat001 for first row) |
+| `row_codec_detail.h` | Shared codec helpers: `computeWireMetadata()`, `readColumnFromWire()` |
+| `row_codec_variant.h` | `RowCodecType<>` — compile-time codec selection for Writer |
+| `row_codec_dispatch.h` | `CodecDispatch<>` — runtime codec selection for Reader (union + function pointers) |
 | `file_header.h` | `FileHeader` — 12-byte fixed header + variable schema section |
 | `packet_header.h` | `PacketHeader` — 16-byte per-packet header (magic, row index, checksum) |
 | `file_footer.h` | `FileFooter`, `PacketIndexEntry` — EOF index for random access |
@@ -187,9 +194,11 @@ reader.close();
 |------|---------|
 | `bcsv.hpp` | Stream type traits (`is_fstream`, `has_open_method`, etc.) |
 | `layout.hpp` | Offset computation, observer callbacks, bool/tracked mask management |
-| `row.hpp` | `get<T>()`/`set<T>()`/`visit()`, serialization, ZoH, ~3500 lines |
-| `reader.hpp` | `open()`, `close()`, `readNext()`, packet handling, v1.3.0 streaming |
-| `writer.hpp` | `open()`, `close()`, `writeRow()`, packet management, ZoH delta |
+| `row.hpp` | `get<T>()`/`set<T>()`/`visit()`, RowView access — ~3300 lines |
+| `reader.hpp` | `open()`, `close()`, `readNext()`, packet handling, codec dispatch |
+| `writer.hpp` | `open()`, `close()`, `writeRow()`, packet management, codec dispatch |
+| `row_codec_flat001.hpp` | Flat001 codec implementation: serialize, deserialize, column access |
+| `row_codec_zoh001.hpp` | ZoH001 codec implementation: delta serialize/deserialize |
 | `file_header.hpp` | Header read/write/validation |
 | `bitset.hpp` | Full bitset implementation (~1800 lines), SOO, shift, slice views |
 | `column_name_index.hpp` | Name parsing, sorted insert, binary search |
@@ -231,12 +240,13 @@ reader.close();
 - **Policy-based design**: `TrackingPolicy::Enabled/Disabled` as template parameter for ZoH change tracking (compile-time decision, no runtime branching)
 - **CRTP + static dispatch**: `LayoutStatic<Types...>` for zero-overhead compile-time schemas
 - **Three-container Row storage**: `bits_` (Bitset<>), `data_` (vector<byte>), `strg_` (vector<string>) — booleans as bits, scalars packed, strings separate
+- **Codec extraction**: Wire-format serialization/deserialization lives in `RowCodecFlat001`/`RowCodecZoH001`, not in Row classes. Writer uses compile-time `RowCodecType` (`std::conditional_t`); Reader uses runtime `CodecDispatch` (union + function pointers, resolved at file open). TrackingPolicy and file codec are orthogonal axes — all 4 combinations work. Codecs access Row internals via `friend`.
 
 ## Current Status
 
 - **Version**: v1.1.2 (generated from Git tags)
 - **Active work**: see ToDo.txt (items 10-14 are next: wire format, serializer layer, delta encoding)
-- **Test suite**: ~299 tests passing (Google Test)
+- **Test suite**: 404 tests passing (Google Test), 76 C API tests, row API tests
 - **Benchmark suite**: 11 dataset profiles, macro + micro benchmarks, Python orchestrator
 
 ## Subsystem Skill Files
@@ -275,6 +285,7 @@ Key source entry points by area:
 - Types & constants: include/bcsv/definitions.h
 - Column schema: include/bcsv/layout.h
 - Row data model: include/bcsv/row.h (RowImpl is internal — users see Row, RowView, RowStatic, RowViewStatic)
+- Row codecs: include/bcsv/row_codec_flat001.h, include/bcsv/row_codec_zoh001.h
 - File I/O: include/bcsv/reader.h, include/bcsv/writer.h
 - Visitor pattern: include/bcsv/row_visitors.h
 - VLE encoding: include/bcsv/vle.hpp

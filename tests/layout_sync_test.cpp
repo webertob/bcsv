@@ -11,6 +11,8 @@
 
 #include <gtest/gtest.h>
 #include <bcsv/bcsv.h>
+#include <bcsv/row_codec_flat001.h>
+#include <bcsv/row_codec_flat001.hpp>
 #include <set>
 #include <string>
 
@@ -431,7 +433,7 @@ TEST_F(LayoutSyncTest, Layout_SetColumns_NamesTypes_UpdatesAttachedRow) {
 }
 
 // ============================================================================
-// Layout Wire Metadata Tests
+// Layout Wire Metadata via Codec Tests
 // ============================================================================
 
 TEST_F(LayoutSyncTest, Clone_PreservesWireMetadata) {
@@ -444,21 +446,28 @@ TEST_F(LayoutSyncTest, Clone_PreservesWireMetadata) {
     layout.addColumn({"name", bcsv::ColumnType::STRING});
     layout.addColumn({"desc", bcsv::ColumnType::STRING});
 
-    // Verify original has non-zero wire metadata
-    EXPECT_GT(layout.wireBitsSize(), 0u) << "Original wireBitsSize should be > 0 (2 bools)";
-    EXPECT_GT(layout.wireDataSize(), 0u) << "Original wireDataSize should be > 0 (int32 + double)";
-    EXPECT_EQ(layout.wireStrgCount(), 2u) << "Original wireStrgCount should be 2";
+    // Create codecs from original and cloned layouts
+    bcsv::RowCodecFlat001<bcsv::Layout> codecOrig;
+    codecOrig.setup(layout);
 
-    // Clone and verify metadata is preserved
     bcsv::Layout cloned = layout.clone();
-    EXPECT_EQ(cloned.wireBitsSize(), layout.wireBitsSize())
+    bcsv::RowCodecFlat001<bcsv::Layout> codecCloned;
+    codecCloned.setup(cloned);
+
+    // Verify codec wire metadata matches between original and clone
+    EXPECT_EQ(codecCloned.wireBitsSize(), codecOrig.wireBitsSize())
         << "Cloned wireBitsSize must match original";
-    EXPECT_EQ(cloned.wireDataSize(), layout.wireDataSize())
+    EXPECT_EQ(codecCloned.wireDataSize(), codecOrig.wireDataSize())
         << "Cloned wireDataSize must match original";
-    EXPECT_EQ(cloned.wireStrgCount(), layout.wireStrgCount())
+    EXPECT_EQ(codecCloned.wireStrgCount(), codecOrig.wireStrgCount())
         << "Cloned wireStrgCount must match original";
-    EXPECT_EQ(cloned.wireFixedSize(), layout.wireFixedSize())
+    EXPECT_EQ(codecCloned.wireFixedSize(), codecOrig.wireFixedSize())
         << "Cloned wireFixedSize must match original";
+
+    // Verify expected values
+    EXPECT_GT(codecOrig.wireBitsSize(), 0u) << "wireBitsSize should be > 0 (2 bools)";
+    EXPECT_GT(codecOrig.wireDataSize(), 0u) << "wireDataSize should be > 0 (int32 + double)";
+    EXPECT_EQ(codecOrig.wireStrgCount(), 2u) << "wireStrgCount should be 2";
 
     // Also verify basic layout properties survived
     EXPECT_EQ(cloned.columnCount(), layout.columnCount());
@@ -466,7 +475,7 @@ TEST_F(LayoutSyncTest, Clone_PreservesWireMetadata) {
 }
 
 TEST_F(LayoutSyncTest, Clone_WireMetadata_AfterRemoveColumn) {
-    // Build layout, remove a column, clone — metadata must still be correct
+    // Build layout, remove a column, clone — codec metadata must still match
     bcsv::Layout layout;
     layout.addColumn({"b1", bcsv::ColumnType::BOOL});
     layout.addColumn({"x",  bcsv::ColumnType::INT32});
@@ -476,14 +485,20 @@ TEST_F(LayoutSyncTest, Clone_WireMetadata_AfterRemoveColumn) {
     layout.removeColumn(1);  // remove "x" (INT32)
     // Now: b1(BOOL), s(STRING), b2(BOOL) — no scalars, 2 bools, 1 string
 
-    EXPECT_EQ(layout.wireDataSize(), 0u) << "No scalars after removing INT32";
-    EXPECT_EQ(layout.wireStrgCount(), 1u) << "One string column remains";
-    EXPECT_GT(layout.wireBitsSize(), 0u) << "Two bools remain";
+    bcsv::RowCodecFlat001<bcsv::Layout> codecOrig;
+    codecOrig.setup(layout);
+
+    EXPECT_EQ(codecOrig.wireDataSize(), 0u) << "No scalars after removing INT32";
+    EXPECT_EQ(codecOrig.wireStrgCount(), 1u) << "One string column remains";
+    EXPECT_GT(codecOrig.wireBitsSize(), 0u) << "Two bools remain";
 
     bcsv::Layout cloned = layout.clone();
-    EXPECT_EQ(cloned.wireBitsSize(), layout.wireBitsSize());
-    EXPECT_EQ(cloned.wireDataSize(), layout.wireDataSize());
-    EXPECT_EQ(cloned.wireStrgCount(), layout.wireStrgCount());
-    EXPECT_EQ(cloned.wireFixedSize(), layout.wireFixedSize());
+    bcsv::RowCodecFlat001<bcsv::Layout> codecCloned;
+    codecCloned.setup(cloned);
+
+    EXPECT_EQ(codecCloned.wireBitsSize(), codecOrig.wireBitsSize());
+    EXPECT_EQ(codecCloned.wireDataSize(), codecOrig.wireDataSize());
+    EXPECT_EQ(codecCloned.wireStrgCount(), codecOrig.wireStrgCount());
+    EXPECT_EQ(codecCloned.wireFixedSize(), codecOrig.wireFixedSize());
     validateSync(cloned, "After removeColumn + clone");
 }

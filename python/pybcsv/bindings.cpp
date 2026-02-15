@@ -238,7 +238,7 @@ PYBIND11_MODULE(_bcsv, m) {
         .def_readwrite("type", &bcsv::ColumnDefinition::type)
         .def("__repr__", [](const bcsv::ColumnDefinition& col) {
             return "<ColumnDefinition name='" + col.name + "' type=" +
-                   bcsv::toString(col.type) + ">";
+                   std::string(bcsv::toString(col.type)) + ">";
         });
 
     // Layout class
@@ -337,14 +337,14 @@ PYBIND11_MODULE(_bcsv, m) {
             size_t estimated_row_size = 0;
             for (size_t i = 0; i < layout.columnCount(); ++i) {
                 if (layout.columnType(i) == bcsv::ColumnType::STRING) {
-                    estimated_row_size += 8; // StringAddress size
+                    estimated_row_size += sizeof(uint16_t); // wire format: uint16_t length prefix
                     if (i < values.size() && py::isinstance<py::str>(values[i])) {
                         py::str str_obj = values[i].cast<py::str>();
                         size_t str_size = PyUnicode_GET_LENGTH(str_obj.ptr()) * PyUnicode_KIND(str_obj.ptr());
                         estimated_row_size += str_size;
                     }
                 } else {
-                    estimated_row_size += layout.columnLength(i);
+                    estimated_row_size += bcsv::sizeOf(layout.columnType(i));
                 }
             }
             
@@ -384,7 +384,7 @@ PYBIND11_MODULE(_bcsv, m) {
         }, "Write multiple rows efficiently with batching")
         .def("close", &bcsv::Writer<bcsv::Layout>::close)
         .def("flush", &bcsv::Writer<bcsv::Layout>::flush)
-        .def("is_open", &bcsv::Writer<bcsv::Layout>::is_open)
+        .def("is_open", &bcsv::Writer<bcsv::Layout>::isOpen)
         .def("layout", &bcsv::Writer<bcsv::Layout>::layout, py::return_value_policy::reference_internal)
         .def("__enter__", [](bcsv::Writer<bcsv::Layout>& writer) -> bcsv::Writer<bcsv::Layout>& {
             return writer;
@@ -399,7 +399,7 @@ PYBIND11_MODULE(_bcsv, m) {
         .def("open", [](bcsv::Reader<bcsv::Layout>& reader, const std::string& filename) {
             bool success = reader.open(filename);
             if (!success) {
-                std::string error = reader.getLastError();
+                std::string error = reader.getErrorMsg();
                 if (error.empty()) {
                     error = "Failed to open file for reading: " + filename;
                 }

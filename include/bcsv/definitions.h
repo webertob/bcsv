@@ -15,10 +15,9 @@
 #include <cstddef>
 #include <variant>
 #include <limits>
-#include <span>
 #include <cstring>
+#include <stdexcept>
 #include <type_traits>
-#include "string_addr.h"
 
 // Include auto-generated version information
 #include "version_generated.h"
@@ -27,35 +26,7 @@ namespace bcsv {
     
     // Configuration
     constexpr bool RANGE_CHECKING = true;
-    constexpr bool DEBUG_OUTPUTS  = true;       // sends information to std::cerr and std::cout to support development and debugging
-    using StringAddr = StrAddr32_t;             // Default StringAddress type (4 bytes address type)
-
-    // Helper template for static_assert
-    template<typename T>
-    constexpr bool ALWAYS_FALSE = false;
-
-    template<typename T>
-    inline T unalignedRead(const void *src) {
-        static_assert(std::is_trivially_copyable_v<T>, "unalignedRead requires trivially copyable type");
-        T value{};
-        std::memcpy(&value, src, sizeof(T));
-        return value;
-    }
-
-    template<typename T>
-    inline void unalignedWrite(void *dst, const T& value) {
-        static_assert(std::is_trivially_copyable_v<T>, "unalignedWrite requires trivially copyable type");
-        std::memcpy(dst, &value, sizeof(T));
-    }
-
-    enum class TrackingPolicy : uint8_t {
-        Disabled,
-        Enabled
-    };
-
-    constexpr bool isTrackingEnabled(TrackingPolicy policy) noexcept {
-        return policy == TrackingPolicy::Enabled;
-    }
+    constexpr bool DEBUG_OUTPUTS  = true;       // sends information to std::cerr and std::cout to support development and debugging             
 
     // Version information (from auto-generated header)
     constexpr int VERSION_MAJOR = version::MAJOR;
@@ -83,7 +54,7 @@ namespace bcsv {
     constexpr uint32_t PCKT_TERMINATOR = 0x3FFFFFFF ;    // Marker value to indicate end of packet data (no more rows to come)
     constexpr size_t MAX_COLUMN_COUNT  = std::numeric_limits<uint16_t>::max();  // Maximum number of columns
     constexpr size_t MAX_COLUMN_LENGTH = std::numeric_limits<uint16_t>::max();  // Maximum width of column content
-    constexpr size_t MAX_STRING_LENGTH = StringAddr::MAX_STRING_LENGTH;        // Maximum length of string data
+    constexpr size_t MAX_STRING_LENGTH = std::numeric_limits<uint16_t>::max(); // Maximum length of string data (wire format uses uint16_t lengths)
     constexpr size_t MAX_ROW_LENGTH    = (1ULL << 24) - 2 ;                     // about 16MB maximum Maximum size of a single row in bytes, using 4b BLE encoding (2 bits for length), reserve 0xFFFF for terminator.
     constexpr size_t MIN_PACKET_SIZE   = 64 * 1024;                             // 64KB minimum packet size    
     constexpr size_t MAX_PACKET_SIZE   = 1024 * 1024 * 1024;                    // 1GB maximum packet size
@@ -153,6 +124,10 @@ namespace bcsv {
     inline bool isType(const ValueType& value, const ColumnType& type) {
         return value.index() == static_cast<size_t>(type);
     }
+
+    // Helper template for static_assert
+    template<typename T>
+    constexpr bool ALWAYS_FALSE = false;
 
     // Convert C++ type to ColumnType enum
     template<typename T>
@@ -345,7 +320,7 @@ namespace bcsv {
         else if constexpr (std::is_same_v<T, int64_t> ) return sizeof(int64_t);
         else if constexpr (std::is_same_v<T, float>   ) return sizeof(float);
         else if constexpr (std::is_same_v<T, double>  ) return sizeof(double);
-        else if constexpr (std::is_same_v<T, string>  ) return sizeof(StringAddr); // StringAddress
+        else if constexpr (std::is_same_v<T, string>  ) return sizeof(uint16_t);    // wire format: uint16_t length prefix
         else static_assert(ALWAYS_FALSE<T>, "Unsupported type");
     }
 
@@ -363,7 +338,7 @@ namespace bcsv {
             case ColumnType::INT64:  return sizeof(int64_t);
             case ColumnType::FLOAT:  return sizeof(float);
             case ColumnType::DOUBLE: return sizeof(double);
-            case ColumnType::STRING: return sizeof(StringAddr); // StringAddress
+            case ColumnType::STRING: return sizeof(uint16_t);    // wire format: uint16_t length prefix
             default: throw std::runtime_error("Unknown column type");
         }
     }
@@ -471,7 +446,20 @@ namespace bcsv {
         }, value);
     }
 
-    
+    template<typename T>
+    inline T unalignedRead(const void *src) {
+        static_assert(std::is_trivially_copyable_v<T>, "unalignedRead requires trivially copyable type");
+        T value{};
+        std::memcpy(&value, src, sizeof(T));
+        return value;
+    }
+
+    template<typename T>
+    inline void unalignedWrite(void *dst, const T& value) {
+        static_assert(std::is_trivially_copyable_v<T>, "unalignedWrite requires trivially copyable type");
+        std::memcpy(dst, &value, sizeof(T));
+    }
+
     namespace detail {
         // Validation helper: allows templates to check if type is std::variant
         template<typename T> struct is_variant : std::false_type {};
@@ -528,4 +516,13 @@ namespace bcsv {
             (std::is_convertible_v<std::decay_t<T>, bool> && !std::is_arithmetic_v<std::decay_t<T>>);  // For std::_Bit_reference
     }    
     
+    enum class TrackingPolicy : uint8_t {
+        Disabled,
+        Enabled
+    };
+
+    constexpr bool isTrackingEnabled(TrackingPolicy policy) noexcept {
+        return policy == TrackingPolicy::Enabled;
+    }
+
 } // namespace bcsv

@@ -321,17 +321,17 @@ def cleanup_git_worktree(project_root, worktree_path, keep_last):
     )
 
 
-def pin_cmd(cmd, pin=True):
-    """Wrap a command list with taskset to pin to CPU core 0 (Linux only)."""
+def pin_cmd(cmd, pin=True, cpu=0):
+    """Wrap a command list with taskset to pin to a CPU core (Linux only)."""
     if not pin:
         return cmd
     if shutil.which("taskset"):
-        return ["taskset", "-c", "0"] + cmd
+        return ["taskset", "-c", str(cpu)] + cmd
     return cmd
 
 
 def run_macro_benchmark(executable, output_dir, mode="full", profile=None, rows=None,
-                         build_type="Release", no_cleanup=False, pin=True, quiet=False):
+                         build_type="Release", no_cleanup=False, pin=True, pin_cpu=0, quiet=False):
     """Run the macro benchmark executable."""
     output_file = output_dir / "macro_results.json"
     stdout_log = output_dir / "macro_stdout.log"
@@ -350,7 +350,7 @@ def run_macro_benchmark(executable, output_dir, mode="full", profile=None, rows=
     if no_cleanup:
         cmd.append("--no-cleanup")
     
-    cmd = pin_cmd(cmd, pin)
+    cmd = pin_cmd(cmd, pin, cpu=pin_cpu)
     
     if not quiet:
         print(f"\n{'='*60}")
@@ -395,7 +395,7 @@ def run_macro_benchmark(executable, output_dir, mode="full", profile=None, rows=
     return None
 
 
-def run_micro_benchmark(executable, output_dir, pin=True, quiet=False):
+def run_micro_benchmark(executable, output_dir, pin=True, pin_cpu=0, quiet=False):
     """Run the Google Benchmark micro-benchmark executable."""
     output_file = output_dir / "micro_results.json"
     stdout_log = output_dir / "micro_stdout.log"
@@ -407,7 +407,7 @@ def run_micro_benchmark(executable, output_dir, pin=True, quiet=False):
         f"--benchmark_out={output_file}",
     ]
     
-    cmd = pin_cmd(cmd, pin)
+    cmd = pin_cmd(cmd, pin, cpu=pin_cpu)
     
     if not quiet:
         print(f"\n{'='*60}")
@@ -700,7 +700,7 @@ def update_leaderboard_from(output_dir):
             print(f"  {line}")
 
 
-def run_repeated_benchmarks(args, executables, output_dir, pin, quiet=False):
+def run_repeated_benchmarks(args, executables, output_dir, pin, pin_cpu=0, quiet=False):
     macro_runs = []
     micro_runs = []
     cli_runs = []
@@ -728,6 +728,7 @@ def run_repeated_benchmarks(args, executables, output_dir, pin, quiet=False):
                 build_type=args.build_type,
                 no_cleanup=args.no_cleanup,
                 pin=pin,
+                pin_cpu=pin_cpu,
                 quiet=quiet,
             )
             if macro_data:
@@ -738,6 +739,7 @@ def run_repeated_benchmarks(args, executables, output_dir, pin, quiet=False):
                 executables["bench_micro_types"],
                 run_dir,
                 pin=pin,
+                pin_cpu=pin_cpu,
                 quiet=quiet,
             )
             if micro_data:
@@ -767,7 +769,7 @@ def run_repeated_benchmarks(args, executables, output_dir, pin, quiet=False):
                 ext_cmd.append(f"--rows={args.rows}")
             if args.profile:
                 ext_cmd.append(f"--profile={args.profile}")
-            ext_cmd = pin_cmd(ext_cmd, pin)
+            ext_cmd = pin_cmd(ext_cmd, pin, cpu=pin_cpu)
 
             if not quiet:
                 print(f"\n  External CSV comparison")
@@ -908,6 +910,8 @@ def main():
                         help="Keep temporary data files")
     parser.add_argument("--no-pin", action="store_true",
                         help="Disable CPU pinning")
+    parser.add_argument("--pin-cpu", type=int, default=0,
+                        help="CPU core to pin to (default: 0)")
     parser.add_argument("--list", action="store_true",
                         help="List available executables and profiles")
     
@@ -960,6 +964,7 @@ def main():
 
     build_dir = get_build_dir(run_project_root, args.build_type)
     pin = not args.no_pin
+    pin_cpu = args.pin_cpu
     
     # ── Step 1: Build ─────────────────────────────────────────────
     if args.git_commit:
@@ -1010,6 +1015,8 @@ def main():
         # Write platform info
         platform_info = write_platform_json(output_dir, args.build_type, git_cwd=run_project_root)
         platform_info["cpu_pinning"] = pin and shutil.which("taskset") is not None
+        if pin and shutil.which("taskset"):
+            platform_info["cpu_pinned_to"] = pin_cpu
         if git_commit_resolved:
             platform_info["bench_source"] = "current-suite+historic-worktree"
             platform_info["bench_source_git_commit"] = git_commit_resolved
@@ -1020,11 +1027,11 @@ def main():
     
         # ── Step 2: Run benchmarks ────────────────────────────────────
         repeat_suffix = f", repeat={args.repeat}" if args.repeat > 1 else ""
-        print(f"\n[2/5] Running benchmarks {'(pinned to CPU 0)' if pin else '(no pinning)'}{repeat_suffix}")
+        print(f"\n[2/5] Running benchmarks {'(pinned to CPU ' + str(pin_cpu) + ')' if pin else '(no pinning)'}{repeat_suffix}")
         print(f"      Output: {output_dir}")
 
         macro_runs, micro_runs, cli_runs, external_runs = run_repeated_benchmarks(
-            args, executables, output_dir, pin, quiet=args.quiet
+            args, executables, output_dir, pin, pin_cpu=pin_cpu, quiet=args.quiet
         )
 
         macro_data, micro_data, cli_data, external_data = finalize_run_payloads(

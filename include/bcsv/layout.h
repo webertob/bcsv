@@ -99,12 +99,6 @@ namespace bcsv {
             std::vector<uint32_t>                    offsets_;       // Unified per-column offsets into RowImpl's storage containers (bits_, data_, strg_). Meaning depends on columnType: BOOL→bit index in bits_, STRING→index in strg_, scalar→byte offset in data_ (aligned).
             Bitset<>                                 tracked_mask_;  // Bit i set iff column i is NOT BOOL (scalar or string). Size == columnCount.
 
-            // Wire-format metadata — pre-computed section sizes for flat serialization.
-            // Temporary home: moves to Serializer/Deserializer in ToDo item 11.
-            uint32_t                                 wire_bits_size_{0};   // ⌈bool_count / 8⌉ bytes
-            uint32_t                                 wire_data_size_{0};   // sum of sizeOf(type) for all scalar (non-bool, non-string) columns
-            uint32_t                                 wire_strg_size_{0};  // number of string columns
-
             // Internal helpers
             void rebuildColumnIndex();
             void rebuildOffsets();  // Recomputes offsets_ from column_types_
@@ -132,13 +126,6 @@ namespace bcsv {
             const std::vector<uint32_t>& columnOffsets() const noexcept { return offsets_; }
             Bitset<> boolMask() const noexcept { return ~tracked_mask_; }  // Derived: inverse of tracked_mask_
             const Bitset<>& trackedMask() const noexcept { return tracked_mask_; }
-
-            /// Wire-format section sizes for flat row serialization.
-            /// Temporary home — moves to Serializer/Deserializer in ToDo item 11.
-            uint32_t wireBitsSize() const noexcept { return wire_bits_size_; }   ///< ⌈bool_count / 8⌉
-            uint32_t wireDataSize() const noexcept { return wire_data_size_; }   ///< packed scalars (no alignment)
-            uint32_t wireStrgCount() const noexcept { return wire_strg_size_; } ///< number of string columns
-            uint32_t wireFixedSize() const noexcept { return wire_bits_size_ + wire_data_size_ + wire_strg_size_ * sizeof(uint16_t); } ///< total fixed-size portion (everything before strg_data)
 
             /// Compute unified offsets from a type vector. Used by Row's onLayoutUpdate to pre-compute new offsets
             /// before the layout has been updated. Returns total data_ byte size via out parameter.
@@ -239,22 +226,6 @@ namespace bcsv {
             return data_->trackedMask();
         }
 
-        uint32_t wireBitsSize() const noexcept {
-            return data_->wireBitsSize();
-        }
-
-        uint32_t wireDataSize() const noexcept {
-            return data_->wireDataSize();
-        }
-
-        uint32_t wireStrgCount() const noexcept {
-            return data_->wireStrgCount();
-        }
-
-        uint32_t wireFixedSize() const noexcept {
-            return data_->wireFixedSize();
-        }
-        
         const std::vector<ColumnType>& columnTypes() const noexcept { 
             return data_->columnTypes(); 
         }

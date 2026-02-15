@@ -394,7 +394,9 @@ static void BM_RowViewVisit_Int8UInt8_Aligned(benchmark::State& state) {
     row.set(1, static_cast<uint8_t>(201));
 
     bcsv::ByteBuffer buffer;
-    auto serialized = row.serializeTo(buffer);
+    bcsv::RowCodecFlat001<bcsv::Layout> codec;
+    codec.setup(layout);
+    auto serialized = codec.serialize(row, buffer);
     bcsv::RowView view(layout, std::span<std::byte>(serialized));
 
     for (auto _ : state) {
@@ -421,7 +423,9 @@ static void BM_RowViewVisit_Int8UInt8_Misaligned(benchmark::State& state) {
     row.set(1, static_cast<uint8_t>(201));
 
     bcsv::ByteBuffer aligned;
-    auto serialized = row.serializeTo(aligned);
+    bcsv::RowCodecFlat001<bcsv::Layout> codec2;
+    codec2.setup(layout);
+    auto serialized = codec2.serialize(row, aligned);
 
     std::vector<std::byte> misaligned_storage(serialized.size() + 1);
     std::memcpy(misaligned_storage.data() + 1, serialized.data(), serialized.size());
@@ -450,7 +454,9 @@ static void BM_RowViewVisit_Int32_Aligned(benchmark::State& state) {
     row.set(0, static_cast<int32_t>(123456));
 
     bcsv::ByteBuffer buffer;
-    auto serialized = row.serializeTo(buffer);
+    bcsv::RowCodecFlat001<bcsv::Layout> codec;
+    codec.setup(layout);
+    auto serialized = codec.serialize(row, buffer);
     bcsv::RowView view(layout, std::span<std::byte>(serialized));
 
     for (auto _ : state) {
@@ -473,7 +479,9 @@ static void BM_RowViewVisit_Int32_Misaligned(benchmark::State& state) {
     row.set(0, static_cast<int32_t>(123456));
 
     bcsv::ByteBuffer aligned;
-    auto serialized = row.serializeTo(aligned);
+    bcsv::RowCodecFlat001<bcsv::Layout> codec2;
+    codec2.setup(layout);
+    auto serialized = codec2.serialize(row, aligned);
 
     std::vector<std::byte> misaligned_storage(serialized.size() + 1);
     std::memcpy(misaligned_storage.data() + 1, serialized.data(), serialized.size());
@@ -538,10 +546,12 @@ static void BM_SerializeTo_12col(benchmark::State& state) {
     fillMicroRow(row);
     bcsv::ByteBuffer buffer;
     buffer.reserve(4096);
+    bcsv::RowCodecFlat001<bcsv::Layout> codec;
+    codec.setup(g_microLayout);
     
     for (auto _ : state) {
         buffer.clear();
-        auto span = row.serializeTo(buffer);
+        auto span = codec.serialize(row, buffer);
         benchmark::DoNotOptimize(span);
     }
 }
@@ -551,13 +561,15 @@ static void BM_DeserializeFrom_12col(benchmark::State& state) {
     bcsv::Row row(g_microLayout);
     fillMicroRow(row);
     bcsv::ByteBuffer buffer;
-    auto serialized = row.serializeTo(buffer);
+    bcsv::RowCodecFlat001<bcsv::Layout> codec;
+    codec.setup(g_microLayout);
+    auto serialized = codec.serialize(row, buffer);
 
     bcsv::Row target(g_microLayout);
     std::span<const std::byte> data(serialized.data(), serialized.size());
     
     for (auto _ : state) {
-        target.deserializeFrom(data);
+        codec.deserialize(data, target);
         benchmark::DoNotOptimize(target);
     }
 }

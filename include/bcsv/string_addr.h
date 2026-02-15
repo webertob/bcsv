@@ -13,7 +13,7 @@
 #include <utility>
 
 namespace bcsv {
-    
+    /* DEPRECATED; We strop storing addresses (offsets) for string, we only keep string size/length. This class is not required any more and going to be removed.*/
     /* StringAddress template, helps with packing and unpacking string payload address and length into fixed column sections. */
     template<typename AddrType = uint32_t>
     class StrAddrT {

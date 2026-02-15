@@ -10,12 +10,15 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <fstream>
 #include <filesystem>
 #include <optional>
+#include <string>
 #include "definitions.h"
 #include "layout.h"
 #include "row.h"
+#include "row_codec_dispatch.h"
 #include "file_header.h"
 #include "byte_buffer.h"
 #include "lz4_stream.hpp"
@@ -50,6 +53,7 @@ namespace bcsv {
         ByteBuffer              row_buffer_;             // current row, encoded data (decompressed)
         size_t                  row_pos_;                // postion of current row in file (0-based row counter)
         RowType                 row_;                   // current row, decoded data
+        CodecDispatch<LayoutType, Policy> codec_;      // Runtime codec dispatch (Item 11 Phase 7)
         
     public:
         /**

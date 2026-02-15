@@ -9,18 +9,18 @@
 
 #pragma once
 
-#include <cassert>
 #include <cstddef>
-#include <cstring>
 #include <span>
+#include <string>
+#include <string_view>
 #include <tuple>
-#include <utility>
+#include <type_traits>
 #include <vector>
 
 #include "definitions.h"
 #include "layout.h"
 #include "bitset.h"
-#include "byte_buffer.h"
+#include "row_codec_flat001.h"
 
 namespace bcsv {
 
@@ -471,8 +471,17 @@ namespace bcsv {
      *   - the CHANGE FLAG for non-BOOL columns (1 = changed since last reset)
      * When tracking is disabled, bits_.size() == number of BOOL columns only.
      */
+    // Forward declarations for codec friend access
+    template<typename LayoutType, TrackingPolicy P> class RowCodecFlat001;
+    template<typename LayoutType, TrackingPolicy P> class RowCodecZoH001;
+
     template<TrackingPolicy Policy>
     class RowImpl {
+        // Codec friend access — direct access to bits_, data_, strg_ for serialization.
+        // See docs/ITEM_11_PLAN.md §5 for rationale.
+        template<typename LT, TrackingPolicy P> friend class RowCodecFlat001;
+        template<typename LT, TrackingPolicy P> friend class RowCodecZoH001;
+
     private:
         // Immutable after construction
         Layout                      layout_;               // Shared layout data with observer callbacks
@@ -538,11 +547,6 @@ namespace bcsv {
                                     template<typename T>
         void                        set(size_t index, std::span<const T> values);
 
-        [[nodiscard]] std::span<std::byte>        serializeTo(ByteBuffer& buffer) const;
-        [[nodiscard]] std::span<std::byte>        serializeToZoH(ByteBuffer& buffer) const;
-        void                        deserializeFrom(const std::span<const std::byte> buffer);
-        void                        deserializeFromZoH(const std::span<const std::byte> buffer);
-
         /** @brief Visit columns with read-only access. @see row.hpp */
                                     template<RowVisitorConst Visitor>
         void                        visitConst(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
@@ -586,21 +590,30 @@ namespace bcsv {
     class RowView {
         // Immutable after construction
         Layout                  layout_;        // Shared layout data (no callbacks needed for views)
-        std::vector<uint32_t>   offsets_;       // Per-column section-relative offset (bool: bit index, scalar: byte offset in data section, string: string index)
-        uint32_t                wire_data_off_;   // byte offset from buffer start to data section (= wireBitsSize)
-        uint32_t                wire_lens_off_;   // byte offset from buffer start to strg_lengths section
-        uint32_t                wire_fixed_size_; // total fixed-size section bytes (bits + data + strg_lengths)
+        RowCodecFlat001<Layout, TrackingPolicy::Disabled> codec_; // Wire-format metadata + per-column offsets (Item 11)
+
+        // Per-column offset pointer — cached from codec_.columnOffsets().data()
+        // to avoid vector indirection in inner loops (offsets_ptr_[i] per column).
+        // Other wire constants (wireBitsSize, wireFixedSize, etc.) are accessed
+        // directly from codec_ — they are only used once per call (pre-loop).
+        const uint32_t*         offsets_ptr_{nullptr};
+
         mutable bool            bool_scratch_;    // scratch for raw get() returning span on BOOL columns
 
         // Mutable data
         std::span<std::byte>    buffer_;        // serialized data buffer (flat wire format)
 
+        /// Re-cache offsets pointer after codec_ setup or copy/move.
+        void cacheOffsetsPtr() noexcept {
+            offsets_ptr_ = codec_.columnOffsets().data();
+        }
+
     
     public:
         RowView() = delete;
         RowView(const Layout& layout, std::span<std::byte> buffer = {});
-        RowView(const RowView& other) = default;        // default copy constructor, as we don't own the buffer
-        RowView(RowView&& other) noexcept = default;    // default move constructor, as we don't own the buffer
+        RowView(const RowView& other);
+        RowView(RowView&& other) noexcept;
         ~RowView() = default;
 
         [[nodiscard]] const std::span<std::byte>& buffer() const noexcept                   { return buffer_; }
@@ -650,8 +663,8 @@ namespace bcsv {
                                         requires TypedRowVisitorConst<Visitor, T>
         void                        visitConst(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
 
-        RowView& operator=(const RowView& other) noexcept = default; // default copy assignment, as we don't own the buffer
-        RowView& operator=(RowView&& other) noexcept = default;      // default move assignment, as we don't own the buffer
+        RowView& operator=(const RowView& other);
+        RowView& operator=(RowView&& other) noexcept;
     };
 
 
@@ -666,34 +679,10 @@ namespace bcsv {
         template<size_t Index>
         using column_type = std::tuple_element_t<Index, typename LayoutType::ColTypes>;
 
-        // ── Flat wire-format helpers (constexpr) ───────────────────────
-        // Type-family counts
-        static constexpr size_t BOOL_COUNT   = (0 + ... + (std::is_same_v<ColumnTypes, bool> ? 1 : 0));
-        static constexpr size_t STRING_COUNT = (0 + ... + (std::is_same_v<ColumnTypes, std::string> ? 1 : 0));
-
-        // Section sizes  [bits_][data_][strg_lengths][strg_data]
-        static constexpr size_t WIRE_BITS_SIZE  = (BOOL_COUNT + 7) / 8;
-        static constexpr size_t WIRE_DATA_SIZE  = (0 + ... + (!std::is_same_v<ColumnTypes, bool> && !std::is_same_v<ColumnTypes, std::string> ? sizeof(ColumnTypes) : 0));
-        static constexpr size_t WIRE_STRG_COUNT = STRING_COUNT;
-        static constexpr size_t WIRE_FIXED_SIZE = WIRE_BITS_SIZE + WIRE_DATA_SIZE + WIRE_STRG_COUNT * sizeof(uint16_t);
-
-        // Per-column offset within its section:
-        //   bool   → sequential bit index (0, 1, 2, …)
-        //   scalar → byte offset from start of data section
-        //   string → sequential string index (0, 1, 2, …)
-        static constexpr std::array<size_t, sizeof...(ColumnTypes)> WIRE_OFFSETS = []() {
-            std::array<size_t, sizeof...(ColumnTypes)> r{};
-            size_t bi = 0, di = 0, si = 0, idx = 0;
-            auto assign = [&](auto tag) {
-                using T = typename decltype(tag)::type;
-                if constexpr (std::is_same_v<T, bool>)             r[idx] = bi++;
-                else if constexpr (std::is_same_v<T, std::string>) r[idx] = si++;
-                else { r[idx] = di; di += sizeof(T); }
-                ++idx;
-            };
-            (assign(std::type_identity<ColumnTypes>{}), ...);
-            return r;
-        }();
+        // Codec friend access — direct access to data_, changes_ for serialization.
+        // See docs/ITEM_11_PLAN.md §5 for rationale.
+        template<typename LT, TrackingPolicy P> friend class RowCodecFlat001;
+        template<typename LT, TrackingPolicy P> friend class RowCodecZoH001;
 
     private:
         // Immutable after construction
@@ -754,11 +743,6 @@ namespace bcsv {
                                     template<typename T, size_t Extent = std::dynamic_extent>
         void                        set(size_t index, std::span<const T, Extent> values);   // vectorized runtime indexed access
 
-        [[nodiscard]] std::span<std::byte>        serializeTo(ByteBuffer& buffer) const;
-        [[nodiscard]] std::span<std::byte>        serializeToZoH(ByteBuffer& buffer) const;
-        void                        deserializeFrom(const std::span<const std::byte> buffer);
-        void                        deserializeFromZoH(const std::span<const std::byte> buffer);
-
         /** @brief Visit columns with read-only access (compile-time). @see row.hpp */
                                     template<RowVisitorConst Visitor>
         void                        visitConst(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
@@ -777,21 +761,6 @@ namespace bcsv {
 
         RowStaticImpl& operator=(const RowStaticImpl& other) noexcept = default; // default copy assignment, tuple manges copying its members including strings
         RowStaticImpl& operator=(RowStaticImpl&& other) noexcept = default;      // default move assignment, tuple manges moving its members including strings
-
-    private:
-                                    template<size_t Index>
-        void                        serializeElements(ByteBuffer& buffer, size_t offRow,
-                                                       size_t& boolIdx, size_t& dataOff, size_t& lenOff, size_t& payOff) const;
-
-                                    template<size_t Index>
-        void                        serializeElementsZoH(ByteBuffer& buffer, Bitset<COLUMN_COUNT>& bitHeader) const;
-
-                                    template<size_t Index>
-        void                        deserializeElements(const std::span<const std::byte> &srcBuffer,
-                                                         size_t& boolIdx, size_t& dataOff, size_t& lenOff, size_t& payOff);
-
-                                    template<size_t Index>
-        void                        deserializeElementsZoH(std::span<const std::byte> &srcBuffer);
     };
 
     template<typename... ColumnTypes>
@@ -812,39 +781,20 @@ namespace bcsv {
     class RowViewStatic {
     public:
         using LayoutType = LayoutStatic<ColumnTypes...>;
+        using Codec = RowCodecFlat001<LayoutType, TrackingPolicy::Disabled>;  // Wire-format metadata source (Item 11)
         static constexpr size_t COLUMN_COUNT = LayoutType::columnCount();
 
         template<size_t Index>
         using column_type = std::tuple_element_t<Index, typename LayoutType::ColTypes>;
 
-        // ── Flat wire-format helpers (constexpr) ───────────────────────
-        // Type-family counts
-        static constexpr size_t BOOL_COUNT   = (0 + ... + (std::is_same_v<ColumnTypes, bool> ? 1 : 0));
-        static constexpr size_t STRING_COUNT = (0 + ... + (std::is_same_v<ColumnTypes, std::string> ? 1 : 0));
-
-        // Section sizes  [bits_][data_][strg_lengths][strg_data]
-        static constexpr size_t WIRE_BITS_SIZE  = (BOOL_COUNT + 7) / 8;
-        static constexpr size_t WIRE_DATA_SIZE  = (0 + ... + (!std::is_same_v<ColumnTypes, bool> && !std::is_same_v<ColumnTypes, std::string> ? sizeof(ColumnTypes) : 0));
-        static constexpr size_t WIRE_STRG_COUNT = STRING_COUNT;
-        static constexpr size_t WIRE_FIXED_SIZE = WIRE_BITS_SIZE + WIRE_DATA_SIZE + WIRE_STRG_COUNT * sizeof(uint16_t);
-
-        // Per-column offset within its section:
-        //   bool   → sequential bit index (0, 1, 2, …)
-        //   scalar → byte offset from start of data section
-        //   string → sequential string index (0, 1, 2, …)
-        static constexpr std::array<size_t, sizeof...(ColumnTypes)> WIRE_OFFSETS = []() {
-            std::array<size_t, sizeof...(ColumnTypes)> r{};
-            size_t bi = 0, di = 0, si = 0, idx = 0;
-            auto assign = [&](auto tag) {
-                using T = typename decltype(tag)::type;
-                if constexpr (std::is_same_v<T, bool>)             r[idx] = bi++;
-                else if constexpr (std::is_same_v<T, std::string>) r[idx] = si++;
-                else { r[idx] = di; di += sizeof(T); }
-                ++idx;
-            };
-            (assign(std::type_identity<ColumnTypes>{}), ...);
-            return r;
-        }();
+        // ── Flat wire-format constants (sourced from codec — single source of truth) ──
+        static constexpr size_t BOOL_COUNT      = Codec::BOOL_COUNT;
+        static constexpr size_t STRING_COUNT    = Codec::STRING_COUNT;
+        static constexpr size_t WIRE_BITS_SIZE  = Codec::WIRE_BITS_SIZE;
+        static constexpr size_t WIRE_DATA_SIZE  = Codec::WIRE_DATA_SIZE;
+        static constexpr size_t WIRE_STRG_COUNT = Codec::WIRE_STRG_COUNT;
+        static constexpr size_t WIRE_FIXED_SIZE = Codec::WIRE_FIXED_SIZE;
+        static constexpr auto   WIRE_OFFSETS    = Codec::WIRE_OFFSETS;
 
 
     private:

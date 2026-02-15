@@ -225,15 +225,17 @@ TYPED_TEST(RowTypedTest, Serialization) {
     row1.set(1, val2);
     row1.set(2, val3);
     
-    // Serialize
+    // Serialize via codec
     ByteBuffer buffer;
-    auto serialized = row1.serializeTo(buffer);
+    RowCodecFlat001<Layout, TrackingPolicy::Disabled> codec;
+    codec.setup(this->layout_);
+    auto serialized = codec.serialize(row1, buffer);
     ASSERT_FALSE(serialized.empty())
         << "Serialization failed for type " << this->GetTypeName();
     
     // Deserialize
     Row row2(this->layout_);
-    ASSERT_NO_THROW(row2.deserializeFrom(serialized))
+    ASSERT_NO_THROW(codec.deserialize(serialized, row2))
         << "Deserialization failed for type " << this->GetTypeName();
     
     // Verify round-trip

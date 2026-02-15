@@ -17,6 +17,24 @@
 
 using namespace bcsv;
 
+// Helper: serialize a Row via codec (replaces removed Row::serializeTo)
+template<typename LayoutT, TrackingPolicy P = TrackingPolicy::Disabled>
+std::span<std::byte> codecSerialize(const typename LayoutT::template RowType<P>& row,
+                                     ByteBuffer& buffer, const LayoutT& layout) {
+    RowCodecFlat001<LayoutT, P> codec;
+    codec.setup(layout);
+    return codec.serialize(row, buffer);
+}
+
+// Helper: serialize a Row via ZoH codec (replaces removed Row::serializeToZoH)
+template<typename LayoutT>
+std::span<std::byte> codecSerializeZoH(const typename LayoutT::template RowType<TrackingPolicy::Enabled>& row,
+                                        ByteBuffer& buffer, const LayoutT& layout) {
+    RowCodecZoH001<LayoutT, TrackingPolicy::Enabled> codec;
+    codec.setup(layout);
+    return codec.serialize(row, buffer);
+}
+
 // ============================================================================
 // Test: Row::visit() - Dynamic Layout
 // ============================================================================
@@ -170,7 +188,7 @@ TEST(VisitTest, RowViewBasicIteration) {
     
     // Serialize to buffer
     ByteBuffer buffer;
-    auto serialized = row.serializeTo(buffer);
+    auto serialized = codecSerialize(row, buffer, layout);
     
     // Create RowView
     RowView rowView(layout, std::span<std::byte>(serialized));
@@ -207,7 +225,7 @@ TEST(VisitTest, RowViewStringHandling) {
     row.set(2, std::string("Description text"));
     
     ByteBuffer buffer;
-    auto serialized = row.serializeTo(buffer);
+    auto serialized = codecSerialize(row, buffer, layout);
     
     RowView rowView(layout, std::span<std::byte>(serialized));
     
@@ -238,7 +256,7 @@ TEST(VisitTest, RowViewStaticBasicIteration) {
     row.set<2>(false);
     
     ByteBuffer buffer;
-    auto serialized = row.serializeTo(buffer);
+    auto serialized = codecSerialize(row, buffer, layout);
     
     RowViewStatic<int32_t, double, bool> rowView(layout, std::span<std::byte>(serialized));
     
@@ -525,7 +543,7 @@ TEST(VisitTest, RowViewMutableVisitPrimitives) {
     row.set(2, true);
     
     ByteBuffer buffer;
-    auto serialized = row.serializeTo(buffer);
+    auto serialized = codecSerialize(row, buffer, layout);
     
     RowView rowView(layout, std::span<std::byte>(serialized));
     
@@ -560,7 +578,7 @@ TEST(VisitTest, RowViewMutableVisitStringsReadOnly) {
     row.set(1, int32_t(25));
     
     ByteBuffer buffer;
-    auto serialized = row.serializeTo(buffer);
+    auto serialized = codecSerialize(row, buffer, layout);
     
     RowView rowView(layout, std::span<std::byte>(serialized));
     
@@ -592,7 +610,7 @@ TEST(VisitTest, RowViewStaticMutableVisit) {
     row.set<2>(true);
     
     ByteBuffer buffer;
-    auto serialized = row.serializeTo(buffer);
+    auto serialized = codecSerialize(row, buffer, layout);
     
     RowViewStatic<int32_t, double, bool> rowView(layout, std::span<std::byte>(serialized));
     
@@ -627,7 +645,7 @@ TEST(VisitTest, RowViewMutableVisitPrimitivesMisalignedBuffer) {
     row.set(2, true);
 
     ByteBuffer aligned;
-    auto serialized = row.serializeTo(aligned);
+    auto serialized = codecSerialize(row, aligned, layout);
 
     ByteBuffer misaligned(aligned.size() + 1);
     std::memcpy(misaligned.data() + 1, serialized.data(), serialized.size());
@@ -662,7 +680,7 @@ TEST(VisitTest, RowViewMutableVisitInt8UInt8) {
     row.set(1, uint8_t(201));
 
     ByteBuffer buffer;
-    auto serialized = row.serializeTo(buffer);
+    auto serialized = codecSerialize(row, buffer, layout);
     RowView rowView(layout, std::span<std::byte>(serialized));
 
     rowView.visit([&](size_t, auto& value, bool&) {
@@ -688,7 +706,7 @@ TEST(VisitTest, RowViewStaticMutableVisitMisalignedBuffer) {
     row.set<2>(true);
 
     ByteBuffer aligned;
-    auto serialized = row.serializeTo(aligned);
+    auto serialized = codecSerialize(row, aligned, layout);
 
     ByteBuffer misaligned(aligned.size() + 1);
     std::memcpy(misaligned.data() + 1, serialized.data(), serialized.size());
@@ -793,7 +811,7 @@ TEST(VisitTest, FineGrainedChangeTracking) {
     
     // Can verify via serialization - ZoH would only include changed columns
     ByteBuffer buffer;
-    auto serialized = row.serializeToZoH(buffer);
+    auto serialized = codecSerializeZoH(row, buffer, layout);
     
     // With fine-grained tracking, only 2 columns changed
     // Expected size: bitset (1 byte) + 2 * sizeof(int32_t) = 1 + 8 = 9 bytes
@@ -1022,7 +1040,7 @@ TEST(VisitTest, TypedVisitWithChangeTracking) {
     
     // Verify ZoH serialization only includes changed columns
     ByteBuffer buffer;
-    auto serialized = row.serializeToZoH(buffer);
+    auto serialized = codecSerializeZoH(row, buffer, layout);
     // bitset (1 byte) + 2 * int32 = 1 + 8 = 9 bytes
     EXPECT_EQ(serialized.size(), 9);
 }
@@ -1125,7 +1143,7 @@ TEST(VisitTest, RowViewTypedVisitConstScalar) {
     row.set(2, int32_t(30));
 
     ByteBuffer buf;
-    auto serialized = row.serializeTo(buf);
+    auto serialized = codecSerialize(row, buf, layout);
     RowView rv(layout, std::span<std::byte>(serialized));
 
     // visitConst<int32_t> over all 3 columns
@@ -1148,7 +1166,7 @@ TEST(VisitTest, RowViewTypedVisitConstDouble) {
     row.set(1, 2.5);
 
     ByteBuffer buf;
-    auto serialized = row.serializeTo(buf);
+    auto serialized = codecSerialize(row, buf, layout);
     RowView rv(layout, std::span<std::byte>(serialized));
 
     double sum = 0;
@@ -1170,7 +1188,7 @@ TEST(VisitTest, RowViewTypedVisitConstString) {
     row.set(1, std::string("world"));
 
     ByteBuffer buf;
-    auto serialized = row.serializeTo(buf);
+    auto serialized = codecSerialize(row, buf, layout);
     RowView rv(layout, std::span<std::byte>(serialized));
 
     // RowView strings are string_view
@@ -1197,7 +1215,7 @@ TEST(VisitTest, RowViewTypedVisitMutableScalar) {
     row.set(2, int32_t(30));
 
     ByteBuffer buf;
-    auto serialized = row.serializeTo(buf);
+    auto serialized = codecSerialize(row, buf, layout);
     RowView rv(layout, std::span<std::byte>(serialized));
 
     // Mutable typed visit: add 100 to each
@@ -1222,7 +1240,7 @@ TEST(VisitTest, RowViewTypedVisitMutableDouble) {
     row.set(1, 2.0);
 
     ByteBuffer buf;
-    auto serialized = row.serializeTo(buf);
+    auto serialized = codecSerialize(row, buf, layout);
     RowView rv(layout, std::span<std::byte>(serialized));
 
     // Scale doubles
@@ -1245,7 +1263,7 @@ TEST(VisitTest, RowViewTypedVisitMutableBool) {
     row.set(1, false);
 
     ByteBuffer buf;
-    auto serialized = row.serializeTo(buf);
+    auto serialized = codecSerialize(row, buf, layout);
     RowView rv(layout, std::span<std::byte>(serialized));
 
     // Flip bools
@@ -1270,7 +1288,7 @@ TEST(VisitTest, RowViewTypedVisitSingleColumn) {
     row.set(2, 3.0);
 
     ByteBuffer buf;
-    auto serialized = row.serializeTo(buf);
+    auto serialized = codecSerialize(row, buf, layout);
     RowView rv(layout, std::span<std::byte>(serialized));
 
     // Visit just column 2 (double)
@@ -1295,7 +1313,7 @@ TEST(VisitTest, RowViewTypedVisitTypeMismatchThrows) {
     row.set(1, 2.0);
 
     ByteBuffer buf;
-    auto serialized = row.serializeTo(buf);
+    auto serialized = codecSerialize(row, buf, layout);
     RowView rv(layout, std::span<std::byte>(serialized));
 
     // Visiting both columns as int32_t should throw (column 1 is DOUBLE)
@@ -1317,7 +1335,7 @@ TEST(VisitTest, RowViewTypedVisitRangeOutOfBoundsThrows) {
     row.set(0, int32_t(1));
 
     ByteBuffer buf;
-    auto serialized = row.serializeTo(buf);
+    auto serialized = codecSerialize(row, buf, layout);
     RowView rv(layout, std::span<std::byte>(serialized));
 
     // Range exceeds column count
@@ -1339,7 +1357,7 @@ TEST(VisitTest, RowViewTypedVisitZeroCount) {
     row.set(0, int32_t(1));
 
     ByteBuffer buf;
-    auto serialized = row.serializeTo(buf);
+    auto serialized = codecSerialize(row, buf, layout);
     RowView rv(layout, std::span<std::byte>(serialized));
 
     int callCount = 0;
@@ -1362,7 +1380,7 @@ TEST(VisitTest, RowViewTypedVisitStringReadOnly) {
     row.set(1, std::string("beta"));
 
     ByteBuffer buf;
-    auto serialized = row.serializeTo(buf);
+    auto serialized = codecSerialize(row, buf, layout);
     RowView rv(layout, std::span<std::byte>(serialized));
 
     // Mutable visit with string_view — can read but not resize the buffer
@@ -1391,7 +1409,7 @@ TEST(VisitTest, RowViewTypedVisitRoundtrip) {
         row.set(i, static_cast<double>(i) * 10.0);
 
     ByteBuffer buf;
-    auto serialized = row.serializeTo(buf);
+    auto serialized = codecSerialize(row, buf, layout);
     RowView rv(layout, std::span<std::byte>(serialized));
 
     // Read original values via visitConst<T>

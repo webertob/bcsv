@@ -9,14 +9,17 @@
  * for full license information.
  */
 #include <cstddef>
+#include <cstdint>
 #include <fstream>
 #include <filesystem>
 #include <optional>
+#include <string>
 
 #include "definitions.h"
 #include "byte_buffer.h"
 #include "layout.h"
 #include "row.h"
+#include "row_codec_variant.h"
 #include "file_header.h"
 #include "file_footer.h"
 #include "lz4_stream.hpp"
@@ -50,6 +53,7 @@ namespace bcsv {
         ByteBuffer              row_buffer_prev_;             // Previous row for ZoH comparison
         uint64_t                row_cnt_;                    // Total rows written across all packets
         RowType                 row_;
+        RowCodecType<LayoutType, Policy> codec_;           // Codec for serialize dispatch (Item 11)
     public:
         Writer() = delete;
         Writer(const LayoutType& layout);

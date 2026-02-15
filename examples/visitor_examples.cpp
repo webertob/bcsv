@@ -21,6 +21,8 @@
 
 #include <bcsv/bcsv.h>
 #include <bcsv/row_visitors.h>
+#include <bcsv/row_codec_flat001.h>
+#include <bcsv/row_codec_flat001.hpp>
 #include <iostream>
 #include <sstream>
 #include <iomanip>
@@ -443,7 +445,9 @@ void example_rowview_typed_visit() {
     row.set(3, std::string("sensor_A"));
 
     ByteBuffer buf;
-    auto serialized = row.serializeTo(buf);
+    RowCodecFlat001<Layout> codec;
+    codec.setup(layout);
+    auto serialized = codec.serialize(row, buf);
 
     // Create a zero-copy RowView into the serialized buffer
     RowView rv(layout, std::span<std::byte>(serialized));

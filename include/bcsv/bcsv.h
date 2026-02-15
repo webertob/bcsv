@@ -37,6 +37,9 @@
 #include "packet_header.h"
 #include "reader.h"
 #include "row.h"
+#include "row_codec_flat001.h"  // Flat001 codec (Item 11)
+#include "row_codec_zoh001.h"   // ZoH001 codec (Item 11)
+#include "row_codec_variant.h"  // Variant dispatch (Item 11)
 #include "row_visitors.h"  // Row visitor pattern concepts and helpers
 #include "writer.h"
 
@@ -47,4 +50,6 @@
 #include "layout.hpp"
 #include "reader.hpp"
 #include "row.hpp"
+#include "row_codec_flat001.hpp"  // Flat001 codec implementation (Item 11)
+#include "row_codec_zoh001.hpp"  // ZoH001 codec implementation (Item 11)
 #include "writer.hpp"

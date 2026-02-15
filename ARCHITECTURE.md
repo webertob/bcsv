@@ -212,10 +212,10 @@ Technical design, requirements, and implementation roadmap
 │ ┌─────────────────────────────────────────────────────┐ │
 │ │            Compressed Payload (LZ4)                 │ │
 │ │  ┌───────────────────────────────────────────────┐  │ │
-│ │  │  Row 1: [bits_][data_][strg_lengths][strg_data]│  │ │
-│ │  │  Row 2: [bits_][data_][strg_lengths][strg_data]│  │ │
+│ │  │ Row 1: [bits_][data_][strg_lengths][strg_data]│  │ │
+│ │  │ Row 2: [bits_][data_][strg_lengths][strg_data]│  │ │
 │ │  │  ...                                          │  │ │
-│ │  │  Row N: [bits_][data_][strg_lengths][strg_data]│  │ │
+│ │  │ Row N: [bits_][data_][strg_lengths][strg_data]│  │ │
 │ │  └───────────────────────────────────────────────┘  │ │
 │ └─────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────┘
@@ -260,6 +260,92 @@ derived from cumulative sum of lengths (no explicit offsets stored).
 - Row buffers use natural alignment (8/16-byte)
 - Compiler optimizations enabled
 - SIMD-friendly layouts (future)
+
+### Row Codec Layer
+
+Serialization and deserialization of rows is handled by codec classes that are
+separate from `Row` and `Layout`. This decouples wire-format knowledge from
+in-memory data storage.
+
+#### Architecture
+
+TrackingPolicy and file codec are **orthogonal axes**:
+- **TrackingPolicy** is the programmer's intent: "do I need change flags in my Row?"
+- **File codec** is a file property: "how are rows encoded on disk?"
+
+All four combinations work:
+
+| | Flat001 file | ZoH001 file |
+|---|---|---|
+| **Disabled** | Natural fit. Full decode, no tracking. | ZoH codec reads wire header into internal `wire_bits_`. Extracts bools → `row.bits_[boolIdx]`. No change flags. |
+| **Enabled** | Full decode. All non-BOOL columns marked changed. | Fast path: wire header → `row.bits_` directly (zero-copy alias). |
+
+```
+Writer ──── RowCodecType ──▶ RowCodecFlat001  or  RowCodecZoH001
+            (compile-time)   (Writer knows what it writes)
+
+Reader ──── CodecDispatch ──▶ RowCodecFlat001  or  RowCodecZoH001
+            (runtime)         (file flags determine codec)
+```
+
+#### Codec Classes
+
+| Class | File | Encoding | State |
+|-------|------|----------|-------|
+| `RowCodecFlat001<Layout, Policy>` | `row_codec_flat001.h/hpp` | Dense flat encoding | Wire metadata + per-column offsets |
+| `RowCodecZoH001<Layout, Policy>` | `row_codec_zoh001.h/hpp` | Zero-Order-Hold delta | Composes `RowCodecFlat001` for first-row; internal `wire_bits_` for change header |
+| `CodecDispatch<Layout, Policy>` | `row_codec_dispatch.h` | Runtime dispatch | Union storage + function pointers |
+
+Each codec provides:
+- `setup(layout)` — compute wire-format metadata from the layout
+- `serialize(row, buffer) → span<byte>` — encode a row to wire format
+- `deserialize(span, row)` — decode wire format into a row
+- `readColumn(span, index) → span<byte>` — zero-copy column access (used by RowView)
+- `reset()` — clear per-packet state (ZoH change tracking)
+
+Wire-format metadata (`wireBitsSize`, `wireDataSize`, `wireStrgCount`,
+`wireFixedSize`, per-column `offsets_[]`) is owned exclusively by the codec.
+`Layout` and `Row` classes contain no wire-format knowledge.
+
+#### Codec Selection
+
+**Writer** holds `RowCodecType<Layout, Policy>` — a `std::conditional_t` that
+resolves to the concrete codec at compile time. The Writer knows what format
+it writes. All serialize calls are direct member function calls, fully inlined.
+
+**Reader** holds `CodecDispatch<Layout, Policy>` — runtime codec selection via
+function pointers. At `open()` time, `CodecDispatch::selectCodec(flags, layout)`
+reads the file's `ZERO_ORDER_HOLD` flag, constructs the correct codec in union
+storage via placement new, and wires function pointers. Subsequent `deserialize()`
+calls go through a single indirect call — branch predictor learns the target
+after the first row.
+
+#### Naming Convention
+
+`RowCodec` + `Format` + `Version`:
+- `Flat001` — dense flat encoding, version 001
+- `ZoH001` — zero-order-hold, version 001
+- Future formats (e.g., `Delta001`, `CSV001`) follow the same pattern.
+
+#### Row ↔ Codec Access Pattern
+
+Codecs access Row internals (`bits_`, `data_`, `strg_`) via `friend`
+declarations. This narrow internal boundary avoids polluting Row's public API
+with wire-format-specific accessors. Each codec class is tightly co-designed
+with Row's three-container storage layout.
+
+Static-layout codecs (`RowCodecFlat001<LayoutStatic<Ts...>, P>`) use
+`constexpr` wire metadata computed at compile time — zero runtime setup cost.
+
+#### RowView ↔ Codec Relationship
+
+`RowView` holds a `RowCodecFlat001<Layout, TrackingPolicy::Disabled>` to
+provide wire-format metadata (section offsets, per-column offsets). RowView
+caches only `offsets_ptr_` (a pointer into the codec's per-column offset
+array) because it is accessed per-iteration in inner loops. All other wire
+metadata (`wireBitsSize()`, `wireFixedSize()`, etc.) is read directly from
+the codec's `noexcept` accessors at call-site preamble — no per-instance
+caching of scalar metadata.
 
 ### Packet Size Strategy
 

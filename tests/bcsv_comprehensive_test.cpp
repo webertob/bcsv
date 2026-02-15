@@ -3069,7 +3069,7 @@ TEST_F(BCSVBoundaryTests, ExceedMaximumColumnCount_ShouldFail) {
 // ============================================================================
 
 TEST_F(BCSVBoundaryTests, MaximumStringLength_AtLimit_ShouldTruncate) {
-    // Test string length capping behavior with 32-bit StringAddr (16-bit length field)
+    // Test string length capping behavior (wire format uses uint16_t length field)
     const std::string filepath = getTestFilePath("max_string_at_limit");
     
     bcsv::Layout layout;
@@ -3170,8 +3170,8 @@ TEST_F(BCSVBoundaryTests, ExcessiveStringLength_ShouldTruncate) {
 
 TEST_F(BCSVBoundaryTests, MaximumPracticalRowSize_SingleString) {
     // Test maximum practical string size that fits within row size limit
-    // Row size = StringAddress (8 bytes) + string_data <= 65535 bytes
-    // Therefore maximum practical string = 65535 - 8 = 65527 bytes
+    // Row size = uint16_t length (2 bytes) + string_data
+    // MAX_STRING_LENGTH = 65535 bytes (uint16_t max)
     const std::string filepath = getTestFilePath("max_practical_string");
     
     bcsv::Layout layout;
@@ -3367,7 +3367,7 @@ TEST_F(BCSVBoundaryTests, ProgressiveSizes) {
 
 TEST_F(BCSVBoundaryTests, RowSizeLimit_16MB_StressTest) {
     // Test that we can write and read back rows with large total string payload.
-    // The flat wire format removed the StringAddr 64KB offset limit,
+    // The flat wire format uses uint16_t string lengths (no offset limit),
     // so large string rows (up to MAX_ROW_LENGTH ~16MB) should now work.
     const std::string filepath = getTestFilePath("row_size_16mb_stress");
     
@@ -3485,11 +3485,13 @@ TEST_F(BCSVTestSuite, Ref_SerializeRoundTrip) {
     row.ref<std::string>(22) = "Serialize me";
 
     bcsv::ByteBuffer buffer;
-    auto span = row.serializeTo(buffer);
+    bcsv::RowCodecFlat001<bcsv::Layout, bcsv::TrackingPolicy::Disabled> codec;
+    codec.setup(layout);
+    auto span = codec.serialize(row, buffer);
     ASSERT_GT(span.size(), 0u) << "Serialized row must be non-empty";
 
     bcsv::Row row2(layout);
-    row2.deserializeFrom(span);
+    codec.deserialize(span, row2);
 
     EXPECT_EQ(row2.get<bool>(0), true);
     EXPECT_EQ(row2.get<int32_t>(6), 42424242);

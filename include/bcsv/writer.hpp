@@ -168,6 +168,10 @@ namespace bcsv {
             }
             row_buffer_raw_.clear();
             row_buffer_prev_.clear(); // Start with empty previous row
+
+            // Initialize codec (Item 11)
+            codec_.setup(layout());
+
             return true;
 
         } catch (const std::filesystem::filesystem_error& ex) {
@@ -241,6 +245,7 @@ namespace bcsv {
         if constexpr (isTrackingEnabled(Policy)) {
             row_.setChanges();      // mark all as changed for first row
         }
+        codec_.reset();  // Item 11: reset codec state at packet boundary
         packet_open_ = true;
     }
 
@@ -254,16 +259,11 @@ namespace bcsv {
             openPacket();
         }
 
-        // 1. Serialize row to buffer
+        // 1. Serialize row to buffer via codec (Item 11)
         row_buffer_raw_.clear();
-        std::span<std::byte> actRow;
-        if(file_header_.hasFlag(FileFlags::ZERO_ORDER_HOLD)) {
-            actRow = row_.serializeToZoH(row_buffer_raw_);
-            if constexpr (isTrackingEnabled(Policy)) {
-                row_.resetChanges();
-            }
-        } else {
-            actRow = row_.serializeTo(row_buffer_raw_);
+        std::span<std::byte> actRow = codec_.serialize(row_, row_buffer_raw_);
+        if constexpr (isTrackingEnabled(Policy)) {
+            row_.resetChanges();
         }
 
         // 2. write row data to file

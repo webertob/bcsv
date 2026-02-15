@@ -34,6 +34,9 @@ set(TEST_SOURCES
     layout_sync_test.cpp
     bitset_test.cpp
     visit_test.cpp
+    row_codec_flat001_test.cpp
+    row_codec_zoh001_test.cpp
+    codec_dispatch_test.cpp
 )
 
 if(BCSV_ENABLE_STRESS_TESTS)
