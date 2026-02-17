@@ -108,18 +108,22 @@ int main() {
 
 - **[benchmark/README.md](benchmark/README.md)** - Benchmark quick-start and script-friendly run options
 - **[tests/PERFORMANCE_COMPARISON.md](tests/PERFORMANCE_COMPARISON.md)** - Detailed benchmarks and comparisons
-- **[benchmark/BENCHMARK_PLAN.md](benchmark/BENCHMARK_PLAN.md)** - Benchmark suite architecture and plan
 - **Typical speeds:** 3.6M rows/sec (flexible), 7.5M rows/sec (static), 127K rows/sec (1000 columns)
 - **Compression:** 15-25% of CSV size (LZ4), 3-4% with Zero-Order Hold
 
 **Run benchmarks locally:**
 ```bash
-# Quick smoke test (~30 sec)
-python3 benchmark/run_benchmarks.py --mode=sweep --size=S --build-type=Release
+# Quick macro smoke run (default)
+python3 benchmark/run_benchmarks.py
 
-# Full benchmark with report
-python3 benchmark/run_benchmarks.py --mode=sweep --size=L --build-type=Release --output-dir=benchmark/results/
-python3 benchmark/report_generator.py benchmark/results/
+# Micro benchmark pinned to CPU2
+python3 benchmark/run_benchmarks.py --type=MICRO --pin=CPU2
+
+# Combined campaign
+python3 benchmark/run_benchmarks.py --type=MICRO,MACRO-SMALL,MACRO-LARGE
+
+# Manual compare report (candidate vs baseline)
+python3 benchmark/report.py <candidate_run_dir> --baseline <baseline_run_dir>
 ```
 
 9 dataset profiles × 3 modes (CSV, BCSV Flexible, BCSV Flexible ZoH), with optional

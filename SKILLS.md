@@ -48,6 +48,12 @@ bcsv/
 └── tmp/                   # Temporary experiments (gitignored)
 ```
 
+### Temporary Files Policy
+
+- Use `tmp/` under the project root for temporary scripts, scratch outputs, and ad-hoc experiments.
+- Do not place temporary artifacts in the repository root or tracked source folders.
+- `tmp/` is gitignored by design, so temporary files there do not pollute version management.
+
 ## Build Skill
 
 ### Prerequisites
@@ -57,22 +63,16 @@ bcsv/
 ### Configure & Build
 
 ```bash
-# Debug build (Ninja)
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
-cmake --build build -j$(nproc)
+# Debug build (Ninja preset)
+cmake --preset ninja-debug
+cmake --build --preset ninja-debug-build -j$(nproc)
 
-# Release build
-cmake -S . -B build_release -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_CXX_FLAGS="-O3 -march=native"
-cmake --build build_release -j$(nproc)
+# Release build (Ninja preset)
+cmake --preset ninja-release
+cmake --build --preset ninja-release-build -j$(nproc)
 
-# Release with all benchmarks
-cmake -S . -B build_release -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_CXX_FLAGS="-O3 -march=native" \
-  -DBCSV_ENABLE_BENCHMARKS=ON \
-  -DBCSV_ENABLE_MICRO_BENCHMARKS=ON \
-  -DBCSV_ENABLE_EXTERNAL_CSV_BENCH=ON
-cmake --build build_release -j$(nproc)
+# Release benchmark targets
+cmake --build --preset ninja-release-build -j$(nproc) --target bench_macro_datasets bench_micro_types
 ```
 
 ### CMake Options
@@ -93,7 +93,7 @@ cmake --build build_release -j$(nproc)
 
 ### Build Output
 
-Executables land in `build/bin/` (debug) or `build_release/bin/` (release):
+Executables land in `build/ninja-debug/bin/` (debug) or `build/ninja-release/bin/` (release):
 - Tests: `bcsv_gtest`, `test_row_api`, `test_c_api`
 - CLI tools: `csv2bcsv`, `bcsv2csv`, `bcsvHead`, `bcsvTail`, `bcsvHeader`
 - Examples: `example`, `example_static`, `example_zoh`, `example_zoh_static`, `visitor_examples`, `c_api_vectorized_example`
@@ -103,15 +103,15 @@ Executables land in `build/bin/` (debug) or `build_release/bin/` (release):
 
 ```bash
 # Build + test (debug)
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j$(nproc)
-./build/bin/bcsv_gtest
+cmake --preset ninja-debug && cmake --build --preset ninja-debug-build -j$(nproc)
+./build/ninja-debug/bin/bcsv_gtest
 
 # Build + test (release)
-cmake -S . -B build_release -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build_release -j$(nproc)
-./build_release/bin/bcsv_gtest
+cmake --preset ninja-release && cmake --build --preset ninja-release-build -j$(nproc)
+./build/ninja-release/bin/bcsv_gtest
 
 # Quick benchmark smoke test
-python3 benchmark/run_benchmarks.py --size=S --no-report
+python3 benchmark/run_benchmarks.py --type=MICRO --no-report
 ```
 
 ## Public API Classes
@@ -254,7 +254,7 @@ reader.close();
 | Subsystem | Skill File | Covers |
 |-----------|-----------|---------|
 | Tests | tests/SKILLS.md | Build, run, filter tests; test files inventory; sanitizers |
-| Benchmarks | benchmark/SKILLS.md | Build, run, interpret benchmarks; dataset profiles; JSON schema |
+| Benchmarks | benchmark/README.md | Build, run, interpret benchmarks; streamlined benchmark CLI and reporting |
 | Examples & CLI | examples/SKILLS.md | CLI tools, example programs, known caveats |
 | Python bindings | python/SKILLS.md | Build, test, publish Python package |
 | Unity / C# | unity/SKILLS.md | Architecture, prerequisites, key files |
@@ -296,7 +296,7 @@ Build & verify: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug && cmake -
 
 **Task-specific additions** (append to the block above):
 - Working on Reader/Writer: "Also read include/bcsv/reader.hpp and writer.hpp for implementation details"
-- Working on benchmarks: "Also read benchmark/SKILLS.md and tests/bench_common.hpp"
+- Working on benchmarks: "Also read benchmark/README.md and tests/bench_common.hpp"
 - Working on Python: "Also read python/SKILLS.md and python/pybcsv/bindings.cpp"
 - Working on CLI tools: "Also read examples/SKILLS.md and examples/CLI_TOOLS.md"
 - Working on file format: "Also read include/bcsv/file_header.h, packet_header.h, file_footer.h"

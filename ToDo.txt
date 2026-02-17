@@ -150,7 +150,7 @@ Lean checklist gate (for every non-trivial item):
                   columns is only valid until the next get(size_t) call for a bool column on the same thread.
             Tested: 299/299 tests pass (debug + release). All examples and benchmarks verified.
 
-[x] 9. Improve benchmark suite — see benchmark/BENCHMARK_PLAN.md for authoritative plan
+[x] 9. Improve benchmark suite
     [x] Phase 1 — MVP: Fair CSV + Key Datasets + JSON Output + Basic Report
         - fair CSV baseline using Row::visitConst() + std::to_chars() (no ostream overhead)  
         - CsvReader using std::from_chars() for all types including float/double
@@ -388,6 +388,51 @@ Lean checklist gate (for every non-trivial item):
         - sizeOf() vs wireSizeOf() naming inconsistency — low
         - reset() is no-op in both codecs — low, dead code path in CodecDispatch
         - ZoH serialize incremental resize — low, perf not correctness
+
+11. c Benchmark 
+
+Reduce Complexity
+Issue: To many tools (scripts), steps and documents make it harder than necessary to interact with the benchmark suite
+Goal: Reduce our effort to understand and interact with the tools.
+Item: 
+1. Reduce benchmarks to MICRO (GoogleBenchmarks), MARCO-SMALL, MARCO-large
+2. run_benchmarks.py should use a streamlined CLI i.e.:
+    run_benchmarks.py --type=MICRO, MACRO-SMALL, MACRO-LARGE --repetitions=1 --cpus=1 --pin=NONE --git=WIP --results=results/WorkhorseLNX/WIP
+    Defaults are: type = MACRO_SMALL, repetition=1, cpus=1 pin=none --git WIP (work in progress current work dir)
+    run_benchmarks.py should create a summary report (report_GIT(wip)_datetime.md) that only contains the host information, the Condensed Performance Matrixt and Condensed Performance Matrix Comparison (against the latest git-clean results)
+3. report.py can be used to create a comparision report between two runs or create and/or more detailed report as required (mean, stddev, result tables per dataset and benchmark)
+4. compare should be removed as it gets integrated into report.py, leaderboard should be removed. report_latest,md should be removed and does not need to be produced
+5. Unify documentation benchmark/OPERATOR_GUIDE.md and benchmark/SKILLS.md into benchmark/README.md addressing both agentic and human users reference this tocument in project root/SKILLS.md
+
+11. d Benchmark 
+Improve Execution Speed
+MACRO-SMALL should be sized to provide results for all workloads and bcsv-versions, with one repetion, on one CPU, no pining, within less than 3mins
+MACRO_LARGE should be sized to provide results for all workloads and bcsv-versions, with one repetion, on one CPU, no pining, wihtin less than 60mins.
+MICOR Benchmarks (Google), should use pining to CPU2, and be sized to run in less than 5mins
+external (3rd party) CSV library should be tested once for our workloads (single cpu 5 repetitions) and documented. No need to rerun on a host, if it has been done already, just use documented results. We are not developing this benchmark and can consider it constant. Perhaps we make s dedicated skript benchmark_3rd-party.py
+
+
+
+11. Clean Up Code Implementation (11.a/11.b)
+
+Issue: Currently bool columns are stored within Row.bits_ / Rowstatic.bits_. But .bits_ is also used to track changes (TrackingPolicy == enabled). This adds deppendecies and divergent code paths. i.e. we cannot use the changes.any() to easily determine if we need to write this row when ZoH coded is used.
+Task: Modify Row(s) to use a dedictated bitset called changes_ if TrackingPolicy = enabled is defined. .bits_ should only contain values for bool columns. Update all functions that are involved in change tracking including visit, serialization and deserilization and change tracking functions itself.
+
+    - Ensure Role Clarity Layout, Row, RowView, codecs
+    - Review member Elemenets Layout, Row, RowView, codecs
+    - Define layout functions getOffsetsAligned() getOffsetAligned(size_t column)
+
+    - Review access patterns to avoid redundant range_checking
+
+
+
+
+
+Review:
+BCSV Flex-ZoH Desne Write is 11% slower than best
+BCSV Static-ZoH Dense Read is 10% slower than best
+BCSV Static-ZoH Sparse Read is 8% slower than best
+
 
 12. Implement CSV write and read functionality using the BCSV interface
     10.a: Restructure BCSV Reader/ Writer API

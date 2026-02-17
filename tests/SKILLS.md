@@ -100,17 +100,17 @@ cmake --build build_ubsan -j$(nproc)
 
 ```bash
 # 1. Debug build + all tests pass
-cmake --build build -j$(nproc) && ./build/bin/bcsv_gtest
+cmake --build --preset ninja-debug-build -j$(nproc) && ./build/ninja-debug/bin/bcsv_gtest
 
 # 2. Release build + all tests pass
-cmake --build build_release -j$(nproc) && ./build_release/bin/bcsv_gtest
+cmake --build --preset ninja-release-build -j$(nproc) && ./build/ninja-release/bin/bcsv_gtest
 
 # 3. C API tests pass
-./build/test_c_api && ./build/test_row_api
+./build/ninja-debug/test_c_api && ./build/ninja-debug/test_row_api
 
 # 4. Examples build and run without errors
-./build/bin/example && ./build/bin/example_static
+./build/ninja-debug/bin/example && ./build/ninja-debug/bin/example_static
 
 # 5. Benchmark smoke test (release only)
-python3 benchmark/run_benchmarks.py --size=S --no-report
+python3 benchmark/run_benchmarks.py --type=MICRO --no-report
 ```

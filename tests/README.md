@@ -393,9 +393,9 @@ Use this checklist when adding new Row API functionality:
    - [ ] Cross-platform CI (Windows, macOS, ARM)
 
 3. **Long-term (Ongoing)**
-   - [x] Performance regression tracking (benchmark/compare_runs.py)
+   - [x] Performance regression tracking (benchmark/report.py comparison mode)
    - [ ] Memory leak detection in CI (Valgrind/ASan)
-   - [x] Benchmark dashboard (benchmark/report_generator.py + CI workflow)
+   - [x] Benchmark dashboard (benchmark/report.py + CI workflow)
 
 ---
 
@@ -442,23 +442,20 @@ EXPECT_EQ(42, value);  // What failed? Which column? Which row?
 
 ## Benchmark Suite
 
-The modular benchmark suite provides comprehensive performance measurement across
-multiple dimensions. See [benchmark/BENCHMARK_PLAN.md](../benchmark/BENCHMARK_PLAN.md)
-for the full architecture and plan.
+The benchmark workflow is streamlined to three run types: `MICRO`, `MACRO-SMALL`, `MACRO-LARGE`.
+See [benchmark/README.md](../benchmark/README.md) for the authoritative operational guide.
 
 ### Architecture
 
 ```
 bench_macro_datasets    Macro: full write→read→validate cycles per dataset profile
 bench_micro_types       Micro: per-type Get/Set, VisitConst, Serialize (Google Benchmark)
-bench_generate_csv      Utility: generates reference CSV files from dataset profiles
-bench_external_csv      External: BCSV CsvReader vs vincentlaucsb/csv-parser (optional)
 ```
 
-Orchestrated by **`benchmark/run_benchmarks.py`** which builds, runs, collects JSON
-results, and invokes the CLI tool round-trip benchmark.
+Orchestrated by **`benchmark/run_benchmarks.py`** using a reduced CLI surface:
+`--type`, `--repetitions`, `--cpus`, `--pin`, `--git`, `--results`.
 
-### Dataset Profiles (9 profiles)
+### Dataset Profiles
 
 | Profile | Columns | Character |
 |---------|---------|-----------|
@@ -475,31 +472,26 @@ results, and invokes the CLI tool round-trip benchmark.
 ### Running Benchmarks
 
 ```bash
-# Quick smoke test (S size, ~30 sec)
-python3 benchmark/run_benchmarks.py --mode=sweep --size=S --build-type=Release
+# Default run (MACRO-SMALL)
+python3 benchmark/run_benchmarks.py
 
-# Standard run (M size, ~2 min)
-python3 benchmark/run_benchmarks.py --mode=sweep --size=M --build-type=Release
+# Micro benchmark pinned to CPU2
+python3 benchmark/run_benchmarks.py --type=MICRO --pin=CPU2
 
-# Full benchmark (L size, ~90 sec at -O3 on Ryzen 9 5900X)
-python3 benchmark/run_benchmarks.py --mode=sweep --size=L --build-type=Release \
-  --output-dir=benchmark/results/$(hostname)/$(date +%Y.%m.%d_%H.%M)
+# Full campaign
+python3 benchmark/run_benchmarks.py --type=MICRO,MACRO-SMALL,MACRO-LARGE
 
-# Generate charts and markdown report
-python3 benchmark/report_generator.py <output-dir>
-
-# Compare two runs for regressions (5% threshold)
-python3 benchmark/compare_runs.py <baseline-dir> <candidate-dir>
+# Explicit comparison report
+python3 benchmark/report.py <candidate-run-dir> --baseline <baseline-run-dir>
 ```
 
-### Size Variants
+### Runtime Targets
 
-| Flag | Rows | Typical Duration | Use Case |
-|------|------|-----------------|----------|
-| `--size=S` | 10K | ~1 sec/profile | CI, quick smoke test |
-| `--size=M` | 100K | ~10 sec/profile | Development iteration |
-| `--size=L` | 500K | ~10 sec/profile at -O3 | Release benchmarks |
-| `--size=XL` | 2M | ~40 sec/profile | Stress testing |
+| Type | Rows | Target Duration |
+|------|------|-----------------|
+| `MACRO-SMALL` | 10K | < 3 minutes |
+| `MACRO-LARGE` | 500K | < 60 minutes |
+| `MICRO` | n/a | < 5 minutes (pinned to CPU2) |
 
 ### CMake Options
 
@@ -507,7 +499,7 @@ python3 benchmark/compare_runs.py <baseline-dir> <candidate-dir>
 |--------|---------|---------|
 | `BCSV_ENABLE_BENCHMARKS` | ON | Build macro/micro/generator benchmarks |
 | `BCSV_ENABLE_MICRO_BENCHMARKS` | ON | Build Google Benchmark micro-benchmarks |
-| `BCSV_ENABLE_EXTERNAL_CSV_BENCH` | OFF | Build external csv-parser comparison |
+| `BCSV_ENABLE_EXTERNAL_CSV_BENCH` | OFF | Optional one-time external reference benchmark |
 
 ### Output Files
 
@@ -515,12 +507,14 @@ All outputs are JSON for machine consumption:
 
 | File | Producer | Contents |
 |------|----------|----------|
-| `macro_results.json` | `bench_macro_datasets` | Write/read times, file sizes, validation |
+| `macro_small_results.json` / `macro_large_results.json` | `bench_macro_datasets` | Per-type macro write/read times, file sizes, validation |
+| `macro_results.json` | orchestrator compatibility view | Merged macro view across selected macro types |
 | `micro_results.json` | `bench_micro_types` | Per-type latency (ns/op) |
-| `cli_results.json` | orchestrator | CLI tool round-trip timing |
-| `external_results.json` | `bench_external_csv` | BCSV vs csv-parser read comparison |
 | `platform.json` | orchestrator | CPU, RAM, OS, git version |
-| `report.md` | `report_generator.py` | Markdown report with inline charts |
+| `report.md` | `report.py` | Summary markdown report |
+| `report_<label>_<timestamp>.md` | `report.py` | Timestamped report artifact |
+
+When `--repetitions > 1`, top-level `macro_*_results.json` and `micro_results.json` are median-aggregated across repetitions.
 
 ### Performance Benchmarks
 
