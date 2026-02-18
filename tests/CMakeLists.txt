@@ -60,22 +60,6 @@ set_target_properties(bcsv_gtest PROPERTIES
 # Enable C++20 standard
 target_compile_features(bcsv_gtest PRIVATE cxx_std_20)
 
-# Legacy benchmark executables — superseded by the modular benchmark suite.
-# Kept behind a flag for one release cycle; will be removed in a future version.
-option(BCSV_ENABLE_LEGACY_BENCHMARKS "Build deprecated benchmark_performance and benchmark_large" OFF)
-
-if(BCSV_ENABLE_LEGACY_BENCHMARKS)
-    add_executable(benchmark_performance benchmark_performance.cpp)
-    target_link_libraries(benchmark_performance PRIVATE bcsv)
-
-    add_executable(benchmark_large benchmark_large.cpp)
-    target_link_libraries(benchmark_large PRIVATE bcsv)
-
-    set_target_properties(benchmark_performance benchmark_large PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
-    )
-endif()
-
 # ============================================================================
 # New Modular Benchmark Suite (Phase 1)
 # ============================================================================
