@@ -144,9 +144,7 @@ void RowCodecZoH001<LayoutType, Policy>::deserialize(
     const size_t colCount = types.size();
 
     if constexpr (isTrackingEnabled(Policy)) {
-        // Copy non-BOOL change flags in one shot. BOOL entries are corrected below
-        // to represent value transitions (old != new) instead of wire BOOL values.
-        row.changes_ = wire_bits_;
+        row.changes_.reset();
     }
 
     size_t dataOffset = wire_bits_.sizeBytes();
@@ -158,12 +156,16 @@ void RowCodecZoH001<LayoutType, Policy>::deserialize(
             const bool newVal = wire_bits_[i];
             if constexpr (isTrackingEnabled(Policy)) {
                 const bool oldVal = row.bits_[offset];
-                row.changes_.set(i, oldVal != newVal);
+                row.changes_[i] |= (oldVal != newVal);
             }
             row.bits_.set(offset, newVal);
         } else {
             if (!wire_bits_[i]) {
                 continue;
+            }
+
+            if constexpr (isTrackingEnabled(Policy)) {
+                row.changes_[i] = true;
             }
 
             if (type == ColumnType::STRING) {

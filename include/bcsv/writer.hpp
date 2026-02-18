@@ -273,7 +273,7 @@ namespace bcsv {
                     actRow.size() == 0
                 ||  (
                         actRow.size() == row_buffer_prev_.size() 
-                    &&  std::equal(actRow.begin(), actRow.end(), row_buffer_prev_.begin())
+                    &&  std::memcmp(actRow.data(), row_buffer_prev_.data(), actRow.size()) == 0
                     )
                 )
             )
