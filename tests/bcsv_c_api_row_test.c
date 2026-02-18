@@ -33,28 +33,17 @@ int main() {
     assert(bcsv_layout_column_count(row_layout) == 3);
     printf("   Row layout has %zu columns\n", bcsv_layout_column_count(row_layout));
     
-    // Test 3: Change tracking (compile-time only)
-    printf("\n3. Testing change tracking...\n");
-    printf("   Initial tracks_changes: %s\n", bcsv_row_tracks_changes(row) ? "true" : "false");
-    printf("   Initial has_any_changes: %s\n", bcsv_row_has_any_changes(row) ? "true" : "false");
+    // Test 3: Change-tracking capability
+    printf("\n3. Testing change-tracking capability...\n");
+    printf("   tracks_changes: %s\n", bcsv_row_tracks_changes(row) ? "true" : "false");
     
     // Set some values
     bcsv_row_set_string(row, 0, "John");
     bcsv_row_set_int32(row, 1, 30);
     bcsv_row_set_double(row, 2, 95.5);
     
-    printf("   After setting values, has_any_changes: %s\n", bcsv_row_has_any_changes(row) ? "true" : "false");
-    
-    // Test 4: Mark all as changed
-    printf("\n4. Testing bcsv_row_set_changes...\n");
-    bcsv_row_reset_changes(row);
-    printf("   After reset_changes, has_any_changes: %s\n", bcsv_row_has_any_changes(row) ? "true" : "false");
-    
-    bcsv_row_set_changes(row);
-    printf("   After set_changes, has_any_changes: %s\n", bcsv_row_has_any_changes(row) ? "true" : "false");
-    
-    // Test 5: Clear row
-    printf("\n5. Testing bcsv_row_clear...\n");
+    // Test 4: Clear row
+    printf("\n4. Testing bcsv_row_clear...\n");
     bcsv_row_clear(row);
     printf("   Row cleared successfully\n");
     
@@ -65,8 +54,8 @@ int main() {
     
     printf("   After clear - name: '%s', age: %d, score: %.1f\n", name, age, score);
     
-    // Test 6: Clone row
-    printf("\n6. Testing bcsv_row_clone...\n");
+    // Test 5: Clone row
+    printf("\n5. Testing bcsv_row_clone...\n");
     
     // First, set some values in the original row
     bcsv_row_set_string(row, 0, "Alice");
@@ -88,8 +77,8 @@ int main() {
     assert(cloned_age == 25);
     assert(cloned_score == 87.5);
     
-    // Test 7: Assign row
-    printf("\n7. Testing bcsv_row_assign...\n");
+    // Test 6: Assign row
+    printf("\n6. Testing bcsv_row_assign...\n");
     
     // Create another row and modify the original
     bcsv_row_t another_row = bcsv_row_create(layout);
@@ -111,8 +100,8 @@ int main() {
     assert(assigned_age == 35);
     assert(assigned_score == 92.3);
     
-    // Test 8: Destroy rows
-    printf("\n8. Testing bcsv_row_destroy for multiple rows...\n");
+    // Test 7: Destroy rows
+    printf("\n7. Testing bcsv_row_destroy for multiple rows...\n");
     bcsv_row_destroy(cloned_row);
     bcsv_row_destroy(another_row);
     bcsv_row_destroy(row);

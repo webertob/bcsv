@@ -3500,12 +3500,12 @@ TEST_F(BCSVTestSuite, Ref_SerializeRoundTrip) {
 }
 
 TEST_F(BCSVTestSuite, Ref_ChangeTracking) {
-    // Verify that ref<T>() marks non-BOOL columns as changed (tracking enabled)
+    // Verify that ref<T>() marks columns as changed (tracking enabled)
     auto layout = createFullFlexibleLayout();
     bcsv::RowImpl<bcsv::TrackingPolicy::Enabled> row(layout);
 
     // After construction, all non-BOOL columns should be marked changed
-    row.resetChanges();
+    row.changes().reset();
 
     // Now ref<T>() on a tracked row must set the change bit
     row.ref<int32_t>(6) = 99;
@@ -3514,11 +3514,11 @@ TEST_F(BCSVTestSuite, Ref_ChangeTracking) {
     row.ref<std::string>(22) = "changed";
     EXPECT_TRUE(row.changes().test(22)) << "ref<std::string>() must mark column as changed";
 
-    // Bool columns: change bit IS the value bit, not a separate flag
+    // Bool columns now use separate change tracking (value stored in bits_, dirty in changes_)
     row.ref<bool>(0) = true;
-    EXPECT_TRUE(row.changes().test(0)) << "ref<bool>() sets value bit = true";
+    EXPECT_TRUE(row.changes().test(0)) << "ref<bool>() must mark bool column as changed";
     row.ref<bool>(0) = false;
-    EXPECT_FALSE(row.changes().test(0)) << "ref<bool>() sets value bit = false";
+    EXPECT_TRUE(row.changes().test(0)) << "ref<bool>() keeps bool column marked as changed";
 }
 
 TEST_F(BCSVTestSuite, Ref_WriteThroughFileRoundTrip) {

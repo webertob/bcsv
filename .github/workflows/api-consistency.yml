@@ -1,0 +1,36 @@
+name: API Consistency
+
+on:
+  pull_request:
+    branches: [ main, master, release ]
+    paths:
+      - 'include/bcsv/bcsv_c_api.h'
+      - 'include/bcsv/bcsv_c_api.cpp'
+      - 'python/include/bcsv/bcsv_c_api.h'
+      - 'python/include/bcsv/bcsv_c_api.cpp'
+      - 'python/sync_headers.py'
+      - 'scripts/check_python_c_api_sync.py'
+      - '.github/workflows/api-consistency.yml'
+  push:
+    branches: [ main, master, release ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python-c-api-sync:
+    name: Python vendored C API sync check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Verify root vs python vendored C API parity
+        run: python3 scripts/check_python_c_api_sync.py

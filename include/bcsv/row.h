@@ -61,9 +61,8 @@ namespace bcsv {
  * │   Byte 1: [bool15|...|bool8]  (if bool_count > 8)             │
  * └─────────────────────────────────────────────────────────────────┘
  * 
- * For RowImpl with TrackingPolicy::Disabled, bits_ can be memcpy'd directly
- * (size == ⌈bool_count / 8⌉). For TrackingPolicy::Enabled, bool values are
- * extracted via the layout's boolMask() (derived from ~tracked_mask_) since bits_ also holds change flags.
+ * For both RowImpl tracking policies, bits_ stores only bool column values and
+ * can be memcpy'd directly (size == ⌈bool_count / 8⌉).
  * 
  * =============================================================================
  * SECTION 2: DATA_ (Scalar values)
@@ -312,7 +311,7 @@ namespace bcsv {
  * =============================================================================
  * 
  * 1. Check if any changes exist:
- *    if (!hasAnyChanges()) return; // Skip serialization entirely
+ *    if (!changes().any()) return; // Skip serialization entirely
  * 
  * 2. Reserve space for change Bitset:
  *    bitset_size = (COLUMN_COUNT + 7) / 8; // Round up to bytes
@@ -456,20 +455,16 @@ namespace bcsv {
     /* Dynamic row with flexible layout (runtime-defined)
      *
      * Storage is split into three type-family containers:
-     *   bits_  — Bitset storing bool column values (and change flags when tracking enabled)
-     *   data_  — contiguous byte buffer for scalar/arithmetic column values (aligned)
-     *   strg_  — vector of strings for string column values
+     *   bits_    — Bitset storing BOOL column values only
+     *   data_    — contiguous byte buffer for scalar/arithmetic column values (aligned)
+     *   strg_    — vector of strings for string column values
+     *   changes_ — per-column change flags (TrackingPolicy::Enabled only)
      *
      * Per-column offsets live in Layout::Data (shared across all rows sharing the same layout).
-     * The meaning of layout_.columnOffset(i) depends on columnType(i):
-     *   BOOL   → bit index into bits_  (when tracking disabled; when enabled, column index i is used directly)
+    * The meaning of layout_.columnOffset(i) depends on columnType(i):
+    *   BOOL   → bit index into bits_
      *   STRING → index into strg_
      *   scalar → byte offset into data_
-     *
-     * When tracking is enabled, bits_.size() == columnCount. Bit i is:
-     *   - the bool VALUE for BOOL columns (no separate change tracking for bools)
-     *   - the CHANGE FLAG for non-BOOL columns (1 = changed since last reset)
-     * When tracking is disabled, bits_.size() == number of BOOL columns only.
      */
     // Forward declarations for codec friend access
     template<typename LayoutType, TrackingPolicy P> class RowCodecFlat001;
@@ -486,8 +481,12 @@ namespace bcsv {
         // Immutable after construction
         Layout                      layout_;               // Shared layout data with observer callbacks
 
+        struct NoChangesStorage {};
+        using ChangesStorage = std::conditional_t<isTrackingEnabled(Policy), Bitset<>, NoChangesStorage>;
+
         // Mutable data — three type-family storage containers
-        Bitset<>                    bits_;                  // Bool values + change tracking (see class comment for semantics)
+        Bitset<>                    bits_;                  // BOOL column values only
+        [[no_unique_address]] ChangesStorage changes_;     // Per-column change flags (tracking-enabled rows only)
         std::vector<std::byte>      data_;                 // Aligned scalar/arithmetic column values (no bools, no strings)
         std::vector<std::string>    strg_;                 // String column values
 
@@ -496,11 +495,7 @@ namespace bcsv {
 
         // Helper: get the bits_ index for a given column
         inline size_t bitsIndex(size_t columnIndex) const noexcept {
-            if constexpr (isTrackingEnabled(Policy)) {
-                return columnIndex;  // bits_.size() == columnCount, direct index
-            } else {
-                return layout_.columnOffset(columnIndex);  // sequential bool index
-            }
+            return layout_.columnOffset(columnIndex);  // sequential bool index
         }
 
     public:
@@ -515,20 +510,11 @@ namespace bcsv {
         const Layout&               layout() const noexcept         { return layout_; }
         [[nodiscard]] bool          tracksChanges() const noexcept  { return isTrackingEnabled(Policy); }
 
-        /// Direct access to the underlying bits_ Bitset (bool values + change flags).
-        /// When tracking enabled: bit[i] = bool value for BOOL columns, change flag for others.
-        /// When tracking disabled: bit[k] = k-th bool column value.
-        [[nodiscard]] const Bitset<>& changes() const noexcept      { return bits_; }
-        [[nodiscard]] Bitset<>&       changes() noexcept            { return bits_; }
+        /// Direct access to per-column change flags (TrackingPolicy::Enabled only).
+        [[nodiscard]] const Bitset<>& changes() const noexcept requires (Policy == TrackingPolicy::Enabled) { return changes_; }
+        [[nodiscard]] Bitset<>&       changes() noexcept requires (Policy == TrackingPolicy::Enabled) { return changes_; }
 
-        // Backward-compatible wrappers (used by Writer for RowImpl/RowStaticImpl uniformity)
-        // Note: These only touch change-flag bits (non-BOOL columns). BOOL value bits are preserved.
-        // Note: checks ALL bits (bool values + change flags). Any true bit means there's
-        // data to serialize. This is intentional — bits_.any() is already O(words), and the
-        // writer must serialize when any bool is true OR any column has changed.
-        [[nodiscard]] bool          hasAnyChanges() const noexcept  { return isTrackingEnabled(Policy) ? bits_.any() : true; }
-        void                        setChanges() noexcept;
-        void                        resetChanges() noexcept;
+        // Change tracking API (TrackingPolicy::Enabled only)
 
         [[nodiscard]] const void*   get(size_t index) const;
                                     template<typename T>
@@ -688,9 +674,12 @@ namespace bcsv {
         // Immutable after construction
         LayoutType layout_; 
 
+        struct NoChangesStorage {};
+        using ChangesStorage = std::conditional_t<isTrackingEnabled(Policy), Bitset<COLUMN_COUNT>, NoChangesStorage>;
+
         // Mutable data
         typename LayoutType::ColTypes   data_;
-        Bitset<COLUMN_COUNT>            changes_;
+        [[no_unique_address]] ChangesStorage changes_;
 
     public:
         // Constructors
@@ -703,10 +692,9 @@ namespace bcsv {
                                     template<size_t Index = 0>
         void                        clear();
         const LayoutType&           layout() const noexcept         { return layout_; }  // Reconstruct facade
-        [[nodiscard]] bool          hasAnyChanges() const noexcept  { return isTrackingEnabled(Policy) ? changes_.any() : true; }
         [[nodiscard]] bool          tracksChanges() const noexcept  { return isTrackingEnabled(Policy); }
-        void                        setChanges() noexcept           { if constexpr (isTrackingEnabled(Policy)) { changes_.set(); } }
-        void                        resetChanges() noexcept         { if constexpr (isTrackingEnabled(Policy)) { changes_.reset(); } }
+        [[nodiscard]] const Bitset<COLUMN_COUNT>& changes() const noexcept requires (Policy == TrackingPolicy::Enabled) { return changes_; }
+        [[nodiscard]] Bitset<COLUMN_COUNT>&       changes() noexcept requires (Policy == TrackingPolicy::Enabled) { return changes_; }
 
         // =========================================================================
         // 1. Static Access (Compile-Time Index) - Zero Overhead

@@ -714,7 +714,7 @@ bench::BenchmarkResult benchmarkBCSVStatic(const bench::DatasetProfile& profile,
         return result;
     }
 
-    bcsv::Row expectedRow(profile.layout);
+    bcsv::RowTracking expectedRow(profile.layout);
     const auto selectedColumns = buildSelectedColumns(profile.layout, scenario.columns_k);
     const auto predicateColumn = findFirstNumericColumn(profile.layout);
     size_t processedRows = 0;
@@ -812,7 +812,7 @@ bench::BenchmarkResult benchmarkBCSVStaticZoH(const bench::DatasetProfile& profi
         return result;
     }
 
-    bcsv::RowTracking expectedRow(profile.layout);
+    bcsv::Row expectedRow(profile.layout);
     const auto selectedColumns = buildSelectedColumns(profile.layout, scenario.columns_k);
     const auto predicateColumn = findFirstNumericColumn(profile.layout);
     size_t processedRows = 0;

@@ -184,6 +184,20 @@ python/
 └── README.md                # This documentation
 ```
 
+## Keeping Python C API in Sync
+
+The Python extension vendors a local snapshot of core headers/sources under `python/include/`.
+After C API changes in the repository root (`include/bcsv/`), resync before building or releasing:
+
+```bash
+cd /home/tobias/ws/bcsv/python
+python sync_headers.py --force --verbose
+```
+
+This keeps the Python package aligned with the current root C API surface and avoids legacy symbol drift.
+
+For full cross-language ownership and update flow, see [docs/BINDING_CONSISTENCY.md](../docs/BINDING_CONSISTENCY.md).
+
 ## Compatibility
 
 - **Python**: 3.7+ (tested with 3.12)

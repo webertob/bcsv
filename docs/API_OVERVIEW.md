@@ -2,6 +2,8 @@
 
 This document provides a comprehensive comparison of all BCSV APIs across different programming languages.
 
+For cross-language surface ownership and sync workflow, see [Binding Consistency](./BINDING_CONSISTENCY.md).
+
 ---
 
 ## API Comparison Matrix
@@ -71,6 +73,7 @@ writer.writeRow();
 - **Manual memory management**: Explicit create/destroy
 - **Language binding foundation**: Base for Python, C#, etc.
 - **Stable ABI**: Binary compatibility across versions
+- **Minimal row change-tracking API**: Capability query via `bcsv_row_tracks_changes()`
 
 ### Quick Example
 
@@ -79,18 +82,18 @@ writer.writeRow();
 
 // Create layout
 bcsv_layout_t layout = bcsv_layout_create();
-bcsv_layout_add_column(layout, "id", BCSV_TYPE_INT32);
-bcsv_layout_add_column(layout, "value", BCSV_TYPE_DOUBLE);
+bcsv_layout_add_column(layout, 0, "id", BCSV_TYPE_INT32);
+bcsv_layout_add_column(layout, 1, "value", BCSV_TYPE_DOUBLE);
 
 // Create writer
 bcsv_writer_t writer = bcsv_writer_create(layout);
-bcsv_writer_open(writer, "data.bcsv", 1);  // overwrite=1
+bcsv_writer_open(writer, "data.bcsv", true, 1, 64, BCSV_FLAG_NONE);
 
 // Write row
 bcsv_row_t row = bcsv_writer_row(writer);
 bcsv_row_set_int32(row, 0, 42);
 bcsv_row_set_double(row, 1, 3.14);
-bcsv_writer_write_row(writer);
+bcsv_writer_next(writer);
 
 // Cleanup
 bcsv_writer_destroy(writer);

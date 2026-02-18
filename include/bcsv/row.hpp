@@ -41,6 +41,7 @@ namespace bcsv {
     inline RowImpl<Policy>::RowImpl(const Layout& layout)
         : layout_(layout)
         , bits_(0)
+        , changes_()
         , data_()
         , strg_()
     {
@@ -74,13 +75,10 @@ namespace bcsv {
         data_.resize(dataSize);  // zero-initialized = scalar defaults (0 for all arithmetic types)
         strg_.resize(strgCount); // default-constructed empty strings
 
+        bits_.resize(boolCount, false);  // bool values only, default false
         if constexpr (isTrackingEnabled(Policy)) {
-            bits_.resize(colCount);
-            bits_.reset(); // all bits 0 (bools = false)
-            // Mark non-BOOL columns as changed (so first ZoH serialize includes all values)
-            bits_ |= layout_.trackedMask();
-        } else {
-            bits_.resize(boolCount, false);  // just bool values, default false
+            changes_.resize(colCount);
+            changes_.set(); // all columns changed by default
         }
     }
 
@@ -88,6 +86,7 @@ namespace bcsv {
     inline RowImpl<Policy>::RowImpl(const RowImpl& other)
         : layout_(other.layout_)  // Share layout (shallow copy of shared_ptr inside)
         , bits_(other.bits_)
+        , changes_(other.changes_)
         , data_(other.data_)      // trivial byte copy (no string objects inside!)
         , strg_(other.strg_)      // vector copy handles deep string copies automatically
     {
@@ -102,6 +101,7 @@ namespace bcsv {
     inline RowImpl<Policy>::RowImpl(RowImpl&& other) noexcept
         : layout_(other.layout_)
         , bits_(std::move(other.bits_))
+        , changes_(std::move(other.changes_))
         , data_(std::move(other.data_))
         , strg_(std::move(other.strg_))
     {
@@ -131,28 +131,12 @@ namespace bcsv {
             s.clear();
         }
 
-        // Reset all bits (bools = false, change flags = cleared)
+        // Reset all bool bits
         bits_.reset();
 
-        // For tracking: mark all non-BOOL columns as changed
+        // For tracking: mark all columns as changed
         if constexpr (isTrackingEnabled(Policy)) {
-            bits_ |= layout_.trackedMask();
-        }
-    }
-
-    template<TrackingPolicy Policy>
-    inline void RowImpl<Policy>::setChanges() noexcept {
-        if constexpr (isTrackingEnabled(Policy)) {
-            // Set all change flags (non-BOOL). BOOL value bits are preserved.
-            bits_ |= layout_.trackedMask();
-        }
-    }
-
-    template<TrackingPolicy Policy>
-    inline void RowImpl<Policy>::resetChanges() noexcept {
-        if constexpr (isTrackingEnabled(Policy)) {
-            // Clear all change flags (non-BOOL). BOOL value bits are preserved.
-            bits_ &= layout_.boolMask();
+            changes_.set();
         }
     }
 
@@ -323,20 +307,18 @@ namespace bcsv {
         uint32_t offset = layout_.columnOffset(index);
 
         if constexpr (std::is_same_v<T, bool>) {
-            // Mark changed if tracking
             if constexpr (isTrackingEnabled(Policy)) {
-                // For bools, the bit IS the value, change is implicit via write-through
-                // No separate change flag for bools — caller writes directly
+                changes_.set(index);
             }
             return bits_[bitsIndex(index)];  // returns Bitset<>::reference proxy
         } else if constexpr (std::is_same_v<T, std::string>) {
             if constexpr (isTrackingEnabled(Policy)) {
-                bits_.set(index);
+                changes_.set(index);
             }
             return static_cast<std::string&>(strg_[offset]);
         } else {
             if constexpr (isTrackingEnabled(Policy)) {
-                bits_.set(index);
+                changes_.set(index);
             }
             return *reinterpret_cast<T*>(&data_[offset]);
         }
@@ -392,8 +374,13 @@ namespace bcsv {
 
     if constexpr (isBoolLike) {
         // Bool (or bool proxy like std::vector<bool>::reference): write to Bitset
-        bits_[bitsIndex(index)] = static_cast<bool>(value);
-        // No separate change tracking for bools (the bit IS the value)
+        const bool newVal = static_cast<bool>(value);
+        bool oldVal = bits_[bitsIndex(index)];
+        bool changed = (oldVal != newVal);
+        bits_[bitsIndex(index)] = newVal;
+        if constexpr (isTrackingEnabled(Policy)) {
+            changes_[index] |= changed;
+        }
     } else if constexpr (isStringLike) {
         // String: write to strg_, with change tracking and truncation
         std::string& str = strg_[offset];
@@ -403,7 +390,7 @@ namespace bcsv {
             str.resize(MAX_STRING_LENGTH);
         }
         if constexpr (isTrackingEnabled(Policy)) {
-            bits_[index] |= changed;
+            changes_[index] |= changed;
         }
     } else {
         // Scalar: direct write to data_
@@ -411,7 +398,7 @@ namespace bcsv {
         bool changed = (colValue != value);
         colValue = value;
         if constexpr (isTrackingEnabled(Policy)) {
-            bits_[index] |= changed;
+            changes_[index] |= changed;
         }
     }
 }
@@ -439,8 +426,9 @@ namespace bcsv {
             for (size_t i = 0; i < values.size(); ++i) {
                 size_t bi = bitsIndex(index + i);
                 if constexpr (isTrackingEnabled(Policy)) {
-                    // For bools, the bit IS the value — just write it
+                    bool changed = (bits_[bi] != values[i]);
                     bits_[bi] = values[i];
+                    changes_[index + i] |= changed;
                 } else {
                     bits_[bi] = values[i];
                 }
@@ -453,7 +441,7 @@ namespace bcsv {
                 for (size_t i = 0; i < values.size(); ++i) {
                     if (dst[i] != values[i]) {
                         dst[i] = values[i];
-                        bits_.set(index + i);
+                        changes_.set(index + i);
                     }
                 }
             } else {
@@ -668,6 +656,7 @@ namespace bcsv {
                                   "Row::visit() with tracking requires (size_t, T&, bool&)");
                     bool changed = true;
                     visitor(i, val, changed);
+                    changes_[i] |= changed;
                 } else {
                     if constexpr (std::is_invocable_v<Visitor, size_t, bool&, bool&>) {
                         bool changed = true;
@@ -678,7 +667,7 @@ namespace bcsv {
                         visitor(i, val);
                     }
                 }
-                bits_[bitsIndex(i)] = val;  // Write back (no separate change tracking for bools)
+                bits_[bitsIndex(i)] = val;
             } else if (type == ColumnType::STRING) {
                 std::string& str = strg_[offset];
                 if constexpr (isTrackingEnabled(Policy)) {
@@ -686,7 +675,7 @@ namespace bcsv {
                                   "Row::visit() with tracking requires (size_t, T&, bool&)");
                     bool changed = true;
                     visitor(i, str, changed);
-                    bits_[i] |= changed;
+                    changes_[i] |= changed;
                 } else {
                     if constexpr (std::is_invocable_v<Visitor, size_t, std::string&, bool&>) {
                         bool changed = true;
@@ -707,7 +696,7 @@ namespace bcsv {
                                       "Row::visit() with tracking requires (size_t, T&, bool&)");
                         bool changed = true;
                         visitor(i, value, changed);
-                        bits_[i] |= changed;
+                        changes_[i] |= changed;
                     } else {
                         if constexpr (std::is_invocable_v<Visitor, size_t, T&, bool&>) {
                             bool changed = true;
@@ -888,8 +877,14 @@ namespace bcsv {
                 if constexpr (std::is_invocable_v<Visitor, size_t, bool&, bool&>) {
                     bool changed = true;
                     visitor(i, val, changed);
+                    if constexpr (isTrackingEnabled(Policy)) {
+                        changes_[i] |= changed;
+                    }
                 } else {
                     visitor(i, val);
+                    if constexpr (isTrackingEnabled(Policy)) {
+                        changes_.set(i);
+                    }
                 }
                 bits_[bitsIndex(i)] = val;
             } else if constexpr (std::is_same_v<T, std::string>) {
@@ -898,12 +893,12 @@ namespace bcsv {
                     bool changed = true;
                     visitor(i, str, changed);
                     if constexpr (isTrackingEnabled(Policy)) {
-                        bits_[i] |= changed;
+                        changes_[i] |= changed;
                     }
                 } else {
                     visitor(i, str);
                     if constexpr (isTrackingEnabled(Policy)) {
-                        bits_.set(i);
+                        changes_.set(i);
                     }
                 }
                 if (str.size() > MAX_STRING_LENGTH) {
@@ -916,12 +911,12 @@ namespace bcsv {
                     bool changed = true;
                     visitor(i, value, changed);
                     if constexpr (isTrackingEnabled(Policy)) {
-                        bits_[i] |= changed;
+                        changes_[i] |= changed;
                     }
                 } else {
                     visitor(i, value);
                     if constexpr (isTrackingEnabled(Policy)) {
-                        bits_.set(i);
+                        changes_.set(i);
                     }
                 }
             }
@@ -993,6 +988,10 @@ namespace bcsv {
 
         // Save old state (layout_ still has pre-mutation types/offsets)
         Bitset<> oldBits = bits_;
+        Bitset<> oldChanges;
+        if constexpr (isTrackingEnabled(Policy)) {
+            oldChanges = changes_;
+        }
         std::vector<std::byte> oldData = data_;
         std::vector<std::string> oldStrg = strg_;
 
@@ -1069,20 +1068,16 @@ namespace bcsv {
         }
 
         // Allocate new storage (zero-initialized)
-        size_t bitsSize = isTrackingEnabled(Policy) ? newColCount : newBoolCount;
-        bits_.resize(bitsSize);
-        bits_.reset(); // All bools false, all change flags clear
+        bits_.resize(newBoolCount);
+        bits_.reset(); // All bools false
         data_.assign(dataSize, std::byte{0});
         strg_.clear();
         strg_.resize(newStrCount);
 
-        // Mark all non-bool columns as changed (new default values)
+        // Mark all columns as changed (new default values)
         if constexpr (isTrackingEnabled(Policy)) {
-            for (size_t ni = 0; ni < newColCount; ++ni) {
-                if (newTypes[ni] != ColumnType::BOOL) {
-                    bits_[ni] = true;
-                }
-            }
+            changes_.resize(newColCount);
+            changes_.set();
         }
 
         // Preserve old values where types match
@@ -1096,18 +1091,21 @@ namespace bcsv {
 
             if (newTypes[ni] == ColumnType::BOOL) {
                 // Copy bool value from old bits to new bits
-                size_t oldBitsIdx = isTrackingEnabled(Policy) ? static_cast<size_t>(oi) : oOff;
-                size_t newBitsIdx = isTrackingEnabled(Policy) ? ni : nOff;
+                size_t oldBitsIdx = oOff;
+                size_t newBitsIdx = nOff;
                 bits_[newBitsIdx] = oldBits[oldBitsIdx];
+                if constexpr (isTrackingEnabled(Policy)) {
+                    changes_[ni] = oldChanges[oi];
+                }
             } else if (newTypes[ni] == ColumnType::STRING) {
                 strg_[nOff] = std::move(oldStrg[oOff]);
                 if constexpr (isTrackingEnabled(Policy)) {
-                    bits_[ni] = false; // Preserved value — not changed
+                    changes_[ni] = oldChanges[oi];
                 }
             } else {
                 std::memcpy(&data_[nOff], &oldData[oOff], sizeOf(newTypes[ni]));
                 if constexpr (isTrackingEnabled(Policy)) {
-                    bits_[ni] = false; // Preserved value — not changed
+                    changes_[ni] = oldChanges[oi];
                 }
             }
         }
@@ -1138,14 +1136,16 @@ namespace bcsv {
                 bool oldVal = bits_[idx];
                 if (oldVal != newValue) {
                     bits_[idx] = newValue;
-                    // No separate change tracking for bools
+                    if constexpr (isTrackingEnabled(Policy)) {
+                        changes_[i] = true;
+                    }
                 }
             } else if constexpr (std::is_same_v<T, std::string>) {
                 std::string& current = strg_[offset];
                 if (current != newValue) {
                     current = newValue;
                     if constexpr (isTrackingEnabled(Policy)) {
-                        bits_[i] = true;
+                        changes_[i] = true;
                     }
                 }
             } else {
@@ -1153,7 +1153,7 @@ namespace bcsv {
                 if (current != newValue) {
                     current = newValue;
                     if constexpr (isTrackingEnabled(Policy)) {
-                        bits_[i] = true;
+                        changes_[i] = true;
                     }
                 }
             }
@@ -1174,6 +1174,7 @@ namespace bcsv {
         // Move other's data (no manual destruction needed — vectors/Bitset clean up themselves)
         layout_ = other.layout_;
         bits_ = std::move(other.bits_);
+        changes_ = std::move(other.changes_);
         data_ = std::move(other.data_);
         strg_ = std::move(other.strg_);
         
@@ -2187,7 +2188,9 @@ namespace bcsv {
         : layout_(layout), data_() 
     {
         clear();
-        changes_.reset();
+        if constexpr (isTrackingEnabled(Policy)) {
+            changes_.reset();
+        }
     }
 
     /** Clear the row to its default state (default values) */

@@ -95,7 +95,7 @@ inline std::span<std::byte> RowCodecFlat001<LayoutType, Policy>::serialize(
 
         if (type == ColumnType::BOOL) {
             if constexpr (isTrackingEnabled(Policy)) {
-                if (row.bits_[i]) {
+                if (row.bits_[off]) {
                     buffer[off_row + (bool_idx >> 3)] |= std::byte{1} << (bool_idx & 7);
                 }
             }
@@ -158,7 +158,7 @@ inline void RowCodecFlat001<LayoutType, Policy>::deserialize(
         if (type == ColumnType::BOOL) {
             if constexpr (isTrackingEnabled(Policy)) {
                 bool val = (buffer[bool_idx >> 3] & (std::byte{1} << (bool_idx & 7))) != std::byte{0};
-                row.bits_[i] = val;
+                row.bits_[off] = val;
             }
             ++bool_idx;
         } else if (type == ColumnType::STRING) {
@@ -187,7 +187,7 @@ inline void RowCodecFlat001<LayoutType, Policy>::deserialize(
     // When tracking is enabled, mark all non-BOOL columns as changed.
     // Flat format carries full row data — every column is "changed".
     if constexpr (isTrackingEnabled(Policy)) {
-        row.setChanges();
+        row.changes().set();
     }
 }
 
@@ -301,7 +301,11 @@ inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy>::serializeElem
                 payOff += len;
             }
         } else {
-            std::memcpy(&buffer[dataOff], &std::get<Index>(row.data_), sizeof(T));
+            const auto& value = std::get<Index>(row.data_);
+            const auto* srcBytes = reinterpret_cast<const std::byte*>(std::addressof(value));
+            for (size_t byteIdx = 0; byteIdx < sizeof(T); ++byteIdx) {
+                buffer[dataOff + byteIdx] = srcBytes[byteIdx];
+            }
             dataOff += sizeof(T);
         }
         serializeElements<Index + 1>(row, buffer, offRow, boolIdx, dataOff, lenOff, payOff);
@@ -329,7 +333,7 @@ inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy>::deserialize(
     // When tracking is enabled, mark all non-BOOL columns as changed.
     // Flat format carries full row data — every column is "changed".
     if constexpr (isTrackingEnabled(Policy)) {
-        row.setChanges();
+        row.changes().set();
     }
 }
 

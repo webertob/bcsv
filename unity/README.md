@@ -2,6 +2,8 @@
 
 This folder contains Unity integration files for the BCSV (Binary CSV) library, allowing you to use BCSV's high-performance binary data format in Unity projects.
 
+For C API/binding ownership and sync rules across C, Python, and Unity, see [docs/BINDING_CONSISTENCY.md](../docs/BINDING_CONSISTENCY.md).
+
 ## Overview
 
 BCSV provides a fast, compact binary format for storing tabular data with built-in compression and type safety. This Unity plugin allows you to read and write BCSV files directly from Unity scripts.

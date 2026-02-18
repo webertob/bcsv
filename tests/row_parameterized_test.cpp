@@ -264,15 +264,15 @@ TYPED_TEST(RowTypedTest, ChangeTracking) {
     
     // Note: After enabling tracking, all columns are initially marked as changed
     // Reset to start fresh
-    row.resetChanges();
-    EXPECT_FALSE(row.hasAnyChanges())
+    row.changes().reset();
+    EXPECT_FALSE(row.changes().any())
         << "Changes not properly reset for type " << this->GetTypeName();
     
     // Modify a value (use non-default value to ensure change is detected)
     T val = TypeTraits<T>::test_value_3();  // Use test_value_3 which is non-default
     row.set(0, val);
     
-    EXPECT_TRUE(row.hasAnyChanges())
+    EXPECT_TRUE(row.changes().any())
         << "Change not detected after modification for type " << this->GetTypeName();
 }
 

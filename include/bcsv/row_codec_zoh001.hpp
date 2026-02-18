@@ -45,15 +45,13 @@ template<typename LayoutType, TrackingPolicy Policy>
 void RowCodecZoH001<LayoutType, Policy>::setup(const LayoutType& layout) {
     layout_ = &layout;
     flat_.setup(layout);
-    if constexpr (!isTrackingEnabled(Policy)) {
-        wire_bits_.resize(layout.columnCount());
-    }
+    wire_bits_.resize(layout.columnCount());
 }
 
 template<typename LayoutType, TrackingPolicy Policy>
 void RowCodecZoH001<LayoutType, Policy>::reset() noexcept {
     // ZoH is stateless within this codec — the Writer owns prev_buffer_ and
-    // repeat detection. The Row's own change tracking (bits_) provides the
+    // repeat detection. The Row's own change tracking (changes_) provides the
     // delta information. reset() is provided for interface uniformity.
 }
 
@@ -65,104 +63,67 @@ std::span<std::byte> RowCodecZoH001<LayoutType, Policy>::serialize(
     const RowType& row, ByteBuffer& buffer) const
 {
     if constexpr (isTrackingEnabled(Policy)) {
-        // ── SHORTCUT: row.bits_ IS the wire change header ────────────────
-        // When Enabled, row.bits_ is columnCount-sized with bool values at
-        // bool positions and change flags at non-bool positions — exactly
-        // the ZoH wire format. Use it directly (zero intermediate copy).
-        const auto& wireBits = row.bits_;
-
-        const size_t bufferSizeOld = buffer.size();
-
-        if (!wireBits.any()) {
+        if (!row.changes().any()) {
             return std::span<std::byte>{};
         }
-
-        const size_t headerSize = wireBits.sizeBytes();
-        buffer.resize(buffer.size() + headerSize);
-        std::memcpy(&buffer[bufferSizeOld], wireBits.data(), headerSize);
-
-        if (!wireBits.any(layout_->trackedMask())) {
-            return {&buffer[bufferSizeOld], headerSize};
-        }
-
-        for (size_t i = 0; i < layout_->columnCount(); ++i) {
-            ColumnType type = layout_->columnType(i);
-            uint32_t offset = layout_->columnOffset(i);
-
-            if (type == ColumnType::BOOL) {
-                // Bool value already encoded in wireBits[i] — nothing.
-            } else if (wireBits[i]) {
-                const size_t off = buffer.size();
-                if (type == ColumnType::STRING) {
-                    const std::string& str = row.strg_[offset];
-                    uint16_t strLength = static_cast<uint16_t>(
-                        std::min(str.size(), MAX_STRING_LENGTH));
-                    buffer.resize(buffer.size() + sizeof(strLength) + strLength);
-                    std::memcpy(&buffer[off], &strLength, sizeof(strLength));
-                    if (strLength > 0) {
-                        std::memcpy(&buffer[off + sizeof(strLength)], str.data(), strLength);
-                    }
-                } else {
-                    const size_t len = wireSizeOf(type);
-                    buffer.resize(buffer.size() + len);
-                    std::memcpy(&buffer[off], &row.data_[offset], len);
-                }
-            }
-        }
-        return {&buffer[bufferSizeOld], buffer.size() - bufferSizeOld};
-
-    } else {
-        // ── GENERAL: no change tracking → mark all non-BOOL as changed ──
-        // row.bits_ is boolCount-sized (bool values only). Build wire_bits_
-        // (columnCount-sized): BOOL positions get their values from
-        // row.bits_[columnOffset(i)], non-BOOL positions are set (all changed).
-        wire_bits_.reset();
-        bool hasAny = false;
-        for (size_t i = 0; i < layout_->columnCount(); ++i) {
-            ColumnType type = layout_->columnType(i);
-            if (type == ColumnType::BOOL) {
-                bool val = row.bits_[layout_->columnOffset(i)];
-                wire_bits_.set(i, val);
-                if (val) hasAny = true;
-            } else {
-                wire_bits_.set(i, true);
-                hasAny = true;
-            }
-        }
-        if (!hasAny) return std::span<std::byte>{};
-
-        const size_t bufferSizeOld = buffer.size();
-        const size_t headerSize = wire_bits_.sizeBytes();
-        buffer.resize(buffer.size() + headerSize);
-        std::memcpy(&buffer[bufferSizeOld], wire_bits_.data(), headerSize);
-
-        // Serialize ALL non-BOOL columns (no tracking → always serialize).
-        for (size_t i = 0; i < layout_->columnCount(); ++i) {
-            ColumnType type = layout_->columnType(i);
-            uint32_t offset = layout_->columnOffset(i);
-
-            if (type == ColumnType::BOOL) {
-                // Already in header.
-            } else {
-                const size_t off = buffer.size();
-                if (type == ColumnType::STRING) {
-                    const std::string& str = row.strg_[offset];
-                    uint16_t strLength = static_cast<uint16_t>(
-                        std::min(str.size(), MAX_STRING_LENGTH));
-                    buffer.resize(buffer.size() + sizeof(strLength) + strLength);
-                    std::memcpy(&buffer[off], &strLength, sizeof(strLength));
-                    if (strLength > 0) {
-                        std::memcpy(&buffer[off + sizeof(strLength)], str.data(), strLength);
-                    }
-                } else {
-                    const size_t len = wireSizeOf(type);
-                    buffer.resize(buffer.size() + len);
-                    std::memcpy(&buffer[off], &row.data_[offset], len);
-                }
-            }
-        }
-        return {&buffer[bufferSizeOld], buffer.size() - bufferSizeOld};
     }
+
+    const size_t bufferSizeOld = buffer.size();
+    const size_t headerSize = wire_bits_.sizeBytes();
+    buffer.resize(buffer.size() + headerSize);
+
+    wire_bits_.reset();
+
+    const auto& types = layout_->columnTypes();
+    const auto& offsets = layout_->columnOffsets();
+    const size_t colCount = types.size();
+    bool hasTrackedPayload = false;
+
+    for (size_t i = 0; i < colCount; ++i) {
+        const ColumnType type = types[i];
+        const uint32_t offset = offsets[i];
+
+        if (type == ColumnType::BOOL) {
+            wire_bits_.set(i, row.bits_[offset]);
+            continue;
+        }
+
+        bool changed = true;
+        if constexpr (isTrackingEnabled(Policy)) {
+            changed = row.changes_[i];
+        }
+        wire_bits_.set(i, changed);
+
+        if (!changed) {
+            continue;
+        }
+
+        hasTrackedPayload = true;
+
+        const size_t off = buffer.size();
+        if (type == ColumnType::STRING) {
+            const std::string& str = row.strg_[offset];
+            uint16_t strLength = static_cast<uint16_t>(
+                std::min(str.size(), MAX_STRING_LENGTH));
+            buffer.resize(buffer.size() + sizeof(strLength) + strLength);
+            std::memcpy(&buffer[off], &strLength, sizeof(strLength));
+            if (strLength > 0) {
+                std::memcpy(&buffer[off + sizeof(strLength)], str.data(), strLength);
+            }
+        } else {
+            const size_t len = wireSizeOf(type);
+            buffer.resize(buffer.size() + len);
+            std::memcpy(&buffer[off], &row.data_[offset], len);
+        }
+    }
+
+    std::memcpy(&buffer[bufferSizeOld], wire_bits_.data(), headerSize);
+
+    if (!hasTrackedPayload) {
+        return {&buffer[bufferSizeOld], headerSize};
+    }
+
+    return {&buffer[bufferSizeOld], buffer.size() - bufferSizeOld};
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -172,95 +133,61 @@ template<typename LayoutType, TrackingPolicy Policy>
 void RowCodecZoH001<LayoutType, Policy>::deserialize(
     std::span<const std::byte> buffer, RowType& row) const
 {
+    if (buffer.size() < wire_bits_.sizeBytes()) [[unlikely]] {
+        throw std::runtime_error(
+            "RowCodecZoH001::deserialize() failed! Buffer too small for change Bitset.");
+    }
+    std::memcpy(wire_bits_.data(), &buffer[0], wire_bits_.sizeBytes());
+
+    const auto& types = layout_->columnTypes();
+    const auto& offsets = layout_->columnOffsets();
+    const size_t colCount = types.size();
+
     if constexpr (isTrackingEnabled(Policy)) {
-        // ── SHORTCUT: decode wire header directly into row.bits_ ─────────
-        // When Enabled, row.bits_ is columnCount-sized = wire format.
-        // memcpy the wire change header directly — zero intermediate copy.
-        auto& wireBits = row.bits_;
+        // Copy non-BOOL change flags in one shot. BOOL entries are corrected below
+        // to represent value transitions (old != new) instead of wire BOOL values.
+        row.changes_ = wire_bits_;
+    }
 
-        if (buffer.size() >= wireBits.sizeBytes()) {
-            std::memcpy(wireBits.data(), &buffer[0], wireBits.sizeBytes());
-        } else [[unlikely]] {
-            throw std::runtime_error(
-                "RowCodecZoH001::deserialize() failed! Buffer too small for change Bitset.");
-        }
+    size_t dataOffset = wire_bits_.sizeBytes();
+    for (size_t i = 0; i < colCount; ++i) {
+        const ColumnType type = types[i];
+        const uint32_t offset = offsets[i];
 
-        size_t dataOffset = wireBits.sizeBytes();
-        for (size_t i = 0; i < layout_->columnCount(); ++i) {
-            ColumnType type = layout_->columnType(i);
-            uint32_t offset = layout_->columnOffset(i);
-
-            if (type == ColumnType::BOOL) {
-                // Bool value already decoded — bit i in wireBits IS the value.
-            } else if (wireBits[i]) {
-                if (type == ColumnType::STRING) {
-                    uint16_t strLength;
-                    if (dataOffset + sizeof(strLength) > buffer.size()) [[unlikely]]
-                        throw std::runtime_error("buffer too small");
-                    std::memcpy(&strLength, &buffer[dataOffset], sizeof(strLength));
-                    dataOffset += sizeof(strLength);
-
-                    if (dataOffset + strLength > buffer.size()) [[unlikely]]
-                        throw std::runtime_error("buffer too small");
-                    std::string& str = row.strg_[offset];
-                    if (strLength > 0) {
-                        str.assign(reinterpret_cast<const char*>(&buffer[dataOffset]), strLength);
-                    } else {
-                        str.clear();
-                    }
-                    dataOffset += strLength;
-                } else {
-                    const size_t len = wireSizeOf(type);
-                    if (dataOffset + len > buffer.size()) [[unlikely]]
-                        throw std::runtime_error("buffer too small");
-                    std::memcpy(&row.data_[offset], &buffer[dataOffset], len);
-                    dataOffset += len;
-                }
+        if (type == ColumnType::BOOL) {
+            const bool newVal = wire_bits_[i];
+            if constexpr (isTrackingEnabled(Policy)) {
+                const bool oldVal = row.bits_[offset];
+                row.changes_.set(i, oldVal != newVal);
             }
-        }
+            row.bits_.set(offset, newVal);
+        } else {
+            if (!wire_bits_[i]) {
+                continue;
+            }
 
-    } else {
-        // ── GENERAL: decode into wire_bits_, translate to row ────────────
-        // wire_bits_ is columnCount-sized (wire format). row.bits_ is
-        // boolCount-sized (bool values only, indexed by sequential offset).
-        if (buffer.size() < wire_bits_.sizeBytes()) [[unlikely]] {
-            throw std::runtime_error(
-                "RowCodecZoH001::deserialize() failed! Buffer too small for change Bitset.");
-        }
-        std::memcpy(wire_bits_.data(), &buffer[0], wire_bits_.sizeBytes());
+            if (type == ColumnType::STRING) {
+                uint16_t strLength;
+                if (dataOffset + sizeof(strLength) > buffer.size()) [[unlikely]]
+                    throw std::runtime_error("buffer too small");
+                std::memcpy(&strLength, &buffer[dataOffset], sizeof(strLength));
+                dataOffset += sizeof(strLength);
 
-        size_t dataOffset = wire_bits_.sizeBytes();
-        for (size_t i = 0; i < layout_->columnCount(); ++i) {
-            ColumnType type = layout_->columnType(i);
-            uint32_t offset = layout_->columnOffset(i);
-
-            if (type == ColumnType::BOOL) {
-                // Translate: wire_bits_[column_i] → row.bits_[sequential_bool_index].
-                row.bits_.set(offset, wire_bits_[i]);
-            } else if (wire_bits_[i]) {
-                if (type == ColumnType::STRING) {
-                    uint16_t strLength;
-                    if (dataOffset + sizeof(strLength) > buffer.size()) [[unlikely]]
-                        throw std::runtime_error("buffer too small");
-                    std::memcpy(&strLength, &buffer[dataOffset], sizeof(strLength));
-                    dataOffset += sizeof(strLength);
-
-                    if (dataOffset + strLength > buffer.size()) [[unlikely]]
-                        throw std::runtime_error("buffer too small");
-                    std::string& str = row.strg_[offset];
-                    if (strLength > 0) {
-                        str.assign(reinterpret_cast<const char*>(&buffer[dataOffset]), strLength);
-                    } else {
-                        str.clear();
-                    }
-                    dataOffset += strLength;
+                if (dataOffset + strLength > buffer.size()) [[unlikely]]
+                    throw std::runtime_error("buffer too small");
+                std::string& str = row.strg_[offset];
+                if (strLength > 0) {
+                    str.assign(reinterpret_cast<const char*>(&buffer[dataOffset]), strLength);
                 } else {
-                    const size_t len = wireSizeOf(type);
-                    if (dataOffset + len > buffer.size()) [[unlikely]]
-                        throw std::runtime_error("buffer too small");
-                    std::memcpy(&row.data_[offset], &buffer[dataOffset], len);
-                    dataOffset += len;
+                    str.clear();
                 }
+                dataOffset += strLength;
+            } else {
+                const size_t len = wireSizeOf(type);
+                if (dataOffset + len > buffer.size()) [[unlikely]]
+                    throw std::runtime_error("buffer too small");
+                std::memcpy(&row.data_[offset], &buffer[dataOffset], len);
+                dataOffset += len;
             }
         }
     }
@@ -296,7 +223,7 @@ RowCodecZoH001<LayoutStatic<ColumnTypes...>, Policy>::serialize(
         // overwritten with actual values during serialization).
         const size_t bufferSizeOld = buffer.size();
 
-        if (!row.hasAnyChanges()) {
+        if (!row.changes().any()) {
             return std::span<std::byte>{};
         }
 

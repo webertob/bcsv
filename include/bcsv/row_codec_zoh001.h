@@ -24,16 +24,16 @@
  * to the flat codec since ZoH is only a transport optimization.
  *
  * TrackingPolicy and codec are orthogonal axes:
- *   - Enabled: row.bits_ (dynamic) / row.changes_ (static) are columnCount-sized
- *     and can be used directly as the wire change header (fast path, no copy).
- *   - Disabled: row.bits_ is boolCount-sized. The codec uses an internal
- *     wire_bits_ member to hold the columnCount-sized wire change header,
- *     translating to/from the row as needed.
+ *   - Enabled: dynamic rows keep bool values in row.bits_ (boolCount-sized)
+ *     and change flags in row.changes_ (columnCount-sized).
+ *   - Disabled: row.bits_ is boolCount-sized and no row-side change flags exist.
+ *   - In both cases, the codec uses an internal columnCount-sized wire_bits_
+ *     header and translates row state to/from wire semantics.
  *
  * The Writer is responsible for:
  *   - Calling reset() at packet boundaries
- *   - Calling row.setChanges() before the first row in a packet (Enabled only)
- *   - Calling row.resetChanges() after each serialize (Enabled only)
+ *   - Calling row.changes().set() before the first row in a packet (Enabled only)
+ *   - Calling row.changes().reset() after each serialize (Enabled only)
  *   - Detecting ZoH repeats (byte-identical serialized rows → write length 0)
  *
  * Template parameters:
@@ -107,8 +107,6 @@ private:
     RowCodecFlat001<LayoutType, Policy> flat_;   // composition
     const LayoutType* layout_{nullptr};
     mutable Bitset<> wire_bits_;  // Wire change header (columnCount-sized).
-                                  // Shortcut when Enabled: unused — row.bits_ IS wire format.
-                                  // General when Disabled: intermediate for value comparison.
 };
 
 

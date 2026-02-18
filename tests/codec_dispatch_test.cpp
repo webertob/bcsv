@@ -242,9 +242,8 @@ TEST_F(CodecDispatchFlexTest, FlatFile_EnabledReader_ChangeTracking) {
 
     while (reader.readNext()) {
         const auto& row = reader.row();
-        // After flat deserialization with Enabled: all non-BOOL columns should
-        // be marked as changed (setChanges was called in flat codec).
-        EXPECT_TRUE(row.hasAnyChanges())
+        // After flat deserialization with Enabled, row is marked dirty.
+        EXPECT_TRUE(row.changes().any())
             << "Flat+Enabled: after deserialize, changes should be set";
     }
     reader.close();
