@@ -46,14 +46,17 @@ namespace bcsv {
 // ────────────────────────────────────────────────────────────────────────────
 // Primary template: CodecDispatch for dynamic Layout
 // ────────────────────────────────────────────────────────────────────────────
-template<typename LayoutType, TrackingPolicy Policy = TrackingPolicy::Disabled>
+template<typename LayoutType>
 class CodecDispatch {
-    using RowType = typename LayoutType::template RowType<Policy>;
-    using FlatCodec = RowCodecFlat001<LayoutType, Policy>;
-    using ZoHCodec  = RowCodecZoH001<LayoutType, Policy>;
+    using RowType = typename LayoutType::RowType;
+    using FlatCodec = RowCodecFlat001<LayoutType>;
+    using ZoHCodec  = RowCodecZoH001<LayoutType>;
 
 public:
     // ── Function-pointer types ───────────────────────────────────────────
+    using SerializeFn   = std::span<std::byte> (*)(const void* codec,
+                                                   const RowType& row,
+                                                   ByteBuffer& buffer);
     using DeserializeFn = void (*)(const void* codec,
                                     std::span<const std::byte> buffer,
                                     RowType& row);
@@ -77,18 +80,25 @@ public:
             auto* codec = new (&storage_.zoh) ZoHCodec();
             codec->setup(layout);
             active_ = ActiveCodec::ZoH;
+            serialize_fn_   = &serializeZoH;
             deserialize_fn_ = &deserializeZoH;
             reset_fn_       = &resetZoH;
         } else {
             auto* codec = new (&storage_.flat) FlatCodec();
             codec->setup(layout);
             active_ = ActiveCodec::Flat;
+            serialize_fn_   = &serializeFlat;
             deserialize_fn_ = &deserializeFlat;
             reset_fn_       = &resetFlat;
         }
     }
 
     // ── Hot-path methods (function-pointer dispatch) ─────────────────────
+
+    std::span<std::byte> serialize(const RowType& row, ByteBuffer& buffer) const {
+        assert(active_ != ActiveCodec::None && "CodecDispatch::serialize() before selectCodec()");
+        return serialize_fn_(activePtr(), row, buffer);
+    }
 
     void deserialize(std::span<const std::byte> buffer, RowType& row) const {
         assert(active_ != ActiveCodec::None && "CodecDispatch::deserialize() before selectCodec()");
@@ -126,6 +136,7 @@ private:
 
     Storage       storage_;
     ActiveCodec   active_{ActiveCodec::None};
+    SerializeFn   serialize_fn_{nullptr};
     DeserializeFn deserialize_fn_{nullptr};
     ResetFn       reset_fn_{nullptr};
 
@@ -153,10 +164,22 @@ private:
         static_cast<const FlatCodec*>(codec)->deserialize(buffer, row);
     }
 
+    static std::span<std::byte> serializeFlat(const void* codec,
+                                              const RowType& row,
+                                              ByteBuffer& buffer) {
+        return static_cast<const FlatCodec*>(codec)->serialize(row, buffer);
+    }
+
     static void deserializeZoH(const void* codec,
                                 std::span<const std::byte> buffer,
                                 RowType& row) {
         static_cast<const ZoHCodec*>(codec)->deserialize(buffer, row);
+    }
+
+    static std::span<std::byte> serializeZoH(const void* codec,
+                                             const RowType& row,
+                                             ByteBuffer& buffer) {
+        return static_cast<const ZoHCodec*>(codec)->serialize(row, buffer);
     }
 
     static void resetFlat(const void* codec) {
@@ -179,12 +202,12 @@ private:
 // A single predictable branch replaces the indirect call, allowing the
 // compiler to inline deserialize/reset into the Reader's hot loop.
 // ────────────────────────────────────────────────────────────────────────────
-template<TrackingPolicy Policy, typename... ColumnTypes>
-class CodecDispatch<LayoutStatic<ColumnTypes...>, Policy> {
+template<typename... ColumnTypes>
+class CodecDispatch<LayoutStatic<ColumnTypes...>> {
     using LayoutType = LayoutStatic<ColumnTypes...>;
-    using RowType    = typename LayoutType::template RowType<Policy>;
-    using FlatCodec  = RowCodecFlat001<LayoutType, Policy>;
-    using ZoHCodec   = RowCodecZoH001<LayoutType, Policy>;
+    using RowType    = typename LayoutType::RowType;
+    using FlatCodec  = RowCodecFlat001<LayoutType>;
+    using ZoHCodec   = RowCodecZoH001<LayoutType>;
 
 public:
     CodecDispatch() = default;
@@ -217,6 +240,14 @@ public:
         } else {
             storage_.flat.deserialize(buffer, row);
         }
+    }
+
+    std::span<std::byte> serialize(const RowType& row, ByteBuffer& buffer) const {
+        assert(active_ != ActiveCodec::None && "CodecDispatch::serialize() before selectCodec()");
+        if (active_ == ActiveCodec::ZoH) {
+            return storage_.zoh.serialize(row, buffer);
+        }
+        return storage_.flat.serialize(row, buffer);
     }
 
     void reset() const {

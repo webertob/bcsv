@@ -61,7 +61,7 @@ All executables output to `build/bin/`.
 
 ## Known Caveat: ZoH Mismatch
 
-`csv2bcsv` defaults to ZoH-enabled output, but the reader CLI tools (`bcsv2csv`, `bcsvHead`, `bcsvTail`, `bcsvHeader`) construct `Reader<Layout>` with `TrackingPolicy::Disabled`, which **cannot read ZoH files**. 
+`csv2bcsv` defaults to ZoH-enabled output, and reader CLI tools (`bcsv2csv`, `bcsvHead`, `bcsvTail`, `bcsvHeader`) automatically dispatch codec handling based on file format flags. 
 
 Workarounds:
 - Use `csv2bcsv --no-zoh` to write flat-encoded files readable by all tools

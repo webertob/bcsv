@@ -19,7 +19,7 @@
 #include "byte_buffer.h"
 #include "layout.h"
 #include "row.h"
-#include "row_codec_variant.h"
+#include "row_codec_dispatch.h"
 #include "file_header.h"
 #include "file_footer.h"
 #include "lz4_stream.hpp"
@@ -30,9 +30,9 @@ namespace bcsv {
     /**
      * @brief Class for writing BCSV binary files
      */
-    template<LayoutConcept LayoutType, TrackingPolicy Policy = TrackingPolicy::Disabled>
+    template<LayoutConcept LayoutType>
     class Writer {
-        using RowType           = typename LayoutType::template RowType<Policy>;
+        using RowType           = typename LayoutType::RowType;
         using FilePath          = std::filesystem::path;
 
         std::string             err_msg_;                    // last error message description
@@ -53,7 +53,7 @@ namespace bcsv {
         ByteBuffer              row_buffer_prev_;             // Previous row for ZoH comparison
         uint64_t                row_cnt_;                    // Total rows written across all packets
         RowType                 row_;
-        RowCodecType<LayoutType, Policy> codec_;           // Codec for serialize dispatch (Item 11)
+        CodecDispatch<LayoutType> codec_;          // Runtime codec dispatch by file flags
     public:
         Writer() = delete;
         Writer(const LayoutType& layout);
@@ -80,6 +80,6 @@ namespace bcsv {
     };
 
     template<LayoutConcept LayoutType>
-    using WriterZoH = Writer<LayoutType, TrackingPolicy::Enabled>;
+    using WriterZoH = Writer<LayoutType>;
 
 } // namespace bcsv

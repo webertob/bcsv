@@ -122,14 +122,12 @@ Users interact with these types (declared in `include/bcsv/`):
 |-------|------|------|
 | `Layout` | layout.h | Dynamic column schema (names, types). Observer pattern syncs attached Rows. |
 | `LayoutStatic<Types...>` | layout.h | Compile-time fixed schema, variadic template. |
-| `Row` | row.h | In-memory row for read/write (tracking disabled). Alias for `RowImpl<TrackingPolicy::Disabled>`. |
-| `RowTracking` | row.h | Row with ZoH change tracking enabled. Alias for `RowImpl<TrackingPolicy::Enabled>`. |
+| `Row` | row.h | In-memory row for read/write. Alias for `RowImpl<TrackingPolicy::Disabled>`. |
 | `RowView` | row.h | Zero-copy read-only view into serialized row buffer (dynamic layout). |
-| `RowStatic<Types...>` | row.h | Compile-time typed row (tracking disabled). |
-| `RowStaticTracking<Types...>` | row.h | Static row with ZoH tracking enabled. |
+| `RowStatic<Types...>` | row.h | Compile-time typed row. |
 | `RowViewStatic<Types...>` | row.h | Zero-copy view for static layouts. |
-| `Reader<LayoutType, Policy>` | reader.h | Stream-based BCSV file reader with LZ4 decompression. |
-| `Writer<LayoutType, Policy>` | writer.h | Stream-based BCSV file writer with LZ4 compression, optional ZoH. |
+| `Reader<LayoutType>` | reader.h | Stream-based BCSV file reader with LZ4 decompression and codec dispatch. |
+| `Writer<LayoutType>` | writer.h | Stream-based BCSV file writer with LZ4 compression and flag-based codec dispatch. |
 | `RowCodecFlat001<Layout, Policy>` | row_codec_flat001.h | Dense flat row codec — serialize, deserialize, zero-copy column access. |
 | `RowCodecZoH001<Layout, Policy>` | row_codec_zoh001.h | Zero-Order-Hold codec — delta-encodes unchanged columns. |
 
@@ -176,12 +174,12 @@ reader.close();
 | `row_codec_flat001.h` | `RowCodecFlat001<>` — dense flat row codec (serialize, deserialize, column access) |
 | `row_codec_zoh001.h` | `RowCodecZoH001<>` — ZoH delta codec (composes Flat001 for first row) |
 | `row_codec_detail.h` | Shared codec helpers: `computeWireMetadata()`, `readColumnFromWire()` |
-| `row_codec_variant.h` | `RowCodecType<>` — compile-time codec selection for Writer |
+| `row_codec_variant.h` | Legacy compile-time codec selector (compatibility header) |
 | `row_codec_dispatch.h` | `CodecDispatch<>` — runtime codec selection for Reader (union + function pointers) |
 | `file_header.h` | `FileHeader` — 12-byte fixed header + variable schema section |
 | `packet_header.h` | `PacketHeader` — 16-byte per-packet header (magic, row index, checksum) |
 | `file_footer.h` | `FileFooter`, `PacketIndexEntry` — EOF index for random access |
-| `bitset.h` | `Bitset<N>` (fixed) / `Bitset<>` (dynamic, SOO) — change tracking + bool storage |
+| `bitset.h` | `Bitset<N>` (fixed) / `Bitset<>` (dynamic, SOO) — bool and wire-header storage |
 | `byte_buffer.h` | `LazyAllocator<T>`, `ByteBuffer` — no-init byte vector |
 | `string_addr.h` | `StrAddrT<>` — packed string offset+length in single integer |
 | `column_name_index.h` | `ColumnNameIndex<>` — flat-map for column name → index lookup |
@@ -237,10 +235,10 @@ reader.close();
 
 - **Header-only library**: all C++ code in `include/bcsv/`, `bcsv` is an INTERFACE CMake target
 - **Observer pattern**: `Layout` notifies attached `Row` objects of schema changes (`onAddColumn`, `onChangeColumnType`, `onRemoveColumn`)
-- **Policy-based design**: `TrackingPolicy::Enabled/Disabled` as template parameter for ZoH change tracking (compile-time decision, no runtime branching)
+- **Codec dispatch**: Reader and Writer select Flat/ZoH by file flags via `CodecDispatch`, with per-packet `reset()` for ZoH state.
 - **CRTP + static dispatch**: `LayoutStatic<Types...>` for zero-overhead compile-time schemas
 - **Three-container Row storage**: `bits_` (Bitset<>), `data_` (vector<byte>), `strg_` (vector<string>) — booleans as bits, scalars packed, strings separate
-- **Codec extraction**: Wire-format serialization/deserialization lives in `RowCodecFlat001`/`RowCodecZoH001`, not in Row classes. Writer uses compile-time `RowCodecType` (`std::conditional_t`); Reader uses runtime `CodecDispatch` (union + function pointers, resolved at file open). TrackingPolicy and file codec are orthogonal axes — all 4 combinations work. Codecs access Row internals via `friend`.
+- **Codec extraction**: Wire-format serialization/deserialization lives in `RowCodecFlat001`/`RowCodecZoH001`, not in Row classes. Reader and Writer both use runtime `CodecDispatch` (resolved at open). ZoH deltas are derived from codec-internal previous-row state. Codecs access Row internals via `friend`.
 
 ## Current Status
 

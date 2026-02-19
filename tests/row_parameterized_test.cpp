@@ -258,22 +258,19 @@ TYPED_TEST(RowTypedTest, Serialization) {
 
 TYPED_TEST(RowTypedTest, ChangeTracking) {
     using T = TypeParam;
-    RowTracked<TrackingPolicy::Enabled> row(this->layout_);
-    EXPECT_TRUE(row.tracksChanges())
-        << "Change tracking not enabled for type " << this->GetTypeName();
-    
-    // Note: After enabling tracking, all columns are initially marked as changed
-    // Reset to start fresh
-    row.changes().reset();
-    EXPECT_FALSE(row.changes().any())
-        << "Changes not properly reset for type " << this->GetTypeName();
+    Row row(this->layout_);
     
     // Modify a value (use non-default value to ensure change is detected)
     T val = TypeTraits<T>::test_value_3();  // Use test_value_3 which is non-default
     row.set(0, val);
-    
-    EXPECT_TRUE(row.changes().any())
-        << "Change not detected after modification for type " << this->GetTypeName();
+
+    if constexpr (std::is_floating_point_v<T>) {
+        EXPECT_FLOAT_EQ(val, row.get<T>(0))
+            << "Value mutation failed for type " << this->GetTypeName();
+    } else {
+        EXPECT_EQ(val, row.get<T>(0))
+            << "Value mutation failed for type " << this->GetTypeName();
+    }
 }
 
 TYPED_TEST(RowTypedTest, TypeMismatch) {

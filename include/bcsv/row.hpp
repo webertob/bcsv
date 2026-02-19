@@ -307,19 +307,10 @@ namespace bcsv {
         uint32_t offset = layout_.columnOffset(index);
 
         if constexpr (std::is_same_v<T, bool>) {
-            if constexpr (isTrackingEnabled(Policy)) {
-                changes_.set(index);
-            }
             return bits_[bitsIndex(index)];  // returns Bitset<>::reference proxy
         } else if constexpr (std::is_same_v<T, std::string>) {
-            if constexpr (isTrackingEnabled(Policy)) {
-                changes_.set(index);
-            }
             return static_cast<std::string&>(strg_[offset]);
         } else {
-            if constexpr (isTrackingEnabled(Policy)) {
-                changes_.set(index);
-            }
             return *reinterpret_cast<T*>(&data_[offset]);
         }
     } 
@@ -374,32 +365,18 @@ namespace bcsv {
 
     if constexpr (isBoolLike) {
         // Bool (or bool proxy like std::vector<bool>::reference): write to Bitset
-        const bool newVal = static_cast<bool>(value);
-        bool oldVal = bits_[bitsIndex(index)];
-        bool changed = (oldVal != newVal);
-        bits_[bitsIndex(index)] = newVal;
-        if constexpr (isTrackingEnabled(Policy)) {
-            changes_[index] |= changed;
-        }
+        bits_[bitsIndex(index)] = static_cast<bool>(value);
     } else if constexpr (isStringLike) {
-        // String: write to strg_, with change tracking and truncation
+        // String: write to strg_ with truncation
         std::string& str = strg_[offset];
-        bool changed = (str != value);
         str = value;
         if (str.size() > MAX_STRING_LENGTH) {
             str.resize(MAX_STRING_LENGTH);
         }
-        if constexpr (isTrackingEnabled(Policy)) {
-            changes_[index] |= changed;
-        }
     } else {
         // Scalar: direct write to data_
         T& colValue = *reinterpret_cast<T*>(&data_[offset]);
-        bool changed = (colValue != value);
         colValue = value;
-        if constexpr (isTrackingEnabled(Policy)) {
-            changes_[index] |= changed;
-        }
     }
 }
 
@@ -425,28 +402,12 @@ namespace bcsv {
             // Bit-by-bit write to bits_
             for (size_t i = 0; i < values.size(); ++i) {
                 size_t bi = bitsIndex(index + i);
-                if constexpr (isTrackingEnabled(Policy)) {
-                    bool changed = (bits_[bi] != values[i]);
-                    bits_[bi] = values[i];
-                    changes_[index + i] |= changed;
-                } else {
-                    bits_[bi] = values[i];
-                }
+                bits_[bi] = values[i];
             }
         } else {
             uint32_t offset = layout_.columnOffset(index);
             T* dst = reinterpret_cast<T*>(&data_[offset]);
-            if constexpr (isTrackingEnabled(Policy)) {
-                // Element-wise check and set to track changes precisely
-                for (size_t i = 0; i < values.size(); ++i) {
-                    if (dst[i] != values[i]) {
-                        dst[i] = values[i];
-                        changes_.set(index + i);
-                    }
-                }
-            } else {
-                std::memcpy(dst, values.data(), values.size() * sizeof(T));
-            }
+            std::memcpy(dst, values.data(), values.size() * sizeof(T));
         }
     }
 
@@ -593,25 +554,19 @@ namespace bcsv {
         visitConst(0, std::forward<Visitor>(visitor), layout_.columnCount());
     }
 
-    /** @brief Visit a range of columns with mutable access and change tracking
+    /** @brief Visit a range of columns with mutable access
      * 
      * Invokes the visitor callable for columns in range [startIndex, startIndex + count).
      * 
      * @tparam Visitor Callable type
      * @param startIndex First column index to visit
-    * @param visitor Callable accepting `(size_t index, T& value[, bool& changed])`
+    * @param visitor Callable accepting `(size_t index, T& value)`
      * @param count Number of columns to visit (default: 1 for single column, 0 visits nothing)
      * 
-    * @par Visitor Signatures
-    * - **Tracking enabled**: `(size_t index, T& value, bool& changed)`
-    * - **Tracking disabled**: `(size_t index, T& value)` or `(size_t index, T& value, bool& changed)`
-    *
     * @par Example - Modify single column
      * @code
-     * row.visit(2, [](size_t idx, auto& value, bool& changed) {
-     *     auto old = value;
+     * row.visit(2, [](size_t idx, auto& value) {
      *     value *= 2;
-     *     changed = (value != old);
      * });  // Default count=1
      * @endcode
      * 
@@ -651,39 +606,13 @@ namespace bcsv {
             if (type == ColumnType::BOOL) {
                 // Materialize bool from Bitset, let visitor modify, write back
                 bool val = bits_[bitsIndex(i)];
-                if constexpr (isTrackingEnabled(Policy)) {
-                    static_assert(std::is_invocable_v<Visitor, size_t, bool&, bool&>,
-                                  "Row::visit() with tracking requires (size_t, T&, bool&)");
-                    bool changed = true;
-                    visitor(i, val, changed);
-                    changes_[i] |= changed;
-                } else {
-                    if constexpr (std::is_invocable_v<Visitor, size_t, bool&, bool&>) {
-                        bool changed = true;
-                        visitor(i, val, changed);
-                    } else {
-                        static_assert(std::is_invocable_v<Visitor, size_t, bool&>,
-                                      "Row::visit() requires (size_t, T&) or (size_t, T&, bool&)");
-                        visitor(i, val);
-                    }
-                }
+                static_assert(std::is_invocable_v<Visitor, size_t, bool&>,
+                              "Row::visit() requires (size_t, T&)");
+                visitor(i, val);
                 bits_[bitsIndex(i)] = val;
             } else if (type == ColumnType::STRING) {
                 std::string& str = strg_[offset];
-                if constexpr (isTrackingEnabled(Policy)) {
-                    static_assert(std::is_invocable_v<Visitor, size_t, std::string&, bool&>,
-                                  "Row::visit() with tracking requires (size_t, T&, bool&)");
-                    bool changed = true;
-                    visitor(i, str, changed);
-                    changes_[i] |= changed;
-                } else {
-                    if constexpr (std::is_invocable_v<Visitor, size_t, std::string&, bool&>) {
-                        bool changed = true;
-                        visitor(i, str, changed);
-                    } else {
-                        visitor(i, str);
-                    }
-                }
+                visitor(i, str);
                 if (str.size() > MAX_STRING_LENGTH) {
                     str.resize(MAX_STRING_LENGTH);
                 }
@@ -691,22 +620,9 @@ namespace bcsv {
                 // Scalar types: dispatch via lambda
                 auto dispatch = [&](auto& value) {
                     using T = std::decay_t<decltype(value)>;
-                    if constexpr (isTrackingEnabled(Policy)) {
-                        static_assert(std::is_invocable_v<Visitor, size_t, T&, bool&>,
-                                      "Row::visit() with tracking requires (size_t, T&, bool&)");
-                        bool changed = true;
-                        visitor(i, value, changed);
-                        changes_[i] |= changed;
-                    } else {
-                        if constexpr (std::is_invocable_v<Visitor, size_t, T&, bool&>) {
-                            bool changed = true;
-                            visitor(i, value, changed);
-                        } else {
-                            static_assert(std::is_invocable_v<Visitor, size_t, T&>,
-                                          "Row::visit() requires (size_t, T&) or (size_t, T&, bool&)");
-                            visitor(i, value);
-                        }
-                    }
+                    static_assert(std::is_invocable_v<Visitor, size_t, T&>,
+                                  "Row::visit() requires (size_t, T&)");
+                    visitor(i, value);
                 };
 
                 switch(type) {
@@ -747,66 +663,36 @@ namespace bcsv {
         }
     }
 
-    /** @brief Visit all columns with mutable access and change tracking
+    /** @brief Visit all columns with mutable access
      * 
-     * Iterates through all columns, allowing modification. Supports fine-grained
-     * change tracking for optimal ZoH (Zero-Order-Hold) compression.
+    * Iterates through all columns, allowing in-place modification.
      * 
      * @tparam Visitor Callable type - see row_visitors.h for concepts and examples
      * 
      * @par Visitor Signature (non-const version)
      * 
-    * **Tracking enabled signature:**
-    * ```cpp
-    * (size_t index, T& value, bool& changed)
-    * ```
-    * **Tracking disabled signature:**
+    * **Signature:**
     * ```cpp
     * (size_t index, T& value)
     * ```
      * - `index` - Column index
      * - `value` - Mutable reference to column value
-     * - `changed` - Output: set to `true` if modified, `false` to skip marking
-     * 
-     * **Note:** You can ignore the `changed` parameter by omitting its name:
-     * ```cpp
-     * [](size_t index, auto& value, bool&) { value *= 2; }
-     * ```
-     * 
-     * @par Example - Fine-grained change tracking
+     *
+     * @par Example - Mutate arithmetic columns
      * @code
-     * row.visit([](size_t index, auto& value, bool& changed) {
+     * row.visit([](size_t index, auto& value) {
      *     if constexpr (std::is_arithmetic_v<decltype(value)>) {
-     *         auto old = value;
      *         value *= 2;
-     *         changed = (value != old);  // Only mark if actually modified
-     *     } else {
-     *         changed = false;  // Don't mark strings as changed
      *     }
      * });
      * @endcode
-     * 
-     * @par Example - Ignoring change parameter
-     * @code
-     * row.visit([](size_t index, auto& value, bool&) {
-     *     if constexpr (std::is_arithmetic_v<decltype(value)>) {
-     *         value *= 2;  // Changed parameter not used
-     *     }
-     * });
-     * @endcode
-     * 
-    * @par Change Tracking Behavior
-     * - **With tracking enabled**: Changed columns are marked in internal Bitset
-     * - **Respects `changed` flag**: Only columns with `changed=true` are marked
-    * - **Without tracking**: No overhead, changes not recorded
      * 
      * @warning Only modifies columns through set() if you need type conversion or validation.
      *          Direct modification via visit() bypasses those checks but is more efficient.
      * 
      * @see row_visitors.h for concepts, helper types, and more examples
      * @see Row::visit(Visitor&&) const for read-only version
-     * @see Row::visit(size_t, Visitor&&, size_t) for visiting a range or single column
-     * @see Row::changes() to access the change tracking Bitset
+    * @see Row::visit(size_t, Visitor&&, size_t) for visiting a range or single column
      */
     template<TrackingPolicy Policy>
     template<RowVisitor Visitor>
@@ -829,16 +715,15 @@ namespace bcsv {
      * Safety: runtime type check verifies each column matches T (in debug/RANGE_CHECKING).
      * 
      * @tparam T         The expected column type (must be a BCSV-supported type)
-     * @tparam Visitor    Callable accepting (size_t, T&, bool&) or (size_t, T&)
+    * @tparam Visitor    Callable accepting (size_t, T&)
      * @param startIndex  First column index to visit
-     * @param visitor     Callable for modification with optional change tracking
+    * @param visitor     Callable for modification
      * @param count       Number of consecutive columns to visit (default 1)
      * 
      * @par Example — Calibrate 5 consecutive double sensor channels
      * @code
-     * row.visit<double>(10, [&](size_t i, double& val, bool& changed) {
+    * row.visit<double>(10, [&](size_t i, double& val) {
      *     val += calibration[i - 10];
-     *     changed = true;
      * }, 5);
      * @endcode
      * 
@@ -874,51 +759,18 @@ namespace bcsv {
             if constexpr (std::is_same_v<T, bool>) {
                 // Materialize bool from Bitset, let visitor modify, write back
                 bool val = bits_[bitsIndex(i)];
-                if constexpr (std::is_invocable_v<Visitor, size_t, bool&, bool&>) {
-                    bool changed = true;
-                    visitor(i, val, changed);
-                    if constexpr (isTrackingEnabled(Policy)) {
-                        changes_[i] |= changed;
-                    }
-                } else {
-                    visitor(i, val);
-                    if constexpr (isTrackingEnabled(Policy)) {
-                        changes_.set(i);
-                    }
-                }
+                visitor(i, val);
                 bits_[bitsIndex(i)] = val;
             } else if constexpr (std::is_same_v<T, std::string>) {
                 std::string& str = strg_[offset];
-                if constexpr (std::is_invocable_v<Visitor, size_t, std::string&, bool&>) {
-                    bool changed = true;
-                    visitor(i, str, changed);
-                    if constexpr (isTrackingEnabled(Policy)) {
-                        changes_[i] |= changed;
-                    }
-                } else {
-                    visitor(i, str);
-                    if constexpr (isTrackingEnabled(Policy)) {
-                        changes_.set(i);
-                    }
-                }
+                visitor(i, str);
                 if (str.size() > MAX_STRING_LENGTH) {
                     str.resize(MAX_STRING_LENGTH);
                 }
             } else {
                 // Scalar: direct reinterpret_cast, no switch
                 T& value = *reinterpret_cast<T*>(&data_[offset]);
-                if constexpr (std::is_invocable_v<Visitor, size_t, T&, bool&>) {
-                    bool changed = true;
-                    visitor(i, value, changed);
-                    if constexpr (isTrackingEnabled(Policy)) {
-                        changes_[i] |= changed;
-                    }
-                } else {
-                    visitor(i, value);
-                    if constexpr (isTrackingEnabled(Policy)) {
-                        changes_.set(i);
-                    }
-                }
+                visitor(i, value);
             }
         }
     }
@@ -1745,18 +1597,13 @@ namespace bcsv {
     /** @brief Visit a range of columns with mutable access (primitives only)
      * 
      * Allows in-place modification of primitives in the serialized buffer.
-    * Strings are READ-ONLY - cannot resize buffer. Change tracking parameter
-    * is accepted but ignored (always treated as changed).
+    * Strings are READ-ONLY - cannot resize buffer.
      * 
-    * @tparam Visitor Callable accepting `(size_t index, T& value[, bool& changed])`
+    * @tparam Visitor Callable accepting `(size_t index, T& value)`
      * @param startIndex First column index to visit
      * @param visitor Callable for in-place modification
      * @param count Number of columns to visit
      * 
-    * @par Visitor Signatures
-    * - `(size_t index, T& value)`
-    * - `(size_t index, T& value, bool& changed)`
-    *
     * Note: For string columns, the visitor receives `std::string_view`.
     *
     * @par Example - Modify primitives in-place
@@ -1815,26 +1662,17 @@ namespace bcsv {
 
             auto dispatch = [&](auto&& value) {
                 using T = std::decay_t<decltype(value)>;
-                if constexpr (std::is_invocable_v<Visitor, size_t, T&, bool&>) {
-                    bool changed = true;
-                    visitor(i, value, changed);
-                    return changed;
-                } else {
-                    static_assert(std::is_invocable_v<Visitor, size_t, T&>,
-                                  "RowView::visit() requires (size_t, T&) or (size_t, T&, bool&)");
-                    visitor(i, value);
-                    return true;
-                }
+                static_assert(std::is_invocable_v<Visitor, size_t, T&>,
+                              "RowView::visit() requires (size_t, T&)");
+                visitor(i, value);
             };
 
             auto visitScalar = [&](auto type_tag) {
                 using Scalar = decltype(type_tag);
                 size_t pos = wire_data_off + off;
                 Scalar value = unalignedRead<Scalar>(buffer_.data() + pos);
-                bool changed = dispatch(value);
-                if (changed) {
-                    unalignedWrite<Scalar>(buffer_.data() + pos, value);
-                }
+                dispatch(value);
+                unalignedWrite<Scalar>(buffer_.data() + pos, value);
             };
 
             switch(type) {
@@ -1843,12 +1681,10 @@ namespace bcsv {
                     size_t bytePos = off >> 3;
                     size_t bitPos  = off & 7;
                     bool value = (buffer_[bytePos] & (std::byte{1} << bitPos)) != std::byte{0};
-                    bool changed = dispatch(value);
+                    dispatch(value);
                     // Write back potentially modified value
-                    if (changed) {
-                        if (value) buffer_[bytePos] |= std::byte{1} << bitPos;
-                        else       buffer_[bytePos] &= ~(std::byte{1} << bitPos);
-                    }
+                    if (value) buffer_[bytePos] |= std::byte{1} << bitPos;
+                    else       buffer_[bytePos] &= ~(std::byte{1} << bitPos);
                     break;
                 }
                 case ColumnType::INT8:
@@ -1921,17 +1757,15 @@ namespace bcsv {
         }
     }
 
-    /** @brief Visit all columns with mutable access (primitives only)
-     * 
-     * Iterate through all columns allowing primitive modification.
-     * Strings remain read-only. No change tracking.
-     * 
-     * @tparam Visitor Callable accepting `(size_t index, T& value[, bool& changed])`
-     * 
-     * @note Both 2-param and 3-param signatures are accepted, change flag is ignored
-     * @see row_visitors.h for concepts and helper types
-     * @see RowView::visit(size_t, Visitor&&, size_t) for range access
-     */
+     /** @brief Visit all columns with mutable access (primitives only)
+      *
+      * Iterate through all columns allowing primitive modification.
+      * Strings remain read-only.
+      *
+      * @tparam Visitor Callable accepting `(size_t index, T& value)`
+      * @see row_visitors.h for concepts and helper types
+      * @see RowView::visit(size_t, Visitor&&, size_t) for range access
+      */
     template<RowVisitor Visitor>
     inline void RowView::visit(Visitor&& visitor) {
         // Delegate to range-based visitor for all columns
@@ -1946,18 +1780,17 @@ namespace bcsv {
      * For strings (T = std::string_view), the visitor receives a read-only string_view
      * pointing into the buffer (cannot resize).
      *
-     * No change tracking — RowView has no tracking infrastructure. The bool& changed
-     * parameter is accepted but ignored.
+        * RowView is a lightweight view and does not maintain per-column dirty state.
      *
      * @tparam T         The expected column type (use std::string_view for STRING columns)
-     * @tparam Visitor    Callable accepting (size_t, T&, bool&) or (size_t, T&)
+        * @tparam Visitor    Callable accepting `(size_t, T&)`
      * @param startIndex  First column index to visit
      * @param visitor     Callable for in-place access
      * @param count       Number of consecutive columns to visit (default 1)
      *
      * @par Example — Scale 100 double columns in-place
      * @code
-     * rowView.visit<double>(0, [](size_t, double& v, bool&) {
+        * rowView.visit<double>(0, [](size_t, double& v) {
      *     v *= 2.0;
      * }, 100);
      * @endcode
@@ -2018,17 +1851,10 @@ namespace bcsv {
                 size_t bytePos = off >> 3;
                 size_t bitPos  = off & 7;
                 bool value = (buffer_[bytePos] & (std::byte{1} << bitPos)) != std::byte{0};
-                bool changed = true;
-                if constexpr (std::is_invocable_v<Visitor, size_t, bool&, bool&>) {
-                    visitor(i, value, changed);
-                } else {
-                    visitor(i, value);
-                }
+                visitor(i, value);
                 // Write back
-                if (changed) {
-                    if (value) buffer_[bytePos] |= std::byte{1} << bitPos;
-                    else       buffer_[bytePos] &= ~(std::byte{1} << bitPos);
-                }
+                if (value) buffer_[bytePos] |= std::byte{1} << bitPos;
+                else       buffer_[bytePos] &= ~(std::byte{1} << bitPos);
             } else if constexpr (std::is_same_v<T, std::string_view> || std::is_same_v<T, std::string>) {
                 // Strings: read-only (buffer is fixed-size, cannot resize)
                 uint16_t strLength = unalignedRead<uint16_t>(&buffer_[str_lens_cursor]);
@@ -2044,15 +1870,8 @@ namespace bcsv {
                 );
                 str_pay_cursor += strLength;
 
-                if constexpr (std::is_invocable_v<Visitor, size_t, std::string_view&, bool&>) {
-                    bool changed = true;
-                    visitor(i, sv, changed);
-                } else if constexpr (std::is_invocable_v<Visitor, size_t, std::string_view&>) {
+                if constexpr (std::is_invocable_v<Visitor, size_t, std::string_view&>) {
                     visitor(i, sv);
-                } else if constexpr (std::is_invocable_v<Visitor, size_t, std::string&, bool&>) {
-                    std::string tmp(sv);
-                    bool changed = true;
-                    visitor(i, tmp, changed);
                 } else {
                     std::string tmp(sv);
                     visitor(i, tmp);
@@ -2061,15 +1880,8 @@ namespace bcsv {
                 // Scalar: copy-in/out (safe on unaligned packed wire data)
                 size_t pos = wire_data_off + off;
                 T value = unalignedRead<T>(buffer_.data() + pos);
-                bool changed = true;
-                if constexpr (std::is_invocable_v<Visitor, size_t, T&, bool&>) {
-                    visitor(i, value, changed);
-                } else {
-                    visitor(i, value);
-                }
-                if (changed) {
-                    unalignedWrite<T>(buffer_.data() + pos, value);
-                }
+                visitor(i, value);
+                unalignedWrite<T>(buffer_.data() + pos, value);
             }
         }
     }
@@ -2497,7 +2309,7 @@ namespace bcsv {
     template<typename T>
     void RowStaticImpl<Policy, ColumnTypes...>::set(size_t index, const T& value)  {
         // Use visitor pattern for runtime-indexed write
-        visit(index, [&](size_t, auto& colValue, bool&) {
+        visit(index, [&](size_t, auto& colValue) {
             using ColType = std::decay_t<decltype(colValue)>;
             using DecayedT = std::decay_t<T>;
             
@@ -2636,23 +2448,21 @@ namespace bcsv {
         visitConst(0, std::forward<Visitor>(visitor), COLUMN_COUNT);
     }
 
-    /** @brief Visit a range of columns with mutable access and change tracking (compile-time optimized)
+    /** @brief Visit a range of columns with mutable access (compile-time optimized)
      * 
-     * Compile-time type dispatch with fine-grained change tracking support.
+    * Compile-time type dispatch with tuple-backed column access.
      * Optimal code generation through fold expressions and type-safe tuple access.
      * 
-     * @tparam Visitor Callable accepting `(size_t index, T& value[, bool& changed])`
+    * @tparam Visitor Callable accepting `(size_t index, T& value)`
      * @param startIndex First column index to visit
-     * @param visitor Callable for modification with optional change tracking
+    * @param visitor Callable for modification
      * @param count Number of columns to visit
      * 
-     * @par Example - Fine-grained tracking
+    * @par Example - Range mutation
      * @code
      * RowStatic<int, double, std::string> row{layout};
-     * row.visit(0, [](size_t idx, auto& value, bool& changed) {
-     *     auto old = value;
+    * row.visit(0, [](size_t idx, auto& value) {
      *     value = process(value);
-     *     changed = (value != old);  // Fine-grained per-column tracking
      * }, 2);
      * @endcode
      * 
@@ -2675,54 +2485,32 @@ namespace bcsv {
             assert(endIndex <= COLUMN_COUNT && "RowStatic::visit: Range out of bounds");
         }
         
-        // Runtime loop with compile-time type dispatch and change tracking
+        // Runtime loop with compile-time type dispatch
         for (size_t i = startIndex; i < endIndex; ++i) {
             // Use fold expression to dispatch to correct tuple element at runtime
             [&]<size_t... I>(std::index_sequence<I...>) {
                 ([&] {
                     if (I == i) {
-                        // Check if visitor accepts change tracking parameter
-                        if constexpr (std::is_invocable_v<Visitor, size_t, decltype(std::get<I>(data_))&, bool&>) {
-                            bool changed = true;
-                            visitor(I, std::get<I>(data_), changed);
-                            if constexpr (isTrackingEnabled(Policy)) {
-                                changes_[I] |= changed;
-                            }
-                        } else {
-                            visitor(I, std::get<I>(data_));
-                            if constexpr (isTrackingEnabled(Policy)) {
-                                changes_[I] = true;
-                            }
-                        }
+                        visitor(I, std::get<I>(data_));
                     }
                 }(), ...);
             }(std::make_index_sequence<COLUMN_COUNT>{});
         }
     }
 
-    /** @brief Visit all columns with mutable access and change tracking (compile-time optimized)
+    /** @brief Visit all columns with mutable access (compile-time optimized)
      * 
-     * Type-safe iteration with compile-time optimization and optional change tracking.
-     * Supports both 2-param and 3-param visitor signatures.
+     * Type-safe iteration with compile-time optimization.
      * 
-     * @tparam Visitor Callable accepting `(size_t index, T& value[, bool& changed])`
+     * @tparam Visitor Callable accepting `(size_t index, T& value)`
      * 
-     * @par Visitor Signatures
-     * 
-     * **Fine-grained (3 params):** `(size_t index, T& value, bool& changed)`
-     * **Legacy (2 params):** `(size_t index, T& value)` - marks all as changed
-     * 
-     * @par Example - Mixed signature visitor
+     * @par Example
      * @code
      * RowStatic<int, double, std::string> row{layout};
-     * row.visit([](size_t idx, auto& value, bool& changed) {
+     * row.visit([](size_t idx, auto& value) {
      *     using T = std::decay_t<decltype(value)>;
      *     if constexpr (std::is_arithmetic_v<T>) {
-     *         auto old = value;
      *         value *= 2;
-     *         changed = (value != old);  // Track arithmetic changes
-     *     } else {
-     *         changed = false;  // Don't track string changes
      *     }
      * });
      * @endcode
@@ -3183,7 +2971,7 @@ namespace bcsv {
      * In-place primitive modification with compile-time type safety.
      * Strings are read-only (std::string_view) - cannot resize buffer.
      * 
-     * @tparam Visitor Callable accepting `(size_t index, T& value[, bool& changed])`
+    * @tparam Visitor Callable accepting `(size_t index, T& value)`
      * @param startIndex First column index to visit
      * @param visitor Callable for modification
      * @param count Number of columns to visit
@@ -3200,8 +2988,7 @@ namespace bcsv {
      * }, 3);
      * @endcode
      * 
-     * @warning Strings cannot be modified (buffer size is fixed)
-     * @note Change tracking parameter accepted but has no effect
+    * @warning Strings cannot be modified (buffer size is fixed)
      * @see row_visitors.h for concepts and helper types
      */
     template<typename... ColumnTypes>
@@ -3225,54 +3012,37 @@ namespace bcsv {
             throw std::runtime_error("RowViewStatic::visit() buffer too small for fixed wire section");
         }
         
-        // Runtime loop with compile-time type dispatch and change tracking
+        // Runtime loop with compile-time type dispatch
         for (size_t i = startIndex; i < endIndex; ++i) {
             // Use fold expression to dispatch to correct column at runtime
             [&]<size_t... I>(std::index_sequence<I...>) {
                 ([&] {
                     if (I == i) {
                         using ColType = column_type<I>;
-                        bool changed = true;  // Default: assume changed
-                        
+
                         if constexpr (std::is_same_v<ColType, bool>) {
                             // Bool: bit-packed in bits section — read-modify-write
                             constexpr size_t off = WIRE_OFFSETS[I];        // bit index
                             const size_t byteIdx = off >> 3;
                             const std::byte bitMask = std::byte{1} << (off & 7);
                             ColType value = (buffer_[byteIdx] & bitMask) != std::byte{0};
-                            
-                            if constexpr (std::is_invocable_v<Visitor, size_t, ColType&, bool&>) {
-                                visitor(I, value, changed);
-                            } else {
-                                visitor(I, value);
-                            }
+
+                            visitor(I, value);
                             // Write back
-                            if (changed) {
-                                if (value) buffer_[byteIdx] |=  bitMask;
-                                else       buffer_[byteIdx] &= ~bitMask;
-                            }
+                            if (value) buffer_[byteIdx] |=  bitMask;
+                            else       buffer_[byteIdx] &= ~bitMask;
                         } else if constexpr (std::is_same_v<ColType, std::string>) {
                             // Strings: read-only (cannot resize buffer), pass string_view
                             auto str_view = get<I>();
-                            
-                            if constexpr (std::is_invocable_v<Visitor, size_t, decltype(str_view), bool&>) {
-                                visitor(I, str_view, changed);
-                            } else {
-                                visitor(I, str_view);
-                            }
+
+                            visitor(I, str_view);
                         } else {
                             // Scalars: located at WIRE_BITS_SIZE + WIRE_OFFSETS[I]
                             constexpr size_t offset = WIRE_BITS_SIZE + WIRE_OFFSETS[I];
                             ColType value = unalignedRead<ColType>(buffer_.data() + offset);
-                            
-                            if constexpr (std::is_invocable_v<Visitor, size_t, ColType&, bool&>) {
-                                visitor(I, value, changed);
-                            } else {
-                                visitor(I, value);
-                            }
-                            if (changed) {
-                                unalignedWrite<ColType>(buffer_.data() + offset, value);
-                            }
+
+                            visitor(I, value);
+                            unalignedWrite<ColType>(buffer_.data() + offset, value);
                         }
                     }
                 }(), ...);
@@ -3281,24 +3051,19 @@ namespace bcsv {
     }
 
     /** @brief Visit all columns with mutable access (compile-time, primitives only)
-     * 
+     *
      * Type-safe iteration with in-place primitive modification.
-     * Strings remain read-only. No change tracking.
-     * 
-     * @tparam Visitor Callable accepting `(size_t index, T& value[, bool& changed])`
-     * 
+     * Strings remain read-only.
+     *
+     * @tparam Visitor Callable accepting `(size_t index, T& value)`
+     *
      * @par Example - Conditional modification
      * @code
      * RowViewStatic<int, std::string, double> view{layout, buffer};
-     * view.visit([](size_t idx, auto& value, bool& changed) {
+     * view.visit([](size_t idx, auto& value) {
      *     using T = std::decay_t<decltype(value)>;
      *     if constexpr (std::is_arithmetic_v<T>) {
-     *         auto old = value;
      *         value = process(value);  // Modify primitives
-     *         changed = (value != old);
-     *     } else {
-     *         // String: read-only std::string_view
-     *         changed = false;
      *     }
      * });
      * @endcode

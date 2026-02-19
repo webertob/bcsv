@@ -97,18 +97,15 @@ TEST(RowVectorizedTest, ChangeTrackingMultiple) {
     layout.addColumn({"col2", ColumnType::INT32});
     layout.addColumn({"col3", ColumnType::INT32});
 
-    RowTracked<TrackingPolicy::Enabled> row(layout);
-    row.changes().reset();
-
-    EXPECT_FALSE(row.changes().any()) 
-        << "After changes().reset(), changes().any() should return false";
+    Row row(layout);
 
     // Set multiple values
     int32_t values[] = {10, 20, 30};
     row.set(0, std::span<const int32_t>{values, 3});
 
-    EXPECT_TRUE(row.changes().any()) 
-        << "After vectorized set, changes().any() should return true";
+    EXPECT_EQ(row.get<int32_t>(0), 10);
+    EXPECT_EQ(row.get<int32_t>(1), 20);
+    EXPECT_EQ(row.get<int32_t>(2), 30);
 }
 
 TEST(RowVectorizedTest, BoundaryCheck) {
@@ -213,15 +210,15 @@ TEST(RowStaticVectorizedTest, CompileTimeGetPartialRange) {
 TEST(RowStaticVectorizedTest, CompileTimeChangeTracking) {
     using LayoutType = LayoutStatic<int32_t, int32_t, int32_t>;
     LayoutType layout({"col1", "col2", "col3"});
-    RowStaticTracked<TrackingPolicy::Enabled, int32_t, int32_t, int32_t> row(layout);
-    row.changes().reset();
-    EXPECT_FALSE(row.changes().any());
+    RowStatic<int32_t, int32_t, int32_t> row(layout);
 
     // Set multiple values
     std::array<int32_t, 3> arr = {10, 20, 30};
-    row.set<0, int32_t, 3>(arr);
+    row.set<0>(std::span<const int32_t, 3>{arr});
 
-    EXPECT_TRUE(row.changes().any());
+    EXPECT_EQ(row.get<0>(), 10);
+    EXPECT_EQ(row.get<1>(), 20);
+    EXPECT_EQ(row.get<2>(), 30);
 }
 
 // =============================================================================
@@ -288,16 +285,16 @@ TEST(RowStaticVectorizedTest, RuntimeBoundaryCheck) {
 TEST(RowStaticVectorizedTest, RuntimeChangeTracking) {
     using LayoutType = LayoutStatic<int32_t, int32_t, int32_t>;
     LayoutType layout({"col1", "col2", "col3"});
-    RowStaticTracked<TrackingPolicy::Enabled, int32_t, int32_t, int32_t> row(layout);
-    row.changes().reset();
-    EXPECT_FALSE(row.changes().any());
+    RowStatic<int32_t, int32_t, int32_t> row(layout);
 
     // Set multiple values via runtime interface
     int32_t values[] = {10, 20, 30};
     std::span<const int32_t> values_span{values, 3};
     row.set(0, values_span);
 
-    EXPECT_TRUE(row.changes().any());
+    EXPECT_EQ(row.get<0>(), 10);
+    EXPECT_EQ(row.get<1>(), 20);
+    EXPECT_EQ(row.get<2>(), 30);
 }
 
 // =============================================================================

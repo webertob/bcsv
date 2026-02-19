@@ -127,9 +127,6 @@ void test_row_api() {
     TEST_ASSERT(row_layout != NULL, "Row layout access");
     TEST_ASSERT(bcsv_layout_column_count(row_layout) == 4, "Row layout has 4 columns");
     
-    // Test change-tracking capability flag (compile-time only)
-    TEST_ASSERT(!bcsv_row_tracks_changes(row), "Change tracking initially disabled");
-    
     // Test setting values
     bcsv_row_set_string(row, 0, "Alice");
     bcsv_row_set_int32(row, 1, 30);

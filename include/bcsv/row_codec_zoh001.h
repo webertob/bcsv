@@ -23,22 +23,17 @@
  * subsequent rows are ZoH-delta encoded. Per-column access (readColumn) delegates
  * to the flat codec since ZoH is only a transport optimization.
  *
- * TrackingPolicy and codec are orthogonal axes:
- *   - Enabled: dynamic rows keep bool values in row.bits_ (boolCount-sized)
- *     and change flags in row.changes_ (columnCount-sized).
- *   - Disabled: row.bits_ is boolCount-sized and no row-side change flags exist.
- *   - In both cases, the codec uses an internal columnCount-sized wire_bits_
- *     header and translates row state to/from wire semantics.
+ * TrackingPolicy and codec are orthogonal axes.
+ * The codec computes deltas by comparing each row against internal previous-row
+ * state (prev_row_) and emits a columnCount-sized wire_bits_ header.
  *
  * The Writer is responsible for:
  *   - Calling reset() at packet boundaries
- *   - Calling row.changes().set() before the first row in a packet (Enabled only)
- *   - Calling row.changes().reset() after each serialize (Enabled only)
  *   - Detecting ZoH repeats (byte-identical serialized rows → write length 0)
  *
  * Template parameters:
  *   LayoutType     — bcsv::Layout (dynamic) or bcsv::LayoutStatic<Ts...>
- *   Policy         — TrackingPolicy::Disabled or TrackingPolicy::Enabled
+ *   Policy         — TrackingPolicy (currently not part of the public row API surface)
  *
  * @see row_codec_flat001.h for the flat codec this composes.
  * @see ITEM_11_PLAN.md for architecture and design rationale.
@@ -50,6 +45,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 
 namespace bcsv {
@@ -57,9 +53,9 @@ namespace bcsv {
 // ────────────────────────────────────────────────────────────────────────────
 // Primary template: RowCodecZoH001 for dynamic Layout
 // ────────────────────────────────────────────────────────────────────────────
-template<typename LayoutType, TrackingPolicy Policy = TrackingPolicy::Enabled>
+template<typename LayoutType, TrackingPolicy Policy = TrackingPolicy::Disabled>
 class RowCodecZoH001 {
-    using RowType = typename LayoutType::template RowType<Policy>;
+    using RowType = typename LayoutType::RowType;
 
 public:
     RowCodecZoH001() = default;
@@ -107,6 +103,8 @@ private:
     RowCodecFlat001<LayoutType, Policy> flat_;   // composition
     const LayoutType* layout_{nullptr};
     mutable Bitset<> wire_bits_;  // Wire change header (columnCount-sized).
+    mutable std::unique_ptr<RowType> prev_row_;
+    mutable bool has_prev_{false};
 };
 
 
@@ -116,7 +114,7 @@ private:
 template<TrackingPolicy Policy, typename... ColumnTypes>
 class RowCodecZoH001<LayoutStatic<ColumnTypes...>, Policy> {
     using LayoutType = LayoutStatic<ColumnTypes...>;
-    using RowType = typename LayoutType::template RowType<Policy>;
+    using RowType = typename LayoutType::RowType;
 
 public:
     static constexpr size_t COLUMN_COUNT = sizeof...(ColumnTypes);
@@ -155,8 +153,8 @@ private:
     RowCodecFlat001<LayoutType, Policy> flat_;   // composition
     const LayoutType* layout_{nullptr};
     mutable Bitset<COLUMN_COUNT> wire_bits_;  // Wire change header.
-                                               // Shortcut when Enabled: unused — row.changes_ IS wire format.
-                                               // General when Disabled: intermediate for value comparison.
+    mutable std::unique_ptr<RowType> prev_row_;
+    mutable bool has_prev_{false};
 
     // ── Compile-time recursive helpers ───────────────────────────────────
     template<size_t Index>

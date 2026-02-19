@@ -138,8 +138,6 @@ void                bcsv_row_destroy     (bcsv_row_t row);                      
 void                bcsv_row_clear       (bcsv_row_t row);                        // clears all values in the row
 void                bcsv_row_assign      (bcsv_row_t dest, const_bcsv_row_t src); // assigns src row data to dest row
 
-bool                bcsv_row_tracks_changes   (const_bcsv_row_t row);             // returns true if change tracking is enabled
-
 // Single value access
 const_bcsv_layout_t bcsv_row_layout     (const_bcsv_row_t row);                   // returns layout of the row
 bool                bcsv_row_get_bool   (const_bcsv_row_t row, int col);

@@ -400,7 +400,7 @@ static void BM_RowViewVisit_Int8UInt8_Aligned(benchmark::State& state) {
     bcsv::RowView view(layout, std::span<std::byte>(serialized));
 
     for (auto _ : state) {
-        view.visit([&](size_t, auto& value, bool&) {
+        view.visit([&](size_t, auto& value) {
             using T = std::decay_t<decltype(value)>;
             if constexpr (std::is_same_v<T, int8_t>) {
                 value = (value == static_cast<int8_t>(41)) ? static_cast<int8_t>(42) : static_cast<int8_t>(41);
@@ -433,7 +433,7 @@ static void BM_RowViewVisit_Int8UInt8_Misaligned(benchmark::State& state) {
     bcsv::RowView view(layout, misaligned_span);
 
     for (auto _ : state) {
-        view.visit([&](size_t, auto& value, bool&) {
+        view.visit([&](size_t, auto& value) {
             using T = std::decay_t<decltype(value)>;
             if constexpr (std::is_same_v<T, int8_t>) {
                 value = (value == static_cast<int8_t>(41)) ? static_cast<int8_t>(42) : static_cast<int8_t>(41);
@@ -460,7 +460,7 @@ static void BM_RowViewVisit_Int32_Aligned(benchmark::State& state) {
     bcsv::RowView view(layout, std::span<std::byte>(serialized));
 
     for (auto _ : state) {
-        view.visit([&](size_t, auto& value, bool&) {
+        view.visit([&](size_t, auto& value) {
             using T = std::decay_t<decltype(value)>;
             if constexpr (std::is_same_v<T, int32_t>) {
                 value ^= 1;
@@ -489,7 +489,7 @@ static void BM_RowViewVisit_Int32_Misaligned(benchmark::State& state) {
     bcsv::RowView view(layout, misaligned_span);
 
     for (auto _ : state) {
-        view.visit([&](size_t, auto& value, bool&) {
+        view.visit([&](size_t, auto& value) {
             using T = std::decay_t<decltype(value)>;
             if constexpr (std::is_same_v<T, int32_t>) {
                 value ^= 1;

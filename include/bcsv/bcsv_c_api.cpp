@@ -251,10 +251,6 @@ void bcsv_row_assign(bcsv_row_t dest, const_bcsv_row_t src) {
     d = s;
 }
 
-bool bcsv_row_tracks_changes(const_bcsv_row_t row) {
-    return static_cast<const bcsv::Row*>(row)->tracksChanges();
-}
-
 const_bcsv_layout_t bcsv_row_layout(const_bcsv_row_t row) {
     auto r = static_cast<const bcsv::Row*>(row);
     auto l = &(r->layout());

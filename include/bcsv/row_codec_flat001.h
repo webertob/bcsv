@@ -44,7 +44,7 @@ namespace bcsv {
 // ────────────────────────────────────────────────────────────────────────────
 template<typename LayoutType, TrackingPolicy Policy = TrackingPolicy::Disabled>
 class RowCodecFlat001 {
-    using RowType = typename LayoutType::template RowType<Policy>;
+    using RowType = typename LayoutType::RowType;
 
 public:
     RowCodecFlat001() = default;
@@ -91,7 +91,7 @@ private:
 template<TrackingPolicy Policy, typename... ColumnTypes>
 class RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy> {
     using LayoutType = LayoutStatic<ColumnTypes...>;
-    using RowType = typename LayoutType::template RowType<Policy>;
+    using RowType = typename LayoutType::RowType;
 
 public:
     static constexpr size_t COLUMN_COUNT = sizeof...(ColumnTypes);

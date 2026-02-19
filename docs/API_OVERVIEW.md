@@ -9,7 +9,7 @@ For cross-language surface ownership and sync workflow, see [Binding Consistency
 ## API Comparison Matrix
 
 | Feature | C++ API | C API | Python API | C# API |
-|---------|---------|-------|------------|--------|
+| ------- | ------- | ----- | ---------- | ------ |
 | **Type** | Header-only | Shared library | Pip package | Unity plugin |
 | **Performance** | Fastest | Fast | Fast (native bindings) | Fast (P/Invoke) |
 | **Type Safety** | Compile-time (static) / Runtime (flexible) | Runtime | Runtime | Runtime |
@@ -73,7 +73,7 @@ writer.writeRow();
 - **Manual memory management**: Explicit create/destroy
 - **Language binding foundation**: Base for Python, C#, etc.
 - **Stable ABI**: Binary compatibility across versions
-- **Minimal row change-tracking API**: Capability query via `bcsv_row_tracks_changes()`
+- **Row value API**: Scalar/string get/set, row clone/assign/clear, and layout access
 
 ### Quick Example
 

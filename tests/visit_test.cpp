@@ -18,19 +18,19 @@
 using namespace bcsv;
 
 // Helper: serialize a Row via codec (replaces removed Row::serializeTo)
-template<typename LayoutT, TrackingPolicy P = TrackingPolicy::Disabled>
-std::span<std::byte> codecSerialize(const typename LayoutT::template RowType<P>& row,
+template<typename LayoutT>
+std::span<std::byte> codecSerialize(const typename LayoutT::RowType& row,
                                      ByteBuffer& buffer, const LayoutT& layout) {
-    RowCodecFlat001<LayoutT, P> codec;
+    RowCodecFlat001<LayoutT> codec;
     codec.setup(layout);
     return codec.serialize(row, buffer);
 }
 
 // Helper: serialize a Row via ZoH codec (replaces removed Row::serializeToZoH)
 template<typename LayoutT>
-std::span<std::byte> codecSerializeZoH(const typename LayoutT::template RowType<TrackingPolicy::Enabled>& row,
+std::span<std::byte> codecSerializeZoH(const typename LayoutT::RowType& row,
                                         ByteBuffer& buffer, const LayoutT& layout) {
-    RowCodecZoH001<LayoutT, TrackingPolicy::Enabled> codec;
+    RowCodecZoH001<LayoutT> codec;
     codec.setup(layout);
     return codec.serialize(row, buffer);
 }
@@ -418,7 +418,7 @@ TEST(VisitTest, RowMutableVisit) {
     row.set(2, 30.0f);
     
     // Mutable visit: multiply all values by 2
-    row.visit([&](size_t, auto& value, bool&) {
+    row.visit([&](size_t, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             value *= 2;
@@ -438,23 +438,17 @@ TEST(VisitTest, RowMutableVisitWithChangeTracking) {
         {"c", ColumnType::INT32}
     });
     
-    RowTracked<TrackingPolicy::Enabled> row(layout);
+    Row row(layout);
     row.set(0, 10);
     row.set(1, 20);
     row.set(2, 30);
-    row.changes().reset();  // Clear changes
-    
-    EXPECT_FALSE(row.changes().any());
-    
-    // Mutable visit should mark all columns as changed
-    row.visit([&](size_t, auto& value, bool&) {
+    row.visit([&](size_t, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             value += 5;
         }
     });
-    
-    EXPECT_TRUE(row.changes().any());
+
     EXPECT_EQ(row.get<int32_t>(0), 15);
     EXPECT_EQ(row.get<int32_t>(1), 25);
     EXPECT_EQ(row.get<int32_t>(2), 35);
@@ -471,7 +465,7 @@ TEST(VisitTest, RowMutableVisitStrings) {
     row.set(1, int32_t(10));
     
     // Mutable visit: can modify strings
-    row.visit([&](size_t, auto& value, bool&) {
+    row.visit([&](size_t, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, std::string>) {
             value += " Smith";
@@ -494,7 +488,7 @@ TEST(VisitTest, RowStaticMutableVisit) {
     row.set<2>(15.0f);
     
     // Mutable visit with compile-time indices
-    row.visit([&](auto, auto& value, bool&) {
+    row.visit([&](auto, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             value *= 3;
@@ -510,22 +504,16 @@ TEST(VisitTest, RowStaticMutableVisitWithTracking) {
     using LayoutType = LayoutStatic<int32_t, int32_t>;
     LayoutType layout({"x", "y"});
     
-    RowStaticTracked<TrackingPolicy::Enabled, int32_t, int32_t> row(layout);
+    RowStatic<int32_t, int32_t> row(layout);
     row.set<0>(100);
     row.set<1>(200);
-    row.changes().reset();
-    
-    EXPECT_FALSE(row.changes().any());
-    
-    // Mutable visit should mark all as changed
-    row.visit([&](auto, auto& value, bool&) {
+    row.visit([&](auto, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             value += 50;
         }
     });
-    
-    EXPECT_TRUE(row.changes().any());
+
     EXPECT_EQ(row.get<0>(), 150);
     EXPECT_EQ(row.get<1>(), 250);
 }
@@ -548,7 +536,7 @@ TEST(VisitTest, RowViewMutableVisitPrimitives) {
     RowView rowView(layout, std::span<std::byte>(serialized));
     
     // Mutable visit: modify primitives in buffer
-    rowView.visit([&](size_t, auto& value, bool& change) {
+    rowView.visit([&](size_t, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, int32_t>) {
             value = 100;
@@ -556,8 +544,6 @@ TEST(VisitTest, RowViewMutableVisitPrimitives) {
             value = 2.718;
         } else if constexpr (std::is_same_v<T, bool>) {
             value = false;
-        } else {
-            change = false;
         }
     });
     
@@ -584,15 +570,13 @@ TEST(VisitTest, RowViewMutableVisitStringsReadOnly) {
     
     // Mutable visit: strings are read-only, primitives are mutable
     std::string capturedName;
-    rowView.visit([&](size_t, auto& value, bool& change) {
+    rowView.visit([&](size_t, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, std::string_view>) {
             // String passed as const (read-only)
             capturedName = std::string(value);
         } else if constexpr (std::is_same_v<T, int32_t>) {
             value = 30;  // Can modify primitive
-        } else {
-            change = false;
         }
     });
     
@@ -615,14 +599,12 @@ TEST(VisitTest, RowViewStaticMutableVisit) {
     RowViewStatic<int32_t, double, bool> rowView(layout, std::span<std::byte>(serialized));
     
     // Mutable visit: modify primitives in buffer
-    rowView.visit([&](auto, auto& value, bool& change) {
+    rowView.visit([&](auto, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             value *= 2;
         } else if constexpr (std::is_same_v<T, bool>) {
             value = false;
-        } else {
-            change = false;
         }
     });
     
@@ -653,7 +635,7 @@ TEST(VisitTest, RowViewMutableVisitPrimitivesMisalignedBuffer) {
 
     RowView rowView(layout, misaligned_span);
 
-    EXPECT_NO_THROW(rowView.visit([&](size_t, auto& value, bool&) {
+    EXPECT_NO_THROW(rowView.visit([&](size_t, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, int32_t>) {
             value = 101;
@@ -683,7 +665,7 @@ TEST(VisitTest, RowViewMutableVisitInt8UInt8) {
     auto serialized = codecSerialize(row, buffer, layout);
     RowView rowView(layout, std::span<std::byte>(serialized));
 
-    rowView.visit([&](size_t, auto& value, bool&) {
+    rowView.visit([&](size_t, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, int8_t>) {
             value = 42;
@@ -714,7 +696,7 @@ TEST(VisitTest, RowViewStaticMutableVisitMisalignedBuffer) {
 
     RowViewStatic<int32_t, double, bool> rowView(layout, misaligned_span);
 
-    EXPECT_NO_THROW(rowView.visit([&](auto, auto& value, bool&) {
+    EXPECT_NO_THROW(rowView.visit([&](auto, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, int32_t>) {
             value = 20;
@@ -753,12 +735,10 @@ TEST(VisitTest, MutableVisitNormalization) {
     magnitude = std::sqrt(magnitude);
     
     // Normalize vector using mutable visit
-    row.visit([&](size_t, auto& value, bool& change) {
+    row.visit([&](size_t, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             value /= magnitude;
-        } else {
-            change = false;
         }
     });
     
@@ -782,24 +762,15 @@ TEST(VisitTest, FineGrainedChangeTracking) {
         {"c", ColumnType::INT32}
     });
     
-    RowTracked<TrackingPolicy::Enabled> row(layout);
+    Row row(layout);
     row.set(0, 10);
     row.set(1, 20);
     row.set(2, 30);
-    row.changes().reset();
-    
-    EXPECT_FALSE(row.changes().any());
-    
-    // Fine-grained visitor: only modifies columns where value < 25
-    // Uses optional 3rd parameter to control change tracking
-    row.visit([&](size_t, auto& value, bool& changed) {
+    row.visit([&](size_t, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             if (value < 25) {
                 value += 100;  // Modify
-                changed = true;  // Mark as changed
-            } else {
-                changed = false;  // Explicitly mark as NOT changed
             }
         }
     });
@@ -809,38 +780,23 @@ TEST(VisitTest, FineGrainedChangeTracking) {
     EXPECT_EQ(row.get<int32_t>(1), 120);  // Modified
     EXPECT_EQ(row.get<int32_t>(2), 30);   // NOT modified
     
-    // Can verify via serialization - ZoH would only include changed columns
-    ByteBuffer buffer;
-    auto serialized = codecSerializeZoH(row, buffer, layout);
-    
-    // With fine-grained tracking, only 2 columns changed
-    // Expected size: bitset (1 byte) + 2 * sizeof(int32_t) = 1 + 8 = 9 bytes
-    EXPECT_EQ(serialized.size(), 9);
 }
 
 TEST(VisitTest, FineGrainedChangeTrackingRowStatic) {
     using LayoutType = LayoutStatic<int32_t, int32_t, int32_t, int32_t>;
     LayoutType layout({"a", "b", "c", "d"});
     
-    RowStaticTracked<TrackingPolicy::Enabled, int32_t, int32_t, int32_t, int32_t> row(layout);
+    RowStatic<int32_t, int32_t, int32_t, int32_t> row(layout);
     row.set<0>(5);
     row.set<1>(15);
     row.set<2>(25);
     row.set<3>(35);
-    row.changes().reset();
-    
-    // Conditional modification with fine-grained tracking
-    row.visit([&](auto, auto& value, bool& changed) {
+    row.visit([&](auto, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             if (value % 10 == 5) {  // Only modify values ending in 5
                 value *= 2;
-                changed = true;
-            } else {
-                changed = false;
             }
-        } else {
-            changed = false;
         }
     });
     
@@ -849,8 +805,6 @@ TEST(VisitTest, FineGrainedChangeTrackingRowStatic) {
     EXPECT_EQ(row.get<2>(), 50);   // Modified (was 25)
     EXPECT_EQ(row.get<3>(), 70);   // Modified (was 35)
     
-    // All were actually modified in this case
-    EXPECT_TRUE(row.changes().any());
 }
 
 TEST(VisitTest, IgnoringChangeFlagParameter) {
@@ -859,13 +813,10 @@ TEST(VisitTest, IgnoringChangeFlagParameter) {
         {"y", ColumnType::INT32}
     });
     
-    RowTracked<TrackingPolicy::Enabled> row(layout);
+    Row row(layout);
     row.set(0, 10);
     row.set(1, 20);
-    row.changes().reset();
-    
-    // Visitor with unnamed 3rd parameter - still marks all as changed
-    row.visit([&](size_t, auto& value, bool&) {
+    row.visit([&](size_t, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             value *= 2;
@@ -874,7 +825,6 @@ TEST(VisitTest, IgnoringChangeFlagParameter) {
     
     EXPECT_EQ(row.get<int32_t>(0), 20);
     EXPECT_EQ(row.get<int32_t>(1), 40);
-    EXPECT_TRUE(row.changes().any());
 }
 
 // ============================================================================
@@ -894,9 +844,8 @@ TEST(VisitTest, TypedVisitScalarReadWrite) {
     row.set(2, 3.0);
     
     // Typed mutable visit: multiply all doubles by 10
-    row.visit<double>(0, [](size_t, double& val, bool& changed) {
+    row.visit<double>(0, [](size_t, double& val) {
         val *= 10.0;
-        changed = true;
     }, 3);
     
     EXPECT_NEAR(row.get<double>(0), 10.0, 0.01);
@@ -952,9 +901,8 @@ TEST(VisitTest, TypedVisitSingleColumn) {
     EXPECT_EQ(strResult, "hello");
     
     // Mutable visit: modify the double
-    row.visit<double>(1, [](size_t, double& val, bool& changed) {
+    row.visit<double>(1, [](size_t, double& val) {
         val = 2.718;
-        changed = true;
     });
     EXPECT_NEAR(row.get<double>(1), 2.718, 0.001);
 }
@@ -979,7 +927,7 @@ TEST(VisitTest, TypedVisitBool) {
     EXPECT_EQ(trueCount, 2);
     
     // Mutable visit: flip all bools
-    row.visit<bool>(0, [](size_t, bool& val, bool&) {
+    row.visit<bool>(0, [](size_t, bool& val) {
         val = !val;
     }, 3);
     
@@ -999,9 +947,8 @@ TEST(VisitTest, TypedVisitString) {
     row.set(1, std::string("world"));
     
     // Mutable visit: append suffix
-    row.visit<std::string>(0, [](size_t, std::string& val, bool& changed) {
+    row.visit<std::string>(0, [](size_t, std::string& val) {
         val += "!";
-        changed = true;
     }, 2);
     
     EXPECT_EQ(row.get<std::string>(0), "hello!");
@@ -1015,34 +962,19 @@ TEST(VisitTest, TypedVisitWithChangeTracking) {
         {"c", ColumnType::INT32}
     });
     
-    RowTracked<TrackingPolicy::Enabled> row(layout);
+    Row row(layout);
     row.set(0, 10);
     row.set(1, 20);
     row.set(2, 30);
-    row.changes().reset();
-    
-    EXPECT_FALSE(row.changes().any());
-    
-    // Typed visit: only modify columns where value > 15
-    row.visit<int32_t>(0, [](size_t, int32_t& val, bool& changed) {
+    row.visit<int32_t>(0, [](size_t, int32_t& val) {
         if (val > 15) {
             val += 100;
-            changed = true;
-        } else {
-            changed = false;
         }
     }, 3);
     
     EXPECT_EQ(row.get<int32_t>(0), 10);   // Not modified
     EXPECT_EQ(row.get<int32_t>(1), 120);  // Modified
     EXPECT_EQ(row.get<int32_t>(2), 130);  // Modified
-    EXPECT_TRUE(row.changes().any());
-    
-    // Verify ZoH serialization only includes changed columns
-    ByteBuffer buffer;
-    auto serialized = codecSerializeZoH(row, buffer, layout);
-    // bitset (1 byte) + 2 * int32 = 1 + 8 = 9 bytes
-    EXPECT_EQ(serialized.size(), 9);
 }
 
 TEST(VisitTest, TypedVisitTypeMismatchThrows) {
@@ -1057,13 +989,13 @@ TEST(VisitTest, TypedVisitTypeMismatchThrows) {
     
     // Visiting INT32 column as DOUBLE should throw
     EXPECT_THROW(
-        row.visit<double>(0, [](size_t, double&, bool&) {}, 1),
+        row.visit<double>(0, [](size_t, double&) {}, 1),
         std::runtime_error
     );
     
     // Visiting 2 columns where types differ should throw
     EXPECT_THROW(
-        row.visit<int32_t>(0, [](size_t, int32_t&, bool&) {}, 2),
+        row.visit<int32_t>(0, [](size_t, int32_t&) {}, 2),
         std::runtime_error
     );
     
@@ -1084,7 +1016,7 @@ TEST(VisitTest, TypedVisitRangeOutOfBoundsThrows) {
     
     // Range exceeds column count
     EXPECT_THROW(
-        row.visit<int32_t>(0, [](size_t, int32_t&, bool&) {}, 5),
+        row.visit<int32_t>(0, [](size_t, int32_t&) {}, 5),
         std::out_of_range
     );
     
@@ -1100,7 +1032,7 @@ TEST(VisitTest, TypedVisitZeroCount) {
     
     int callCount = 0;
     // count=0 should be a no-op
-    row.visit<int32_t>(0, [&](size_t, int32_t&, bool&) { callCount++; }, 0);
+    row.visit<int32_t>(0, [&](size_t, int32_t&) { callCount++; }, 0);
     EXPECT_EQ(callCount, 0);
     
     row.visitConst<int32_t>(0, [&](size_t, const int32_t&) { callCount++; }, 0);
@@ -1219,7 +1151,7 @@ TEST(VisitTest, RowViewTypedVisitMutableScalar) {
     RowView rv(layout, std::span<std::byte>(serialized));
 
     // Mutable typed visit: add 100 to each
-    rv.visit<int32_t>(0, [](size_t, int32_t& val, bool&) {
+    rv.visit<int32_t>(0, [](size_t, int32_t& val) {
         val += 100;
     }, 3);
 
@@ -1267,7 +1199,7 @@ TEST(VisitTest, RowViewTypedVisitMutableBool) {
     RowView rv(layout, std::span<std::byte>(serialized));
 
     // Flip bools
-    rv.visit<bool>(0, [](size_t, bool& val, bool&) {
+    rv.visit<bool>(0, [](size_t, bool& val) {
         val = !val;
     }, 2);
 
@@ -1318,7 +1250,7 @@ TEST(VisitTest, RowViewTypedVisitTypeMismatchThrows) {
 
     // Visiting both columns as int32_t should throw (column 1 is DOUBLE)
     EXPECT_THROW(
-        rv.visit<int32_t>(0, [](size_t, int32_t&, bool&) {}, 2),
+        rv.visit<int32_t>(0, [](size_t, int32_t&) {}, 2),
         std::runtime_error
     );
 
@@ -1340,7 +1272,7 @@ TEST(VisitTest, RowViewTypedVisitRangeOutOfBoundsThrows) {
 
     // Range exceeds column count
     EXPECT_THROW(
-        rv.visit<int32_t>(0, [](size_t, int32_t&, bool&) {}, 5),
+        rv.visit<int32_t>(0, [](size_t, int32_t&) {}, 5),
         std::out_of_range
     );
 
@@ -1361,7 +1293,7 @@ TEST(VisitTest, RowViewTypedVisitZeroCount) {
     RowView rv(layout, std::span<std::byte>(serialized));
 
     int callCount = 0;
-    rv.visit<int32_t>(0, [&](size_t, int32_t&, bool&) { callCount++; }, 0);
+    rv.visit<int32_t>(0, [&](size_t, int32_t&) { callCount++; }, 0);
     EXPECT_EQ(callCount, 0);
 
     rv.visitConst<int32_t>(0, [&](size_t, const int32_t&) { callCount++; }, 0);
@@ -1385,7 +1317,7 @@ TEST(VisitTest, RowViewTypedVisitStringReadOnly) {
 
     // Mutable visit with string_view — can read but not resize the buffer
     std::vector<std::string> results;
-    rv.visit<std::string_view>(0, [&](size_t, std::string_view& sv, bool&) {
+    rv.visit<std::string_view>(0, [&](size_t, std::string_view& sv) {
         results.emplace_back(sv);
     }, 2);
 
@@ -1423,7 +1355,7 @@ TEST(VisitTest, RowViewTypedVisitRoundtrip) {
         EXPECT_NEAR(original[i], i * 10.0, 0.01);
 
     // Modify via visit<T>
-    rv.visit<double>(0, [](size_t, double& val, bool&) {
+    rv.visit<double>(0, [](size_t, double& val) {
         val += 1000.0;
     }, 5);
 

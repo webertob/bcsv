@@ -1,63 +1,40 @@
 /*
  * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
- *
- * This file is part of the BCSV library.
- *
- * Licensed under the MIT License. See LICENSE file in the project root
- * for full license information.
- */
-
-/**
- * @file codec_dispatch_test.cpp
- * @brief Cross-combination tests for CodecDispatch (Item 11, Phase 7).
- *
- * Tests all four combinations of {Flat, ZoH} × {Disabled, Enabled}:
- *   - Flat  + Disabled  (natural fit — existing tests cover this extensively)
- *   - ZoH   + Enabled   (natural fit — existing tests cover this extensively)
- *   - Flat  + Enabled   (cross: Writer writes flat, Reader tracks changes)
- *   - ZoH   + Disabled  (cross: Writer writes ZoH, Reader skips tracking)
- *
- * Both dynamic (Layout) and static (LayoutStatic) paths are tested.
  */
 
 #include <gtest/gtest.h>
+
 #include <filesystem>
 #include <string>
 #include <vector>
 
-#include "bcsv/writer.h"
-#include "bcsv/reader.h"
-#include "bcsv/row_codec_dispatch.h"
-#include <bcsv/bcsv.h>
+#include "bcsv/bcsv.h"
 
 namespace {
 
-// ── Test data ────────────────────────────────────────────────────────────────
 struct RowData {
-    bool        b1;
-    int32_t     i32;
-    double      d;
+    bool b1;
+    int32_t i32;
+    double d;
     std::string s;
 };
 
 const std::vector<RowData> TEST_DATA = {
-    { true,   42,    3.14,   "hello" },
-    { false, -100,   2.718,  "world" },
-    { true,   0,     0.0,    "" },
-    { false,  999,  -1.5,    "bcsv" },
-    { true,   42,    3.14,   "hello" },   // repeat of row 0 (tests ZoH repeat)
-    { true,   42,    3.14,   "hello" },   // another repeat
-    { false, -999,   100.0,  "changed" }, // change after repeats
+    {true, 42, 3.14, "hello"},
+    {false, -100, 2.718, "world"},
+    {true, 0, 0.0, ""},
+    {false, 999, -1.5, "bcsv"},
+    {true, 42, 3.14, "hello"},
+    {true, 42, 3.14, "hello"},
+    {false, -999, 100.0, "changed"},
 };
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
 
 bcsv::Layout createFlexLayout() {
     bcsv::Layout layout;
-    layout.addColumn({"b1",  bcsv::ColumnType::BOOL});
+    layout.addColumn({"b1", bcsv::ColumnType::BOOL});
     layout.addColumn({"i32", bcsv::ColumnType::INT32});
-    layout.addColumn({"d",   bcsv::ColumnType::DOUBLE});
-    layout.addColumn({"s",   bcsv::ColumnType::STRING});
+    layout.addColumn({"d", bcsv::ColumnType::DOUBLE});
+    layout.addColumn({"s", bcsv::ColumnType::STRING});
     return layout;
 }
 
@@ -73,8 +50,6 @@ std::string testPath(const std::string& name) {
     std::filesystem::create_directories(TEST_DIR);
     return TEST_DIR + "/" + name;
 }
-
-// ── Write helpers ────────────────────────────────────────────────────────────
 
 void writeFlatFlexible(const std::string& path) {
     auto layout = createFlexLayout();
@@ -92,7 +67,7 @@ void writeFlatFlexible(const std::string& path) {
 
 void writeZoHFlexible(const std::string& path) {
     auto layout = createFlexLayout();
-    bcsv::Writer<bcsv::Layout, bcsv::TrackingPolicy::Enabled> writer(layout);
+    bcsv::Writer<bcsv::Layout> writer(layout);
     ASSERT_TRUE(writer.open(path, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD))
         << writer.getErrorMsg();
     for (const auto& d : TEST_DATA) {
@@ -121,7 +96,7 @@ void writeFlatStatic(const std::string& path) {
 
 void writeZoHStatic(const std::string& path) {
     auto layout = createStaticLayout();
-    bcsv::Writer<StaticLayout, bcsv::TrackingPolicy::Enabled> writer(layout);
+    bcsv::Writer<StaticLayout> writer(layout);
     ASSERT_TRUE(writer.open(path, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD))
         << writer.getErrorMsg();
     for (const auto& d : TEST_DATA) {
@@ -134,8 +109,6 @@ void writeZoHStatic(const std::string& path) {
     writer.close();
 }
 
-// ── Verification ─────────────────────────────────────────────────────────────
-
 template<typename ReaderType>
 void verifyData(ReaderType& reader) {
     size_t count = 0;
@@ -144,40 +117,14 @@ void verifyData(ReaderType& reader) {
         const auto& expected = TEST_DATA[count];
         const auto& row = reader.row();
 
-        EXPECT_EQ(row.template get<bool>(0),        expected.b1)   << "row " << count << " b1";
-        EXPECT_EQ(row.template get<int32_t>(1),      expected.i32)  << "row " << count << " i32";
-        EXPECT_DOUBLE_EQ(row.template get<double>(2), expected.d)   << "row " << count << " d";
-        EXPECT_EQ(row.template get<std::string>(3),  expected.s)    << "row " << count << " s";
+        EXPECT_EQ(row.template get<bool>(0), expected.b1) << "row " << count << " b1";
+        EXPECT_EQ(row.template get<int32_t>(1), expected.i32) << "row " << count << " i32";
+        EXPECT_DOUBLE_EQ(row.template get<double>(2), expected.d) << "row " << count << " d";
+        EXPECT_EQ(row.template get<std::string>(3), expected.s) << "row " << count << " s";
         ++count;
     }
     EXPECT_EQ(count, TEST_DATA.size()) << "Row count mismatch";
 }
-
-template<typename ReaderType>
-void verifyDataStatic(ReaderType& reader) {
-    size_t count = 0;
-    while (reader.readNext()) {
-        ASSERT_LT(count, TEST_DATA.size()) << "Too many rows read";
-        const auto& expected = TEST_DATA[count];
-        const auto& row = reader.row();
-
-        // Use runtime-indexed get<Type>(index) to avoid auto-deduction issues
-        // in template context with GTest macros.
-        EXPECT_EQ(row.template get<bool>(0),        expected.b1)   << "row " << count << " b1";
-        EXPECT_EQ(row.template get<int32_t>(1),      expected.i32)  << "row " << count << " i32";
-        EXPECT_DOUBLE_EQ(row.template get<double>(2), expected.d)   << "row " << count << " d";
-        EXPECT_EQ(row.template get<std::string>(3),  expected.s)    << "row " << count << " s";
-        ++count;
-    }
-    EXPECT_EQ(count, TEST_DATA.size()) << "Row count mismatch";
-}
-
-} // anonymous namespace
-
-
-// ════════════════════════════════════════════════════════════════════════════
-// Flexible Layout cross-combination tests
-// ════════════════════════════════════════════════════════════════════════════
 
 class CodecDispatchFlexTest : public ::testing::Test {
 protected:
@@ -186,73 +133,47 @@ protected:
     }
 };
 
-// Natural: Flat file, Disabled reader (existing path — sanity check)
-TEST_F(CodecDispatchFlexTest, FlatFile_DisabledReader) {
-    const auto path = testPath("dispatch_flat_disabled.bcsv");
+TEST_F(CodecDispatchFlexTest, FlatFile_ReadsCorrectly) {
+    const auto path = testPath("dispatch_flat_dynamic.bcsv");
     writeFlatFlexible(path);
 
-    bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Disabled> reader;
+    bcsv::Reader<bcsv::Layout> reader;
     ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
     verifyData(reader);
     reader.close();
 }
 
-// Natural: ZoH file, Enabled reader (existing path — sanity check)
-TEST_F(CodecDispatchFlexTest, ZoHFile_EnabledReader) {
-    const auto path = testPath("dispatch_zoh_enabled.bcsv");
+TEST_F(CodecDispatchFlexTest, ZoHFile_ReadsCorrectly) {
+    const auto path = testPath("dispatch_zoh_dynamic.bcsv");
     writeZoHFlexible(path);
 
-    bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Enabled> reader;
+    bcsv::Reader<bcsv::Layout> reader;
     ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
     verifyData(reader);
     reader.close();
 }
 
-// Cross: Flat file, Enabled reader (should work — all columns marked changed)
-TEST_F(CodecDispatchFlexTest, FlatFile_EnabledReader) {
-    const auto path = testPath("dispatch_flat_enabled.bcsv");
+TEST_F(CodecDispatchFlexTest, FlatFile_OpenStateIsValid) {
+    const auto path = testPath("dispatch_flat_dynamic_open.bcsv");
     writeFlatFlexible(path);
 
-    bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Enabled> reader;
+    bcsv::Reader<bcsv::Layout> reader;
     ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
     EXPECT_TRUE(reader.isOpen());
     verifyData(reader);
     reader.close();
 }
 
-// Cross: ZoH file, Disabled reader (should work — codec uses internal wire_bits_)
-TEST_F(CodecDispatchFlexTest, ZoHFile_DisabledReader) {
-    const auto path = testPath("dispatch_zoh_disabled.bcsv");
+TEST_F(CodecDispatchFlexTest, ZoHFile_OpenStateIsValid) {
+    const auto path = testPath("dispatch_zoh_dynamic_open.bcsv");
     writeZoHFlexible(path);
 
-    bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Disabled> reader;
+    bcsv::Reader<bcsv::Layout> reader;
     ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
     EXPECT_TRUE(reader.isOpen());
     verifyData(reader);
     reader.close();
 }
-
-// Verify Flat+Enabled reader has change tracking set after deserialization
-TEST_F(CodecDispatchFlexTest, FlatFile_EnabledReader_ChangeTracking) {
-    const auto path = testPath("dispatch_flat_enabled_tracking.bcsv");
-    writeFlatFlexible(path);
-
-    bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Enabled> reader;
-    ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
-
-    while (reader.readNext()) {
-        const auto& row = reader.row();
-        // After flat deserialization with Enabled, row is marked dirty.
-        EXPECT_TRUE(row.changes().any())
-            << "Flat+Enabled: after deserialize, changes should be set";
-    }
-    reader.close();
-}
-
-
-// ════════════════════════════════════════════════════════════════════════════
-// Static Layout cross-combination tests
-// ════════════════════════════════════════════════════════════════════════════
 
 class CodecDispatchStaticTest : public ::testing::Test {
 protected:
@@ -261,54 +182,47 @@ protected:
     }
 };
 
-// Natural: Flat file, Disabled reader
-TEST_F(CodecDispatchStaticTest, FlatFile_DisabledReader) {
-    const auto path = testPath("dispatch_static_flat_disabled.bcsv");
+TEST_F(CodecDispatchStaticTest, FlatFile_ReadsCorrectly) {
+    const auto path = testPath("dispatch_flat_static.bcsv");
     writeFlatStatic(path);
 
-    bcsv::Reader<StaticLayout, bcsv::TrackingPolicy::Disabled> reader;
+    bcsv::Reader<StaticLayout> reader;
     ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
-    verifyDataStatic(reader);
+    verifyData(reader);
     reader.close();
 }
 
-// Natural: ZoH file, Enabled reader
-TEST_F(CodecDispatchStaticTest, ZoHFile_EnabledReader) {
-    const auto path = testPath("dispatch_static_zoh_enabled.bcsv");
+TEST_F(CodecDispatchStaticTest, ZoHFile_ReadsCorrectly) {
+    const auto path = testPath("dispatch_zoh_static.bcsv");
     writeZoHStatic(path);
 
-    bcsv::Reader<StaticLayout, bcsv::TrackingPolicy::Enabled> reader;
+    bcsv::Reader<StaticLayout> reader;
     ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
-    verifyDataStatic(reader);
+    verifyData(reader);
     reader.close();
 }
 
-// Cross: Flat file, Enabled reader
-TEST_F(CodecDispatchStaticTest, FlatFile_EnabledReader) {
-    const auto path = testPath("dispatch_static_flat_enabled.bcsv");
+TEST_F(CodecDispatchStaticTest, FlatFile_OpenStateIsValid) {
+    const auto path = testPath("dispatch_flat_static_open.bcsv");
     writeFlatStatic(path);
 
-    bcsv::Reader<StaticLayout, bcsv::TrackingPolicy::Enabled> reader;
+    bcsv::Reader<StaticLayout> reader;
     ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
-    verifyDataStatic(reader);
+    EXPECT_TRUE(reader.isOpen());
+    verifyData(reader);
     reader.close();
 }
 
-// Cross: ZoH file, Disabled reader
-TEST_F(CodecDispatchStaticTest, ZoHFile_DisabledReader) {
-    const auto path = testPath("dispatch_static_zoh_disabled.bcsv");
+TEST_F(CodecDispatchStaticTest, ZoHFile_OpenStateIsValid) {
+    const auto path = testPath("dispatch_zoh_static_open.bcsv");
     writeZoHStatic(path);
 
-    bcsv::Reader<StaticLayout, bcsv::TrackingPolicy::Disabled> reader;
+    bcsv::Reader<StaticLayout> reader;
     ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
-    verifyDataStatic(reader);
+    EXPECT_TRUE(reader.isOpen());
+    verifyData(reader);
     reader.close();
 }
-
-
-// ════════════════════════════════════════════════════════════════════════════
-// CodecDispatch unit tests (direct API, without Writer/Reader)
-// ════════════════════════════════════════════════════════════════════════════
 
 TEST(CodecDispatchUnitTest, DefaultState) {
     bcsv::CodecDispatch<bcsv::Layout> dispatch;
@@ -321,6 +235,7 @@ TEST(CodecDispatchUnitTest, SelectFlat) {
     auto layout = createFlexLayout();
     bcsv::CodecDispatch<bcsv::Layout> dispatch;
     dispatch.selectCodec(bcsv::FileFlags::NONE, layout);
+
     EXPECT_TRUE(dispatch.isSetup());
     EXPECT_TRUE(dispatch.isFlat());
     EXPECT_FALSE(dispatch.isZoH());
@@ -328,22 +243,52 @@ TEST(CodecDispatchUnitTest, SelectFlat) {
 
 TEST(CodecDispatchUnitTest, SelectZoH) {
     auto layout = createFlexLayout();
-    bcsv::CodecDispatch<bcsv::Layout, bcsv::TrackingPolicy::Enabled> dispatch;
+    bcsv::CodecDispatch<bcsv::Layout> dispatch;
     dispatch.selectCodec(bcsv::FileFlags::ZERO_ORDER_HOLD, layout);
+
     EXPECT_TRUE(dispatch.isSetup());
-    EXPECT_FALSE(dispatch.isFlat());
     EXPECT_TRUE(dispatch.isZoH());
+    EXPECT_FALSE(dispatch.isFlat());
 }
 
 TEST(CodecDispatchUnitTest, ReSelect) {
     auto layout = createFlexLayout();
     bcsv::CodecDispatch<bcsv::Layout> dispatch;
 
-    // First select flat
     dispatch.selectCodec(bcsv::FileFlags::NONE, layout);
     EXPECT_TRUE(dispatch.isFlat());
 
-    // Re-select to ZoH (tests destroy + placement new)
     dispatch.selectCodec(bcsv::FileFlags::ZERO_ORDER_HOLD, layout);
     EXPECT_TRUE(dispatch.isZoH());
+
+    dispatch.selectCodec(bcsv::FileFlags::NONE, layout);
+    EXPECT_TRUE(dispatch.isFlat());
 }
+
+TEST(CodecDispatchUnitTest, SerializeDeserializeViaDispatch) {
+    auto layout = createFlexLayout();
+    bcsv::CodecDispatch<bcsv::Layout> dispatch;
+    dispatch.selectCodec(bcsv::FileFlags::ZERO_ORDER_HOLD, layout);
+
+    bcsv::Row in(layout);
+    in.set<bool>(0, true);
+    in.set<int32_t>(1, 11);
+    in.set<double>(2, 4.5);
+    in.set<std::string_view>(3, "abc");
+
+    bcsv::ByteBuffer buf;
+    auto wire = dispatch.serialize(in, buf);
+    ASSERT_FALSE(wire.empty());
+
+    bcsv::Row out(layout);
+    dispatch.reset();
+    dispatch.deserialize(wire, out);
+
+    EXPECT_TRUE(out.get<bool>(0));
+    EXPECT_EQ(out.get<int32_t>(1), 11);
+    EXPECT_DOUBLE_EQ(out.get<double>(2), 4.5);
+    EXPECT_EQ(out.get<std::string>(3), "abc");
+}
+
+}  // namespace
+

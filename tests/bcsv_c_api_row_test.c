@@ -33,10 +33,6 @@ int main() {
     assert(bcsv_layout_column_count(row_layout) == 3);
     printf("   Row layout has %zu columns\n", bcsv_layout_column_count(row_layout));
     
-    // Test 3: Change-tracking capability
-    printf("\n3. Testing change-tracking capability...\n");
-    printf("   tracks_changes: %s\n", bcsv_row_tracks_changes(row) ? "true" : "false");
-    
     // Set some values
     bcsv_row_set_string(row, 0, "John");
     bcsv_row_set_int32(row, 1, 30);

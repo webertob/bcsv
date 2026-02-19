@@ -58,14 +58,6 @@ namespace BCSV
         #region Common Row Operations
 
         /// <summary>
-        /// Check if this row is currently tracking changes
-        /// </summary>
-        public bool TracksChanges
-        {
-            get { return NativeMethods.bcsv_row_tracks_changes(Handle); }
-        }
-
-        /// <summary>
         /// Clear all values in this row to their default values
         /// </summary>
         public virtual void Clear()

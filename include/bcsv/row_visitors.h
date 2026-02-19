@@ -26,25 +26,13 @@
  * });
  * @endcode
  * 
- * Mutable visitor with fine-grained change tracking (3 parameters):
- * @code
- * row.visit([](size_t index, auto& value, bool& changed) {
- *     if constexpr (std::is_arithmetic_v<decltype(value)>) {
- *         value *= 2;
- *         changed = true;  // Mark this column as modified
- *     } else {
- *         changed = false; // Don't mark strings as changed
- *     }
- * });
- * @endcode
- * 
- * Legacy mutable visitor (2 parameters, all columns marked changed):
+ * Mutable visitor (2 parameters):
  * @code
  * row.visit([](size_t index, auto& value) {
  *     if constexpr (std::is_arithmetic_v<decltype(value)>) {
  *         value *= 2;
  *     }
- * }); // All visited columns automatically marked as changed
+ * });
  * @endcode
  * 
  * @subsection typed_visitors Type-Specific Visitors
@@ -68,9 +56,8 @@
  * When columns share a known type, visit<T>() eliminates the runtime type switch:
  * @code
  * // 2x faster than visit() for homogeneous column ranges
- * row.visit<double>(0, [](size_t col, double& v, bool& changed) {
+ * row.visit<double>(0, [](size_t col, double& v) {
  *     v *= 2.0;
- *     changed = true;
  * }, 100);  // Process 100 consecutive double columns
  * 
  * // Read-only variant
@@ -142,15 +129,15 @@ template<typename Visitor, typename T>
 concept RowMutableVisitor = std::invocable<Visitor, size_t, T&>;
 
 /**
- * @brief Concept for mutable row visitors with fine-grained change tracking
+ * @brief Legacy concept for mutable visitors with `(index, value, changed)`
  * 
  * A RowMutableVisitorWithTracking must be invocable with:
  * - size_t index (column index)
  * - T& value (mutable reference to column value)
  * - bool& changed (output parameter: set to true if column was modified)
  * 
- * This allows the visitor to opt-out of marking columns as changed when
- * no actual modification occurred, optimizing ZoH compression.
+ * This concept is retained only for backward compatibility in helper code.
+ * Core Row/RowStatic/RowView APIs use the 2-parameter mutable visitor form.
  * 
  * @tparam Visitor The visitor callable type
  * @tparam T The column value type
@@ -182,8 +169,7 @@ concept RowStaticReadOnlyVisitor =
  * @brief Concept for typed mutable visitors used with visit<T>()
  * 
  * A TypedRowVisitor must be invocable with a SPECIFIC type T:
- * - (size_t index, T& value, bool& changed)   — with change tracking control
- * - (size_t index, T& value)                   — all visited columns marked changed
+ * - (size_t index, T& value)
  * 
  * Unlike the generic visit() which dispatches to the visitor with auto& (each
  * column's actual type), visit<T>() calls the visitor with a concrete T& for
@@ -197,9 +183,8 @@ concept RowStaticReadOnlyVisitor =
  * 
  * @code
  * // Scale 100 consecutive double columns by 2x
- * row.visit<double>(0, [](size_t, double& v, bool& changed) {
+ * row.visit<double>(0, [](size_t, double& v) {
  *     v *= 2.0;
- *     changed = true;
  * }, 100);
  * @endcode
  * 

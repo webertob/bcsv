@@ -880,7 +880,7 @@ public:
 
     // Write BCSV Flexible ZoH file
     void writeBCSVFlexibleZoH(const std::string& filepath, const bcsv::Layout& layout, size_t numberOfRows) {
-        bcsv::Writer<bcsv::Layout, bcsv::TrackingPolicy::Enabled> writer(layout);
+        bcsv::Writer<bcsv::Layout> writer(layout);
         if (!writer.open(filepath, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
             throw std::runtime_error("Failed to open file for writing: " + filepath + " - " + writer.getErrorMsg());
         }
@@ -969,7 +969,7 @@ public:
     
     // Read BCSV Flexible ZoH file and return number of rows read
     size_t readBCSVFlexibleZoH(const std::string& filepath, const bcsv::Layout& layoutExpected) {
-        bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Enabled> reader;
+        bcsv::Reader<bcsv::Layout> reader;
         if (!reader.open(filepath)) {
             throw std::runtime_error("Failed to open file for reading: " + filepath + " - " + reader.getErrorMsg());
         }
@@ -1129,7 +1129,7 @@ public:
         }
         
         LargeTestLayoutStatic layout(columnNames);
-        bcsv::Writer<LargeTestLayoutStatic, bcsv::TrackingPolicy::Enabled> writer(layout);
+        bcsv::Writer<LargeTestLayoutStatic> writer(layout);
         if (!writer.open(filepath, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
             throw std::runtime_error("Failed to open file for writing: " + filepath + " - " + writer.getErrorMsg());
         }
@@ -1147,7 +1147,7 @@ public:
     
     // Read BCSV Static ZoH file and return number of rows read with validation
     size_t readBCSVStaticZoH(const std::string& filepath, const LargeTestLayoutStatic& /*layoutExpected*/) {
-        bcsv::Reader<LargeTestLayoutStatic, bcsv::TrackingPolicy::Enabled> reader;
+        bcsv::Reader<LargeTestLayoutStatic> reader;
         if (!reader.open(filepath)) {
             throw std::runtime_error("Failed to open file for reading: " + filepath + " - " + reader.getErrorMsg());
         }

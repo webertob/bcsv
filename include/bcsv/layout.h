@@ -60,7 +60,7 @@ namespace bcsv {
         { const_layout.isCompatible(const_layout)       } -> std::convertible_to<bool>;
 
         // Type information (for static layouts)
-        typename T::template RowType<TrackingPolicy::Disabled>;  // Each layout must define its row type
+        typename T::RowType;  // Each layout must define its row type
         typename T::RowViewType;  // Each layout must define its row view type
     };
 
@@ -159,8 +159,7 @@ namespace bcsv {
         DataPtr data_;
 
     public:
-        template<TrackingPolicy Policy = TrackingPolicy::Disabled>
-        using RowType     = RowImpl<Policy>;
+        using RowType     = RowImpl<TrackingPolicy::Disabled>;
         using RowViewType = RowView;
 
         // ============================================================
@@ -325,8 +324,7 @@ namespace bcsv {
         void checkRange(size_t index) const;
 
     public:
-        template<TrackingPolicy Policy = TrackingPolicy::Disabled>
-        using RowType           = RowStaticImpl<Policy, ColumnTypes...>;
+        using RowType           = RowStaticImpl<TrackingPolicy::Disabled, ColumnTypes...>;
         using RowViewType       = RowViewStatic<ColumnTypes...>;
         using ColTypes          = std::tuple<ColumnTypes...>;
                                   template<size_t Index>

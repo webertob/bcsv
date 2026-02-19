@@ -590,7 +590,7 @@ bench::BenchmarkResult benchmarkBCSVFlexibleZoH(const bench::DatasetProfile& pro
     // ----- Write (ZoH requires TrackingPolicy::Enabled) -----
     bench::Timer timer;
     {
-        bcsv::Writer<bcsv::Layout, bcsv::TrackingPolicy::Enabled> writer(profile.layout);
+        bcsv::Writer<bcsv::Layout> writer(profile.layout);
         if (!writer.open(filename, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
             result.validation_error = "Cannot open BCSV ZoH file: " + writer.getErrorMsg();
             return result;
@@ -621,13 +621,13 @@ bench::BenchmarkResult benchmarkBCSVFlexibleZoH(const bench::DatasetProfile& pro
 
     // ----- Read and validate -----
     bench::RoundTripValidator validator;
-    bcsv::RowTracking expectedRow(profile.layout);
+    bcsv::Row expectedRow(profile.layout);
     const auto selectedColumns = buildSelectedColumns(profile.layout, scenario.columns_k);
     const auto predicateColumn = findFirstNumericColumn(profile.layout);
     size_t processedRows = 0;
 
     {
-        bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Enabled> reader;
+        bcsv::Reader<bcsv::Layout> reader;
         if (!reader.open(filename)) {
             result.validation_error = "Cannot read BCSV ZoH file: " + reader.getErrorMsg();
             return result;
@@ -714,7 +714,7 @@ bench::BenchmarkResult benchmarkBCSVStatic(const bench::DatasetProfile& profile,
         return result;
     }
 
-    bcsv::RowTracking expectedRow(profile.layout);
+    bcsv::Row expectedRow(profile.layout);
     const auto selectedColumns = buildSelectedColumns(profile.layout, scenario.columns_k);
     const auto predicateColumn = findFirstNumericColumn(profile.layout);
     size_t processedRows = 0;
@@ -788,7 +788,7 @@ bench::BenchmarkResult benchmarkBCSVStaticZoH(const bench::DatasetProfile& profi
     bench::Timer timer;
     {
         auto layoutStatic = createMixedGenericStaticLayout();
-        bcsv::Writer<MixedGenericLayoutStatic, bcsv::TrackingPolicy::Enabled> writer(layoutStatic);
+        bcsv::Writer<MixedGenericLayoutStatic> writer(layoutStatic);
         if (!writer.open(filename, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
             result.validation_error = "Cannot open BCSV Static ZoH file: " + writer.getErrorMsg();
             return result;
@@ -820,7 +820,7 @@ bench::BenchmarkResult benchmarkBCSVStaticZoH(const bench::DatasetProfile& profi
     std::string firstError;
 
     {
-        bcsv::Reader<MixedGenericLayoutStatic, bcsv::TrackingPolicy::Enabled> reader;
+        bcsv::Reader<MixedGenericLayoutStatic> reader;
         if (!reader.open(filename)) {
             result.validation_error = "Cannot read BCSV Static ZoH file: " + reader.getErrorMsg();
             return result;

@@ -75,12 +75,7 @@ inline std::span<std::byte> RowCodecFlat001<LayoutType, Policy>::serialize(
 
     // Clear bits section (padding bits must be zero)
     if (bits_sz > 0) {
-        if constexpr (!isTrackingEnabled(Policy)) {
-            // Non-tracking: bits_ is already sequentially packed, bulk copy
-            std::memcpy(&buffer[off_row], row.bits_.data(), bits_sz);
-        } else {
-            std::memset(&buffer[off_row], 0, bits_sz);
-        }
+        std::memset(&buffer[off_row], 0, bits_sz);
     }
 
     // ── Single-pass: serialize all sections in one column loop ─────
@@ -94,10 +89,8 @@ inline std::span<std::byte> RowCodecFlat001<LayoutType, Policy>::serialize(
         const uint32_t   off  = offsets[i];
 
         if (type == ColumnType::BOOL) {
-            if constexpr (isTrackingEnabled(Policy)) {
-                if (row.bits_[off]) {
-                    buffer[off_row + (bool_idx >> 3)] |= std::byte{1} << (bool_idx & 7);
-                }
+            if (row.bits_[off]) {
+                buffer[off_row + (bool_idx >> 3)] |= std::byte{1} << (bool_idx & 7);
             }
             ++bool_idx;
         } else if (type == ColumnType::STRING) {
@@ -140,12 +133,6 @@ inline void RowCodecFlat001<LayoutType, Policy>::deserialize(
     const ColumnType* types   = layout_->columnTypes().data();
     const uint32_t*   offsets = layout_->columnOffsets().data();
 
-    if constexpr (!isTrackingEnabled(Policy)) {
-        if (bits_sz > 0) {
-            std::memcpy(row.bits_.data(), &buffer[0], bits_sz);
-        }
-    }
-
     size_t bool_idx = 0;
     size_t wire_off = bits_sz;
     size_t len_off  = bits_sz + data_sz;
@@ -156,10 +143,8 @@ inline void RowCodecFlat001<LayoutType, Policy>::deserialize(
         const uint32_t   off  = offsets[i];
 
         if (type == ColumnType::BOOL) {
-            if constexpr (isTrackingEnabled(Policy)) {
-                bool val = (buffer[bool_idx >> 3] & (std::byte{1} << (bool_idx & 7))) != std::byte{0};
-                row.bits_[off] = val;
-            }
+            bool val = (buffer[bool_idx >> 3] & (std::byte{1} << (bool_idx & 7))) != std::byte{0};
+            row.bits_[off] = val;
             ++bool_idx;
         } else if (type == ColumnType::STRING) {
             uint16_t len = 0;
@@ -182,12 +167,6 @@ inline void RowCodecFlat001<LayoutType, Policy>::deserialize(
             std::memcpy(&row.data_[off], &buffer[wire_off], len);
             wire_off += len;
         }
-    }
-
-    // When tracking is enabled, mark all non-BOOL columns as changed.
-    // Flat format carries full row data — every column is "changed".
-    if constexpr (isTrackingEnabled(Policy)) {
-        row.changes().set();
     }
 }
 
@@ -330,11 +309,6 @@ inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy>::deserialize(
     size_t payOff  = WIRE_FIXED_SIZE;
     deserializeElements<0>(buffer, row, boolIdx, dataOff, lenOff, payOff);
 
-    // When tracking is enabled, mark all non-BOOL columns as changed.
-    // Flat format carries full row data — every column is "changed".
-    if constexpr (isTrackingEnabled(Policy)) {
-        row.changes().set();
-    }
 }
 
 template<TrackingPolicy Policy, typename... ColumnTypes>

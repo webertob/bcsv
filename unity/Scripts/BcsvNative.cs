@@ -186,10 +186,6 @@ namespace BCSV
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void bcsv_row_assign(IntPtr dest, IntPtr src);
 
-        // Row API - Change tracking
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern bool bcsv_row_tracks_changes(IntPtr row);
-
         // Row API - Single value access
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr bcsv_row_layout(IntPtr row);
