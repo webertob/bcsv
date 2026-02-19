@@ -141,18 +141,27 @@ namespace bcsv {
     }
 
     template<TrackingPolicy Policy>
-    inline void RowImpl<Policy>::setChanges() noexcept {
+    inline bool RowImpl<Policy>::changesAny() const noexcept {
         if constexpr (isTrackingEnabled(Policy)) {
-            // Set all change flags (non-BOOL). BOOL value bits are preserved.
-            bits_ |= layout_.trackedMask();
+            return bits_.any(layout_.trackedMask()); // check only change flags (non-BOOL columns)
+        } else {
+            return true; // always "changed" when tracking disabled
         }
     }
 
     template<TrackingPolicy Policy>
-    inline void RowImpl<Policy>::resetChanges() noexcept {
+    inline void RowImpl<Policy>::changesReset() noexcept {
         if constexpr (isTrackingEnabled(Policy)) {
             // Clear all change flags (non-BOOL). BOOL value bits are preserved.
             bits_ &= layout_.boolMask();
+        }
+    }
+
+    template<TrackingPolicy Policy>
+    inline void RowImpl<Policy>::changesSet() noexcept {
+        if constexpr (isTrackingEnabled(Policy)) {
+            // Set all change flags (non-BOOL). BOOL value bits are preserved.
+            bits_ |= layout_.trackedMask();
         }
     }
 

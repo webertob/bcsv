@@ -122,11 +122,11 @@ Users interact with these types (declared in `include/bcsv/`):
 |-------|------|------|
 | `Layout` | layout.h | Dynamic column schema (names, types). Observer pattern syncs attached Rows. |
 | `LayoutStatic<Types...>` | layout.h | Compile-time fixed schema, variadic template. |
-| `Row` | row.h | In-memory row for read/write (tracking disabled). Alias for `RowImpl<TrackingPolicy::Disabled>`. |
-| `RowTracking` | row.h | Row with ZoH change tracking enabled. Alias for `RowImpl<TrackingPolicy::Enabled>`. |
+| `Row` | row.h | In-memory row for read/write (`changesEnabled()==false`). Alias for `RowImpl<TrackingPolicy::Disabled>`. |
+| `RowTracking` | row.h | Row with ZoH change tracking enabled (`changesEnabled()==true`). Alias for `RowImpl<TrackingPolicy::Enabled>`. |
 | `RowView` | row.h | Zero-copy read-only view into serialized row buffer (dynamic layout). |
 | `RowStatic<Types...>` | row.h | Compile-time typed row (tracking disabled). |
-| `RowStaticTracking<Types...>` | row.h | Static row with ZoH tracking enabled. |
+| `RowStaticTracking<Types...>` | row.h | Static row with ZoH tracking enabled (`changesEnabled()==true`). |
 | `RowViewStatic<Types...>` | row.h | Zero-copy view for static layouts. |
 | `Reader<LayoutType, Policy>` | reader.h | Stream-based BCSV file reader with LZ4 decompression. |
 | `Writer<LayoutType, Policy>` | writer.h | Stream-based BCSV file writer with LZ4 compression, optional ZoH. |
@@ -134,6 +134,8 @@ Users interact with these types (declared in `include/bcsv/`):
 | `RowCodecZoH001<Layout, Policy>` | row_codec_zoh001.h | Zero-Order-Hold codec — delta-encodes unchanged columns. |
 
 > **Note:** `RowImpl<Policy>` is an internal implementation detail — never mention it in user-facing code or docs.
+
+Change-tracking API naming is standardized as `changesEnabled()`, `changesAny()`, `changesSet()`, and `changesReset()`.
 
 ### Core workflow pattern
 

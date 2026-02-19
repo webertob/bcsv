@@ -259,20 +259,20 @@ TYPED_TEST(RowTypedTest, Serialization) {
 TYPED_TEST(RowTypedTest, ChangeTracking) {
     using T = TypeParam;
     RowTracked<TrackingPolicy::Enabled> row(this->layout_);
-    EXPECT_TRUE(row.tracksChanges())
+    EXPECT_TRUE(row.changesEnabled())
         << "Change tracking not enabled for type " << this->GetTypeName();
     
     // Note: After enabling tracking, all columns are initially marked as changed
     // Reset to start fresh
-    row.resetChanges();
-    EXPECT_FALSE(row.hasAnyChanges())
+    row.changesReset();
+    EXPECT_FALSE(row.changesAny())
         << "Changes not properly reset for type " << this->GetTypeName();
     
     // Modify a value (use non-default value to ensure change is detected)
     T val = TypeTraits<T>::test_value_3();  // Use test_value_3 which is non-default
     row.set(0, val);
     
-    EXPECT_TRUE(row.hasAnyChanges())
+    EXPECT_TRUE(row.changesAny())
         << "Change not detected after modification for type " << this->GetTypeName();
 }
 

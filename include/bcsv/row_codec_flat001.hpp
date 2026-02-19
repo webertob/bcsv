@@ -187,7 +187,7 @@ inline void RowCodecFlat001<LayoutType, Policy>::deserialize(
     // When tracking is enabled, mark all non-BOOL columns as changed.
     // Flat format carries full row data — every column is "changed".
     if constexpr (isTrackingEnabled(Policy)) {
-        row.setChanges();
+        row.changesSet();
     }
 }
 
@@ -329,7 +329,7 @@ inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy>::deserialize(
     // When tracking is enabled, mark all non-BOOL columns as changed.
     // Flat format carries full row data — every column is "changed".
     if constexpr (isTrackingEnabled(Policy)) {
-        row.setChanges();
+        row.changesSet();
     }
 }
 

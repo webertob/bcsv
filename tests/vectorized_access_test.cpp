@@ -98,17 +98,17 @@ TEST(RowVectorizedTest, ChangeTrackingMultiple) {
     layout.addColumn({"col3", ColumnType::INT32});
 
     RowTracked<TrackingPolicy::Enabled> row(layout);
-    row.resetChanges();
+    row.changesReset();
 
-    EXPECT_FALSE(row.hasAnyChanges()) 
-        << "After resetChanges(), hasAnyChanges() should return false";
+    EXPECT_FALSE(row.changesAny()) 
+        << "After changesReset(), changesAny() should return false";
 
     // Set multiple values
     int32_t values[] = {10, 20, 30};
     row.set(0, std::span<const int32_t>{values, 3});
 
-    EXPECT_TRUE(row.hasAnyChanges()) 
-        << "After vectorized set, hasAnyChanges() should return true";
+    EXPECT_TRUE(row.changesAny()) 
+        << "After vectorized set, changesAny() should return true";
 }
 
 TEST(RowVectorizedTest, BoundaryCheck) {
@@ -214,14 +214,14 @@ TEST(RowStaticVectorizedTest, CompileTimeChangeTracking) {
     using LayoutType = LayoutStatic<int32_t, int32_t, int32_t>;
     LayoutType layout({"col1", "col2", "col3"});
     RowStaticTracked<TrackingPolicy::Enabled, int32_t, int32_t, int32_t> row(layout);
-    row.resetChanges();
-    EXPECT_FALSE(row.hasAnyChanges());
+    row.changesReset();
+    EXPECT_FALSE(row.changesAny());
 
     // Set multiple values
     std::array<int32_t, 3> arr = {10, 20, 30};
     row.set<0, int32_t, 3>(arr);
 
-    EXPECT_TRUE(row.hasAnyChanges());
+    EXPECT_TRUE(row.changesAny());
 }
 
 // =============================================================================
@@ -289,15 +289,15 @@ TEST(RowStaticVectorizedTest, RuntimeChangeTracking) {
     using LayoutType = LayoutStatic<int32_t, int32_t, int32_t>;
     LayoutType layout({"col1", "col2", "col3"});
     RowStaticTracked<TrackingPolicy::Enabled, int32_t, int32_t, int32_t> row(layout);
-    row.resetChanges();
-    EXPECT_FALSE(row.hasAnyChanges());
+    row.changesReset();
+    EXPECT_FALSE(row.changesAny());
 
     // Set multiple values via runtime interface
     int32_t values[] = {10, 20, 30};
     std::span<const int32_t> values_span{values, 3};
     row.set(0, values_span);
 
-    EXPECT_TRUE(row.hasAnyChanges());
+    EXPECT_TRUE(row.changesAny());
 }
 
 // =============================================================================

@@ -35,23 +35,23 @@ int main() {
     
     // Test 3: Change tracking (compile-time only)
     printf("\n3. Testing change tracking...\n");
-    printf("   Initial tracks_changes: %s\n", bcsv_row_tracks_changes(row) ? "true" : "false");
-    printf("   Initial has_any_changes: %s\n", bcsv_row_has_any_changes(row) ? "true" : "false");
+    printf("   Initial changes_enabled: %s\n", bcsv_row_changes_enabled(row) ? "true" : "false");
+    printf("   Initial changes_any: %s\n", bcsv_row_changes_any(row) ? "true" : "false");
     
     // Set some values
     bcsv_row_set_string(row, 0, "John");
     bcsv_row_set_int32(row, 1, 30);
     bcsv_row_set_double(row, 2, 95.5);
     
-    printf("   After setting values, has_any_changes: %s\n", bcsv_row_has_any_changes(row) ? "true" : "false");
+    printf("   After setting values, changes_any: %s\n", bcsv_row_changes_any(row) ? "true" : "false");
     
     // Test 4: Mark all as changed
-    printf("\n4. Testing bcsv_row_set_changes...\n");
-    bcsv_row_reset_changes(row);
-    printf("   After reset_changes, has_any_changes: %s\n", bcsv_row_has_any_changes(row) ? "true" : "false");
+    printf("\n4. Testing bcsv_row_changes_set...\n");
+    bcsv_row_changes_reset(row);
+    printf("   After changes_reset, changes_any: %s\n", bcsv_row_changes_any(row) ? "true" : "false");
     
-    bcsv_row_set_changes(row);
-    printf("   After set_changes, has_any_changes: %s\n", bcsv_row_has_any_changes(row) ? "true" : "false");
+    bcsv_row_changes_set(row);
+    printf("   After changes_set, changes_any: %s\n", bcsv_row_changes_any(row) ? "true" : "false");
     
     // Test 5: Clear row
     printf("\n5. Testing bcsv_row_clear...\n");

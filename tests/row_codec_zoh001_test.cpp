@@ -53,7 +53,7 @@ protected:
 
 TEST_F(CodecZoH001DynamicTest, Serialize_AllChanged) {
     TrackedRow row(layout_);
-    row.setChanges();  // mark all as changed (like first row in packet)
+    row.changesSet();  // mark all as changed (like first row in packet)
     row.set<bool>(0, true);
     row.set<int32_t>(1, 42);
     row.set<double>(2, 3.14);
@@ -82,7 +82,7 @@ TEST_F(CodecZoH001DynamicTest, Serialize_AllChanged) {
 
 TEST_F(CodecZoH001DynamicTest, Serialize_PartialChanges) {
     TrackedRow row(layout_);
-    row.setChanges();
+    row.changesSet();
     row.set<bool>(0, true);
     row.set<int32_t>(1, 99);
     row.set<double>(2, 2.0);
@@ -92,7 +92,7 @@ TEST_F(CodecZoH001DynamicTest, Serialize_PartialChanges) {
     row.set<std::string_view>(6, "orig");
 
     // Now reset changes and only change some columns
-    row.resetChanges();
+    row.changesReset();
     row.set<int32_t>(1, 200);        // changed
     row.set<bool>(0, false);         // bool — always in header
     row.set<std::string_view>(6, "updated");  // changed
@@ -107,7 +107,7 @@ TEST_F(CodecZoH001DynamicTest, Serialize_PartialChanges) {
 TEST_F(CodecZoH001DynamicTest, Serialize_NoChanges) {
     TrackedRow row(layout_);
     // Don't set any values — all bits should be zero.
-    row.resetChanges();
+    row.changesReset();
 
     RowCodecZoH001<Layout, TrackingPolicy::Enabled> codec;
     codec.setup(layout_);
@@ -119,7 +119,7 @@ TEST_F(CodecZoH001DynamicTest, Serialize_NoChanges) {
 
 TEST_F(CodecZoH001DynamicTest, Serialize_BoolOnlyChanges) {
     TrackedRow row(layout_);
-    row.resetChanges();
+    row.changesReset();
     // Only set a bool — since trackingEnabled, bits_[0] = true for the bool value,
     // but bits_[1..6] won't be set (no non-bool changes)
     row.set<bool>(0, true);
@@ -135,7 +135,7 @@ TEST_F(CodecZoH001DynamicTest, Serialize_BoolOnlyChanges) {
 
 TEST_F(CodecZoH001DynamicTest, Deserialize_AllChanged) {
     TrackedRow row(layout_);
-    row.setChanges();
+    row.changesSet();
     row.set<bool>(0, true);
     row.set<int32_t>(1, 12345);
     row.set<double>(2, -1.5);
@@ -163,7 +163,7 @@ TEST_F(CodecZoH001DynamicTest, Deserialize_AllChanged) {
 
 TEST_F(CodecZoH001DynamicTest, Deserialize_PartialChanges) {
     TrackedRow row(layout_);
-    row.setChanges();
+    row.changesSet();
     row.set<bool>(0, true);
     row.set<int32_t>(1, 99);
     row.set<double>(2, 2.0);
@@ -173,7 +173,7 @@ TEST_F(CodecZoH001DynamicTest, Deserialize_PartialChanges) {
     row.set<std::string_view>(6, "orig");
 
     // Reset and change only some columns
-    row.resetChanges();
+    row.changesReset();
     row.set<int32_t>(1, 200);
     row.set<bool>(0, false);
     row.set<std::string_view>(6, "updated");
@@ -209,7 +209,7 @@ TEST_F(CodecZoH001DynamicTest, Deserialize_PartialChanges) {
 
 TEST_F(CodecZoH001DynamicTest, Roundtrip) {
     TrackedRow row(layout_);
-    row.setChanges();
+    row.changesSet();
     row.set<bool>(0, true);
     row.set<int32_t>(1, -2147483648);
     row.set<double>(2, 1e308);
@@ -250,7 +250,7 @@ TEST(CodecZoH001EdgeTest, AllBoolLayout) {
     });
 
     TrackedRow row(layout);
-    row.setChanges();
+    row.changesSet();
     for (size_t i = 0; i < 9; ++i)
         row.set<bool>(i, (i % 2) == 0);
 
@@ -268,7 +268,7 @@ TEST(CodecZoH001EdgeTest, AllStringLayout) {
     });
 
     TrackedRow row(layout);
-    row.setChanges();
+    row.changesSet();
     row.set<std::string_view>(0, "first");
     row.set<std::string_view>(1, "");
     row.set<std::string_view>(2, "third string is long");
@@ -297,7 +297,7 @@ TEST(CodecZoH001EdgeTest, AllNumericTypes) {
     });
 
     TrackedRow row(layout);
-    row.setChanges();
+    row.changesSet();
     row.set<int8_t>(0, -128);
     row.set<int16_t>(1, -32768);
     row.set<int32_t>(2, -2147483647);
@@ -333,7 +333,7 @@ TEST(CodecZoH001EdgeTest, AllNumericTypes) {
 TEST(CodecZoH001EdgeTest, SingleColumn_Int32) {
     Layout layout({{"x", ColumnType::INT32}});
     TrackedRow row(layout);
-    row.setChanges();
+    row.changesSet();
     row.set<int32_t>(0, 42);
 
     RowCodecZoH001<Layout, TrackingPolicy::Enabled> codec;
@@ -346,7 +346,7 @@ TEST(CodecZoH001EdgeTest, SingleColumn_Int32) {
 TEST(CodecZoH001EdgeTest, SingleColumn_Bool) {
     Layout layout({{"flag", ColumnType::BOOL}});
     TrackedRow row(layout);
-    row.setChanges();
+    row.changesSet();
     row.set<bool>(0, true);
 
     RowCodecZoH001<Layout, TrackingPolicy::Enabled> codec;
@@ -359,7 +359,7 @@ TEST(CodecZoH001EdgeTest, SingleColumn_Bool) {
 TEST(CodecZoH001EdgeTest, SingleColumn_String) {
     Layout layout({{"name", ColumnType::STRING}});
     TrackedRow row(layout);
-    row.setChanges();
+    row.changesSet();
     row.set<std::string_view>(0, "solo");
 
     RowCodecZoH001<Layout, TrackingPolicy::Enabled> codec;
@@ -385,7 +385,7 @@ TEST(CodecZoH001EdgeTest, MultipleRowsSequential) {
 
     for (int v = 0; v < 10; ++v) {
         TrackedRow row(layout);
-        row.setChanges();
+        row.changesSet();
         row.set<bool>(0, v % 2 == 0);
         row.set<int32_t>(1, v * 100);
         row.set<std::string_view>(2, std::string("row_") + std::to_string(v));
@@ -409,7 +409,7 @@ TEST(CodecZoH001EdgeTest, DeserializeBufferTooShort) {
 TEST(CodecZoH001EdgeTest, LargeString) {
     Layout layout({{"big", ColumnType::STRING}});
     TrackedRow row(layout);
-    row.setChanges();
+    row.changesSet();
     std::string largeStr(10000, 'A');
     row.set<std::string_view>(0, largeStr);
 
@@ -435,7 +435,7 @@ using TrackedStaticRow = RowStaticImpl<TrackingPolicy::Enabled, bool, int32_t, d
 TEST(CodecZoH001StaticTest, Serialize_AllChanged) {
     TestStaticLayout layout;
     TrackedStaticRow row(layout);
-    row.setChanges();
+    row.changesSet();
     row.set<0>(true);
     row.set<1>(42);
     row.set<2>(3.14);
@@ -465,7 +465,7 @@ TEST(CodecZoH001StaticTest, Serialize_AllChanged) {
 TEST(CodecZoH001StaticTest, Serialize_PartialChanges) {
     TestStaticLayout layout;
     TrackedStaticRow row(layout);
-    row.setChanges();
+    row.changesSet();
     row.set<0>(true);
     row.set<1>(99);
     row.set<2>(2.0);
@@ -475,7 +475,7 @@ TEST(CodecZoH001StaticTest, Serialize_PartialChanges) {
     row.set<6>(std::string("orig"));
 
     // Reset and change only some columns
-    row.resetChanges();
+    row.changesReset();
     row.set<0>(false);          // bool — always in header
     row.set<1>(200);            // changed
     row.set<6>(std::string("updated"));  // changed
@@ -490,7 +490,7 @@ TEST(CodecZoH001StaticTest, Serialize_PartialChanges) {
 TEST(CodecZoH001StaticTest, Serialize_NoChanges) {
     TestStaticLayout layout;
     TrackedStaticRow row(layout);
-    row.resetChanges();
+    row.changesReset();
 
     RowCodecZoH001<TestStaticLayout, TrackingPolicy::Enabled> codec;
     codec.setup(layout);
@@ -503,7 +503,7 @@ TEST(CodecZoH001StaticTest, Serialize_NoChanges) {
 TEST(CodecZoH001StaticTest, Deserialize_AllChanged) {
     TestStaticLayout layout;
     TrackedStaticRow row(layout);
-    row.setChanges();
+    row.changesSet();
     row.set<0>(true);
     row.set<1>(-999);
     row.set<2>(1e-10);
@@ -532,7 +532,7 @@ TEST(CodecZoH001StaticTest, Deserialize_AllChanged) {
 TEST(CodecZoH001StaticTest, Roundtrip) {
     TestStaticLayout layout;
     TrackedStaticRow row(layout);
-    row.setChanges();
+    row.changesSet();
     row.set<0>(false);
     row.set<1>(2147483647);
     row.set<2>(-0.0);
@@ -568,7 +568,7 @@ TEST(CodecZoH001StaticTest, MultipleRowsSequential) {
 
     for (int v = 0; v < 10; ++v) {
         RowStaticImpl<TrackingPolicy::Enabled, bool, int32_t, std::string> row(layout);
-        row.setChanges();
+        row.changesSet();
         row.set<0>(v % 2 == 0);
         row.set<1>(v * 100);
         row.set<2>(std::string("srow_") + std::to_string(v));
@@ -590,7 +590,7 @@ TEST_F(CodecZoH001DynamicTest, MultiRowLifecycle) {
     TrackedRow row(layout_);
 
     // ── Row 1: first in packet → all changes ──
-    row.setChanges();
+    row.changesSet();
     row.set<bool>(0, true);
     row.set<int32_t>(1, 100);
     row.set<double>(2, 1.0);
@@ -604,7 +604,7 @@ TEST_F(CodecZoH001DynamicTest, MultiRowLifecycle) {
     EXPECT_FALSE(wire1.empty());
 
     // ── Row 2: reset + partial changes ──
-    row.resetChanges();
+    row.changesReset();
     row.set<int32_t>(1, 200);
     row.set<bool>(0, false);
 
@@ -613,7 +613,7 @@ TEST_F(CodecZoH001DynamicTest, MultiRowLifecycle) {
     EXPECT_FALSE(wire2.empty());
 
     // ── Row 3: no changes ──
-    row.resetChanges();
+    row.changesReset();
 
     ByteBuffer buf3;
     auto wire3 = codec.serialize(row, buf3);
@@ -621,7 +621,7 @@ TEST_F(CodecZoH001DynamicTest, MultiRowLifecycle) {
 
     // ── Row 4: new packet → all changes again ──
     codec.reset();
-    row.setChanges();
+    row.changesSet();
     row.set<bool>(0, true);
     row.set<int32_t>(1, 300);
 

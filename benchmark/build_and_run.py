@@ -285,9 +285,14 @@ def main() -> int:
             result = subprocess.run(macro_cmd, capture_output=True, text=True)
             (run_output_dir / f"{stem}_stdout.log").write_text(result.stdout or "")
             (run_output_dir / f"{stem}_stderr.log").write_text(result.stderr or "")
-            if result.returncode != 0:
+            macro_json = run_output_dir / f"{stem}_results.json"
+            if result.returncode != 0 and not macro_json.exists():
                 raise RuntimeError(f"{run_type} execution failed")
-            run_payloads[run_type].append(json.loads((run_output_dir / f"{stem}_results.json").read_text()))
+            if result.returncode != 0 and macro_json.exists():
+                print(
+                    f"WARNING: {run_type} exited with code {result.returncode} but produced {macro_json.name}; continuing with generated results."
+                )
+            run_payloads[run_type].append(json.loads(macro_json.read_text()))
 
     aggregated_macro_payloads: dict[str, dict] = {}
     for run_type in types:

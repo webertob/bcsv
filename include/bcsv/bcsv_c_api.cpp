@@ -252,21 +252,21 @@ void bcsv_row_assign(bcsv_row_t dest, const_bcsv_row_t src) {
 }
 
 // Change tracking
-bool bcsv_row_has_any_changes(const_bcsv_row_t row) {
-    return static_cast<const bcsv::Row*>(row)->hasAnyChanges();
+bool bcsv_row_changes_any(const_bcsv_row_t row) {
+    return static_cast<const bcsv::Row*>(row)->changesAny();
 }
 
 
-bool bcsv_row_tracks_changes(const_bcsv_row_t row) {
-    return static_cast<const bcsv::Row*>(row)->tracksChanges();
+bool bcsv_row_changes_enabled(const_bcsv_row_t row) {
+    return static_cast<const bcsv::Row*>(row)->changesEnabled();
 }
 
-void bcsv_row_set_changes(bcsv_row_t row) {
-    static_cast<bcsv::Row*>(row)->setChanges();
+void bcsv_row_changes_set(bcsv_row_t row) {
+    static_cast<bcsv::Row*>(row)->changesSet();
 }
 
-void bcsv_row_reset_changes(bcsv_row_t row) {
-    static_cast<bcsv::Row*>(row)->resetChanges();
+void bcsv_row_changes_reset(bcsv_row_t row) {
+    static_cast<bcsv::Row*>(row)->changesReset();
 }
 
 const_bcsv_layout_t bcsv_row_layout(const_bcsv_row_t row) {

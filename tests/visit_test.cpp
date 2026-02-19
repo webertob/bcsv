@@ -442,9 +442,9 @@ TEST(VisitTest, RowMutableVisitWithChangeTracking) {
     row.set(0, 10);
     row.set(1, 20);
     row.set(2, 30);
-    row.resetChanges();  // Clear changes
+    row.changesReset();  // Clear changes
     
-    EXPECT_FALSE(row.hasAnyChanges());
+    EXPECT_FALSE(row.changesAny());
     
     // Mutable visit should mark all columns as changed
     row.visit([&](size_t, auto& value, bool&) {
@@ -454,7 +454,7 @@ TEST(VisitTest, RowMutableVisitWithChangeTracking) {
         }
     });
     
-    EXPECT_TRUE(row.hasAnyChanges());
+    EXPECT_TRUE(row.changesAny());
     EXPECT_EQ(row.get<int32_t>(0), 15);
     EXPECT_EQ(row.get<int32_t>(1), 25);
     EXPECT_EQ(row.get<int32_t>(2), 35);
@@ -513,9 +513,9 @@ TEST(VisitTest, RowStaticMutableVisitWithTracking) {
     RowStaticTracked<TrackingPolicy::Enabled, int32_t, int32_t> row(layout);
     row.set<0>(100);
     row.set<1>(200);
-    row.resetChanges();
+    row.changesReset();
     
-    EXPECT_FALSE(row.hasAnyChanges());
+    EXPECT_FALSE(row.changesAny());
     
     // Mutable visit should mark all as changed
     row.visit([&](auto, auto& value, bool&) {
@@ -525,7 +525,7 @@ TEST(VisitTest, RowStaticMutableVisitWithTracking) {
         }
     });
     
-    EXPECT_TRUE(row.hasAnyChanges());
+    EXPECT_TRUE(row.changesAny());
     EXPECT_EQ(row.get<0>(), 150);
     EXPECT_EQ(row.get<1>(), 250);
 }
@@ -786,7 +786,7 @@ TEST(VisitTest, FineGrainedChangeTracking) {
     row.set(0, 10);
     row.set(1, 20);
     row.set(2, 30);
-    row.changes().reset();
+    row.changesReset();
     
     EXPECT_FALSE(row.changes().any());
     
@@ -827,7 +827,7 @@ TEST(VisitTest, FineGrainedChangeTrackingRowStatic) {
     row.set<1>(15);
     row.set<2>(25);
     row.set<3>(35);
-    row.resetChanges();
+    row.changesReset();
     
     // Conditional modification with fine-grained tracking
     row.visit([&](auto, auto& value, bool& changed) {
@@ -850,7 +850,7 @@ TEST(VisitTest, FineGrainedChangeTrackingRowStatic) {
     EXPECT_EQ(row.get<3>(), 70);   // Modified (was 35)
     
     // All were actually modified in this case
-    EXPECT_TRUE(row.hasAnyChanges());
+    EXPECT_TRUE(row.changesAny());
 }
 
 TEST(VisitTest, IgnoringChangeFlagParameter) {
@@ -862,7 +862,7 @@ TEST(VisitTest, IgnoringChangeFlagParameter) {
     RowTracked<TrackingPolicy::Enabled> row(layout);
     row.set(0, 10);
     row.set(1, 20);
-    row.resetChanges();
+    row.changesReset();
     
     // Visitor with unnamed 3rd parameter - still marks all as changed
     row.visit([&](size_t, auto& value, bool&) {
@@ -874,7 +874,7 @@ TEST(VisitTest, IgnoringChangeFlagParameter) {
     
     EXPECT_EQ(row.get<int32_t>(0), 20);
     EXPECT_EQ(row.get<int32_t>(1), 40);
-    EXPECT_TRUE(row.hasAnyChanges());
+    EXPECT_TRUE(row.changesAny());
 }
 
 // ============================================================================
@@ -1019,9 +1019,9 @@ TEST(VisitTest, TypedVisitWithChangeTracking) {
     row.set(0, 10);
     row.set(1, 20);
     row.set(2, 30);
-    row.resetChanges();
+    row.changesReset();
     
-    EXPECT_FALSE(row.hasAnyChanges());
+    EXPECT_FALSE(row.changesAny());
     
     // Typed visit: only modify columns where value > 15
     row.visit<int32_t>(0, [](size_t, int32_t& val, bool& changed) {
@@ -1036,7 +1036,7 @@ TEST(VisitTest, TypedVisitWithChangeTracking) {
     EXPECT_EQ(row.get<int32_t>(0), 10);   // Not modified
     EXPECT_EQ(row.get<int32_t>(1), 120);  // Modified
     EXPECT_EQ(row.get<int32_t>(2), 130);  // Modified
-    EXPECT_TRUE(row.hasAnyChanges());
+    EXPECT_TRUE(row.changesAny());
     
     // Verify ZoH serialization only includes changed columns
     ByteBuffer buffer;

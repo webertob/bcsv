@@ -32,8 +32,8 @@
  *
  * The Writer is responsible for:
  *   - Calling reset() at packet boundaries
- *   - Calling row.setChanges() before the first row in a packet (Enabled only)
- *   - Calling row.resetChanges() after each serialize (Enabled only)
+ *   - Calling row.changesSet() before the first row in a packet (Enabled only)
+ *   - Calling row.changesReset() after each serialize (Enabled only)
  *   - Detecting ZoH repeats (byte-identical serialized rows → write length 0)
  *
  * Template parameters:

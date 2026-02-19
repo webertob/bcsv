@@ -60,33 +60,33 @@ namespace BCSV
         /// <summary>
         /// Check if this row has any changes
         /// </summary>
-        public bool HasAnyChanges
+        public bool ChangesAny
         {
-            get { return NativeMethods.bcsv_row_has_any_changes(Handle); }
+            get { return NativeMethods.bcsv_row_changes_any(Handle); }
         }
 
         /// <summary>
         /// Check if this row is currently tracking changes
         /// </summary>
-        public bool TracksChanges
+        public bool ChangesEnabled
         {
-            get { return NativeMethods.bcsv_row_tracks_changes(Handle); }
+            get { return NativeMethods.bcsv_row_changes_enabled(Handle); }
         }
 
         /// <summary>
         /// Mark all columns as changed
         /// </summary>
-        public void SetChanges()
+        public void ChangesSet()
         {
-            NativeMethods.bcsv_row_set_changes(Handle);
+            NativeMethods.bcsv_row_changes_set(Handle);
         }
 
         /// <summary>
         /// Reset all change flags
         /// </summary>
-        public void ResetChanges()
+        public void ChangesReset()
         {
-            NativeMethods.bcsv_row_reset_changes(Handle);
+            NativeMethods.bcsv_row_changes_reset(Handle);
         }
 
         /// <summary>

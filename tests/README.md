@@ -340,7 +340,7 @@ Use this checklist when adding new Row API functionality:
 ### For New Row Functions
 - [ ] Add to `row_parameterized_test.cpp` (all types)
 - [ ] Test with vectorized access if applicable
-- [ ] Test with change tracking enabled/disabled
+- [ ] Test both `changesEnabled()==true/false` and `changesAny()` behavior
 - [ ] Test serialization/deserialization
 - [ ] Add error cases (type mismatch, out of bounds)
 - [ ] Update this README with new coverage

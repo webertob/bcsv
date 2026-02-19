@@ -296,7 +296,7 @@ RowCodecZoH001<LayoutStatic<ColumnTypes...>, Policy>::serialize(
         // overwritten with actual values during serialization).
         const size_t bufferSizeOld = buffer.size();
 
-        if (!row.hasAnyChanges()) {
+        if (!row.changesAny()) {
             return std::span<std::byte>{};
         }
 

@@ -164,7 +164,7 @@ namespace bcsv {
             packet_index_.clear();            
             row_.clear();
             if constexpr (isTrackingEnabled(Policy)) {
-                row_.setChanges();
+                row_.changesSet();
             }
             row_buffer_raw_.clear();
             row_buffer_prev_.clear(); // Start with empty previous row
@@ -243,7 +243,7 @@ namespace bcsv {
         row_buffer_prev_.clear();
         row_buffer_raw_.clear();
         if constexpr (isTrackingEnabled(Policy)) {
-            row_.setChanges();      // mark all as changed for first row
+            row_.changesSet();      // mark all as changed for first row
         }
         codec_.reset();  // Item 11: reset codec state at packet boundary
         packet_open_ = true;
@@ -263,7 +263,7 @@ namespace bcsv {
         row_buffer_raw_.clear();
         std::span<std::byte> actRow = codec_.serialize(row_, row_buffer_raw_);
         if constexpr (isTrackingEnabled(Policy)) {
-            row_.resetChanges();
+            row_.changesReset();
         }
 
         // 2. write row data to file

@@ -3505,7 +3505,7 @@ TEST_F(BCSVTestSuite, Ref_ChangeTracking) {
     bcsv::RowImpl<bcsv::TrackingPolicy::Enabled> row(layout);
 
     // After construction, all non-BOOL columns should be marked changed
-    row.resetChanges();
+    row.changesReset();
 
     // Now ref<T>() on a tracked row must set the change bit
     row.ref<int32_t>(6) = 99;

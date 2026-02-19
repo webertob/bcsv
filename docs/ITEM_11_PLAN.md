@@ -96,7 +96,7 @@ the Row view classes (`RowView`, `RowViewStatic`). This creates several problems
 | **Row is too heavy** | row.hpp is ~3800 lines. Rows carry wire-specific state (`offsets_`, `wire_data_off_`, `wire_lens_off_`, `wire_fixed_size_`, `bool_scratch_`) that is only needed during I/O. |
 | **Wire metadata in wrong place** | `wire_bits_size_`, `wire_data_size_`, `wire_strg_size_` live in `Layout::Data`. Layout should be format-agnostic (column names, types, offsets). |
 | **Duplication** | Flat encoding logic is duplicated across RowImpl, RowStaticImpl, RowView, RowViewStatic — four copies of similar column-loop and offset-computation code. Serialize and deserialize mirror each other's structure but share no extracted helpers. |
-| **Encoding concerns leak into Reader/Writer** | Writer does ZoH repeat detection (byte comparison), change-flag management (`setChanges()`/`resetChanges()`), first-row-in-packet logic. Reader branches on `FileFlags::ZERO_ORDER_HOLD`. These are encoding policy, not I/O policy. |
+| **Encoding concerns leak into Reader/Writer** | Writer does ZoH repeat detection (byte comparison), change-flag management (`changesSet()`/`changesReset()`), first-row-in-packet logic. Reader branches on `FileFlags::ZERO_ORDER_HOLD`. These are encoding policy, not I/O policy. |
 | **No extension point** | Adding a new encoding (CSV, delta) requires modifying Row classes and Reader/Writer. No way to plug in an alternative format without touching core code. |
 | **Delta encoding needs heavy inter-row state** | Item 13/14 requires ring buffers, prediction state, per-column history. This state is fundamentally different from flat's stateless encoding and ZoH's single-prev buffer. Combining all formats in one class would force every flat codec instance to carry dead delta state. |
 | **Backward compatibility forces runtime format dispatch** | When Reader opens a file with an older format version, it must select the matching codec at runtime. A combined class would require internal if-chains for every format version — unmaintainable. Separate classes fit naturally into `std::variant`-based dispatch. |
@@ -441,13 +441,13 @@ Three earlier design alternatives were evaluated and rejected:
 | `Layout::wireBitsSize()` etc. | layout.h L140-144, L242-255 | `RowCodecFlat001` accessors |
 | `RowStaticImpl::WIRE_BITS_SIZE` etc. | row.h constexpr | `RowCodecFlat001<LayoutStatic>` constexpr |
 | `Writer::row_buffer_prev_` comparison | writer.hpp L267-280 | `RowCodecZoH001` internal `prev_buffer_` |
-| `Writer: setChanges()/resetChanges()` | writer.hpp L246-250 | `RowCodecZoH001::reset()` / `serialize()` |
+| `Writer: changesSet()/changesReset()` | writer.hpp L246-250 | `RowCodecZoH001::reset()` / `serialize()` |
 
 ### 2.9 What Stays Where
 
 | Component | Keeps |
 |-----------|-------|
-| **Row classes** | `bits_`, `data_`, `strg_`, `layout_&`, `get()`, `set()`, `visit()`, `visitConst()`, `clear()`, `clone()`, `assign()`, `hasChanges()`, `setChanges()`, `resetChanges()` |
+| **Row classes** | `bits_`, `data_`, `strg_`, `layout_&`, `get()`, `set()`, `visit()`, `visitConst()`, `clear()`, `clone()`, `assign()`, `changesAny()`, `changesSet()`, `changesReset()` |
 | **RowView** | `layout_`, `buffer_`, `bool_scratch_`, `codec_` member (owns format state), `get()`, `set()`, `visit()` (delegate to codec), `toRow()` |
 | **Layout** | `column_names_`, `column_types_`, `offsets_`, `tracked_mask_`, `boolMask()`, `addColumn()`, `removeColumn()`, observer callbacks |
 | **Writer** | `stream_`, `lz4_stream_`, `packet_hash_`, `packet_index_`, `row_buffer_raw_`, `row_cnt_`, `openPacket()`, `closePacket()`, `writeRow()` (delegating via variant visit), VLE encoding, LZ4 compression |
@@ -519,7 +519,7 @@ Three earlier design alternatives were evaluated and rejected:
 | Step | Action | Validation |
 |------|--------|------------|
 | 3.1 | Create `row_codec_variant.h` with `RowCodecVariant` type alias (`std::variant<Flat001, ZoH001>`). | Compiles. |
-| 3.2 | Add `codec_: RowCodecVariant` member to Writer. In `open()`, construct the appropriate variant member based on `FileFlags::ZERO_ORDER_HOLD`. In `writeRow()`, replace `row_.serializeTo(buffer)` / `row_.serializeToZoH(buffer)` with `std::visit([&](auto& c) { return c.serialize(row_, buffer); }, codec_)`. Remove `setChanges()`/`resetChanges()` calls and `row_buffer_prev_` comparison. In `openPacket()`, call `std::visit([](auto& c) { c.reset(); }, codec_)`. | **All existing tests pass** — 343 GTest + 76 C API + Row API. |
+| 3.2 | Add `codec_: RowCodecVariant` member to Writer. In `open()`, construct the appropriate variant member based on `FileFlags::ZERO_ORDER_HOLD`. In `writeRow()`, replace `row_.serializeTo(buffer)` / `row_.serializeToZoH(buffer)` with `std::visit([&](auto& c) { return c.serialize(row_, buffer); }, codec_)`. Remove `changesSet()`/`changesReset()` calls and `row_buffer_prev_` comparison. In `openPacket()`, call `std::visit([](auto& c) { c.reset(); }, codec_)`. | **All existing tests pass** — 343 GTest + 76 C API + Row API. |
 | 3.3 | Add `codec_: RowCodecVariant` member to Reader. In `open()`, construct based on file header flags. In `readNext()`, replace `row_.deserializeFrom()` / `row_.deserializeFromZoH()` with `std::visit`. | All existing tests pass. |
 | 3.4 | Run full benchmark suite (`--size=S`). Compare against item 10 baseline. No regression beyond noise (±3%). | Benchmark comparison report. |
 
@@ -690,7 +690,7 @@ TrackingPolicy::Disabled  →  RowCodecFlat001   (compile-time binding)
 TrackingPolicy::Enabled   →  RowCodecZoH001    (compile-time binding)
 ```
 
-**TrackingPolicy** is the programmer's intent: "do I need change flags in my Row?"
+**TrackingPolicy** is the programmer's intent: "do I need `changesEnabled()`/`changesAny()` semantics in my Row?"
 **File codec** is a file property: "how are rows encoded on disk?"
 
 These are orthogonal. A programmer cannot know the file's codec before opening it. They may
@@ -708,8 +708,8 @@ All four combinations must work:
 
 | | Flat001 file | ZoH001 file |
 |---|---|---|
-| **Disabled** | Natural fit. Full decode, no tracking. | ZoH codec reads wire change-header into **internal** bitset. Decodes only changed columns. Extracts bool values → `row.bits_[boolIdx]`. No change flags. |
-| **Enabled** | Full decode. Mark all columns as changed in `row.bits_` (or: compare-and-set per column for precise detection; future refinement). | Natural fit. Wire change-header → `row.bits_` directly (fast alias, same sizing). Change flags visible to programmer. |
+| **Disabled** | Natural fit. Full decode, no tracking (`changesEnabled()==false`). | ZoH codec reads wire change-header into **internal** bitset. Decodes only changed columns. Extracts bool values → `row.bits_[boolIdx]`. No per-column change flags are surfaced. |
+| **Enabled** | Full decode. Mark all columns as changed in `row.bits_` (or: compare-and-set per column for precise detection; future refinement), so `changesAny()==true`. | Natural fit. Wire change-header → `row.bits_` directly (fast alias, same sizing). Change flags are visible via `changesAny()` / `changes()`. |
 
 **Why ZoH + Disabled is possible**: The ZoH wire format's change bitset has `columnCount` bits.
 With `Disabled`, `row.bits_` is `boolCount`-sized (different size and indexing). The codec
@@ -819,7 +819,7 @@ sets change flags. Initial strategy: mark all columns as changed (simple, correc
 ```cpp
 // In CodecDispatch's flat deserialize thunk, or as post-deserialize hook:
 if constexpr (isTrackingEnabled(Policy)) {
-    row.setChanges();  // marks all non-BOOL columns as changed
+    row.changesSet();  // marks all non-BOOL columns as changed
 }
 ```
 
@@ -838,7 +838,7 @@ vs. buffered previous row). This is an optimization, not required for correctnes
 | **`writer.h`** | **No change** — keeps `RowCodecType` (compile-time selection; Writer knows what it writes) |
 | **`writer.hpp`** | **No change** |
 | **`row_codec_variant.h`** | Retained — provides `RowCodecType` alias for Writer |
-| **`row_codec_flat001.h/.hpp`** | Minor: Enabled path may need post-deserialize `setChanges()` hook |
+| **`row_codec_flat001.h/.hpp`** | Minor: Enabled path may need post-deserialize `changesSet()` hook |
 | **`row.h` / `row.hpp`** | **No change** — bits_/changes_ sizing unchanged |
 | **RowView / RowViewStatic** | **No change** — always flat-only, unchanged |
 | **Tests** | Add cross-combination tests: write Flat→read Enabled, write ZoH→read Disabled, etc. |
@@ -850,7 +850,7 @@ vs. buffered previous row). This is an optimization, not required for correctnes
 |------|-------------|--------------|
 | **7a** | Add internal `wire_bits_` to ZoH codec. Refactor serialize/deserialize to use `wire_bits_` instead of direct `row.bits_` alias. Keep `static_assert` for now. | 391/391 tests pass (no behavior change) |
 | **7b** | Remove `static_assert` from ZoH codec. Add `if constexpr` branches for Disabled policy in ZoH serialize/deserialize. | Build succeeds (ZoH+Disabled instantiable but not yet used) |
-| **7c** | Add post-deserialize `setChanges()` hook for Flat+Enabled path. | Build succeeds |
+| **7c** | Add post-deserialize `changesSet()` hook for Flat+Enabled path. | Build succeeds |
 | **7d** | Create `CodecDispatch<LayoutType, Policy>` with union storage, function pointers, `selectCodec()`. | Unit test: dispatch to Flat001 and ZoH001 |
 | **7e** | Wire `CodecDispatch` into `Reader`. Remove `if constexpr` validation in `readFileHeader()`. | 391/391 tests pass (existing Flat+Disabled and ZoH+Enabled paths) |
 | **7f** | Add cross-combination tests: write Flat file → read with Enabled Reader; write ZoH file → read with Disabled Reader. | New tests pass, all 391+ pass |

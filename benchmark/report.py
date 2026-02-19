@@ -188,11 +188,12 @@ def micro_group_medians(micro_payload):
     return out
 
 
-def latest_clean_run(current_run: Path):
+def latest_clean_run(current_run: Path, required_macro_types: set[str] | None = None, require_micro: bool = False):
     host_root = current_run.parent.parent
     if not host_root.exists():
         return None
 
+    required_macro_types = required_macro_types or set()
     candidates = []
     for git_bucket in host_root.iterdir():
         if not git_bucket.is_dir():
@@ -202,29 +203,64 @@ def latest_clean_run(current_run: Path):
         for run_dir in git_bucket.iterdir():
             if not run_dir.is_dir() or run_dir == current_run:
                 continue
-            has_macro = (run_dir / "macro_results.json").exists()
-            has_micro = (run_dir / "micro_results.json").exists()
-            if (run_dir / "platform.json").exists() and (has_macro or has_micro):
-                candidates.append((run_dir.stat().st_mtime, run_dir))
+            if not (run_dir / "platform.json").exists():
+                continue
+
+            macro_by_type = load_macro_rows_by_type(run_dir)
+            candidate_macro_types = {macro_type for macro_type, rows in macro_by_type.items() if rows}
+            candidate_has_micro = bool(micro_group_medians(load_micro(run_dir)))
+
+            has_any_data = bool(candidate_macro_types) or candidate_has_micro
+            if not has_any_data:
+                continue
+
+            macro_overlap = len(required_macro_types & candidate_macro_types)
+            missing_macro = len(required_macro_types - candidate_macro_types)
+            missing_micro = 1 if (require_micro and not candidate_has_micro) else 0
+            exact_match = (missing_macro == 0 and missing_micro == 0)
+
+            candidates.append({
+                "run_dir": run_dir,
+                "mtime": run_dir.stat().st_mtime,
+                "exact_match": exact_match,
+                "missing_total": missing_macro + missing_micro,
+                "macro_overlap": macro_overlap,
+            })
 
     if not candidates:
         return None
 
-    candidates.sort(key=lambda item: item[0], reverse=True)
-    return candidates[0][1]
+    candidates.sort(
+        key=lambda item: (
+            item["exact_match"],
+            -item["missing_total"],
+            item["macro_overlap"],
+            item["mtime"],
+        ),
+        reverse=True,
+    )
+    return candidates[0]["run_dir"]
 
 
 def generate_summary_markdown(run_dir: Path, baseline_dir: Path | None, summary_only: bool):
     platform = load_platform(run_dir)
-    candidate_label = str(platform.get("git_label", run_dir.name))
+    candidate_label = str(platform.get("git_label", platform.get("git_describe", run_dir.name)))
+    candidate_run_id = run_dir.name
     current_macro_by_type = load_macro_rows_by_type(run_dir)
     micro_data = load_micro(run_dir)
     baseline_macro_by_type = {}
     baseline_micro = {}
+    baseline_platform = {}
     if baseline_dir is not None:
+        baseline_platform = load_platform(baseline_dir)
         baseline_macro_by_type = load_macro_rows_by_type(baseline_dir)
         baseline_micro = load_micro(baseline_dir)
-    baseline_label = baseline_dir.name if baseline_dir is not None else None
+    baseline_label = (
+        str(baseline_platform.get("git_label", baseline_platform.get("git_describe", baseline_dir.name)))
+        if baseline_dir is not None
+        else None
+    )
+    baseline_run_id = baseline_dir.name if baseline_dir is not None else None
 
     lines = []
     lines.append("# BCSV Benchmark Summary Report")
@@ -280,13 +316,13 @@ def generate_summary_markdown(run_dir: Path, baseline_dir: Path | None, summary_
             lines.append("No baseline run available (latest git-clean run not found).")
             lines.append("")
         elif not baseline_macro_rows:
-            lines.append(f"Baseline `{baseline_label}` has no {macro_type} data.")
+            lines.append(f"Baseline `{baseline_label}` (run `{baseline_run_id}`) has no {macro_type} data.")
             lines.append("")
         else:
             baseline_condensed = compute_condensed_progress_metrics(baseline_macro_rows)
             baseline_by_mode = {row["mode"]: row for row in baseline_condensed}
-            lines.append(f"Candidate: `{candidate_label}`")
-            lines.append(f"Baseline: `{baseline_label}`")
+            lines.append(f"Candidate: `{candidate_label}` (run `{candidate_run_id}`)")
+            lines.append(f"Baseline: `{baseline_label}` (run `{baseline_run_id}`)")
             lines.append("Delta is candidate vs baseline. Positive % means candidate is better (faster for throughput columns; smaller is better for compression ratio).")
             lines.append("")
             lines.append("| Mode | Compression Ratio vs CSV | Dense Write (rows/s) | Dense Read (rows/s) | Sparse Write (cells/s) | Sparse Read (cells/s) |")
@@ -339,11 +375,11 @@ def generate_summary_markdown(run_dir: Path, baseline_dir: Path | None, summary_
         lines.append("No baseline run available (latest git-clean run not found).")
         lines.append("")
     elif not baseline_micro_medians:
-        lines.append(f"Baseline `{baseline_label}` has no micro benchmark data.")
+        lines.append(f"Baseline `{baseline_label}` (run `{baseline_run_id}`) has no micro benchmark data.")
         lines.append("")
     else:
-        lines.append(f"Candidate: `{candidate_label}`")
-        lines.append(f"Baseline: `{baseline_label}`")
+        lines.append(f"Candidate: `{candidate_label}` (run `{candidate_run_id}`)")
+        lines.append(f"Baseline: `{baseline_label}` (run `{baseline_run_id}`)")
         lines.append("Delta is candidate vs baseline. Positive % indicates candidate is faster (lower ns).")
         lines.append("")
         lines.append("| Group | Current Median (ns) | Baseline Median (ns) | Delta |")
@@ -410,7 +446,15 @@ def main():
         print(f"ERROR: Run directory not found: {run_dir}")
         return 1
 
-    baseline_dir = Path(args.baseline) if args.baseline else latest_clean_run(run_dir)
+    current_macro_by_type = load_macro_rows_by_type(run_dir)
+    required_macro_types = {macro_type for macro_type, rows in current_macro_by_type.items() if rows}
+    require_micro = bool(micro_group_medians(load_micro(run_dir)))
+
+    baseline_dir = Path(args.baseline) if args.baseline else latest_clean_run(
+        run_dir,
+        required_macro_types=required_macro_types,
+        require_micro=require_micro,
+    )
     if baseline_dir is not None and not baseline_dir.exists():
         baseline_dir = None
 

@@ -312,7 +312,7 @@ namespace bcsv {
  * =============================================================================
  * 
  * 1. Check if any changes exist:
- *    if (!hasAnyChanges()) return; // Skip serialization entirely
+ *    if (!changesAny()) return; // Skip serialization entirely
  * 
  * 2. Reserve space for change Bitset:
  *    bitset_size = (COLUMN_COUNT + 7) / 8; // Round up to bytes
@@ -513,22 +513,16 @@ namespace bcsv {
 
         void                        clear();
         const Layout&               layout() const noexcept         { return layout_; }
-        [[nodiscard]] bool          tracksChanges() const noexcept  { return isTrackingEnabled(Policy); }
 
-        /// Direct access to the underlying bits_ Bitset (bool values + change flags).
+
+        /// Read-only access to the underlying bits_ Bitset (bool values + change flags).
         /// When tracking enabled: bit[i] = bool value for BOOL columns, change flag for others.
         /// When tracking disabled: bit[k] = k-th bool column value.
         [[nodiscard]] const Bitset<>& changes() const noexcept      { return bits_; }
-        [[nodiscard]] Bitset<>&       changes() noexcept            { return bits_; }
-
-        // Backward-compatible wrappers (used by Writer for RowImpl/RowStaticImpl uniformity)
-        // Note: These only touch change-flag bits (non-BOOL columns). BOOL value bits are preserved.
-        // Note: checks ALL bits (bool values + change flags). Any true bit means there's
-        // data to serialize. This is intentional — bits_.any() is already O(words), and the
-        // writer must serialize when any bool is true OR any column has changed.
-        [[nodiscard]] bool          hasAnyChanges() const noexcept  { return isTrackingEnabled(Policy) ? bits_.any() : true; }
-        void                        setChanges() noexcept;
-        void                        resetChanges() noexcept;
+        [[nodiscard]] bool          changesAny() const noexcept;
+        [[nodiscard]] bool          changesEnabled() const noexcept  { return isTrackingEnabled(Policy); }
+        void                        changesSet() noexcept;
+        void                        changesReset() noexcept;
 
         [[nodiscard]] const void*   get(size_t index) const;
                                     template<typename T>
@@ -703,10 +697,10 @@ namespace bcsv {
                                     template<size_t Index = 0>
         void                        clear();
         const LayoutType&           layout() const noexcept         { return layout_; }  // Reconstruct facade
-        [[nodiscard]] bool          hasAnyChanges() const noexcept  { return isTrackingEnabled(Policy) ? changes_.any() : true; }
-        [[nodiscard]] bool          tracksChanges() const noexcept  { return isTrackingEnabled(Policy); }
-        void                        setChanges() noexcept           { if constexpr (isTrackingEnabled(Policy)) { changes_.set(); } }
-        void                        resetChanges() noexcept         { if constexpr (isTrackingEnabled(Policy)) { changes_.reset(); } }
+        [[nodiscard]] bool          changesAny() const noexcept     { return isTrackingEnabled(Policy) ? changes_.any() : true; }
+        [[nodiscard]] bool          changesEnabled() const noexcept { return isTrackingEnabled(Policy); }
+        void                        changesSet() noexcept           { if constexpr (isTrackingEnabled(Policy)) { changes_.set(); } }
+        void                        changesReset() noexcept         { if constexpr (isTrackingEnabled(Policy)) { changes_.reset(); } }
 
         // =========================================================================
         // 1. Static Access (Compile-Time Index) - Zero Overhead

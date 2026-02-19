@@ -121,7 +121,7 @@ void example_change_tracking() {
     row.set(1, int32_t(20));
     row.set(2, std::string("test"));
     
-    row.resetChanges();  // Clear change tracking
+    row.changesReset();  // Clear change tracking
     
     // Visitor with fine-grained tracking
     row.visit([](size_t index, auto& value, bool& changed) {
@@ -141,7 +141,7 @@ void example_change_tracking() {
         }
     });
     
-    std::cout << "Has changes: " << (row.hasAnyChanges() ? "yes" : "no") << "\n";
+    std::cout << "Has changes: " << (row.changesAny() ? "yes" : "no") << "\n";
 }
 
 // ============================================================================
@@ -409,7 +409,7 @@ void example_typed_visit_2param() {
     row.set<int32_t>(0, 10);
     row.set<int32_t>(1, 20);
     row.set<int32_t>(2, 30);
-    row.changes().reset();  // Clear change flags
+    row.changesReset();  // Clear change flags
 
     // 2-param visitor: all visited columns automatically marked changed
     row.visit<int32_t>(0, [](size_t, int32_t& val) {
