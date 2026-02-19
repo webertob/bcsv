@@ -141,7 +141,7 @@ namespace bcsv {
     }
 
     template<TrackingPolicy Policy>
-    inline bool RowImpl<Policy>::changesAny() const noexcept {
+    inline bool RowImpl<Policy>::trackingAnyChanged() const noexcept {
         if constexpr (isTrackingEnabled(Policy)) {
             return bits_.any(layout_.trackedMask()); // check only change flags (non-BOOL columns)
         } else {
@@ -150,7 +150,7 @@ namespace bcsv {
     }
 
     template<TrackingPolicy Policy>
-    inline void RowImpl<Policy>::changesReset() noexcept {
+    inline void RowImpl<Policy>::trackingResetChanged() noexcept {
         if constexpr (isTrackingEnabled(Policy)) {
             // Clear all change flags (non-BOOL). BOOL value bits are preserved.
             bits_ &= layout_.boolMask();
@@ -158,7 +158,7 @@ namespace bcsv {
     }
 
     template<TrackingPolicy Policy>
-    inline void RowImpl<Policy>::changesSet() noexcept {
+    inline void RowImpl<Policy>::trackingSetAllChanged() noexcept {
         if constexpr (isTrackingEnabled(Policy)) {
             // Set all change flags (non-BOOL). BOOL value bits are preserved.
             bits_ |= layout_.trackedMask();
@@ -826,7 +826,6 @@ namespace bcsv {
      * @see row_visitors.h for concepts, helper types, and more examples
      * @see Row::visit(Visitor&&) const for read-only version
      * @see Row::visit(size_t, Visitor&&, size_t) for visiting a range or single column
-     * @see Row::changes() to access the change tracking Bitset
      */
     template<TrackingPolicy Policy>
     template<RowVisitor Visitor>

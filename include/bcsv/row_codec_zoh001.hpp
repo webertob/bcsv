@@ -52,9 +52,7 @@ void RowCodecZoH001<LayoutType, Policy>::setup(const LayoutType& layout) {
 
 template<typename LayoutType, TrackingPolicy Policy>
 void RowCodecZoH001<LayoutType, Policy>::reset() noexcept {
-    // ZoH is stateless within this codec — the Writer owns prev_buffer_ and
-    // repeat detection. The Row's own change tracking (bits_) provides the
-    // delta information. reset() is provided for interface uniformity.
+    first_row_in_packet_ = true;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -62,18 +60,24 @@ void RowCodecZoH001<LayoutType, Policy>::reset() noexcept {
 // ────────────────────────────────────────────────────────────────────────────
 template<typename LayoutType, TrackingPolicy Policy>
 std::span<std::byte> RowCodecZoH001<LayoutType, Policy>::serialize(
-    const RowType& row, ByteBuffer& buffer) const
+    RowType& row, ByteBuffer& buffer)
 {
     if constexpr (isTrackingEnabled(Policy)) {
         // ── SHORTCUT: row.bits_ IS the wire change header ────────────────
         // When Enabled, row.bits_ is columnCount-sized with bool values at
         // bool positions and change flags at non-bool positions — exactly
         // the ZoH wire format. Use it directly (zero intermediate copy).
-        const auto& wireBits = row.bits_;
+        auto& wireBits = row.bits_;
+
+        if (first_row_in_packet_) {
+            row.trackingSetAllChanged();
+            first_row_in_packet_ = false;
+        }
 
         const size_t bufferSizeOld = buffer.size();
 
         if (!wireBits.any()) {
+            row.trackingResetChanged();
             return std::span<std::byte>{};
         }
 
@@ -82,6 +86,7 @@ std::span<std::byte> RowCodecZoH001<LayoutType, Policy>::serialize(
         std::memcpy(&buffer[bufferSizeOld], wireBits.data(), headerSize);
 
         if (!wireBits.any(layout_->trackedMask())) {
+            row.trackingResetChanged();
             return {&buffer[bufferSizeOld], headerSize};
         }
 
@@ -109,6 +114,7 @@ std::span<std::byte> RowCodecZoH001<LayoutType, Policy>::serialize(
                 }
             }
         }
+        row.trackingResetChanged();
         return {&buffer[bufferSizeOld], buffer.size() - bufferSizeOld};
 
     } else {
@@ -279,7 +285,7 @@ void RowCodecZoH001<LayoutStatic<ColumnTypes...>, Policy>::setup(const LayoutTyp
 
 template<TrackingPolicy Policy, typename... ColumnTypes>
 void RowCodecZoH001<LayoutStatic<ColumnTypes...>, Policy>::reset() noexcept {
-    // Stateless within codec — see primary template comment.
+    first_row_in_packet_ = true;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -288,15 +294,21 @@ void RowCodecZoH001<LayoutStatic<ColumnTypes...>, Policy>::reset() noexcept {
 template<TrackingPolicy Policy, typename... ColumnTypes>
 std::span<std::byte>
 RowCodecZoH001<LayoutStatic<ColumnTypes...>, Policy>::serialize(
-    const RowType& row, ByteBuffer& buffer) const
+    RowType& row, ByteBuffer& buffer)
 {
     if constexpr (isTrackingEnabled(Policy)) {
         // ── SHORTCUT: row.changes_ is columnCount-sized = wire-compatible ──
         // Copy to local rowHeader (needed because bool positions get
         // overwritten with actual values during serialization).
+        if (first_row_in_packet_) {
+            row.trackingSetAllChanged();
+            first_row_in_packet_ = false;
+        }
+
         const size_t bufferSizeOld = buffer.size();
 
-        if (!row.changesAny()) {
+        if (!row.trackingAnyChanged()) {
+            row.trackingResetChanged();
             return std::span<std::byte>{};
         }
 
@@ -307,6 +319,7 @@ RowCodecZoH001<LayoutStatic<ColumnTypes...>, Policy>::serialize(
 
         std::memcpy(&buffer[bufferSizeOld], rowHeader.data(), rowHeader.sizeBytes());
 
+    row.trackingResetChanged();
         return {&buffer[bufferSizeOld], buffer.size() - bufferSizeOld};
 
     } else {

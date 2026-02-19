@@ -311,8 +311,8 @@ namespace bcsv {
  * ZoH SERIALIZATION ALGORITHM
  * =============================================================================
  * 
- * 1. Check if any changes exist:
- *    if (!changesAny()) return; // Skip serialization entirely
+ * 1. Check if any non-BOOL changes exist (internal tracking state):
+ *    if (!trackingAnyChanged()) return; // Skip serialization entirely
  * 
  * 2. Reserve space for change Bitset:
  *    bitset_size = (COLUMN_COUNT + 7) / 8; // Round up to bytes
@@ -503,6 +503,10 @@ namespace bcsv {
             }
         }
 
+        [[nodiscard]] bool          trackingAnyChanged() const noexcept;
+        void                        trackingSetAllChanged() noexcept;
+        void                        trackingResetChanged() noexcept;
+
     public:
         RowImpl() = delete; // no default constructor, we always need a layout
         RowImpl(const Layout& layout);
@@ -514,15 +518,6 @@ namespace bcsv {
         void                        clear();
         const Layout&               layout() const noexcept         { return layout_; }
 
-
-        /// Read-only access to the underlying bits_ Bitset (bool values + change flags).
-        /// When tracking enabled: bit[i] = bool value for BOOL columns, change flag for others.
-        /// When tracking disabled: bit[k] = k-th bool column value.
-        [[nodiscard]] const Bitset<>& changes() const noexcept      { return bits_; }
-        [[nodiscard]] bool          changesAny() const noexcept;
-        [[nodiscard]] bool          changesEnabled() const noexcept  { return isTrackingEnabled(Policy); }
-        void                        changesSet() noexcept;
-        void                        changesReset() noexcept;
 
         [[nodiscard]] const void*   get(size_t index) const;
                                     template<typename T>
@@ -575,8 +570,6 @@ namespace bcsv {
     using RowTracked = RowImpl<Policy>;
 
     using Row = RowImpl<TrackingPolicy::Disabled>;
-
-    using RowTracking = RowImpl<TrackingPolicy::Enabled>;
 
     /* RowView provides a direct view into a serilized buffer, partially supporting the row interface. Intended for sparse data access, avoiding costly full deserialization.
        Currently we only support the basic get/set interface for individual columns, into a flat serilized buffer. We do not support ZoH format or more complex encoding schemes.
@@ -686,6 +679,10 @@ namespace bcsv {
         typename LayoutType::ColTypes   data_;
         Bitset<COLUMN_COUNT>            changes_;
 
+        [[nodiscard]] bool              trackingAnyChanged() const noexcept     { return isTrackingEnabled(Policy) ? changes_.any() : true; }
+        void                            trackingSetAllChanged() noexcept         { if constexpr (isTrackingEnabled(Policy)) { changes_.set(); } }
+        void                            trackingResetChanged() noexcept          { if constexpr (isTrackingEnabled(Policy)) { changes_.reset(); } }
+
     public:
         // Constructors
         RowStaticImpl() = delete;
@@ -697,10 +694,6 @@ namespace bcsv {
                                     template<size_t Index = 0>
         void                        clear();
         const LayoutType&           layout() const noexcept         { return layout_; }  // Reconstruct facade
-        [[nodiscard]] bool          changesAny() const noexcept     { return isTrackingEnabled(Policy) ? changes_.any() : true; }
-        [[nodiscard]] bool          changesEnabled() const noexcept { return isTrackingEnabled(Policy); }
-        void                        changesSet() noexcept           { if constexpr (isTrackingEnabled(Policy)) { changes_.set(); } }
-        void                        changesReset() noexcept         { if constexpr (isTrackingEnabled(Policy)) { changes_.reset(); } }
 
         // =========================================================================
         // 1. Static Access (Compile-Time Index) - Zero Overhead
@@ -762,9 +755,6 @@ namespace bcsv {
 
     template<TrackingPolicy Policy, typename... ColumnTypes>
     using RowStaticTracked = RowStaticImpl<Policy, ColumnTypes...>;
-
-    template<typename... ColumnTypes>
-    using RowStaticTracking = RowStaticImpl<TrackingPolicy::Enabled, ColumnTypes...>;
 
 
     /* Provides a zero-copy view into a buffer with compile-time layout. 

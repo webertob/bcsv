@@ -32,9 +32,11 @@
  *
  * The Writer is responsible for:
  *   - Calling reset() at packet boundaries
- *   - Calling row.changesSet() before the first row in a packet (Enabled only)
- *   - Calling row.changesReset() after each serialize (Enabled only)
  *   - Detecting ZoH repeats (byte-identical serialized rows → write length 0)
+ *
+ * Change tracking is internal-only:
+ *   - reset() marks next row as full-row emit in Enabled mode
+ *   - serialize() updates internal tracking flags as needed
  *
  * Template parameters:
  *   LayoutType     — bcsv::Layout (dynamic) or bcsv::LayoutStatic<Ts...>
@@ -75,7 +77,7 @@ public:
     /// The caller (Writer) is responsible for detecting byte-identical repeats
     /// of the returned span and writing length 0 for those as well.
     [[nodiscard]] std::span<std::byte> serialize(
-        const RowType& row, ByteBuffer& buffer) const;
+        RowType& row, ByteBuffer& buffer);
 
     /// Deserialize a ZoH-encoded buffer into the row.
     /// Only changed columns are updated — unchanged columns retain their
@@ -109,6 +111,7 @@ private:
     mutable Bitset<> wire_bits_;  // Wire change header (columnCount-sized).
                                   // Shortcut when Enabled: unused — row.bits_ IS wire format.
                                   // General when Disabled: intermediate for value comparison.
+    bool first_row_in_packet_{true};
 };
 
 
@@ -131,7 +134,7 @@ public:
 
     // ── Bulk operations (Row — throughput path) ──────────────────────────
     [[nodiscard]] std::span<std::byte> serialize(
-        const RowType& row, ByteBuffer& buffer) const;
+        RowType& row, ByteBuffer& buffer);
 
     void deserialize(
         std::span<const std::byte> buffer, RowType& row) const;
@@ -159,6 +162,7 @@ private:
     mutable Bitset<COLUMN_COUNT> wire_bits_;  // Wire change header.
                                                // Shortcut when Enabled: unused — row.changes_ IS wire format.
                                                // General when Disabled: intermediate for value comparison.
+    bool first_row_in_packet_{true};
 
     // ── Compile-time recursive helpers ───────────────────────────────────
     template<size_t Index>
