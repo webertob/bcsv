@@ -431,35 +431,6 @@ TEST(VisitTest, RowMutableVisit) {
     EXPECT_NEAR(row.get<float>(2), 60.0f, 0.01f);
 }
 
-TEST(VisitTest, RowMutableVisitWithChangeTracking) {
-    Layout layout({
-        {"a", ColumnType::INT32},
-        {"b", ColumnType::INT32},
-        {"c", ColumnType::INT32}
-    });
-    
-    RowTracked<TrackingPolicy::Enabled> row(layout);
-    row.set(0, 10);
-    row.set(1, 20);
-    row.set(2, 30);
-    row.changesReset();  // Clear changes
-    
-    EXPECT_FALSE(row.changesAny());
-    
-    // Mutable visit should mark all columns as changed
-    row.visit([&](size_t, auto& value, bool&) {
-        using T = std::decay_t<decltype(value)>;
-        if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
-            value += 5;
-        }
-    });
-    
-    EXPECT_TRUE(row.changesAny());
-    EXPECT_EQ(row.get<int32_t>(0), 15);
-    EXPECT_EQ(row.get<int32_t>(1), 25);
-    EXPECT_EQ(row.get<int32_t>(2), 35);
-}
-
 TEST(VisitTest, RowMutableVisitStrings) {
     Layout layout({
         {"name", ColumnType::STRING},
@@ -504,30 +475,6 @@ TEST(VisitTest, RowStaticMutableVisit) {
     EXPECT_EQ(row.get<0>(), 15);
     EXPECT_NEAR(row.get<1>(), 30.0, 0.01);
     EXPECT_NEAR(row.get<2>(), 45.0f, 0.01f);
-}
-
-TEST(VisitTest, RowStaticMutableVisitWithTracking) {
-    using LayoutType = LayoutStatic<int32_t, int32_t>;
-    LayoutType layout({"x", "y"});
-    
-    RowStaticTracked<TrackingPolicy::Enabled, int32_t, int32_t> row(layout);
-    row.set<0>(100);
-    row.set<1>(200);
-    row.changesReset();
-    
-    EXPECT_FALSE(row.changesAny());
-    
-    // Mutable visit should mark all as changed
-    row.visit([&](auto, auto& value, bool&) {
-        using T = std::decay_t<decltype(value)>;
-        if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
-            value += 50;
-        }
-    });
-    
-    EXPECT_TRUE(row.changesAny());
-    EXPECT_EQ(row.get<0>(), 150);
-    EXPECT_EQ(row.get<1>(), 250);
 }
 
 TEST(VisitTest, RowViewMutableVisitPrimitives) {
@@ -775,108 +722,6 @@ TEST(VisitTest, MutableVisitNormalization) {
     EXPECT_NEAR(normalized_mag, 1.0, 0.0001);
 }
 
-TEST(VisitTest, FineGrainedChangeTracking) {
-    Layout layout({
-        {"a", ColumnType::INT32},
-        {"b", ColumnType::INT32},
-        {"c", ColumnType::INT32}
-    });
-    
-    RowTracked<TrackingPolicy::Enabled> row(layout);
-    row.set(0, 10);
-    row.set(1, 20);
-    row.set(2, 30);
-    row.changesReset();
-    
-    EXPECT_FALSE(row.changes().any());
-    
-    // Fine-grained visitor: only modifies columns where value < 25
-    // Uses optional 3rd parameter to control change tracking
-    row.visit([&](size_t, auto& value, bool& changed) {
-        using T = std::decay_t<decltype(value)>;
-        if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
-            if (value < 25) {
-                value += 100;  // Modify
-                changed = true;  // Mark as changed
-            } else {
-                changed = false;  // Explicitly mark as NOT changed
-            }
-        }
-    });
-    
-    // Only columns 0 and 1 should be marked as changed (values were < 25)
-    EXPECT_EQ(row.get<int32_t>(0), 110);  // Modified
-    EXPECT_EQ(row.get<int32_t>(1), 120);  // Modified
-    EXPECT_EQ(row.get<int32_t>(2), 30);   // NOT modified
-    
-    // Can verify via serialization - ZoH would only include changed columns
-    ByteBuffer buffer;
-    auto serialized = codecSerializeZoH(row, buffer, layout);
-    
-    // With fine-grained tracking, only 2 columns changed
-    // Expected size: bitset (1 byte) + 2 * sizeof(int32_t) = 1 + 8 = 9 bytes
-    EXPECT_EQ(serialized.size(), 9);
-}
-
-TEST(VisitTest, FineGrainedChangeTrackingRowStatic) {
-    using LayoutType = LayoutStatic<int32_t, int32_t, int32_t, int32_t>;
-    LayoutType layout({"a", "b", "c", "d"});
-    
-    RowStaticTracked<TrackingPolicy::Enabled, int32_t, int32_t, int32_t, int32_t> row(layout);
-    row.set<0>(5);
-    row.set<1>(15);
-    row.set<2>(25);
-    row.set<3>(35);
-    row.changesReset();
-    
-    // Conditional modification with fine-grained tracking
-    row.visit([&](auto, auto& value, bool& changed) {
-        using T = std::decay_t<decltype(value)>;
-        if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
-            if (value % 10 == 5) {  // Only modify values ending in 5
-                value *= 2;
-                changed = true;
-            } else {
-                changed = false;
-            }
-        } else {
-            changed = false;
-        }
-    });
-    
-    EXPECT_EQ(row.get<0>(), 10);   // Modified (was 5)
-    EXPECT_EQ(row.get<1>(), 30);   // Modified (was 15)
-    EXPECT_EQ(row.get<2>(), 50);   // Modified (was 25)
-    EXPECT_EQ(row.get<3>(), 70);   // Modified (was 35)
-    
-    // All were actually modified in this case
-    EXPECT_TRUE(row.changesAny());
-}
-
-TEST(VisitTest, IgnoringChangeFlagParameter) {
-    Layout layout({
-        {"x", ColumnType::INT32},
-        {"y", ColumnType::INT32}
-    });
-    
-    RowTracked<TrackingPolicy::Enabled> row(layout);
-    row.set(0, 10);
-    row.set(1, 20);
-    row.changesReset();
-    
-    // Visitor with unnamed 3rd parameter - still marks all as changed
-    row.visit([&](size_t, auto& value, bool&) {
-        using T = std::decay_t<decltype(value)>;
-        if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
-            value *= 2;
-        }
-    });
-    
-    EXPECT_EQ(row.get<int32_t>(0), 20);
-    EXPECT_EQ(row.get<int32_t>(1), 40);
-    EXPECT_TRUE(row.changesAny());
-}
-
 // ============================================================================
 // Test: visit<T>() — Type-Safe Typed Visit (Compile-Time Dispatch)
 // ============================================================================
@@ -1006,43 +851,6 @@ TEST(VisitTest, TypedVisitString) {
     
     EXPECT_EQ(row.get<std::string>(0), "hello!");
     EXPECT_EQ(row.get<std::string>(1), "world!");
-}
-
-TEST(VisitTest, TypedVisitWithChangeTracking) {
-    Layout layout({
-        {"a", ColumnType::INT32},
-        {"b", ColumnType::INT32},
-        {"c", ColumnType::INT32}
-    });
-    
-    RowTracked<TrackingPolicy::Enabled> row(layout);
-    row.set(0, 10);
-    row.set(1, 20);
-    row.set(2, 30);
-    row.changesReset();
-    
-    EXPECT_FALSE(row.changesAny());
-    
-    // Typed visit: only modify columns where value > 15
-    row.visit<int32_t>(0, [](size_t, int32_t& val, bool& changed) {
-        if (val > 15) {
-            val += 100;
-            changed = true;
-        } else {
-            changed = false;
-        }
-    }, 3);
-    
-    EXPECT_EQ(row.get<int32_t>(0), 10);   // Not modified
-    EXPECT_EQ(row.get<int32_t>(1), 120);  // Modified
-    EXPECT_EQ(row.get<int32_t>(2), 130);  // Modified
-    EXPECT_TRUE(row.changesAny());
-    
-    // Verify ZoH serialization only includes changed columns
-    ByteBuffer buffer;
-    auto serialized = codecSerializeZoH(row, buffer, layout);
-    // bitset (1 byte) + 2 * int32 = 1 + 8 = 9 bytes
-    EXPECT_EQ(serialized.size(), 9);
 }
 
 TEST(VisitTest, TypedVisitTypeMismatchThrows) {

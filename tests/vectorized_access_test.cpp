@@ -91,26 +91,6 @@ TEST(RowVectorizedTest, GetMultipleDoubles) {
     EXPECT_DOUBLE_EQ(buffer[2], 3.5) << "Vectorized double get failed: column 2 expected 3.5";
 }
 
-TEST(RowVectorizedTest, ChangeTrackingMultiple) {
-    Layout layout;
-    layout.addColumn({"col1", ColumnType::INT32});
-    layout.addColumn({"col2", ColumnType::INT32});
-    layout.addColumn({"col3", ColumnType::INT32});
-
-    RowTracked<TrackingPolicy::Enabled> row(layout);
-    row.changesReset();
-
-    EXPECT_FALSE(row.changesAny()) 
-        << "After changesReset(), changesAny() should return false";
-
-    // Set multiple values
-    int32_t values[] = {10, 20, 30};
-    row.set(0, std::span<const int32_t>{values, 3});
-
-    EXPECT_TRUE(row.changesAny()) 
-        << "After vectorized set, changesAny() should return true";
-}
-
 TEST(RowVectorizedTest, BoundaryCheck) {
     Layout layout;
     layout.addColumn({"col1", ColumnType::INT32});
@@ -210,20 +190,6 @@ TEST(RowStaticVectorizedTest, CompileTimeGetPartialRange) {
     EXPECT_EQ(arr2[1], 5);
 }
 
-TEST(RowStaticVectorizedTest, CompileTimeChangeTracking) {
-    using LayoutType = LayoutStatic<int32_t, int32_t, int32_t>;
-    LayoutType layout({"col1", "col2", "col3"});
-    RowStaticTracked<TrackingPolicy::Enabled, int32_t, int32_t, int32_t> row(layout);
-    row.changesReset();
-    EXPECT_FALSE(row.changesAny());
-
-    // Set multiple values
-    std::array<int32_t, 3> arr = {10, 20, 30};
-    row.set<0, int32_t, 3>(arr);
-
-    EXPECT_TRUE(row.changesAny());
-}
-
 // =============================================================================
 // RowStatic Runtime Vectorized Access Tests
 // =============================================================================
@@ -283,21 +249,6 @@ TEST(RowStaticVectorizedTest, RuntimeBoundaryCheck) {
     std::span<int32_t> buffer_span{buffer, 3};
     // This should throw - trying to read 3 columns starting at index 1, but only 2 columns total
     EXPECT_THROW(row.get(1, buffer_span), std::out_of_range);
-}
-
-TEST(RowStaticVectorizedTest, RuntimeChangeTracking) {
-    using LayoutType = LayoutStatic<int32_t, int32_t, int32_t>;
-    LayoutType layout({"col1", "col2", "col3"});
-    RowStaticTracked<TrackingPolicy::Enabled, int32_t, int32_t, int32_t> row(layout);
-    row.changesReset();
-    EXPECT_FALSE(row.changesAny());
-
-    // Set multiple values via runtime interface
-    int32_t values[] = {10, 20, 30};
-    std::span<const int32_t> values_span{values, 3};
-    row.set(0, values_span);
-
-    EXPECT_TRUE(row.changesAny());
 }
 
 // =============================================================================

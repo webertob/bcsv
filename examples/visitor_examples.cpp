@@ -121,8 +121,6 @@ void example_change_tracking() {
     row.set(1, int32_t(20));
     row.set(2, std::string("test"));
     
-    row.changesReset();  // Clear change tracking
-    
     // Visitor with fine-grained tracking
     row.visit([](size_t index, auto& value, bool& changed) {
         using T = std::decay_t<decltype(value)>;
@@ -141,7 +139,7 @@ void example_change_tracking() {
         }
     });
     
-    std::cout << "Has changes: " << (row.changesAny() ? "yes" : "no") << "\n";
+    std::cout << "Updated numeric columns via visitor callback\n";
 }
 
 // ============================================================================
@@ -405,12 +403,10 @@ void example_typed_visit_2param() {
         {"z", ColumnType::INT32}
     });
 
-    RowTracking row(layout);
+    RowTracked<TrackingPolicy::Enabled> row(layout);
     row.set<int32_t>(0, 10);
     row.set<int32_t>(1, 20);
     row.set<int32_t>(2, 30);
-    row.changesReset();  // Clear change flags
-
     // 2-param visitor: all visited columns automatically marked changed
     row.visit<int32_t>(0, [](size_t, int32_t& val) {
         val += 100;
@@ -418,8 +414,7 @@ void example_typed_visit_2param() {
 
     std::cout << "  After adding 100 to all columns:\n";
     row.visitConst<int32_t>(0, [&](size_t col, const int32_t& val) {
-        std::cout << "    " << layout.columnName(col) << " = " << val
-                  << " (changed: " << row.changes()[col] << ")\n";
+        std::cout << "    " << layout.columnName(col) << " = " << val << "\n";
     }, 3);
 }
 

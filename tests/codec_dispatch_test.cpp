@@ -232,25 +232,6 @@ TEST_F(CodecDispatchFlexTest, ZoHFile_DisabledReader) {
     reader.close();
 }
 
-// Verify Flat+Enabled reader has change tracking set after deserialization
-TEST_F(CodecDispatchFlexTest, FlatFile_EnabledReader_ChangeTracking) {
-    const auto path = testPath("dispatch_flat_enabled_tracking.bcsv");
-    writeFlatFlexible(path);
-
-    bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Enabled> reader;
-    ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
-
-    while (reader.readNext()) {
-        const auto& row = reader.row();
-        // After flat deserialization with Enabled: all non-BOOL columns should
-        // be marked as changed (setChanges was called in flat codec).
-        EXPECT_TRUE(row.changesAny())
-            << "Flat+Enabled: after deserialize, changes should be set";
-    }
-    reader.close();
-}
-
-
 // ════════════════════════════════════════════════════════════════════════════
 // Static Layout cross-combination tests
 // ════════════════════════════════════════════════════════════════════════════
