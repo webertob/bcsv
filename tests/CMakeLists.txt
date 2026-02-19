@@ -52,6 +52,9 @@ target_link_libraries(bcsv_gtest PRIVATE
     gtest_main
 )
 
+include(GoogleTest)
+gtest_discover_tests(bcsv_gtest DISCOVERY_TIMEOUT 60)
+
 # Set output directory
 set_target_properties(bcsv_gtest PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin

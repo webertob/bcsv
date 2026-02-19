@@ -137,6 +137,8 @@ endif()
 
 option(BUILD_TESTS "Build test programs" ON)
 if(BUILD_TESTS)
+    include(CTest)
+    enable_testing()
     add_subdirectory(tests)
 endif()
 
@@ -197,12 +199,14 @@ install(TARGETS bcsv_c_api
 # ============================================================================
 # Test Programs
 # ============================================================================
-if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME)
+if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTS)
     add_executable(test_row_api tests/bcsv_c_api_row_test.c)
     target_link_libraries(test_row_api bcsv_c_api)
     target_include_directories(test_row_api PRIVATE ${CMAKE_SOURCE_DIR})
+    add_test(NAME test_row_api COMMAND $<TARGET_FILE:test_row_api>)
     
     add_executable(test_c_api tests/bcsv_c_api_test.c)
     target_link_libraries(test_c_api bcsv_c_api)
     target_include_directories(test_c_api PRIVATE ${CMAKE_SOURCE_DIR})
+    add_test(NAME test_c_api COMMAND $<TARGET_FILE:test_c_api>)
 endif()
