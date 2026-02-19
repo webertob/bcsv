@@ -47,16 +47,15 @@ namespace BCSV.Examples
                 {
                     Debug.Log("✓ Created row with layout");
 
-                    // Change tracking is compile-time only (Row<> does not enable it)
-                    Debug.Log($"Changes enabled: {row.ChangesEnabled}");
-                    Debug.Log($"Has changes initially: {row.ChangesAny}");
+                    // Public row-level change tracking APIs were removed; tracking is internal-only
+                    Debug.Log("Using internal codec-managed tracking (no public row change flags)");
 
                     // Set some values
                     row.SetInt32(0, 42);
                     row.SetString(1, "Test");
                     row.SetDouble(2, 3.14159);
                     
-                    Debug.Log($"Has changes after setting values: {row.ChangesAny}");
+                    Debug.Log("Set values successfully");
 
                     // Test cloning
                     using (var clonedRow = BcsvRow.Clone(row))

@@ -58,38 +58,6 @@ namespace BCSV
         #region Common Row Operations
 
         /// <summary>
-        /// Check if this row has any changes
-        /// </summary>
-        public bool ChangesAny
-        {
-            get { return NativeMethods.bcsv_row_changes_any(Handle); }
-        }
-
-        /// <summary>
-        /// Check if this row is currently tracking changes
-        /// </summary>
-        public bool ChangesEnabled
-        {
-            get { return NativeMethods.bcsv_row_changes_enabled(Handle); }
-        }
-
-        /// <summary>
-        /// Mark all columns as changed
-        /// </summary>
-        public void ChangesSet()
-        {
-            NativeMethods.bcsv_row_changes_set(Handle);
-        }
-
-        /// <summary>
-        /// Reset all change flags
-        /// </summary>
-        public void ChangesReset()
-        {
-            NativeMethods.bcsv_row_changes_reset(Handle);
-        }
-
-        /// <summary>
         /// Clear all values in this row to their default values
         /// </summary>
         public virtual void Clear()
