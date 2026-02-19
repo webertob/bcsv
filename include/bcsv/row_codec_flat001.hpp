@@ -187,7 +187,7 @@ inline void RowCodecFlat001<LayoutType, Policy>::deserialize(
     // When tracking is enabled, mark all non-BOOL columns as changed.
     // Flat format carries full row data — every column is "changed".
     if constexpr (isTrackingEnabled(Policy)) {
-        row.changesSet();
+        row.trackingSetAllChanged();
     }
 }
 
@@ -227,12 +227,12 @@ inline std::span<const std::byte> RowCodecFlat001<LayoutType, Policy>::readColum
         }
         uint16_t len = unalignedRead<uint16_t>(&buffer[lens_cursor]);
         if (pay_cursor + len > buffer.size()) [[unlikely]] return {};
-        return { &buffer[pay_cursor], len };
+        return { buffer.data() + pay_cursor, len };
     } else {
         // Scalar: absolute position = wire_bits_size_ + section-relative offset
         size_t absOff = wire_bits_size_ + off;
         size_t fieldLen = sizeOf(type);
-        return { &buffer[absOff], fieldLen };
+        return { buffer.data() + absOff, fieldLen };
     }
 }
 
@@ -329,7 +329,7 @@ inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy>::deserialize(
     // When tracking is enabled, mark all non-BOOL columns as changed.
     // Flat format carries full row data — every column is "changed".
     if constexpr (isTrackingEnabled(Policy)) {
-        row.changesSet();
+        row.trackingSetAllChanged();
     }
 }
 
@@ -401,11 +401,11 @@ inline std::span<const std::byte> RowCodecFlat001<LayoutStatic<ColumnTypes...>, 
         }
         uint16_t len = unalignedRead<uint16_t>(&buffer[lens_cursor]);
         if (pay_cursor + len > buffer.size()) [[unlikely]] return {};
-        return { &buffer[pay_cursor], len };
+        return { buffer.data() + pay_cursor, len };
     } else {
         size_t absOff = WIRE_BITS_SIZE + off;
         size_t fieldLen = sizeOf(type);
-        return { &buffer[absOff], fieldLen };
+        return { buffer.data() + absOff, fieldLen };
     }
 }
 
