@@ -122,20 +122,18 @@ Users interact with these types (declared in `include/bcsv/`):
 |-------|------|------|
 | `Layout` | layout.h | Dynamic column schema (names, types). Observer pattern syncs attached Rows. |
 | `LayoutStatic<Types...>` | layout.h | Compile-time fixed schema, variadic template. |
-| `Row` | row.h | In-memory row for read/write (`changesEnabled()==false`). Alias for `RowImpl<TrackingPolicy::Disabled>`. |
-| `RowTracking` | row.h | Row with ZoH change tracking enabled (`changesEnabled()==true`). Alias for `RowImpl<TrackingPolicy::Enabled>`. |
+| `Row` | row.h | In-memory row for read/write. Alias for `RowImpl<TrackingPolicy::Disabled>`. |
+| `RowTracked<Policy>` | row.h | Policy-based row alias for advanced use (e.g., `TrackingPolicy::Enabled` with ZoH codec). |
 | `RowView` | row.h | Zero-copy read-only view into serialized row buffer (dynamic layout). |
 | `RowStatic<Types...>` | row.h | Compile-time typed row (tracking disabled). |
-| `RowStaticTracking<Types...>` | row.h | Static row with ZoH tracking enabled (`changesEnabled()==true`). |
+| `RowStaticTracked<Policy, Types...>` | row.h | Policy-based static row alias for advanced use. |
 | `RowViewStatic<Types...>` | row.h | Zero-copy view for static layouts. |
 | `Reader<LayoutType, Policy>` | reader.h | Stream-based BCSV file reader with LZ4 decompression. |
 | `Writer<LayoutType, Policy>` | writer.h | Stream-based BCSV file writer with LZ4 compression, optional ZoH. |
 | `RowCodecFlat001<Layout, Policy>` | row_codec_flat001.h | Dense flat row codec — serialize, deserialize, zero-copy column access. |
 | `RowCodecZoH001<Layout, Policy>` | row_codec_zoh001.h | Zero-Order-Hold codec — delta-encodes unchanged columns. |
 
-> **Note:** `RowImpl<Policy>` is an internal implementation detail — never mention it in user-facing code or docs.
-
-Change-tracking API naming is standardized as `changesEnabled()`, `changesAny()`, `changesSet()`, and `changesReset()`.
+> **Note:** public row change-tracking methods were removed. Tracking is internal-only and consumed by codecs (especially ZoH).
 
 ### Core workflow pattern
 

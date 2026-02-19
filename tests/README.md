@@ -340,7 +340,7 @@ Use this checklist when adding new Row API functionality:
 ### For New Row Functions
 - [ ] Add to `row_parameterized_test.cpp` (all types)
 - [ ] Test with vectorized access if applicable
-- [ ] Test both `changesEnabled()==true/false` and `changesAny()` behavior
+- [ ] If ZoH behavior is affected: add codec-level tests for internal tracking semantics
 - [ ] Test serialization/deserialization
 - [ ] Add error cases (type mismatch, out of bounds)
 - [ ] Update this README with new coverage

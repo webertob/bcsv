@@ -144,7 +144,7 @@ Lean checklist gate (for every non-trivial item):
                 - get<T>/ref<T>() return by value. Removed bool_cache_. Supports string_view and span<const char> for zero-copy reads.
                 - Removed ref<T>() const (was duplicate of get<T>). Kept mutable ref<T>() for both Row and RowStatic.
                 - changesSet/changesReset use bitwise mask ops (|= trackedMask, &= boolMask) instead of loops.
-                - changesAny() uses bits_.any() — intentionally includes bool values (any true bit = data to serialize).
+                - Internal tracking predicate uses bits_.any() — intentionally includes bool values (any true bit = data to serialize).
                 - Fixed thread_local bool aliasing in raw get(size_t): alternating 2-slot buffer.
             Note: Raw get(size_t) returning const void* is a legacy API, not called externally. Pointer to bool
                   columns is only valid until the next get(size_t) call for a bool column on the same thread.
@@ -568,7 +568,7 @@ Parking LOT:
 
 
 LOW PRIORITY / Known Issues (from 8.h review, 2026-02-12):
-        - changesAny() conflates bool values with change flags. Semantically correct for ZoH wire protocol
+        - Internal tracking predicate conflates bool values with change flags. Semantically correct for ZoH wire protocol
             but name is broad; keep behavior documented for callers.
     - serializeToZoH writes raw bits_.data() via memcpy — architecture-dependent byte order. 
       Not portable across different endianness or word sizes. Document in wire format spec if cross-platform needed.

@@ -270,15 +270,15 @@ in-memory data storage.
 #### Architecture
 
 TrackingPolicy and file codec are **orthogonal axes**:
-- **TrackingPolicy** is the programmer's intent: "do I need `changesEnabled()`/`changesAny()` semantics in my Row?"
+- **TrackingPolicy** configures row/codec behavior (storage shape and internal tracking flow).
 - **File codec** is a file property: "how are rows encoded on disk?"
 
 All four combinations work:
 
 | | Flat001 file | ZoH001 file |
 |---|---|---|
-| **Disabled** | Natural fit. Full decode, no tracking (`changesEnabled()==false`). | ZoH codec reads wire header into internal `wire_bits_`. Extracts bools → `row.bits_[boolIdx]`. No per-column change flags are surfaced. |
-| **Enabled** | Full decode. All non-BOOL columns marked changed (`changesAny()==true`). | Fast path: wire header → `row.bits_` directly (zero-copy alias). |
+| **Disabled** | Natural fit. Full decode without exposed tracking surface. | ZoH codec reads wire header into internal `wire_bits_`. Extracts bools → `row.bits_[boolIdx]`. No per-column change flags are surfaced. |
+| **Enabled** | Full decode. Codec marks internal non-BOOL tracking bits as changed after deserialize. | Fast path: wire header → `row.bits_` directly (zero-copy alias) for internal tracking and bool values. |
 
 ```
 Writer ──── RowCodecType ──▶ RowCodecFlat001  or  RowCodecZoH001
