@@ -28,6 +28,35 @@ cmake --preset ninja-release
 cmake --build --preset ninja-release-build -j$(nproc) --target bench_macro_datasets bench_micro_types
 ```
 
+## Direct Macro CLI Quick Start
+
+Use the macro executable directly when you want fast local iteration on profile/scenario selection.
+
+```bash
+# Show CLI overview, options, and examples
+build/ninja-release/bin/bench_macro_datasets --help
+
+# Run one profile with selected scenarios
+build/ninja-release/bin/bench_macro_datasets \
+	--profile=rtl_waveform \
+	--rows=10000 \
+	--scenario=baseline,sparse_columns_k1
+
+# Force narrow-terminal summary output
+build/ninja-release/bin/bench_macro_datasets \
+	--size=S \
+	--summary=compact \
+	--output=macro_small_results.json
+```
+
+Summary modes:
+- `--summary=full` (default): full metrics table
+- `--summary=compact`: terminal-friendly compact table (fits narrow terminals)
+
+Discovery helpers:
+- `--list` prints all profile names
+- `--list-scenarios` prints all scenario IDs
+
 ## Streamlined CLI
 
 ```bash
@@ -110,6 +139,33 @@ python3 benchmark/interleaved_compare.py \
 	--run-type MACRO-SMALL
 ```
 
+### True Interleaved Pair Runner (Head-to-Head)
+
+For strict interleaving semantics (`for repetition -> for benchmark type -> run A/B pair`),
+use the dedicated runner below. It executes each pair **in parallel** (no pinning by default)
+to expose both candidates to similar thermal/power conditions.
+
+```bash
+python3 benchmark/run_interleaved_pairs.py \
+	--baseline-bin /tmp/bcsv/<git-hash>/build/ninja-release/bin \
+	--candidate-bin build/ninja-release/bin \
+	--baseline-label git-<git-hash>-clean \
+	--candidate-label WIP \
+	--types MICRO,MACRO-SMALL \
+	--repetitions 5 \
+	--results-root benchmark/results/$(hostname)/interleaved_h2h
+```
+
+Then compare the pair roots:
+
+```bash
+python3 benchmark/interleaved_compare.py \
+	--baseline-root benchmark/results/$(hostname)/interleaved_h2h/git-<git-hash>-clean \
+	--candidate-root benchmark/results/$(hostname)/interleaved_h2h/WIP \
+	--expected-pairs 5 \
+	--run-type MACRO-SMALL
+```
+
 Default output:
 - `benchmark/results/<hostname>/interleaved_5x_comparison.md`
 
@@ -117,6 +173,19 @@ The script also prints a concise terminal summary (median/min/max deltas per met
 so operators get immediate feedback without opening the markdown file.
 Scores and comparison matrices are computed only from workloads present in both
 baseline and candidate runs; excluded workloads are listed explicitly in the report.
+
+Delta conventions used by comparison reports:
+- Macro write/read deltas are expressed as **execution-time change** (derived from throughput).
+	Positive means WIP is slower; negative means WIP is faster.
+- Micro deltas are expressed as latency change (`real_time` ns).
+	Positive means WIP is slower; negative means WIP is faster.
+- Compression/file-size deltas use `(WIP - baseline) / baseline`.
+	Positive means WIP output is larger.
+
+Supported run types for `--run-type`:
+- `MACRO-SMALL`
+- `MACRO-LARGE`
+- `MICRO` (latency deltas, using `micro_results.json`)
 
 Temp clone location defaults:
 - Linux: `/tmp/bcsv/<git-hash>`

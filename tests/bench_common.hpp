@@ -182,6 +182,7 @@ struct PlatformInfo {
 struct BenchmarkResult {
     std::string dataset_name;       // e.g. "mixed_generic"
     std::string mode;               // e.g. "BCSV Flexible", "CSV", "BCSV Static ZoH"
+    std::string status = "ok";      // ok | skipped | error
     size_t      num_rows     = 0;
     size_t      num_columns  = 0;
 
@@ -223,6 +224,7 @@ struct BenchmarkResult {
         ss << "    {\n"
            << "      \"dataset\": \"" << dataset_name << "\",\n"
            << "      \"mode\": \"" << mode << "\",\n"
+              << "      \"status\": \"" << status << "\",\n"
            << "      \"num_rows\": " << num_rows << ",\n"
            << "      \"num_columns\": " << num_columns << ",\n"
            << "      \"scenario_id\": \"" << scenario_id << "\",\n"
@@ -692,6 +694,10 @@ inline void printResultsTable(const std::vector<BenchmarkResult>& results) {
         double fileSizeMB = r.file_size / (1024.0 * 1024.0);
         double writeMrowS = r.write_throughput_rows_per_sec / 1e6;
         double readMrowS  = r.read_throughput_rows_per_sec / 1e6;
+        const std::string validText =
+            (r.status == "skipped") ? "SKIP" :
+            (r.status == "error") ? "ERROR" :
+            (r.validation_passed ? "PASS" : "FAIL");
 
         std::cout << std::left << std::setw(24) << r.mode
                   << std::right << std::fixed
@@ -701,7 +707,7 @@ inline void printResultsTable(const std::vector<BenchmarkResult>& results) {
                   << std::setw(14) << std::setprecision(2) << fileSizeMB
                   << std::setw(14) << std::setprecision(3) << writeMrowS
                   << std::setw(14) << std::setprecision(3) << readMrowS
-                  << std::setw(10) << (r.validation_passed ? "PASS" : "FAIL")
+                  << std::setw(10) << validText
                   << "\n";
     }
     std::cout << "\n";

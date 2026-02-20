@@ -579,6 +579,64 @@ BENCHMARK(BM_DeserializeFrom_12col);
 // Row construction and copy
 // ============================================================================
 
+struct RowViewBenchFixture {
+    bcsv::Layout layout;
+    bcsv::ByteBuffer buffer;
+    bcsv::RowView source;
+
+    RowViewBenchFixture()
+        : layout(createMicroLayout()),
+          buffer(),
+          source(layout, std::span<std::byte>{}) {
+        bcsv::Row row(layout);
+        fillMicroRow(row);
+        bcsv::RowCodecFlat001<bcsv::Layout> codec;
+        codec.setup(layout);
+        auto serialized = codec.serialize(row, buffer);
+        source.setBuffer(std::span<std::byte>(serialized));
+    }
+};
+
+static void BM_RowViewCopyConstruct_12col(benchmark::State& state) {
+    RowViewBenchFixture fixture;
+    for (auto _ : state) {
+        bcsv::RowView copy(fixture.source);
+        benchmark::DoNotOptimize(copy.buffer().data());
+    }
+}
+BENCHMARK(BM_RowViewCopyConstruct_12col);
+
+static void BM_RowViewCopyAssign_12col(benchmark::State& state) {
+    RowViewBenchFixture fixture;
+    bcsv::RowView target(fixture.source.layout(), fixture.source.buffer());
+    for (auto _ : state) {
+        target = fixture.source;
+        benchmark::DoNotOptimize(target.buffer().data());
+    }
+}
+BENCHMARK(BM_RowViewCopyAssign_12col);
+
+static void BM_RowViewMoveConstruct_12col(benchmark::State& state) {
+    RowViewBenchFixture fixture;
+    for (auto _ : state) {
+        bcsv::RowView tmp(fixture.source);
+        bcsv::RowView moved(std::move(tmp));
+        benchmark::DoNotOptimize(moved.buffer().data());
+    }
+}
+BENCHMARK(BM_RowViewMoveConstruct_12col);
+
+static void BM_RowViewMoveAssign_12col(benchmark::State& state) {
+    RowViewBenchFixture fixture;
+    bcsv::RowView target(fixture.source.layout(), fixture.source.buffer());
+    for (auto _ : state) {
+        bcsv::RowView tmp(fixture.source);
+        target = std::move(tmp);
+        benchmark::DoNotOptimize(target.buffer().data());
+    }
+}
+BENCHMARK(BM_RowViewMoveAssign_12col);
+
 static void BM_RowConstruct_12col(benchmark::State& state) {
     for (auto _ : state) {
         bcsv::Row row(g_microLayout);

@@ -116,6 +116,12 @@ int main() {
 # Quick macro smoke run (default)
 python3 benchmark/run_benchmarks.py
 
+# Direct macro CLI overview (profiles/scenarios/examples)
+build/ninja-release/bin/bench_macro_datasets --help
+
+# Direct macro run with compact summary (narrow terminal friendly)
+build/ninja-release/bin/bench_macro_datasets --size=S --summary=compact
+
 # Micro benchmark pinned to CPU2
 python3 benchmark/run_benchmarks.py --type=MICRO --pin=CPU2
 

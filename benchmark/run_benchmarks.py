@@ -709,18 +709,17 @@ def main() -> int:
     print(f"[2/5] Run selected benchmark types: {', '.join(run_types)}")
     run_payloads: dict[str, list[dict]] = {run_type: [] for run_type in run_types}
 
-    for run_type in run_types:
-        for repetition_idx in range(args.repetitions):
+    for repetition_idx in range(args.repetitions):
+        run_output_dir = out_dir if args.repetitions == 1 else out_dir / "repeats" / f"run_{repetition_idx + 1:03d}"
+        run_output_dir.mkdir(parents=True, exist_ok=True)
+
+        for run_type in run_types:
             rep_suffix = "" if args.repetitions == 1 else f" (rep {repetition_idx + 1}/{args.repetitions})"
             print(f"  - {run_type}{rep_suffix}")
-
-            run_output_dir = out_dir if args.repetitions == 1 else out_dir / "repeats" / f"run_{repetition_idx + 1:03d}"
-            run_output_dir.mkdir(parents=True, exist_ok=True)
 
             if run_type == "MICRO":
                 payload = run_micro(executables["bench_micro_types"], run_output_dir, pin_enabled, pin_cpu)
                 run_payloads[run_type].append(payload)
-
             else:
                 rows = TYPE_ROWS[run_type]
                 payload = run_macro(

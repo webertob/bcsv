@@ -28,6 +28,10 @@ MODE_ALIASES = OrderedDict([
 ])
 
 
+def _is_ok_row(row: dict) -> bool:
+    return str(row.get("status", "ok")).lower() == "ok"
+
+
 def load_json(path: Path):
     return json.loads(path.read_text())
 
@@ -37,7 +41,8 @@ def load_macro_rows(run_dir: Path):
     if not path.exists():
         return []
     payload = load_json(path)
-    return payload.get("results", [])
+    rows = payload.get("results", [])
+    return [row for row in rows if isinstance(row, dict) and _is_ok_row(row)]
 
 
 def load_macro_rows_by_type(run_dir: Path):
@@ -51,7 +56,8 @@ def load_macro_rows_by_type(run_dir: Path):
         if not path.exists():
             continue
         payload = load_json(path)
-        out[run_type] = payload.get("results", [])
+        rows = payload.get("results", [])
+        out[run_type] = [row for row in rows if isinstance(row, dict) and _is_ok_row(row)]
 
     if out:
         return out
@@ -224,13 +230,17 @@ def fmt_med_std(median_val, stdev_val, decimals=2):
     return f"{median_val:.{decimals}f} ± {stdev_val:.{decimals}f}"
 
 
-def fmt_delta(current, baseline, higher_is_better):
+def fmt_delta_relative(current, baseline):
     if current is None or baseline is None or baseline == 0:
         return "—"
-    if higher_is_better:
-        delta = ((current - baseline) / baseline) * 100.0
-    else:
-        delta = ((baseline - current) / baseline) * 100.0
+    delta = ((current - baseline) / baseline) * 100.0
+    return f"{delta:+.1f}%"
+
+
+def fmt_delta_time_from_rate(current_rate, baseline_rate):
+    if current_rate is None or baseline_rate is None or current_rate == 0:
+        return "—"
+    delta = ((baseline_rate / current_rate) - 1.0) * 100.0
     return f"{delta:+.1f}%"
 
 
@@ -409,9 +419,11 @@ def generate_summary_markdown(run_dir: Path,
             baseline_by_mode = {row["mode"]: row for row in baseline_condensed}
             lines.append(f"Candidate: `{candidate_label}` (run `{candidate_run_id}`)")
             lines.append(f"Baseline: `{baseline_label}` (run `{baseline_run_id}`)")
-            lines.append("Delta is candidate vs baseline. Positive % means candidate is better (faster for throughput columns; smaller is better for compression ratio).")
+            lines.append("Delta is current run vs baseline.")
+            lines.append("Positive write/read delta means current run is slower (derived from rows/s). Negative means faster.")
+            lines.append("Positive compression delta means current run files are larger. Negative means smaller.")
             lines.append("")
-            lines.append("| Mode | Compression Ratio vs CSV | Dense Write (rows/s) | Dense Read (rows/s) | Sparse Write (cells/s) | Sparse Read (cells/s) |")
+            lines.append("| Mode | Compression Ratio Δ | Dense Write Time Δ | Dense Read Time Δ | Sparse Write Time Δ | Sparse Read Time Δ |")
             lines.append("|------|---------------------------:|---------------------:|--------------------:|-----------------------:|----------------------:|")
 
             for mode in MODE_ALIASES.keys():
@@ -419,11 +431,11 @@ def generate_summary_markdown(run_dir: Path,
                 baseline = baseline_by_mode.get(mode, {})
                 lines.append(
                     f"| {mode}"
-                    f" | {fmt_delta(current.get('compression_ratio_median'), baseline.get('compression_ratio_median'), higher_is_better=False)}"
-                    f" | {fmt_delta(current.get('dense_write_rows_per_sec_median'), baseline.get('dense_write_rows_per_sec_median'), higher_is_better=True)}"
-                    f" | {fmt_delta(current.get('dense_read_rows_per_sec_median'), baseline.get('dense_read_rows_per_sec_median'), higher_is_better=True)}"
-                    f" | {fmt_delta(current.get('sparse_write_cells_per_sec_median'), baseline.get('sparse_write_cells_per_sec_median'), higher_is_better=True)}"
-                    f" | {fmt_delta(current.get('sparse_read_cells_per_sec_median'), baseline.get('sparse_read_cells_per_sec_median'), higher_is_better=True)} |"
+                    f" | {fmt_delta_relative(current.get('compression_ratio_median'), baseline.get('compression_ratio_median'))}"
+                    f" | {fmt_delta_time_from_rate(current.get('dense_write_rows_per_sec_median'), baseline.get('dense_write_rows_per_sec_median'))}"
+                    f" | {fmt_delta_time_from_rate(current.get('dense_read_rows_per_sec_median'), baseline.get('dense_read_rows_per_sec_median'))}"
+                    f" | {fmt_delta_time_from_rate(current.get('sparse_write_cells_per_sec_median'), baseline.get('sparse_write_cells_per_sec_median'))}"
+                    f" | {fmt_delta_time_from_rate(current.get('sparse_read_cells_per_sec_median'), baseline.get('sparse_read_cells_per_sec_median'))} |"
                 )
             lines.append("")
 
@@ -466,7 +478,8 @@ def generate_summary_markdown(run_dir: Path,
     else:
         lines.append(f"Candidate: `{candidate_label}` (run `{candidate_run_id}`)")
         lines.append(f"Baseline: `{baseline_label}` (run `{baseline_run_id}`)")
-        lines.append("Delta is candidate vs baseline. Positive % indicates candidate is faster (lower ns).")
+        lines.append("Delta is current run vs baseline.")
+        lines.append("Positive latency delta means current run is slower. Negative means faster.")
         lines.append("")
         lines.append("| Group | Current Median (ns) | Baseline Median (ns) | Delta |")
         lines.append("|-------|--------------------:|---------------------:|------:|")
@@ -477,7 +490,7 @@ def generate_summary_markdown(run_dir: Path,
                 continue
             cur_text = f"{cur:.2f}" if cur is not None else "—"
             base_text = f"{base:.2f}" if base is not None else "—"
-            delta = fmt_delta(cur, base, higher_is_better=False)
+            delta = fmt_delta_relative(cur, base)
             lines.append(f"| {label} | {cur_text} | {base_text} | {delta} |")
         lines.append("")
 
@@ -550,9 +563,9 @@ def generate_summary_markdown(run_dir: Path,
             base = baseline_summary.get(mode, {})
             lines.append(
                 f"| {mode}"
-                f" | {fmt_delta(cur.get('write_rows_per_sec_median'), base.get('write_rows_per_sec_median'), higher_is_better=True)}"
-                f" | {fmt_delta(cur.get('read_rows_per_sec_median'), base.get('read_rows_per_sec_median'), higher_is_better=True)}"
-                f" | {fmt_delta(cur.get('file_size_median'), base.get('file_size_median'), higher_is_better=False)} |"
+                f" | {fmt_delta_time_from_rate(cur.get('write_rows_per_sec_median'), base.get('write_rows_per_sec_median'))}"
+                f" | {fmt_delta_time_from_rate(cur.get('read_rows_per_sec_median'), base.get('read_rows_per_sec_median'))}"
+                f" | {fmt_delta_relative(cur.get('file_size_median'), base.get('file_size_median'))} |"
             )
         lines.append("")
 

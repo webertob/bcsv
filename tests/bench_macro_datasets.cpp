@@ -26,8 +26,11 @@
  *     --output=PATH    Write JSON results to file (default: stdout summary)
  *     --profile=NAME   Run only this profile (default: all)
  *     --scenario=LIST  Comma-separated sparse scenarios to run (default: all)
+ *     --tracking=MODE  both|enabled|disabled (default: both)
+ *     --storage=MODE   both|flexible|static (default: both)
  *     --list           List available profiles and exit
  *     --list-scenarios List available sparse scenarios and exit
+ *     --help           Show CLI help and examples
  *     --quiet          Suppress progress output
  *     --no-cleanup     Keep temporary benchmark files
  *     --build-type=X   Tag results with build type (Debug/Release)
@@ -40,13 +43,15 @@
 
 #include <bcsv/bcsv.h>
 
-#include <array>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -65,6 +70,175 @@ using MixedGenericLayoutStatic = bcsv::LayoutStatic<
     double, double, double, double, double, double,
     std::string, std::string, std::string, std::string, std::string, std::string
 >;
+
+template<typename... Ts>
+struct TypeList {};
+
+template<typename... Lists>
+struct TypeListConcat;
+
+template<>
+struct TypeListConcat<> { using type = TypeList<>; };
+
+template<typename... Ts>
+struct TypeListConcat<TypeList<Ts...>> { using type = TypeList<Ts...>; };
+
+template<typename... A, typename... B, typename... Rest>
+struct TypeListConcat<TypeList<A...>, TypeList<B...>, Rest...> {
+    using type = typename TypeListConcat<TypeList<A..., B...>, Rest...>::type;
+};
+
+template<typename T, typename Seq>
+struct RepeatAsTypeListImpl;
+
+template<typename T, size_t... I>
+struct RepeatAsTypeListImpl<T, std::index_sequence<I...>> {
+    using type = TypeList<std::conditional_t<true, T, std::integral_constant<size_t, I>>...>;
+};
+
+template<typename T, size_t N>
+using RepeatAsTypeList = typename RepeatAsTypeListImpl<T, std::make_index_sequence<N>>::type;
+
+template<typename TL>
+struct LayoutFromTypeList;
+
+template<typename... Ts>
+struct LayoutFromTypeList<TypeList<Ts...>> {
+    using type = bcsv::LayoutStatic<Ts...>;
+};
+
+template<typename... Lists>
+using ConcatTypeLists = typename TypeListConcat<Lists...>::type;
+
+template<typename TL>
+using LayoutFromTypeList_t = typename LayoutFromTypeList<TL>::type;
+
+using SparseEventsLayoutStatic = LayoutFromTypeList_t<ConcatTypeLists<
+    RepeatAsTypeList<bool, 20>, RepeatAsTypeList<int32_t, 30>, RepeatAsTypeList<float, 20>,
+    RepeatAsTypeList<double, 20>, RepeatAsTypeList<std::string, 10>
+>>;
+
+using SensorNoisyLayoutStatic = LayoutFromTypeList_t<ConcatTypeLists<
+    TypeList<uint64_t, uint32_t>, RepeatAsTypeList<float, 24>, RepeatAsTypeList<double, 24>
+>>;
+
+using StringHeavyLayoutStatic = LayoutFromTypeList_t<ConcatTypeLists<
+    TypeList<int32_t, int32_t, int32_t, float, float, float, double, double, uint64_t, uint64_t>,
+    RepeatAsTypeList<std::string, 20>
+>>;
+
+using SimulationSmoothLayoutStatic = LayoutFromTypeList_t<ConcatTypeLists<
+    TypeList<uint64_t, double, uint32_t, bool>, RepeatAsTypeList<float, 48>, RepeatAsTypeList<double, 48>
+>>;
+
+using WeatherTimeseriesLayoutStatic = LayoutFromTypeList_t<ConcatTypeLists<
+    TypeList<uint64_t, std::string, std::string, uint8_t>, RepeatAsTypeList<float, 10>, RepeatAsTypeList<float, 6>,
+    TypeList<float, uint16_t, float, uint16_t, float, uint16_t, float, uint16_t>,
+    RepeatAsTypeList<double, 4>, TypeList<float, float, bool, uint8_t>
+>>;
+
+using HighCardinalityStringLayoutStatic = LayoutFromTypeList_t<ConcatTypeLists<
+    TypeList<uint64_t, uint32_t>, RepeatAsTypeList<std::string, 48>
+>>;
+
+using EventLogLayoutStatic = bcsv::LayoutStatic<
+    uint64_t, uint64_t,
+    std::string, std::string, std::string, std::string, std::string, std::string, std::string, std::string,
+    float, uint32_t, uint16_t,
+    bool, bool,
+    double, double, double, double, double, double, double, double,
+    uint32_t, uint32_t, uint32_t, uint32_t
+>;
+
+using IotFleetLayoutStatic = LayoutFromTypeList_t<ConcatTypeLists<
+    TypeList<uint64_t, uint64_t,
+             std::string, std::string, std::string, std::string, std::string, std::string,
+             double, float, float,
+             uint8_t, int8_t, uint32_t, uint64_t,
+             bool, bool>,
+    RepeatAsTypeList<float, 8>
+>>;
+
+using FinancialOrdersLayoutStatic = bcsv::LayoutStatic<
+    uint64_t, uint64_t,
+    std::string, std::string, std::string, std::string, std::string, std::string, std::string, std::string,
+    double, uint32_t, double, uint32_t, float,
+    bool, bool, bool,
+    double, double, float,
+    uint64_t
+>;
+
+using RealisticMeasurementLayoutStatic = LayoutFromTypeList_t<ConcatTypeLists<
+    TypeList<uint64_t, uint64_t, std::string, std::string, std::string, uint8_t>,
+    RepeatAsTypeList<float, 8>, RepeatAsTypeList<double, 8>, RepeatAsTypeList<int32_t, 8>,
+    RepeatAsTypeList<bool, 4>, TypeList<uint32_t, uint32_t, uint32_t, uint32_t>
+>>;
+
+enum class TrackingSelection { Both, Enabled, Disabled };
+enum class StorageSelection { Both, Flexible, Static };
+
+struct ModeSelection {
+    TrackingSelection tracking = TrackingSelection::Both;
+    StorageSelection storage = StorageSelection::Both;
+};
+
+struct ProfileCapabilities {
+    bool hasStaticLayoutDispatch = false;
+    bool supportsTrackedFlexibleNoCopy = false;
+    bool supportsStaticNoCopy = false;
+};
+
+inline ProfileCapabilities capabilitiesForProfileName(std::string_view profileName) {
+    if (profileName == "mixed_generic" || profileName == "sparse_events") {
+        return {true, true, true};
+    }
+
+    if (profileName == "sensor_noisy"
+        || profileName == "string_heavy"
+        || profileName == "simulation_smooth"
+        || profileName == "weather_timeseries"
+        || profileName == "high_cardinality_string"
+        || profileName == "event_log"
+        || profileName == "iot_fleet"
+        || profileName == "financial_orders"
+        || profileName == "realistic_measurement") {
+        return {true, false, false};
+    }
+
+    return {false, false, false};
+}
+
+inline bool includesTrackingEnabled(TrackingSelection s) {
+    return s == TrackingSelection::Both || s == TrackingSelection::Enabled;
+}
+
+inline bool includesTrackingDisabled(TrackingSelection s) {
+    return s == TrackingSelection::Both || s == TrackingSelection::Disabled;
+}
+
+inline bool includesFlexible(StorageSelection s) {
+    return s == StorageSelection::Both || s == StorageSelection::Flexible;
+}
+
+inline bool includesStatic(StorageSelection s) {
+    return s == StorageSelection::Both || s == StorageSelection::Static;
+}
+
+template<typename Fn>
+bool dispatchStaticLayoutForProfile(const bench::DatasetProfile& profile, Fn&& fn) {
+    if (profile.name == "mixed_generic") { fn.template operator()<MixedGenericLayoutStatic>(); return true; }
+    if (profile.name == "sparse_events") { fn.template operator()<SparseEventsLayoutStatic>(); return true; }
+    if (profile.name == "sensor_noisy") { fn.template operator()<SensorNoisyLayoutStatic>(); return true; }
+    if (profile.name == "string_heavy") { fn.template operator()<StringHeavyLayoutStatic>(); return true; }
+    if (profile.name == "simulation_smooth") { fn.template operator()<SimulationSmoothLayoutStatic>(); return true; }
+    if (profile.name == "weather_timeseries") { fn.template operator()<WeatherTimeseriesLayoutStatic>(); return true; }
+    if (profile.name == "high_cardinality_string") { fn.template operator()<HighCardinalityStringLayoutStatic>(); return true; }
+    if (profile.name == "event_log") { fn.template operator()<EventLogLayoutStatic>(); return true; }
+    if (profile.name == "iot_fleet") { fn.template operator()<IotFleetLayoutStatic>(); return true; }
+    if (profile.name == "financial_orders") { fn.template operator()<FinancialOrdersLayoutStatic>(); return true; }
+    if (profile.name == "realistic_measurement") { fn.template operator()<RealisticMeasurementLayoutStatic>(); return true; }
+    return false;
+}
 
 enum class SparseKind {
     Baseline,
@@ -96,39 +270,51 @@ std::vector<SparseScenario> buildSparseScenarios() {
 }
 
 bool supportsStaticMode(const bench::DatasetProfile& profile) {
-    return profile.name == "mixed_generic" && profile.layout.columnCount() == 72;
+    const auto capabilities = capabilitiesForProfileName(profile.name);
+    return profile.layout.columnCount() <= 128
+        && capabilities.hasStaticLayoutDispatch
+        && capabilities.supportsStaticNoCopy;
 }
 
-MixedGenericLayoutStatic createMixedGenericStaticLayout() {
-    std::array<std::string, 72> columnNames{};
-    const std::vector<std::string> typeNames = {
-        "bool", "int8", "int16", "int32", "int64", "uint8",
-        "uint16", "uint32", "uint64", "float", "double", "string"
-    };
+bool supportsNoCopyTrackedFlexible(const bench::DatasetProfile& profile) {
+    return capabilitiesForProfileName(profile.name).supportsTrackedFlexibleNoCopy;
+}
 
-    size_t idx = 0;
-    for (size_t typeIdx = 0; typeIdx < typeNames.size(); ++typeIdx) {
-        for (size_t colIdx = 0; colIdx < 6; ++colIdx) {
-            columnNames[idx++] = typeNames[typeIdx] + "_" + std::to_string(colIdx);
-        }
+template<typename RowType>
+inline void fillMixedGenericRowRandomTyped(RowType& row, size_t rowIndex);
+
+template<typename RowType>
+inline void fillMixedGenericRowZoHTyped(RowType& row, size_t rowIndex);
+
+template<typename RowType>
+bool generateProfileNonZoHNoCopy(const bench::DatasetProfile& profile, RowType& row, size_t rowIndex) {
+    if (profile.name == "mixed_generic") {
+        fillMixedGenericRowRandomTyped(row, rowIndex);
+        return true;
     }
-
-    return MixedGenericLayoutStatic(columnNames);
+    if (profile.name == "sparse_events") {
+        bench::datagen::fillRowRandom(row, rowIndex, profile.layout);
+        return true;
+    }
+    return false;
 }
 
 template<typename RowType>
-void fillRowRandomByLayout(RowType& row, size_t rowIndex, const bcsv::Layout& layout) {
-    bench::datagen::fillRowRandom(row, rowIndex, layout);
-}
-
-template<typename RowType>
-void fillRowZoHByLayout(RowType& row, size_t rowIndex, const bcsv::Layout& layout) {
-    bench::datagen::fillRowTimeSeries(row, rowIndex, layout, 100);
+bool generateProfileZoHNoCopy(const bench::DatasetProfile& profile, RowType& row, size_t rowIndex) {
+    if (profile.name == "mixed_generic") {
+        fillMixedGenericRowZoHTyped(row, rowIndex);
+        return true;
+    }
+    if (profile.name == "sparse_events") {
+        bench::datagen::fillRowTimeSeries(row, rowIndex, profile.layout, 500);
+        return true;
+    }
+    return false;
 }
 
 template<size_t Offset, typename RowType, typename Generator, size_t... I>
 inline void fillSixTypedImpl(RowType& row, size_t rowIndex, Generator&& generator, std::index_sequence<I...>) {
-    (row.template set<Offset + I>(generator(rowIndex, Offset + I)), ...);
+    (row.set(Offset + I, generator(rowIndex, Offset + I)), ...);
 }
 
 template<size_t Offset, typename RowType, typename Generator>
@@ -212,11 +398,43 @@ std::vector<SparseScenario> filterScenarios(const std::vector<SparseScenario>& a
     return selected;
 }
 
+TrackingSelection parseTrackingSelection(const std::string& value, std::string& error) {
+    if (value.empty() || value == "both") {
+        return TrackingSelection::Both;
+    }
+    if (value == "enabled" || value == "on") {
+        return TrackingSelection::Enabled;
+    }
+    if (value == "disabled" || value == "off") {
+        return TrackingSelection::Disabled;
+    }
+    error = "Unknown --tracking=" + value + " (expected both|enabled|disabled)";
+    return TrackingSelection::Both;
+}
+
+StorageSelection parseStorageSelection(const std::string& value, std::string& error) {
+    if (value.empty() || value == "both") {
+        return StorageSelection::Both;
+    }
+    if (value == "flexible" || value == "flex") {
+        return StorageSelection::Flexible;
+    }
+    if (value == "static") {
+        return StorageSelection::Static;
+    }
+    error = "Unknown --storage=" + value + " (expected both|flexible|static)";
+    return StorageSelection::Both;
+}
+
 std::string makeScenarioDatasetName(const std::string& base, const SparseScenario& scenario) {
     if (scenario.kind == SparseKind::Baseline) {
         return base;
     }
     return base + "::" + scenario.id;
+}
+
+std::string makeScenarioRunLabel(const bench::DatasetProfile& profile, const SparseScenario& scenario) {
+    return makeScenarioDatasetName(profile.name, scenario);
 }
 
 std::string scenarioFileTag(const SparseScenario& scenario) {
@@ -239,6 +457,20 @@ void applyScenarioMetadata(bench::BenchmarkResult& result,
     result.selected_columns = (scenario.kind == SparseKind::Columns)
         ? std::min(scenario.columns_k, profile.layout.columnCount())
         : profile.layout.columnCount();
+}
+
+bench::BenchmarkResult makeSkippedResult(const bench::DatasetProfile& profile,
+                                         size_t numRows,
+                                         const SparseScenario& scenario,
+                                         const std::string& mode,
+                                         const std::string& reason)
+{
+    bench::BenchmarkResult result;
+    applyScenarioMetadata(result, profile, numRows, scenario, mode, "deserialize_first");
+    result.status = "skipped";
+    result.validation_passed = true;
+    result.validation_error = "SKIPPED: " + reason;
+    return result;
 }
 
 double computeProcessedRowRatio(size_t processedRows, size_t totalRows) {
@@ -527,7 +759,7 @@ bench::BenchmarkResult benchmarkBCSVFlexible(const bench::DatasetProfile& profil
                                               bool quiet)
 {
     bench::BenchmarkResult result;
-    applyScenarioMetadata(result, profile, numRows, scenario, "BCSV Flexible", "deserialize_first");
+        applyScenarioMetadata(result, profile, numRows, scenario, "BCSV Flexible [trk=off]", "deserialize_first");
 
     const std::string filename = bench::tempFilePath(profile.name + scenarioFileTag(scenario) + "_flex", ".bcsv");
 
@@ -628,7 +860,7 @@ bench::BenchmarkResult benchmarkBCSVFlexibleZoH(const bench::DatasetProfile& pro
                                                   bool quiet)
 {
     bench::BenchmarkResult result;
-    applyScenarioMetadata(result, profile, numRows, scenario, "BCSV Flexible ZoH", "deserialize_first");
+        applyScenarioMetadata(result, profile, numRows, scenario, "BCSV Flexible ZoH [trk=on]", "deserialize_first");
 
     const std::string filename = bench::tempFilePath(profile.name + scenarioFileTag(scenario) + "_flex_zoh", ".bcsv");
 
@@ -722,21 +954,120 @@ bench::BenchmarkResult benchmarkBCSVFlexibleZoH(const bench::DatasetProfile& pro
     return result;
 }
 
-bench::BenchmarkResult benchmarkBCSVStatic(const bench::DatasetProfile& profile,
-                                           size_t numRows,
-                                           const SparseScenario& scenario,
-                                           bool quiet)
+bench::BenchmarkResult benchmarkBCSVFlexibleTracked(const bench::DatasetProfile& profile,
+                                                    size_t numRows,
+                                                    const SparseScenario& scenario,
+                                                    bool quiet)
 {
     bench::BenchmarkResult result;
-    applyScenarioMetadata(result, profile, numRows, scenario, "BCSV Static", "deserialize_first");
-
-    const std::string filename = bench::tempFilePath(profile.name + scenarioFileTag(scenario) + "_static", ".bcsv");
+    applyScenarioMetadata(result, profile, numRows, scenario, "BCSV Flexible [trk=on]", "deserialize_first");
+    const std::string filename = bench::tempFilePath(profile.name + scenarioFileTag(scenario) + "_flex_trk_on", ".bcsv");
 
     bench::Timer timer;
     {
-        auto layoutStatic = createMixedGenericStaticLayout();
-        bcsv::Writer<MixedGenericLayoutStatic> writer(layoutStatic);
+        bcsv::Writer<bcsv::Layout, bcsv::TrackingPolicy::Enabled> writer(profile.layout);
         if (!writer.open(filename, true, 1)) {
+            result.validation_error = "Cannot open BCSV file: " + writer.getErrorMsg();
+            return result;
+        }
+
+        timer.start();
+        for (size_t i = 0; i < numRows; ++i) {
+            if (!generateProfileNonZoHNoCopy(profile, writer.row(), i)) {
+                result.validation_error = "No-copy tracked-flex generator unavailable for profile: " + profile.name;
+                writer.close();
+                return result;
+            }
+            writer.writeRow();
+        }
+        writer.close();
+        timer.stop();
+    }
+    result.write_time_ms = timer.elapsedMs();
+
+    try {
+        result.file_size = bench::validateFile(filename);
+    } catch (const std::exception& e) {
+        result.validation_error = e.what();
+        return result;
+    }
+
+    bench::RoundTripValidator validator;
+    bcsv::Row expectedRow(profile.layout);
+    const auto selectedColumns = buildSelectedColumns(profile.layout, scenario.columns_k);
+    const auto predicateColumn = findFirstNumericColumn(profile.layout);
+    size_t processedRows = 0;
+
+    {
+        bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Enabled> reader;
+        if (!reader.open(filename)) {
+            result.validation_error = "Cannot read BCSV file: " + reader.getErrorMsg();
+            return result;
+        }
+
+        size_t rowsRead = 0;
+        timer.start();
+        while (reader.readNext()) {
+            const auto& row = reader.row();
+            profile.generate(expectedRow, rowsRead);
+            if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
+                validateRowByScenario(scenario, rowsRead, expectedRow, row, profile.layout,
+                                      selectedColumns, validator);
+                ++processedRows;
+            }
+            bench::doNotOptimize(row);
+            ++rowsRead;
+        }
+        reader.close();
+        timer.stop();
+
+        if (rowsRead != numRows) {
+            result.validation_error = "Row count mismatch: expected " + std::to_string(numRows)
+                                    + " got " + std::to_string(rowsRead);
+            result.read_time_ms = timer.elapsedMs();
+            return result;
+        }
+    }
+    result.read_time_ms = timer.elapsedMs();
+    result.processed_row_ratio = computeProcessedRowRatio(processedRows, numRows);
+
+    result.validation_passed = validator.passed();
+    if (!validator.passed()) {
+        result.validation_error = validator.summary();
+    }
+
+    result.computeThroughput();
+    if (!quiet) {
+        std::cerr << "  [" << profile.name << "] BCSV Flexible [trk=on] read:  "
+                  << std::fixed << std::setprecision(1) << result.read_time_ms << " ms"
+                  << " — " << (result.validation_passed ? "PASS" : "FAIL") << "\n";
+    }
+    return result;
+}
+
+template<typename StaticLayout, bcsv::TrackingPolicy Policy>
+bench::BenchmarkResult runStaticLayoutVariant(const bench::DatasetProfile& profile,
+                                              size_t numRows,
+                                              const SparseScenario& scenario,
+                                              bool quiet,
+                                              const std::string& modeLabel,
+                                              const std::string& suffix,
+                                              bool useZoH)
+{
+    bench::BenchmarkResult result;
+    applyScenarioMetadata(result, profile, numRows, scenario, modeLabel, "deserialize_first");
+
+    const std::string filename = bench::tempFilePath(profile.name + scenarioFileTag(scenario) + suffix, ".bcsv");
+    bench::Timer timer;
+
+    {
+        StaticLayout layoutStatic;
+        layoutStatic = profile.layout;
+        bcsv::Writer<StaticLayout, Policy> writer(layoutStatic);
+        const bool opened = useZoH
+            ? writer.open(filename, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)
+            : writer.open(filename, true, 1);
+        if (!opened) {
             result.validation_error = "Cannot open BCSV Static file: " + writer.getErrorMsg();
             return result;
         }
@@ -744,7 +1075,14 @@ bench::BenchmarkResult benchmarkBCSVStatic(const bench::DatasetProfile& profile,
         timer.start();
         for (size_t i = 0; i < numRows; ++i) {
             auto& row = writer.row();
-            fillMixedGenericRowRandomTyped(row, i);
+            const bool generated = useZoH
+                ? generateProfileZoHNoCopy(profile, row, i)
+                : generateProfileNonZoHNoCopy(profile, row, i);
+            if (!generated) {
+                result.validation_error = "No-copy static generator unavailable for profile: " + profile.name;
+                writer.close();
+                return result;
+            }
             writer.writeRow();
         }
         writer.close();
@@ -760,6 +1098,7 @@ bench::BenchmarkResult benchmarkBCSVStatic(const bench::DatasetProfile& profile,
     }
 
     bcsv::Row expectedRow(profile.layout);
+    bcsv::RowImpl<bcsv::TrackingPolicy::Enabled> expectedZoHRow(profile.layout);
     const auto selectedColumns = buildSelectedColumns(profile.layout, scenario.columns_k);
     const auto predicateColumn = findFirstNumericColumn(profile.layout);
     size_t processedRows = 0;
@@ -767,7 +1106,9 @@ bench::BenchmarkResult benchmarkBCSVStatic(const bench::DatasetProfile& profile,
     std::string firstError;
 
     {
-        bcsv::Reader<MixedGenericLayoutStatic> reader;
+        StaticLayout layoutStatic;
+        layoutStatic = profile.layout;
+        bcsv::Reader<StaticLayout, Policy> reader;
         if (!reader.open(filename)) {
             result.validation_error = "Cannot read BCSV Static file: " + reader.getErrorMsg();
             return result;
@@ -777,18 +1118,37 @@ bench::BenchmarkResult benchmarkBCSVStatic(const bench::DatasetProfile& profile,
         timer.start();
         while (reader.readNext()) {
             const auto& row = reader.row();
-            fillRowRandomByLayout(expectedRow, rowsRead, profile.layout);
-
-            if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
-                std::string err;
-                if (!validateRowByScenarioExact(scenario, rowsRead, expectedRow, row, profile.layout,
-                                                selectedColumns, err)) {
-                    validationOk = false;
-                    if (firstError.empty()) firstError = err;
+            if (useZoH) {
+                if (!generateProfileZoHNoCopy(profile, expectedZoHRow, rowsRead)) {
+                    result.validation_error = "No-copy static expected-row generator unavailable for profile: " + profile.name;
+                    reader.close();
+                    return result;
                 }
-                ++processedRows;
+                if (shouldProcessRow(scenario, rowsRead, expectedZoHRow, profile.layout, predicateColumn)) {
+                    std::string err;
+                    if (!validateRowByScenarioExact(scenario, rowsRead, expectedZoHRow, row, profile.layout,
+                                                    selectedColumns, err)) {
+                        validationOk = false;
+                        if (firstError.empty()) firstError = err;
+                    }
+                    ++processedRows;
+                }
+            } else {
+                if (!generateProfileNonZoHNoCopy(profile, expectedRow, rowsRead)) {
+                    result.validation_error = "No-copy static expected-row generator unavailable for profile: " + profile.name;
+                    reader.close();
+                    return result;
+                }
+                if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
+                    std::string err;
+                    if (!validateRowByScenarioExact(scenario, rowsRead, expectedRow, row, profile.layout,
+                                                    selectedColumns, err)) {
+                        validationOk = false;
+                        if (firstError.empty()) firstError = err;
+                    }
+                    ++processedRows;
+                }
             }
-
             bench::doNotOptimize(row);
             ++rowsRead;
         }
@@ -810,14 +1170,61 @@ bench::BenchmarkResult benchmarkBCSVStatic(const bench::DatasetProfile& profile,
         result.validation_error = firstError;
     }
     result.computeThroughput();
-
     if (!quiet) {
-        std::cerr << "  [" << profile.name << "] BCSV Static read: "
+        std::cerr << "  [" << profile.name << "] " << modeLabel << " read: "
                   << std::fixed << std::setprecision(1) << result.read_time_ms << " ms"
                   << " — " << (result.validation_passed ? "PASS" : "FAIL") << "\n";
     }
+    return result;
+}
+
+bench::BenchmarkResult benchmarkBCSVStaticVariant(const bench::DatasetProfile& profile,
+                                                  size_t numRows,
+                                                  const SparseScenario& scenario,
+                                                  bool quiet,
+                                                  const std::string& modeLabel,
+                                                  const std::string& suffix,
+                                                  bool trackingEnabled,
+                                                  bool useZoH)
+{
+    bench::BenchmarkResult result;
+    bool dispatched = false;
+
+    if (trackingEnabled) {
+        dispatched = dispatchStaticLayoutForProfile(profile, [&]<typename StaticLayout>() {
+            result = runStaticLayoutVariant<StaticLayout, bcsv::TrackingPolicy::Enabled>(
+                profile, numRows, scenario, quiet, modeLabel, suffix, useZoH);
+        });
+    } else {
+        dispatched = dispatchStaticLayoutForProfile(profile, [&]<typename StaticLayout>() {
+            result = runStaticLayoutVariant<StaticLayout, bcsv::TrackingPolicy::Disabled>(
+                profile, numRows, scenario, quiet, modeLabel, suffix, useZoH);
+        });
+    }
+
+    if (!dispatched) {
+        applyScenarioMetadata(result, profile, numRows, scenario, modeLabel, "deserialize_first");
+        result.status = "error";
+        result.validation_error = "Static layout dispatch unavailable for profile: " + profile.name;
+    }
 
     return result;
+}
+
+bench::BenchmarkResult benchmarkBCSVStatic(const bench::DatasetProfile& profile,
+                                           size_t numRows,
+                                           const SparseScenario& scenario,
+                                           bool quiet)
+{
+    return benchmarkBCSVStaticVariant(profile, numRows, scenario, quiet, "BCSV Static [trk=off]", "_static_trk_off", false, false);
+}
+
+bench::BenchmarkResult benchmarkBCSVStaticTracked(const bench::DatasetProfile& profile,
+                                                  size_t numRows,
+                                                  const SparseScenario& scenario,
+                                                  bool quiet)
+{
+    return benchmarkBCSVStaticVariant(profile, numRows, scenario, quiet, "BCSV Static [trk=on]", "_static_trk_on", true, false);
 }
 
 bench::BenchmarkResult benchmarkBCSVStaticZoH(const bench::DatasetProfile& profile,
@@ -825,142 +1232,127 @@ bench::BenchmarkResult benchmarkBCSVStaticZoH(const bench::DatasetProfile& profi
                                               const SparseScenario& scenario,
                                               bool quiet)
 {
-    bench::BenchmarkResult result;
-    applyScenarioMetadata(result, profile, numRows, scenario, "BCSV Static ZoH", "deserialize_first");
-
-    const std::string filename = bench::tempFilePath(profile.name + scenarioFileTag(scenario) + "_static_zoh", ".bcsv");
-
-    bench::Timer timer;
-    {
-        auto layoutStatic = createMixedGenericStaticLayout();
-        bcsv::Writer<MixedGenericLayoutStatic, bcsv::TrackingPolicy::Enabled> writer(layoutStatic);
-        if (!writer.open(filename, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
-            result.validation_error = "Cannot open BCSV Static ZoH file: " + writer.getErrorMsg();
-            return result;
-        }
-
-        timer.start();
-        for (size_t i = 0; i < numRows; ++i) {
-            auto& row = writer.row();
-            fillMixedGenericRowZoHTyped(row, i);
-            writer.writeRow();
-        }
-        writer.close();
-        timer.stop();
-    }
-    result.write_time_ms = timer.elapsedMs();
-
-    try {
-        result.file_size = bench::validateFile(filename);
-    } catch (const std::exception& e) {
-        result.validation_error = e.what();
-        return result;
-    }
-
-    bcsv::RowImpl<bcsv::TrackingPolicy::Enabled> expectedRow(profile.layout);
-    const auto selectedColumns = buildSelectedColumns(profile.layout, scenario.columns_k);
-    const auto predicateColumn = findFirstNumericColumn(profile.layout);
-    size_t processedRows = 0;
-    bool validationOk = true;
-    std::string firstError;
-
-    {
-        bcsv::Reader<MixedGenericLayoutStatic, bcsv::TrackingPolicy::Enabled> reader;
-        if (!reader.open(filename)) {
-            result.validation_error = "Cannot read BCSV Static ZoH file: " + reader.getErrorMsg();
-            return result;
-        }
-
-        size_t rowsRead = 0;
-        timer.start();
-        while (reader.readNext()) {
-            const auto& row = reader.row();
-            fillRowZoHByLayout(expectedRow, rowsRead, profile.layout);
-
-            if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
-                std::string err;
-                if (!validateRowByScenarioExact(scenario, rowsRead, expectedRow, row, profile.layout,
-                                                selectedColumns, err)) {
-                    validationOk = false;
-                    if (firstError.empty()) firstError = err;
-                }
-                ++processedRows;
-            }
-
-            bench::doNotOptimize(row);
-            ++rowsRead;
-        }
-        reader.close();
-        timer.stop();
-
-        if (rowsRead != numRows) {
-            result.validation_error = "Row count mismatch: expected " + std::to_string(numRows)
-                                    + " got " + std::to_string(rowsRead);
-            result.read_time_ms = timer.elapsedMs();
-            return result;
-        }
-    }
-
-    result.read_time_ms = timer.elapsedMs();
-    result.processed_row_ratio = computeProcessedRowRatio(processedRows, numRows);
-    result.validation_passed = validationOk;
-    if (!validationOk) {
-        result.validation_error = firstError;
-    }
-    result.computeThroughput();
-
-    if (!quiet) {
-        std::cerr << "  [" << profile.name << "] BCSV Static ZoH read: "
-                  << std::fixed << std::setprecision(1) << result.read_time_ms << " ms"
-                  << " — " << (result.validation_passed ? "PASS" : "FAIL") << "\n";
-    }
-
-    return result;
+    return benchmarkBCSVStaticVariant(profile, numRows, scenario, quiet, "BCSV Static ZoH [trk=on]", "_static_zoh", true, true);
 }
 
 /// Run all benchmarks for a single dataset profile
 std::vector<bench::BenchmarkResult> benchmarkProfile(const bench::DatasetProfile& profile,
                                                       size_t numRows,
                                                       bool quiet,
-                                                      const std::vector<SparseScenario>& scenarios)
+                                                      const std::vector<SparseScenario>& scenarios,
+                                                      const ModeSelection& modeSelection)
 {
     std::vector<bench::BenchmarkResult> results;
 
     if (!quiet) {
+        const auto capabilities = capabilitiesForProfileName(profile.name);
         std::cerr << "\n=== Dataset: " << profile.name << " ===\n"
                   << "  " << profile.description << "\n"
                   << "  Rows: " << numRows 
-                  << "  Columns: " << profile.layout.columnCount() << "\n\n";
+                  << "  Columns: " << profile.layout.columnCount() << "\n"
+                  << "  Capabilities: tracked-flex(no-copy)="
+                  << (capabilities.supportsTrackedFlexibleNoCopy ? "yes" : "no")
+                  << ", static(no-copy)="
+                  << ((capabilities.supportsStaticNoCopy && profile.layout.columnCount() <= 128) ? "yes" : "no")
+                  << " (layout<=128=" << (profile.layout.columnCount() <= 128 ? "yes" : "no") << ")\n\n";
     }
 
     for (const auto& scenario : scenarios) {
-        auto csvResult = benchmarkCSV(profile, numRows, scenario, quiet);
-        results.push_back(csvResult);
-
-        auto flexResult = benchmarkBCSVFlexible(profile, numRows, scenario, quiet);
-        if (csvResult.file_size > 0) {
-            flexResult.compression_ratio = static_cast<double>(flexResult.file_size) / csvResult.file_size;
+        bench::BenchmarkResult csvResult;
+        bool hasCsvBaseline = false;
+        if (modeSelection.storage == StorageSelection::Both) {
+            csvResult = benchmarkCSV(profile, numRows, scenario, quiet);
+            results.push_back(csvResult);
+            hasCsvBaseline = true;
         }
-        results.push_back(flexResult);
 
-        auto zohResult = benchmarkBCSVFlexibleZoH(profile, numRows, scenario, quiet);
-        if (csvResult.file_size > 0) {
-            zohResult.compression_ratio = static_cast<double>(zohResult.file_size) / csvResult.file_size;
+        if (includesFlexible(modeSelection.storage)) {
+            if (includesTrackingDisabled(modeSelection.tracking)) {
+                auto flexResult = benchmarkBCSVFlexible(profile, numRows, scenario, quiet);
+                if (hasCsvBaseline && csvResult.file_size > 0) {
+                    flexResult.compression_ratio = static_cast<double>(flexResult.file_size) / csvResult.file_size;
+                }
+                results.push_back(flexResult);
+            }
+
+            if (includesTrackingEnabled(modeSelection.tracking)) {
+                if (supportsNoCopyTrackedFlexible(profile)) {
+                    auto flexTrackedResult = benchmarkBCSVFlexibleTracked(profile, numRows, scenario, quiet);
+                    if (hasCsvBaseline && csvResult.file_size > 0) {
+                        flexTrackedResult.compression_ratio = static_cast<double>(flexTrackedResult.file_size) / csvResult.file_size;
+                    }
+                    results.push_back(flexTrackedResult);
+                } else {
+                    results.push_back(makeSkippedResult(
+                        profile,
+                        numRows,
+                        scenario,
+                        "BCSV Flexible [trk=on]",
+                        "no-copy generator unavailable"));
+                    if (!quiet) {
+                        std::cerr << "  [" << makeScenarioRunLabel(profile, scenario)
+                                  << "] skip BCSV Flexible [trk=on]: no-copy generator unavailable\n";
+                    }
+                }
+
+                auto zohResult = benchmarkBCSVFlexibleZoH(profile, numRows, scenario, quiet);
+                if (hasCsvBaseline && csvResult.file_size > 0) {
+                    zohResult.compression_ratio = static_cast<double>(zohResult.file_size) / csvResult.file_size;
+                }
+                results.push_back(zohResult);
+            }
         }
-        results.push_back(zohResult);
 
-        if (supportsStaticMode(profile)) {
-            auto staticResult = benchmarkBCSVStatic(profile, numRows, scenario, quiet);
-            if (csvResult.file_size > 0) {
-                staticResult.compression_ratio = static_cast<double>(staticResult.file_size) / csvResult.file_size;
+        if (includesStatic(modeSelection.storage) && supportsStaticMode(profile)) {
+            if (includesTrackingDisabled(modeSelection.tracking)) {
+                auto staticResult = benchmarkBCSVStatic(profile, numRows, scenario, quiet);
+                if (hasCsvBaseline && csvResult.file_size > 0) {
+                    staticResult.compression_ratio = static_cast<double>(staticResult.file_size) / csvResult.file_size;
+                }
+                results.push_back(staticResult);
             }
-            results.push_back(staticResult);
 
-            auto staticZoHResult = benchmarkBCSVStaticZoH(profile, numRows, scenario, quiet);
-            if (csvResult.file_size > 0) {
-                staticZoHResult.compression_ratio = static_cast<double>(staticZoHResult.file_size) / csvResult.file_size;
+            if (includesTrackingEnabled(modeSelection.tracking)) {
+                auto staticTrackedResult = benchmarkBCSVStaticTracked(profile, numRows, scenario, quiet);
+                if (hasCsvBaseline && csvResult.file_size > 0) {
+                    staticTrackedResult.compression_ratio = static_cast<double>(staticTrackedResult.file_size) / csvResult.file_size;
+                }
+                results.push_back(staticTrackedResult);
+
+                auto staticZoHResult = benchmarkBCSVStaticZoH(profile, numRows, scenario, quiet);
+                if (hasCsvBaseline && csvResult.file_size > 0) {
+                    staticZoHResult.compression_ratio = static_cast<double>(staticZoHResult.file_size) / csvResult.file_size;
+                }
+                results.push_back(staticZoHResult);
             }
-            results.push_back(staticZoHResult);
+        } else if (includesStatic(modeSelection.storage)) {
+            const std::string staticSkipReason = "no-copy static generator unavailable or layout >128 cols";
+            if (includesTrackingDisabled(modeSelection.tracking)) {
+                results.push_back(makeSkippedResult(
+                    profile,
+                    numRows,
+                    scenario,
+                    "BCSV Static [trk=off]",
+                    staticSkipReason));
+            }
+            if (includesTrackingEnabled(modeSelection.tracking)) {
+                results.push_back(makeSkippedResult(
+                    profile,
+                    numRows,
+                    scenario,
+                    "BCSV Static [trk=on]",
+                    staticSkipReason));
+                results.push_back(makeSkippedResult(
+                    profile,
+                    numRows,
+                    scenario,
+                    "BCSV Static ZoH [trk=on]",
+                    staticSkipReason));
+            }
+            if (!quiet) {
+                std::cerr << "  [" << makeScenarioRunLabel(profile, scenario)
+                          << "] skip static modes: " << staticSkipReason << "\n";
+            }
         }
     }
 
@@ -994,10 +1386,45 @@ void cleanupProfile(const bench::DatasetProfile& profile) {
 int main(int argc, char* argv[]) {
     auto args = bench::parseArgs(argc, argv);
     const auto allScenarios = buildSparseScenarios();
+    const auto profileNames = bench::getProfileNames();
+
+    if (bench::hasArg(args, "help") || bench::hasArg(args, "h")) {
+        std::cout
+            << "BCSV Macro Benchmark Suite\n\n"
+            << "Usage:\n"
+            << "  bench_macro_datasets [options]\n\n"
+            << "Options:\n"
+            << "  --rows=N\n"
+            << "  --size=S|M|L|XL\n"
+            << "  --output=PATH\n"
+            << "  --profile=NAME\n"
+            << "  --scenario=LIST\n"
+            << "  --tracking=both|enabled|disabled   (default: both)\n"
+            << "  --storage=both|flexible|static     (default: both)\n"
+            << "  --list\n"
+            << "  --list-scenarios\n"
+            << "  --quiet\n"
+            << "  --no-cleanup\n"
+            << "  --build-type=Debug|Release\n\n"
+            << "Examples:\n"
+            << "  bench_macro_datasets --profile=rtl_waveform --rows=10000 --tracking=enabled\n"
+            << "  bench_macro_datasets --storage=static --scenario=baseline,sparse_columns_k1\n"
+            << "  bench_macro_datasets --tracking=disabled --storage=flexible\n\n"
+            << "Profiles (" << profileNames.size() << "):\n";
+        for (const auto& name : profileNames) {
+            std::cout << "  - " << name << "\n";
+        }
+        std::cout << "\nScenarios (" << allScenarios.size() << "):\n";
+        for (const auto& s : allScenarios) {
+            std::cout << "  - " << s.id << "\n";
+        }
+        std::cout << "\n";
+        return 0;
+    }
 
     // --list: print profile names and exit
     if (bench::hasArg(args, "list")) {
-        for (const auto& name : bench::getProfileNames()) {
+        for (const auto& name : profileNames) {
             std::cout << name << "\n";
         }
         return 0;
@@ -1030,9 +1457,24 @@ int main(int argc, char* argv[]) {
     std::string outputPath = bench::getArgString(args, "output", "");
     std::string profileFilter = bench::getArgString(args, "profile", "");
     std::string scenarioFilter = bench::getArgString(args, "scenario", "");
+    std::string trackingFilter = bench::getArgString(args, "tracking", "both");
+    std::string storageFilter = bench::getArgString(args, "storage", "both");
     bool quiet = bench::hasArg(args, "quiet");
     bool noCleanup = bench::hasArg(args, "no-cleanup");
     std::string buildType = bench::getArgString(args, "build-type", "Release");
+
+    ModeSelection modeSelection;
+    std::string modeError;
+    modeSelection.tracking = parseTrackingSelection(trackingFilter, modeError);
+    if (!modeError.empty()) {
+        std::cerr << "ERROR: " << modeError << "\n";
+        return 1;
+    }
+    modeSelection.storage = parseStorageSelection(storageFilter, modeError);
+    if (!modeError.empty()) {
+        std::cerr << "ERROR: " << modeError << "\n";
+        return 1;
+    }
 
     std::string scenarioError;
     auto scenarios = filterScenarios(allScenarios, scenarioFilter, scenarioError);
@@ -1052,7 +1494,7 @@ int main(int argc, char* argv[]) {
         } catch (const std::exception& e) {
             std::cerr << "ERROR: " << e.what() << "\n";
             std::cerr << "Available profiles: ";
-            for (const auto& n : bench::getProfileNames()) std::cerr << n << " ";
+            for (const auto& n : profileNames) std::cerr << n << " ";
             std::cerr << "\n";
             return 1;
         }
@@ -1065,6 +1507,8 @@ int main(int argc, char* argv[]) {
                   << "==========================\n"
                   << "Profiles: " << profiles.size() << "\n"
                   << "Scenarios: " << scenarios.size() << "\n"
+                  << "Tracking: " << trackingFilter << "\n"
+                  << "Storage: " << storageFilter << "\n"
                   << "Rows: " << (rowOverride > 0 ? std::to_string(rowOverride) : "profile defaults") << "\n"
                   << "Build: " << buildType << "\n\n";
     }
@@ -1080,7 +1524,7 @@ int main(int argc, char* argv[]) {
             std::cerr << "Warmup: " << profiles.front().name << " (100 rows)...\n";
         }
         try {
-            benchmarkProfile(profiles.front(), 100, /*quiet=*/true, {scenarios.front()});
+            benchmarkProfile(profiles.front(), 100, /*quiet=*/true, {scenarios.front()}, modeSelection);
             cleanupProfile(profiles.front());
         } catch (...) {
             // Warmup failure is non-fatal
@@ -1096,13 +1540,14 @@ int main(int argc, char* argv[]) {
         size_t numRows = (rowOverride > 0) ? rowOverride : profile.default_rows;
         
         try {
-            auto results = benchmarkProfile(profile, numRows, quiet, scenarios);
+            auto results = benchmarkProfile(profile, numRows, quiet, scenarios, modeSelection);
             allResults.insert(allResults.end(), results.begin(), results.end());
         } catch (const std::exception& e) {
             std::cerr << "ERROR in profile " << profile.name << ": " << e.what() << "\n";
             bench::BenchmarkResult errorResult;
             errorResult.dataset_name = profile.name;
             errorResult.mode = "ERROR";
+            errorResult.status = "error";
             errorResult.validation_error = e.what();
             allResults.push_back(errorResult);
         }
@@ -1113,6 +1558,15 @@ int main(int argc, char* argv[]) {
     }
 
     totalTimer.stop();
+
+    for (auto& result : allResults) {
+        if (result.status == "ok" && result.validation_error.rfind("SKIPPED:", 0) == 0) {
+            result.status = "skipped";
+        }
+        if (result.status == "ok" && !result.validation_passed) {
+            result.status = "error";
+        }
+    }
 
     // Print human-readable summary to stderr
     if (!quiet) {
