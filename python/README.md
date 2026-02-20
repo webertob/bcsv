@@ -164,6 +164,16 @@ python test_basic.py      # Basic BCSV operations
 python test_pandas.py     # Pandas integration tests
 ```
 
+## Python Benchmark Lane (Item 11.B)
+
+Dedicated benchmark runner:
+
+```bash
+python3 python/benchmarks/run_pybcsv_benchmarks.py --size=S
+```
+
+See `python/benchmarks/README.md` for workload/mode options and output schema.
+
 ## File Structure
 
 ```text
