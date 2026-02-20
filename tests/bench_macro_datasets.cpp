@@ -126,6 +126,51 @@ void fillRowZoHByLayout(RowType& row, size_t rowIndex, const bcsv::Layout& layou
     bench::datagen::fillRowTimeSeries(row, rowIndex, layout, 100);
 }
 
+template<size_t Offset, typename RowType, typename Generator, size_t... I>
+inline void fillSixTypedImpl(RowType& row, size_t rowIndex, Generator&& generator, std::index_sequence<I...>) {
+    (row.template set<Offset + I>(generator(rowIndex, Offset + I)), ...);
+}
+
+template<size_t Offset, typename RowType, typename Generator>
+inline void fillSixTyped(RowType& row, size_t rowIndex, Generator&& generator) {
+    fillSixTypedImpl<Offset>(row, rowIndex, std::forward<Generator>(generator), std::make_index_sequence<6>{});
+}
+
+template<typename RowType>
+inline void fillMixedGenericRowRandomTyped(RowType& row, size_t rowIndex) {
+    using namespace bench::datagen;
+    fillSixTyped<0>(row, rowIndex, [](size_t r, size_t c) { return genBool(r, c); });
+    fillSixTyped<6>(row, rowIndex, [](size_t r, size_t c) { return genInt8(r, c); });
+    fillSixTyped<12>(row, rowIndex, [](size_t r, size_t c) { return genInt16(r, c); });
+    fillSixTyped<18>(row, rowIndex, [](size_t r, size_t c) { return genInt32(r, c); });
+    fillSixTyped<24>(row, rowIndex, [](size_t r, size_t c) { return genInt64(r, c); });
+    fillSixTyped<30>(row, rowIndex, [](size_t r, size_t c) { return genUInt8(r, c); });
+    fillSixTyped<36>(row, rowIndex, [](size_t r, size_t c) { return genUInt16(r, c); });
+    fillSixTyped<42>(row, rowIndex, [](size_t r, size_t c) { return genUInt32(r, c); });
+    fillSixTyped<48>(row, rowIndex, [](size_t r, size_t c) { return genUInt64(r, c); });
+    fillSixTyped<54>(row, rowIndex, [](size_t r, size_t c) { return genFloat(r, c); });
+    fillSixTyped<60>(row, rowIndex, [](size_t r, size_t c) { return genDouble(r, c); });
+    fillSixTyped<66>(row, rowIndex, [](size_t r, size_t c) { return genString(r, c); });
+}
+
+template<typename RowType>
+inline void fillMixedGenericRowZoHTyped(RowType& row, size_t rowIndex) {
+    using namespace bench::datagen;
+    constexpr size_t CHANGE_INTERVAL = 100;
+    fillSixTyped<0>(row, rowIndex, [](size_t r, size_t c) { return genTimeSeries<bool>(r, c, CHANGE_INTERVAL); });
+    fillSixTyped<6>(row, rowIndex, [](size_t r, size_t c) { return genTimeSeries<int8_t>(r, c, CHANGE_INTERVAL); });
+    fillSixTyped<12>(row, rowIndex, [](size_t r, size_t c) { return genTimeSeries<int16_t>(r, c, CHANGE_INTERVAL); });
+    fillSixTyped<18>(row, rowIndex, [](size_t r, size_t c) { return genTimeSeries<int32_t>(r, c, CHANGE_INTERVAL); });
+    fillSixTyped<24>(row, rowIndex, [](size_t r, size_t c) { return genTimeSeries<int64_t>(r, c, CHANGE_INTERVAL); });
+    fillSixTyped<30>(row, rowIndex, [](size_t r, size_t c) { return genTimeSeries<uint8_t>(r, c, CHANGE_INTERVAL); });
+    fillSixTyped<36>(row, rowIndex, [](size_t r, size_t c) { return genTimeSeries<uint16_t>(r, c, CHANGE_INTERVAL); });
+    fillSixTyped<42>(row, rowIndex, [](size_t r, size_t c) { return genTimeSeries<uint32_t>(r, c, CHANGE_INTERVAL); });
+    fillSixTyped<48>(row, rowIndex, [](size_t r, size_t c) { return genTimeSeries<uint64_t>(r, c, CHANGE_INTERVAL); });
+    fillSixTyped<54>(row, rowIndex, [](size_t r, size_t c) { return genTimeSeries<float>(r, c, CHANGE_INTERVAL); });
+    fillSixTyped<60>(row, rowIndex, [](size_t r, size_t c) { return genTimeSeries<double>(r, c, CHANGE_INTERVAL); });
+    fillSixTyped<66>(row, rowIndex, [](size_t r, size_t c) { return genTimeSeriesString(r, c, CHANGE_INTERVAL); });
+}
+
 std::vector<std::string> splitCsvList(const std::string& input) {
     std::vector<std::string> out;
     std::string token;
@@ -699,7 +744,7 @@ bench::BenchmarkResult benchmarkBCSVStatic(const bench::DatasetProfile& profile,
         timer.start();
         for (size_t i = 0; i < numRows; ++i) {
             auto& row = writer.row();
-            fillRowRandomByLayout(row, i, profile.layout);
+            fillMixedGenericRowRandomTyped(row, i);
             writer.writeRow();
         }
         writer.close();
@@ -797,7 +842,7 @@ bench::BenchmarkResult benchmarkBCSVStaticZoH(const bench::DatasetProfile& profi
         timer.start();
         for (size_t i = 0; i < numRows; ++i) {
             auto& row = writer.row();
-            fillRowZoHByLayout(row, i, profile.layout);
+            fillMixedGenericRowZoHTyped(row, i);
             writer.writeRow();
         }
         writer.close();
