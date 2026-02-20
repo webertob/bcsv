@@ -520,6 +520,43 @@ Item:
         }
 
 
+11.D Follow-up actions (post 11.C closure)
+    Goal:
+    - Complete deferred optimization and cleanup work without changing public API behavior.
+
+    Scope:
+    [ ] D1 Performance recovery campaign (VisitConst_72col)
+        - Create baseline/candidate measurement table for BM_VisitConst_72col in release mode
+        - Isolate hottest call paths (RowView/RowViewStatic typed + const visit)
+        - Implement minimal targeted optimizations only where data proves benefit
+        - Acceptance: no regression vs pre-11.C baseline for BM_VisitConst_72col
+
+    [ ] D2 Memory footprint comparison
+        - Measure sizeof and key heap allocations for Row, RowView, RowStatic, RowViewStatic, codecs
+        - Compare before/after Item 11 changes and document deltas
+        - Acceptance: memory report added to docs/ITEM_11_PLAN_Feedback.md (or successor note)
+
+    [ ] D3 Low-risk cleanup of known leftovers
+        - Review redundant layout_ ownership in ZoH/Flat composition
+        - Review reset() no-op path and simplify dispatch only if semantics stay unchanged
+        - Normalize naming consistency where wire/data size naming diverged
+        - Acceptance: no behavior changes, all tests and benchmark smoke remain green
+
+    [ ] D4 Validation and closure
+        - Run release build + full ctest
+        - Run micro + macro-small smoke benchmark suite
+        - Update ToDo.txt and mark 11.D closed with summary of delivered deltas
+
+    Lean Checklist Summary (planned)
+    - Scope fit: pending
+    - Ownership clarity: pending
+    - Layering: pending
+    - Duplication budget: pending
+    - Complexity budget: pending
+    - Safety guardrails: pending
+    - Compatibility impact: pending
+
+
 12. Implement CSV write and read functionality using the BCSV interface
     10.a: Restructure BCSV Reader/ Writer API
         - Create a ReadAPI and WriterAPI class that defined the basic functionality each Reader and Writer needs to support.
