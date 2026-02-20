@@ -126,7 +126,7 @@ python3 benchmark/run_benchmarks.py --type=MICRO,MACRO-SMALL,MACRO-LARGE
 python3 benchmark/report.py <candidate_run_dir> --baseline <baseline_run_dir>
 ```
 
-9 dataset profiles × 3 modes (CSV, BCSV Flexible, BCSV Flexible ZoH), with optional
+14 dataset profiles × 5 modes (CSV, BCSV Flexible, BCSV Flexible ZoH, BCSV Static, BCSV Static ZoH), with optional
 external CSV library comparison. See [tests/README.md](tests/README.md#benchmark-suite) for details.
 
 ---

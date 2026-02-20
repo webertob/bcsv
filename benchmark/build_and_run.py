@@ -11,6 +11,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from operator_summary import print_operator_summary
+
 
 TYPE_ROWS = {
     "MACRO-SMALL": 10_000,
@@ -21,7 +23,6 @@ MACRO_FILE_STEMS = {
     "MACRO-SMALL": "macro_small",
     "MACRO-LARGE": "macro_large",
 }
-
 
 def run(cmd, cwd=None):
     result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
@@ -345,6 +346,8 @@ def main() -> int:
     print("[5/5] Generate summary report")
     report_script = repo_root / "benchmark" / "report.py"
     run([sys.executable, str(report_script), str(out_dir), "--summary-only"], cwd=str(repo_root))
+
+    print_operator_summary(out_dir, types, aggregated_macro_payloads)
 
     print(f"Output: {out_dir}")
     return 0

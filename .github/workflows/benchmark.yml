@@ -21,18 +21,14 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
-      size:
-        description: 'Dataset size (S/M/L/XL)'
+      type:
+        description: 'Run type(s): MICRO, MACRO-SMALL, MACRO-LARGE (comma-separated)'
         required: false
-        default: 'S'
-      mode:
-        description: 'Benchmark mode (sweep or full)'
+        default: 'MACRO-SMALL'
+      repetitions:
+        description: 'Repetitions per type'
         required: false
-        default: 'sweep'
-        type: choice
-        options:
-          - sweep
-          - full
+        default: '1'
 
 permissions:
   contents: read
@@ -77,51 +73,44 @@ jobs:
     - name: Build CLI tools
       run: cmake --build build --target csv2bcsv bcsv2csv -j$(nproc)
 
-    - name: Run benchmark sweep (S size)
+    - name: Run benchmark sweep (MACRO-SMALL)
       run: |
+        RUN_ROOT="${{ runner.temp }}/bench_results/pr-${{ github.event.number }}"
         python3 benchmark/run_benchmarks.py \
-          --mode=sweep \
-          --size=S \
+          --type=MACRO-SMALL \
+          --repetitions=1 \
           --build-type=Release \
-          --output-dir=${{ runner.temp }}/bench_results
+          --git=pr-${{ github.event.number }} \
+          --results="$RUN_ROOT" \
+          --no-build
 
-    - name: Generate report
+    - name: Resolve run directory
       run: |
-        python3 benchmark/report_generator.py \
-          ${{ runner.temp }}/bench_results
+        RUN_ROOT="${{ runner.temp }}/bench_results/pr-${{ github.event.number }}"
+        RUN_DIR=$(ls -1dt "$RUN_ROOT"/* | head -1)
+        echo "RUN_ROOT=$RUN_ROOT" >> "$GITHUB_ENV"
+        echo "RUN_DIR=$RUN_DIR" >> "$GITHUB_ENV"
+
+    - name: Verify report exists
+      run: |
+        test -f "$RUN_DIR/report.md"
 
     - name: Upload benchmark results
       uses: actions/upload-artifact@v4
       with:
         name: benchmark-results-pr-${{ github.event.number }}
         path: |
-          ${{ runner.temp }}/bench_results/*.json
-          ${{ runner.temp }}/bench_results/report.md
-          ${{ runner.temp }}/bench_results/*.png
+          ${{ env.RUN_DIR }}
         retention-days: 30
 
     - name: Post summary to PR
       if: always()
       run: |
-        REPORT="${{ runner.temp }}/bench_results/report.md"
+        REPORT="$RUN_DIR/report.md"
         if [ -f "$REPORT" ]; then
-          # Extract the speedup summary table for a concise PR comment
-          echo "## Benchmark Results (S size — PR #${{ github.event.number }})" > comment.md
+          echo "## Benchmark Results (MACRO-SMALL — PR #${{ github.event.number }})" > comment.md
           echo "" >> comment.md
-          echo "<details><summary>Speedup Summary (BCSV vs CSV)</summary>" >> comment.md
-          echo "" >> comment.md
-          # Extract from first table header to the next blank line after the table
-          sed -n '/^## Speedup Summary/,/^$/p' "$REPORT" >> comment.md
-          echo "" >> comment.md
-          echo "</details>" >> comment.md
-          echo "" >> comment.md
-          echo "<details><summary>Compression Ratios</summary>" >> comment.md
-          echo "" >> comment.md
-          sed -n '/^## Compression Ratios/,/^$/p' "$REPORT" >> comment.md
-          echo "" >> comment.md
-          echo "</details>" >> comment.md
-          echo "" >> comment.md
-          echo "*Full report available in [workflow artifacts](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})*" >> comment.md
+          cat "$REPORT" >> comment.md
           cat comment.md >> "$GITHUB_STEP_SUMMARY"
         else
           echo "⚠️ Benchmark report not generated" >> "$GITHUB_STEP_SUMMARY"
@@ -159,34 +148,37 @@ jobs:
     - name: Build all benchmarks
       run: cmake --build build -j$(nproc)
 
-    - name: Run full benchmark sweep (L size)
+    - name: Run full benchmark sweep
       run: |
+        RUN_ROOT="${{ runner.temp }}/bench_results/release-${{ github.ref_name }}"
         python3 benchmark/run_benchmarks.py \
-          --mode=sweep \
-          --size=L \
+          --type=MICRO,MACRO-SMALL,MACRO-LARGE \
+          --repetitions=3 \
           --build-type=Release \
-          --output-dir=${{ runner.temp }}/bench_results
+          --git=${{ github.ref_name }} \
+          --results="$RUN_ROOT" \
+          --no-build
 
-    - name: Generate report
+    - name: Resolve run directory
       run: |
-        python3 benchmark/report_generator.py \
-          ${{ runner.temp }}/bench_results
+        RUN_ROOT="${{ runner.temp }}/bench_results/release-${{ github.ref_name }}"
+        RUN_DIR=$(ls -1dt "$RUN_ROOT"/* | head -1)
+        echo "RUN_ROOT=$RUN_ROOT" >> "$GITHUB_ENV"
+        echo "RUN_DIR=$RUN_DIR" >> "$GITHUB_ENV"
 
     - name: Upload benchmark results
       uses: actions/upload-artifact@v4
       with:
         name: benchmark-results-${{ github.ref_name }}
         path: |
-          ${{ runner.temp }}/bench_results/*.json
-          ${{ runner.temp }}/bench_results/report.md
-          ${{ runner.temp }}/bench_results/*.png
+          ${{ env.RUN_DIR }}
         retention-days: 90
 
     - name: Post release summary
       run: |
-        REPORT="${{ runner.temp }}/bench_results/report.md"
+        REPORT="$RUN_DIR/report.md"
         if [ -f "$REPORT" ]; then
-          echo "## Benchmark Results — ${{ github.ref_name }} (L size)" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Benchmark Results — ${{ github.ref_name }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
         fi
@@ -223,33 +215,36 @@ jobs:
     - name: Build all benchmarks
       run: cmake --build build -j$(nproc)
 
-    - name: Run benchmarks (${{ inputs.mode }}, ${{ inputs.size }})
+    - name: Run benchmarks (${{ inputs.type }})
       run: |
+        RUN_ROOT="${{ runner.temp }}/bench_results/manual"
         python3 benchmark/run_benchmarks.py \
-          --mode=${{ inputs.mode }} \
-          --size=${{ inputs.size }} \
+          --type=${{ inputs.type }} \
+          --repetitions=${{ inputs.repetitions }} \
           --build-type=Release \
-          --output-dir=${{ runner.temp }}/bench_results
+          --git=manual \
+          --results="$RUN_ROOT" \
+          --no-build
 
-    - name: Generate report
+    - name: Resolve run directory
       run: |
-        python3 benchmark/report_generator.py \
-          ${{ runner.temp }}/bench_results
+        RUN_ROOT="${{ runner.temp }}/bench_results/manual"
+        RUN_DIR=$(ls -1dt "$RUN_ROOT"/* | head -1)
+        echo "RUN_ROOT=$RUN_ROOT" >> "$GITHUB_ENV"
+        echo "RUN_DIR=$RUN_DIR" >> "$GITHUB_ENV"
 
     - name: Upload results
       uses: actions/upload-artifact@v4
       with:
-        name: benchmark-results-manual-${{ inputs.mode }}-${{ inputs.size }}
+        name: benchmark-results-manual
         path: |
-          ${{ runner.temp }}/bench_results/*.json
-          ${{ runner.temp }}/bench_results/report.md
-          ${{ runner.temp }}/bench_results/*.png
+          ${{ env.RUN_DIR }}
         retention-days: 90
 
     - name: Post summary
       run: |
-        REPORT="${{ runner.temp }}/bench_results/report.md"
+        REPORT="$RUN_DIR/report.md"
         if [ -f "$REPORT" ]; then
-          echo "## Benchmark (${{ inputs.mode }}, size=${{ inputs.size }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Benchmark (${{ inputs.type }})" >> "$GITHUB_STEP_SUMMARY"
           cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"
         fi

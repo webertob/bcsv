@@ -247,7 +247,7 @@ reader.close();
 - **Version**: v1.1.2 (generated from Git tags)
 - **Active work**: see ToDo.txt (items 10-14 are next: wire format, serializer layer, delta encoding)
 - **Test suite**: 404 tests passing (Google Test), 76 C API tests, row API tests
-- **Benchmark suite**: 11 dataset profiles, macro + micro benchmarks, Python orchestrator
+- **Benchmark suite**: 14 dataset profiles, macro + micro benchmarks, Python orchestrator
 
 ## Subsystem Skill Files
 

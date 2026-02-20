@@ -37,6 +37,7 @@ set(TEST_SOURCES
     row_codec_flat001_test.cpp
     row_codec_zoh001_test.cpp
     codec_dispatch_test.cpp
+    bench_dataset_profiles_test.cpp
 )
 
 if(BCSV_ENABLE_STRESS_TESTS)

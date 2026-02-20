@@ -11,6 +11,16 @@ The benchmark workflow is intentionally reduced to three run types:
 
 Legacy compare/leaderboard/report-latest flows are removed. Reporting and comparison are handled by `benchmark/report.py`.
 
+Current macro dataset catalog contains 14 profiles, including string-heavy reference workloads:
+`event_log`, `iot_fleet`, and `financial_orders`.
+
+Macro runs execute the following **5 modes**:
+- `CSV`
+- `BCSV Flexible`
+- `BCSV Flexible ZoH`
+- `BCSV Static`
+- `BCSV Static ZoH`
+
 ## Build
 
 ```bash
@@ -82,6 +92,27 @@ python3 benchmark/run_benchmarks.py \
 	--results=benchmark/results/$(hostname)/WIP \
 	--no-build
 ```
+
+### Interleaved Pair Comparison (Operator Utility)
+
+For alternating baseline/candidate campaigns (for example 5 interleaved pairs),
+generate a single pair-wise + aggregate markdown summary:
+
+```bash
+python3 benchmark/interleaved_compare.py \
+	--baseline-root benchmark/results/$(hostname)/clean_interleaved \
+	--candidate-root benchmark/results/$(hostname)/wip_interleaved \
+	--expected-pairs 5 \
+	--run-type MACRO-SMALL
+```
+
+Default output:
+- `benchmark/results/<hostname>/interleaved_5x_comparison.md`
+
+The script also prints a concise terminal summary (median/min/max deltas per metric)
+so operators get immediate feedback without opening the markdown file.
+Scores and comparison matrices are computed only from workloads present in both
+baseline and candidate runs; excluded workloads are listed explicitly in the report.
 
 Temp clone location defaults:
 - Linux: `/tmp/bcsv/<git-hash>`

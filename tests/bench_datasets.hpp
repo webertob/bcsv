@@ -30,6 +30,9 @@
  * 9. high_cardinality_string — 50 string columns, near-unique UUIDs
  * 10. realistic_measurement  — DAQ session: phases, mixed sensor rates, static metadata
  * 11. rtl_waveform           — RTL simulation: 256 bools + uint registers, clock + timer
+ * 12. event_log              — backend event stream, 8 low-cardinality categorical strings
+ * 13. iot_fleet              — fleet telemetry, round-robin devices with bounded metadata vocab
+ * 14. financial_orders       — order/trade feed with 8 categorical strings per event
  */
 
 #include <bcsv/bcsv.h>
@@ -39,6 +42,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace bench {
@@ -856,6 +860,489 @@ inline DatasetProfile createHighCardinalityStringProfile() {
 }
 
 // ============================================================================
+// Profile 12: event_log — backend event stream with categorical strings
+// ============================================================================
+
+inline DatasetProfile createEventLogProfile() {
+    DatasetProfile p;
+    p.name = "event_log";
+    p.description = "Application event stream: 8 categorical strings changing every row + telemetry metrics";
+    p.default_rows = 500000;
+
+    p.layout.addColumn({"tick", bcsv::ColumnType::UINT64});
+    p.layout.addColumn({"timestamp_ns", bcsv::ColumnType::UINT64});
+    p.layout.addColumn({"log_level", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"source_module", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"event_category", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"action", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"result_status", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"client_region", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"http_method", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"content_type", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"response_time_ms", bcsv::ColumnType::FLOAT});
+    p.layout.addColumn({"payload_size_bytes", bcsv::ColumnType::UINT32});
+    p.layout.addColumn({"http_status", bcsv::ColumnType::UINT16});
+    p.layout.addColumn({"is_error", bcsv::ColumnType::BOOL});
+    p.layout.addColumn({"is_authenticated", bcsv::ColumnType::BOOL});
+    p.layout.addColumn({"cpu_pct", bcsv::ColumnType::DOUBLE});
+    p.layout.addColumn({"mem_mb", bcsv::ColumnType::DOUBLE});
+    p.layout.addColumn({"latency_p50", bcsv::ColumnType::DOUBLE});
+    p.layout.addColumn({"latency_p95", bcsv::ColumnType::DOUBLE});
+    p.layout.addColumn({"latency_p99", bcsv::ColumnType::DOUBLE});
+    p.layout.addColumn({"queue_depth", bcsv::ColumnType::DOUBLE});
+    p.layout.addColumn({"db_ms", bcsv::ColumnType::DOUBLE});
+    p.layout.addColumn({"cache_hit_pct", bcsv::ColumnType::DOUBLE});
+    p.layout.addColumn({"req_total", bcsv::ColumnType::UINT32});
+    p.layout.addColumn({"req_success", bcsv::ColumnType::UINT32});
+    p.layout.addColumn({"req_failure", bcsv::ColumnType::UINT32});
+    p.layout.addColumn({"retries", bcsv::ColumnType::UINT32});
+
+    p.generate = [](bcsv::Row& row, size_t rowIndex) {
+        static const std::array<std::string, 5> logLevels = {
+            "TRACE", "DEBUG", "INFO", "WARN", "ERROR"
+        };
+        static const std::array<std::string, 20> sourceModules = {
+            "auth_service", "payment_gateway", "order_router", "billing_worker", "search_api",
+            "inventory_sync", "metrics_collector", "cache_warmer", "email_sender", "scheduler",
+            "profile_api", "fraud_detector", "reco_engine", "cdn_edge", "session_manager",
+            "rate_limiter", "db_proxy", "alert_dispatch", "queue_worker", "audit_logger"
+        };
+        static const std::array<std::string, 8> eventCategories = {
+            "security", "performance", "billing", "auth", "storage", "network", "api", "jobs"
+        };
+        static const std::array<std::string, 30> actions = {
+            "login", "logout", "purchase", "refund", "api_call", "cache_miss", "cache_hit", "retry",
+            "timeout", "enqueue", "dequeue", "db_query", "db_write", "sync_start", "sync_finish",
+            "heartbeat", "token_refresh", "password_reset", "session_start", "session_end", "webhook",
+            "batch_open", "batch_close", "upload", "download", "validate", "rate_limit", "throttle",
+            "audit", "cleanup"
+        };
+        static const std::array<std::string, 6> resultStatuses = {
+            "success", "failure", "timeout", "retrying", "cancelled", "degraded"
+        };
+        static const std::array<std::string, 12> clientRegions = {
+            "us-east-1", "us-west-2", "eu-west-1", "eu-central-1", "ap-south-1", "ap-northeast-1",
+            "sa-east-1", "ca-central-1", "af-south-1", "me-central-1", "us-gov-west-1", "ap-southeast-2"
+        };
+        static const std::array<std::string, 5> httpMethods = {
+            "GET", "POST", "PUT", "DELETE", "PATCH"
+        };
+        static const std::array<std::string, 8> contentTypes = {
+            "application/json", "text/html", "text/plain", "application/xml",
+            "application/octet-stream", "multipart/form-data", "application/grpc", "application/x-www-form-urlencoded"
+        };
+
+        row.set(static_cast<size_t>(0), static_cast<uint64_t>(rowIndex));
+        row.set(static_cast<size_t>(1), static_cast<uint64_t>(1704067200000000000ULL + rowIndex * 1000000ULL));
+        row.set(static_cast<size_t>(2), logLevels[datagen::hash64(rowIndex, 2) % logLevels.size()]);
+        row.set(static_cast<size_t>(3), sourceModules[datagen::hash64(rowIndex, 3) % sourceModules.size()]);
+        row.set(static_cast<size_t>(4), eventCategories[datagen::hash64(rowIndex, 4) % eventCategories.size()]);
+        row.set(static_cast<size_t>(5), actions[datagen::hash64(rowIndex, 5) % actions.size()]);
+        row.set(static_cast<size_t>(6), resultStatuses[datagen::hash64(rowIndex, 6) % resultStatuses.size()]);
+        row.set(static_cast<size_t>(7), clientRegions[datagen::hash64(rowIndex, 7) % clientRegions.size()]);
+        row.set(static_cast<size_t>(8), httpMethods[datagen::hash64(rowIndex, 8) % httpMethods.size()]);
+        row.set(static_cast<size_t>(9), contentTypes[datagen::hash64(rowIndex, 9) % contentTypes.size()]);
+        row.set(static_cast<size_t>(10), static_cast<float>(datagen::hash64(rowIndex, 10) % 501));
+        row.set(static_cast<size_t>(11), static_cast<uint32_t>(datagen::hash64(rowIndex, 11) % 1000001ULL));
+        row.set(static_cast<size_t>(12), static_cast<uint16_t>(200 + (datagen::hash64(rowIndex, 12) % 300)));
+        row.set(static_cast<size_t>(13), (datagen::hash64(rowIndex, 13) % 100) >= 90);
+        row.set(static_cast<size_t>(14), (datagen::hash64(rowIndex, 14) % 100) < 85);
+
+        for (size_t i = 0; i < 8; ++i) {
+            const size_t col = 15 + i;
+            const double metric = 10.0 * (i + 1) + static_cast<double>(datagen::hash64(rowIndex, col) % 10000) / 100.0;
+            row.set(col, metric);
+        }
+
+        row.set(static_cast<size_t>(23), static_cast<uint32_t>(rowIndex));
+        row.set(static_cast<size_t>(24), static_cast<uint32_t>(rowIndex - (rowIndex / 20)));
+        row.set(static_cast<size_t>(25), static_cast<uint32_t>(rowIndex / 20));
+        row.set(static_cast<size_t>(26), static_cast<uint32_t>(rowIndex / 50));
+    };
+
+    p.generateZoH = [](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t rowIndex) {
+        static const std::array<std::string, 5> logLevels = {
+            "TRACE", "DEBUG", "INFO", "WARN", "ERROR"
+        };
+        static const std::array<std::string, 20> sourceModules = {
+            "auth_service", "payment_gateway", "order_router", "billing_worker", "search_api",
+            "inventory_sync", "metrics_collector", "cache_warmer", "email_sender", "scheduler",
+            "profile_api", "fraud_detector", "reco_engine", "cdn_edge", "session_manager",
+            "rate_limiter", "db_proxy", "alert_dispatch", "queue_worker", "audit_logger"
+        };
+        static const std::array<std::string, 8> eventCategories = {
+            "security", "performance", "billing", "auth", "storage", "network", "api", "jobs"
+        };
+        static const std::array<std::string, 30> actions = {
+            "login", "logout", "purchase", "refund", "api_call", "cache_miss", "cache_hit", "retry",
+            "timeout", "enqueue", "dequeue", "db_query", "db_write", "sync_start", "sync_finish",
+            "heartbeat", "token_refresh", "password_reset", "session_start", "session_end", "webhook",
+            "batch_open", "batch_close", "upload", "download", "validate", "rate_limit", "throttle",
+            "audit", "cleanup"
+        };
+        static const std::array<std::string, 6> resultStatuses = {
+            "success", "failure", "timeout", "retrying", "cancelled", "degraded"
+        };
+        static const std::array<std::string, 12> clientRegions = {
+            "us-east-1", "us-west-2", "eu-west-1", "eu-central-1", "ap-south-1", "ap-northeast-1",
+            "sa-east-1", "ca-central-1", "af-south-1", "me-central-1", "us-gov-west-1", "ap-southeast-2"
+        };
+        static const std::array<std::string, 5> httpMethods = {
+            "GET", "POST", "PUT", "DELETE", "PATCH"
+        };
+        static const std::array<std::string, 8> contentTypes = {
+            "application/json", "text/html", "text/plain", "application/xml",
+            "application/octet-stream", "multipart/form-data", "application/grpc", "application/x-www-form-urlencoded"
+        };
+
+        const size_t metricSegment = rowIndex / 50;
+
+        row.set(static_cast<size_t>(0), static_cast<uint64_t>(rowIndex));
+        row.set(static_cast<size_t>(1), static_cast<uint64_t>(1704067200000000000ULL + rowIndex * 1000000ULL));
+        row.set(static_cast<size_t>(2), logLevels[(rowIndex * 3 + 1) % logLevels.size()]);
+        row.set(static_cast<size_t>(3), sourceModules[(rowIndex * 7 + 2) % sourceModules.size()]);
+        row.set(static_cast<size_t>(4), eventCategories[(rowIndex * 5 + 3) % eventCategories.size()]);
+        row.set(static_cast<size_t>(5), actions[(rowIndex * 11 + 4) % actions.size()]);
+        row.set(static_cast<size_t>(6), resultStatuses[(rowIndex * 5 + 1) % resultStatuses.size()]);
+        row.set(static_cast<size_t>(7), clientRegions[(rowIndex * 7 + 5) % clientRegions.size()]);
+        row.set(static_cast<size_t>(8), httpMethods[(rowIndex * 3 + 2) % httpMethods.size()]);
+        row.set(static_cast<size_t>(9), contentTypes[(rowIndex * 5 + 7) % contentTypes.size()]);
+        row.set(static_cast<size_t>(10), static_cast<float>(10.0f + static_cast<float>(metricSegment % 400) * 0.5f));
+        row.set(static_cast<size_t>(11), static_cast<uint32_t>(1024 + (metricSegment % 1000) * 32));
+        row.set(static_cast<size_t>(12), static_cast<uint16_t>((metricSegment % 20) == 0 ? 500 : 200 + (metricSegment % 20)));
+        row.set(static_cast<size_t>(13), (metricSegment % 20) == 0);
+        row.set(static_cast<size_t>(14), (rowIndex % 9) != 0);
+
+        for (size_t i = 0; i < 8; ++i) {
+            const size_t col = 15 + i;
+            const double base = 20.0 + static_cast<double>(i) * 15.0;
+            row.set(col, base + static_cast<double>(metricSegment % 500) * 0.05);
+        }
+
+        row.set(static_cast<size_t>(23), static_cast<uint32_t>(rowIndex));
+        row.set(static_cast<size_t>(24), static_cast<uint32_t>(rowIndex - (rowIndex / 25)));
+        row.set(static_cast<size_t>(25), static_cast<uint32_t>(rowIndex / 25));
+        row.set(static_cast<size_t>(26), static_cast<uint32_t>(rowIndex / 64));
+    };
+
+    return p;
+}
+
+// ============================================================================
+// Profile 13: iot_fleet — round-robin device telemetry with bounded vocabularies
+// ============================================================================
+
+inline DatasetProfile createIotFleetProfile() {
+    DatasetProfile p;
+    p.name = "iot_fleet";
+    p.description = "IoT fleet telemetry: round-robin devices, bounded metadata vocabularies, mixed numeric channels";
+    p.default_rows = 500000;
+
+    p.layout.addColumn({"seq", bcsv::ColumnType::UINT64});
+    p.layout.addColumn({"timestamp_ns", bcsv::ColumnType::UINT64});
+    p.layout.addColumn({"device_id", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"location", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"sensor_type", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"firmware_version", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"unit", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"alert_level", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"reading", bcsv::ColumnType::DOUBLE});
+    p.layout.addColumn({"reading_min", bcsv::ColumnType::FLOAT});
+    p.layout.addColumn({"reading_max", bcsv::ColumnType::FLOAT});
+    p.layout.addColumn({"battery_pct", bcsv::ColumnType::UINT8});
+    p.layout.addColumn({"signal_rssi", bcsv::ColumnType::INT8});
+    p.layout.addColumn({"error_count", bcsv::ColumnType::UINT32});
+    p.layout.addColumn({"uptime_sec", bcsv::ColumnType::UINT64});
+    p.layout.addColumn({"is_online", bcsv::ColumnType::BOOL});
+    p.layout.addColumn({"is_calibrated", bcsv::ColumnType::BOOL});
+    for (size_t i = 0; i < 8; ++i) {
+        p.layout.addColumn({"aux_" + std::to_string(i), bcsv::ColumnType::FLOAT});
+    }
+
+    p.generate = [](bcsv::Row& row, size_t rowIndex) {
+        static const std::array<std::string, 10> sensorTypes = {
+            "temperature", "humidity", "pressure", "co2", "vibration",
+            "light", "noise", "flow", "ph", "occupancy"
+        };
+        static const std::array<std::string, 5> firmware = {
+            "v3.2.1", "v3.2.0", "v3.1.9", "v3.1.8", "v3.0.5"
+        };
+        static const std::array<std::string, 8> units = {
+            "C", "hPa", "%RH", "m/s", "lux", "dB", "ppm", "mg/m3"
+        };
+        static const std::array<std::string, 4> alerts = {
+            "normal", "caution", "warning", "critical"
+        };
+
+        const size_t deviceIdx = datagen::hash64(rowIndex, 2) % 100;
+        const size_t locationIdx = datagen::hash64(rowIndex, 3) % 25;
+
+        row.set(static_cast<size_t>(0), static_cast<uint64_t>(rowIndex));
+        row.set(static_cast<size_t>(1), static_cast<uint64_t>(1704067200000000000ULL + rowIndex * 5000000ULL));
+        row.set(static_cast<size_t>(2), std::string("sensor_") + (deviceIdx < 9 ? "00" : (deviceIdx < 99 ? "0" : "")) + std::to_string(deviceIdx + 1));
+        row.set(static_cast<size_t>(3), std::string("building_") + static_cast<char>('A' + (locationIdx / 5))
+            + "/floor_" + std::to_string((locationIdx % 5) + 1)
+            + "/room_" + std::to_string(100 + static_cast<int>(locationIdx) * 4));
+        row.set(static_cast<size_t>(4), sensorTypes[datagen::hash64(rowIndex, 4) % sensorTypes.size()]);
+        row.set(static_cast<size_t>(5), firmware[datagen::hash64(rowIndex, 5) % firmware.size()]);
+        row.set(static_cast<size_t>(6), units[datagen::hash64(rowIndex, 6) % units.size()]);
+        row.set(static_cast<size_t>(7), alerts[datagen::hash64(rowIndex, 7) % alerts.size()]);
+
+        const double reading = static_cast<double>(datagen::hash64(rowIndex, 8) % 200000) / 1000.0;
+        row.set(static_cast<size_t>(8), reading);
+        row.set(static_cast<size_t>(9), static_cast<float>(reading - static_cast<double>(datagen::hash64(rowIndex, 9) % 400) / 100.0));
+        row.set(static_cast<size_t>(10), static_cast<float>(reading + static_cast<double>(datagen::hash64(rowIndex, 10) % 400) / 100.0));
+        row.set(static_cast<size_t>(11), static_cast<uint8_t>(datagen::hash64(rowIndex, 11) % 101));
+        row.set(static_cast<size_t>(12), static_cast<int8_t>(-90 + static_cast<int>(datagen::hash64(rowIndex, 12) % 61)));
+        row.set(static_cast<size_t>(13), static_cast<uint32_t>(datagen::hash64(rowIndex, 13) % 20000));
+        row.set(static_cast<size_t>(14), static_cast<uint64_t>(datagen::hash64(rowIndex, 14) % 5000000ULL));
+        row.set(static_cast<size_t>(15), (datagen::hash64(rowIndex, 15) % 100) < 97);
+        row.set(static_cast<size_t>(16), (datagen::hash64(rowIndex, 16) % 100) < 90);
+
+        for (size_t i = 0; i < 8; ++i) {
+            const size_t col = 17 + i;
+            row.set(col, static_cast<float>(datagen::hash64(rowIndex, col) % 10000) / 100.0f);
+        }
+    };
+
+    p.generateZoH = [](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t rowIndex) {
+        static const std::array<std::string, 10> sensorTypes = {
+            "temperature", "humidity", "pressure", "co2", "vibration",
+            "light", "noise", "flow", "ph", "occupancy"
+        };
+        static const std::array<std::string, 5> firmware = {
+            "v3.2.1", "v3.2.0", "v3.1.9", "v3.1.8", "v3.0.5"
+        };
+        static const std::array<std::string, 8> units = {
+            "C", "hPa", "%RH", "m/s", "lux", "dB", "ppm", "mg/m3"
+        };
+        static const std::array<std::string, 4> alerts = {
+            "normal", "caution", "warning", "critical"
+        };
+
+        const size_t deviceIdx = rowIndex % 100;
+        const size_t locationIdx = deviceIdx / 4;
+        const size_t sensorIdx = deviceIdx % sensorTypes.size();
+        const size_t metricSegment = rowIndex / 20;
+
+        row.set(static_cast<size_t>(0), static_cast<uint64_t>(rowIndex));
+        row.set(static_cast<size_t>(1), static_cast<uint64_t>(1704067200000000000ULL + rowIndex * 5000000ULL));
+        row.set(static_cast<size_t>(2), std::string("sensor_") + (deviceIdx < 9 ? "00" : (deviceIdx < 99 ? "0" : "")) + std::to_string(deviceIdx + 1));
+        row.set(static_cast<size_t>(3), std::string("building_") + static_cast<char>('A' + (locationIdx / 5))
+            + "/floor_" + std::to_string((locationIdx % 5) + 1)
+            + "/room_" + std::to_string(100 + static_cast<int>(locationIdx) * 4));
+        row.set(static_cast<size_t>(4), sensorTypes[sensorIdx]);
+        row.set(static_cast<size_t>(5), firmware[(deviceIdx / 20) % firmware.size()]);
+        row.set(static_cast<size_t>(6), units[sensorIdx % units.size()]);
+
+        const uint64_t skew = datagen::hash64(rowIndex, 7) % 100;
+        const std::string& alert = (skew < 90) ? alerts[0] : (skew < 97) ? alerts[1] : (skew < 99) ? alerts[2] : alerts[3];
+        row.set(static_cast<size_t>(7), alert);
+
+        const double base = 10.0 + static_cast<double>(sensorIdx) * 7.5 + static_cast<double>(deviceIdx) * 0.2;
+        const double drift = static_cast<double>((metricSegment + deviceIdx) % 800) * 0.02;
+        const double reading = base + drift;
+        row.set(static_cast<size_t>(8), reading);
+        row.set(static_cast<size_t>(9), static_cast<float>(reading - 0.5));
+        row.set(static_cast<size_t>(10), static_cast<float>(reading + 0.5));
+        row.set(static_cast<size_t>(11), static_cast<uint8_t>(20 + (deviceIdx % 81)));
+        row.set(static_cast<size_t>(12), static_cast<int8_t>(-80 + static_cast<int>((deviceIdx * 3) % 35)));
+        row.set(static_cast<size_t>(13), static_cast<uint32_t>(rowIndex / 100 + deviceIdx));
+        row.set(static_cast<size_t>(14), static_cast<uint64_t>(rowIndex * 5 + deviceIdx * 1000));
+        row.set(static_cast<size_t>(15), true);
+        row.set(static_cast<size_t>(16), (deviceIdx % 10) != 0);
+
+        for (size_t i = 0; i < 8; ++i) {
+            const size_t col = 17 + i;
+            const float aux = static_cast<float>(reading * 0.1 + static_cast<double>(i) * 0.5 + static_cast<double>(metricSegment % 50) * 0.05);
+            row.set(col, aux);
+        }
+    };
+
+    return p;
+}
+
+// ============================================================================
+// Profile 14: financial_orders — categorical event feed with derived fields
+// ============================================================================
+
+inline DatasetProfile createFinancialOrdersProfile() {
+    DatasetProfile p;
+    p.name = "financial_orders";
+    p.description = "Financial order feed: 8 categorical strings per event + price/quantity derived metrics";
+    p.default_rows = 500000;
+
+    p.layout.addColumn({"order_id", bcsv::ColumnType::UINT64});
+    p.layout.addColumn({"timestamp_ns", bcsv::ColumnType::UINT64});
+    p.layout.addColumn({"ticker", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"exchange", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"order_type", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"side", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"status", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"broker_id", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"currency", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"strategy_tag", bcsv::ColumnType::STRING});
+    p.layout.addColumn({"price", bcsv::ColumnType::DOUBLE});
+    p.layout.addColumn({"quantity", bcsv::ColumnType::UINT32});
+    p.layout.addColumn({"fill_price", bcsv::ColumnType::DOUBLE});
+    p.layout.addColumn({"fill_quantity", bcsv::ColumnType::UINT32});
+    p.layout.addColumn({"commission", bcsv::ColumnType::FLOAT});
+    p.layout.addColumn({"is_margin", bcsv::ColumnType::BOOL});
+    p.layout.addColumn({"is_short", bcsv::ColumnType::BOOL});
+    p.layout.addColumn({"is_algorithmic", bcsv::ColumnType::BOOL});
+    p.layout.addColumn({"notional_usd", bcsv::ColumnType::DOUBLE});
+    p.layout.addColumn({"pnl_realized", bcsv::ColumnType::DOUBLE});
+    p.layout.addColumn({"risk_score", bcsv::ColumnType::FLOAT});
+    p.layout.addColumn({"seq_num", bcsv::ColumnType::UINT64});
+
+    p.generate = [](bcsv::Row& row, size_t rowIndex) {
+        static const std::array<std::string, 50> tickers = {
+            "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "ORCL", "INTC", "AMD",
+            "NFLX", "ADBE", "CRM", "PYPL", "QCOM", "AVGO", "TXN", "IBM", "CSCO", "MU",
+            "UBER", "SHOP", "SNOW", "PLTR", "ABNB", "SQ", "RBLX", "COIN", "TEAM", "DDOG",
+            "SAP", "SONY", "BABA", "TCEHY", "ASML", "TSM", "NVO", "SHEL", "BP", "RIO",
+            "JPM", "BAC", "GS", "MS", "C", "WFC", "V", "MA", "AXP", "BLK"
+        };
+        static const std::array<std::string, 5> exchanges = {
+            "NYSE", "NASDAQ", "LSE", "TSE", "HKEX"
+        };
+        static const std::array<std::string, 5> orderTypes = {
+            "MARKET", "LIMIT", "STOP", "STOP_LIMIT", "TRAILING_STOP"
+        };
+        static const std::array<std::string, 2> sides = {
+            "BUY", "SELL"
+        };
+        static const std::array<std::string, 6> statuses = {
+            "NEW", "PARTIAL_FILL", "FILLED", "CANCELLED", "REJECTED", "EXPIRED"
+        };
+        static const std::array<std::string, 20> brokers = {
+            "broker_01", "broker_02", "broker_03", "broker_04", "broker_05",
+            "broker_06", "broker_07", "broker_08", "broker_09", "broker_10",
+            "broker_11", "broker_12", "broker_13", "broker_14", "broker_15",
+            "broker_16", "broker_17", "broker_18", "broker_19", "broker_20"
+        };
+        static const std::array<std::string, 8> currencies = {
+            "USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "HKD"
+        };
+        static const std::array<std::string, 15> strategies = {
+            "mean_reversion", "momentum", "vwap", "twap", "stat_arb",
+            "pair_trade", "market_making", "breakout", "carry", "news_alpha",
+            "event_driven", "liquidity_seek", "cross_venue", "risk_parity", "vol_target"
+        };
+
+        const size_t tickerIdx = datagen::hash64(rowIndex, 2) % tickers.size();
+        const double basePrice = 20.0 + static_cast<double>(tickerIdx) * 4.5;
+        const double price = basePrice + static_cast<double>(datagen::hash64(rowIndex, 10) % 1000) * 0.01;
+        const uint32_t quantity = static_cast<uint32_t>(1 + (datagen::hash64(rowIndex, 11) % 20000));
+        const uint32_t fillQty = static_cast<uint32_t>(datagen::hash64(rowIndex, 13) % (quantity + 1));
+        const double fillPrice = price + static_cast<double>(static_cast<int>(datagen::hash64(rowIndex, 12) % 11) - 5) * 0.01;
+        const double notional = price * static_cast<double>(quantity);
+        const double pnl = (fillPrice - price) * static_cast<double>(fillQty);
+
+        row.set(static_cast<size_t>(0), static_cast<uint64_t>(1000000000ULL + rowIndex));
+        row.set(static_cast<size_t>(1), static_cast<uint64_t>(1704067200000000000ULL + rowIndex * 100000ULL));
+        row.set(static_cast<size_t>(2), tickers[tickerIdx]);
+        row.set(static_cast<size_t>(3), exchanges[datagen::hash64(rowIndex, 3) % exchanges.size()]);
+        row.set(static_cast<size_t>(4), orderTypes[datagen::hash64(rowIndex, 4) % orderTypes.size()]);
+        row.set(static_cast<size_t>(5), sides[datagen::hash64(rowIndex, 5) % sides.size()]);
+        row.set(static_cast<size_t>(6), statuses[datagen::hash64(rowIndex, 6) % statuses.size()]);
+        row.set(static_cast<size_t>(7), brokers[datagen::hash64(rowIndex, 7) % brokers.size()]);
+        row.set(static_cast<size_t>(8), currencies[datagen::hash64(rowIndex, 8) % currencies.size()]);
+        row.set(static_cast<size_t>(9), strategies[datagen::hash64(rowIndex, 9) % strategies.size()]);
+        row.set(static_cast<size_t>(10), price);
+        row.set(static_cast<size_t>(11), quantity);
+        row.set(static_cast<size_t>(12), fillPrice);
+        row.set(static_cast<size_t>(13), fillQty);
+        row.set(static_cast<size_t>(14), static_cast<float>(0.0002 * static_cast<double>(quantity)));
+        row.set(static_cast<size_t>(15), (datagen::hash64(rowIndex, 15) % 100) < 20);
+        row.set(static_cast<size_t>(16), (datagen::hash64(rowIndex, 16) % 100) < 10);
+        row.set(static_cast<size_t>(17), (datagen::hash64(rowIndex, 17) % 100) < 60);
+        row.set(static_cast<size_t>(18), notional);
+        row.set(static_cast<size_t>(19), pnl);
+        row.set(static_cast<size_t>(20), static_cast<float>(static_cast<double>(datagen::hash64(rowIndex, 20) % 1000) / 1000.0));
+        row.set(static_cast<size_t>(21), static_cast<uint64_t>(rowIndex));
+    };
+
+    p.generateZoH = [](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t rowIndex) {
+        static const std::array<std::string, 50> tickers = {
+            "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "ORCL", "INTC", "AMD",
+            "NFLX", "ADBE", "CRM", "PYPL", "QCOM", "AVGO", "TXN", "IBM", "CSCO", "MU",
+            "UBER", "SHOP", "SNOW", "PLTR", "ABNB", "SQ", "RBLX", "COIN", "TEAM", "DDOG",
+            "SAP", "SONY", "BABA", "TCEHY", "ASML", "TSM", "NVO", "SHEL", "BP", "RIO",
+            "JPM", "BAC", "GS", "MS", "C", "WFC", "V", "MA", "AXP", "BLK"
+        };
+        static const std::array<std::string, 5> exchanges = {
+            "NYSE", "NASDAQ", "LSE", "TSE", "HKEX"
+        };
+        static const std::array<std::string, 5> orderTypes = {
+            "MARKET", "LIMIT", "STOP", "STOP_LIMIT", "TRAILING_STOP"
+        };
+        static const std::array<std::string, 2> sides = {
+            "BUY", "SELL"
+        };
+        static const std::array<std::string, 6> statuses = {
+            "NEW", "PARTIAL_FILL", "FILLED", "CANCELLED", "REJECTED", "EXPIRED"
+        };
+        static const std::array<std::string, 20> brokers = {
+            "broker_01", "broker_02", "broker_03", "broker_04", "broker_05",
+            "broker_06", "broker_07", "broker_08", "broker_09", "broker_10",
+            "broker_11", "broker_12", "broker_13", "broker_14", "broker_15",
+            "broker_16", "broker_17", "broker_18", "broker_19", "broker_20"
+        };
+        static const std::array<std::string, 8> currencies = {
+            "USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "HKD"
+        };
+        static const std::array<std::string, 15> strategies = {
+            "mean_reversion", "momentum", "vwap", "twap", "stat_arb",
+            "pair_trade", "market_making", "breakout", "carry", "news_alpha",
+            "event_driven", "liquidity_seek", "cross_venue", "risk_parity", "vol_target"
+        };
+        static const std::array<double, 50> basePrices = {
+            190.0, 420.0, 150.0, 170.0, 900.0, 480.0, 250.0, 115.0, 38.0, 145.0,
+            600.0, 540.0, 260.0, 70.0, 180.0, 1340.0, 195.0, 220.0, 54.0, 110.0,
+            75.0, 68.0, 165.0, 26.0, 145.0, 78.0, 35.0, 210.0, 185.0, 120.0,
+            170.0, 95.0, 82.0, 44.0, 980.0, 135.0, 120.0, 70.0, 36.0, 62.0,
+            185.0, 42.0, 390.0, 102.0, 55.0, 61.0, 280.0, 445.0, 295.0, 910.0
+        };
+
+        const size_t tickerIdx = (rowIndex * 7 + 3) % tickers.size();
+        const size_t driftSegment = rowIndex / 1000;
+        const double drift = static_cast<double>(driftSegment % 500) * 0.01;
+        const double price = basePrices[tickerIdx] + drift;
+        const uint32_t quantity = static_cast<uint32_t>(100 + ((rowIndex * 37) % 5000));
+        const uint32_t fillQty = static_cast<uint32_t>(quantity * ((rowIndex % 4) + 1) / 4);
+        const double fillPrice = price + 0.01;
+        const double notional = price * static_cast<double>(quantity);
+        const double pnl = (fillPrice - price) * static_cast<double>(fillQty);
+
+        row.set(static_cast<size_t>(0), static_cast<uint64_t>(1000000000ULL + rowIndex));
+        row.set(static_cast<size_t>(1), static_cast<uint64_t>(1704067200000000000ULL + rowIndex * 100000ULL));
+        row.set(static_cast<size_t>(2), tickers[tickerIdx]);
+        row.set(static_cast<size_t>(3), exchanges[(rowIndex * 3 + 1) % exchanges.size()]);
+        row.set(static_cast<size_t>(4), orderTypes[(rowIndex * 5 + 2) % orderTypes.size()]);
+        row.set(static_cast<size_t>(5), sides[rowIndex % sides.size()]);
+        row.set(static_cast<size_t>(6), statuses[(rowIndex * 7 + 3) % statuses.size()]);
+        row.set(static_cast<size_t>(7), brokers[(rowIndex * 11 + 4) % brokers.size()]);
+        row.set(static_cast<size_t>(8), currencies[(rowIndex * 3 + tickerIdx) % currencies.size()]);
+        row.set(static_cast<size_t>(9), strategies[(rowIndex * 13 + 1) % strategies.size()]);
+        row.set(static_cast<size_t>(10), price);
+        row.set(static_cast<size_t>(11), quantity);
+        row.set(static_cast<size_t>(12), fillPrice);
+        row.set(static_cast<size_t>(13), fillQty);
+        row.set(static_cast<size_t>(14), static_cast<float>(0.0002 * static_cast<double>(quantity)));
+        row.set(static_cast<size_t>(15), (rowIndex % 5) == 0);
+        row.set(static_cast<size_t>(16), (rowIndex % 10) == 0);
+        row.set(static_cast<size_t>(17), (rowIndex % 5) < 3);
+        row.set(static_cast<size_t>(18), notional);
+        row.set(static_cast<size_t>(19), pnl);
+        row.set(static_cast<size_t>(20), static_cast<float>((tickerIdx % 10) / 10.0));
+        row.set(static_cast<size_t>(21), static_cast<uint64_t>(rowIndex));
+    };
+
+    return p;
+}
+
+// ============================================================================
 // Profile 10: realistic_measurement — DAQ session with phases and mixed rates
 // ============================================================================
 //
@@ -1148,8 +1635,8 @@ inline DatasetProfile createRtlWaveformProfile() {
 // Registry — get all available dataset profiles
 // ============================================================================
 
-inline std::vector<DatasetProfile> getAllProfiles() {
-    return {
+inline const std::vector<DatasetProfile>& getAllProfilesCached() {
+    static const std::vector<DatasetProfile> profiles = {
         createMixedGenericProfile(),
         createSparseEventsProfile(),
         createSensorNoisyProfile(),
@@ -1159,22 +1646,42 @@ inline std::vector<DatasetProfile> getAllProfiles() {
         createSimulationSmoothProfile(),
         createWeatherTimeseriesProfile(),
         createHighCardinalityStringProfile(),
+        createEventLogProfile(),
+        createIotFleetProfile(),
+        createFinancialOrdersProfile(),
         createRealisticMeasurementProfile(),
         createRtlWaveformProfile()
     };
+    return profiles;
+}
+
+inline std::vector<DatasetProfile> getAllProfiles() {
+    return getAllProfilesCached();
 }
 
 inline DatasetProfile getProfile(const std::string& name) {
-    auto profiles = getAllProfiles();
-    for (auto& p : profiles) {
-        if (p.name == name) return p;
+    const auto& profiles = getAllProfilesCached();
+    static const std::unordered_map<std::string, size_t> profile_index = [] {
+        std::unordered_map<std::string, size_t> index;
+        const auto& all = getAllProfilesCached();
+        for (size_t i = 0; i < all.size(); ++i) {
+            index.emplace(all[i].name, i);
+        }
+        return index;
+    }();
+
+    auto it = profile_index.find(name);
+    if (it != profile_index.end()) {
+        return profiles[it->second];
     }
+
     throw std::runtime_error("Unknown dataset profile: " + name);
 }
 
 inline std::vector<std::string> getProfileNames() {
-    auto profiles = getAllProfiles();
     std::vector<std::string> names;
+    const auto& profiles = getAllProfilesCached();
+    names.reserve(profiles.size());
     for (const auto& p : profiles) names.push_back(p.name);
     return names;
 }

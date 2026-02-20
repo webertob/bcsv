@@ -25,6 +25,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from operator_summary import print_operator_summary
+
 
 TYPE_ROWS = {
     "MACRO-SMALL": 10_000,
@@ -35,7 +37,6 @@ MACRO_FILE_STEMS = {
     "MACRO-SMALL": "macro_small",
     "MACRO-LARGE": "macro_large",
 }
-
 
 def project_root() -> Path:
     root = Path(__file__).resolve().parent.parent
@@ -612,6 +613,8 @@ def main() -> int:
         run_report(out_dir, baseline, summary_only=True)
     else:
         print("  - skipped (--no-report)")
+
+    print_operator_summary(out_dir, run_types, aggregated_macro_payloads)
 
     print("[4/4] Completed")
     print(f"Output: {out_dir}")

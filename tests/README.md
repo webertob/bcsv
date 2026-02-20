@@ -455,6 +455,9 @@ bench_micro_types       Micro: per-type Get/Set, VisitConst, Serialize (Google B
 Orchestrated by **`benchmark/run_benchmarks.py`** using a reduced CLI surface:
 `--type`, `--repetitions`, `--cpus`, `--pin`, `--git`, `--results`.
 
+Macro benchmarks run in 5 modes: `CSV`, `BCSV Flexible`, `BCSV Flexible ZoH`,
+`BCSV Static`, `BCSV Static ZoH`.
+
 ### Dataset Profiles
 
 | Profile | Columns | Character |
@@ -468,6 +471,11 @@ Orchestrated by **`benchmark/run_benchmarks.py`** using a reduced CLI surface:
 | `simulation_smooth` | 100 | Slowly-drifting floats, ZoH-optimal |
 | `weather_timeseries` | 40 | Realistic mixed weather telemetry |
 | `high_cardinality_string` | 50 | UUID strings, worst-case compression |
+| `event_log` | 27 | Backend event stream with bounded categorical strings |
+| `iot_fleet` | 25 | Fleet telemetry with round-robin device metadata |
+| `financial_orders` | 22 | Order/trade feed with categorical tags + derived metrics |
+| `realistic_measurement` | 38 | DAQ session phases with mixed update rates |
+| `rtl_waveform` | 290 | Digital waveform capture (bool-heavy + register buses) |
 
 ### Running Benchmarks
 
