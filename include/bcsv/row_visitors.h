@@ -106,7 +106,12 @@
 
 #pragma once
 
+#include <algorithm>
+#include <cstddef>
 #include <concepts>
+#include <limits>
+#include <ostream>
+#include <string>
 #include <type_traits>
 
 namespace bcsv {

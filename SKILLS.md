@@ -85,11 +85,11 @@ cmake --build --preset ninja-release-build -j$(nproc) --target bench_macro_datas
 | `BCSV_ENABLE_MICRO_BENCHMARKS` | ON | Google Benchmark per-type latency |
 | `BCSV_ENABLE_EXTERNAL_CSV_BENCH` | OFF | External csv-parser comparison (fetches ~30 MB) |
 | `BCSV_ENABLE_STRESS_TESTS` | OFF | Time-consuming LZ4 stress tests |
-| `BCSV_ENABLE_LEGACY_BENCHMARKS` | OFF | Deprecated benchmark_large / benchmark_performance |
+| `BCSV_ENABLE_LEGACY_BENCHMARKS` | ON | Deprecated benchmark_large / benchmark_performance |
 
 ### CMake Presets
 
-6 presets in `CMakePresets.json`: `gcc-debug`, `gcc-release`, `msvc-debug`, `msvc-release`, `ninja-debug`, `ninja-release`.
+7 presets in `CMakePresets.json`: `gcc-debug`, `gcc-release`, `msvc-debug`, `msvc-release`, `ninja-debug`, `ninja-release`, `ninja-release-min`.
 
 ### Build Output
 
@@ -183,7 +183,6 @@ reader.close();
 | `file_footer.h` | `FileFooter`, `PacketIndexEntry` — EOF index for random access |
 | `bitset.h` | `Bitset<N>` (fixed) / `Bitset<>` (dynamic, SOO) — change tracking + bool storage |
 | `byte_buffer.h` | `LazyAllocator<T>`, `ByteBuffer` — no-init byte vector |
-| `string_addr.h` | `StrAddrT<>` — packed string offset+length in single integer |
 | `column_name_index.h` | `ColumnNameIndex<>` — flat-map for column name → index lookup |
 | `bcsv_c_api.h` | C API surface — opaque handles, `extern "C"` functions |
 | `checksum.hpp` | `Checksum` / `Checksum::Streaming` — xxHash64 wrapper |
@@ -258,6 +257,20 @@ reader.close();
 | Examples & CLI | examples/SKILLS.md | CLI tools, example programs, known caveats |
 | Python bindings | python/SKILLS.md | Build, test, publish Python package |
 | Unity / C# | unity/SKILLS.md | Architecture, prerequisites, key files |
+
+## Item 11.B Benchmark Artifacts
+
+- Reference workload mapping and dataset fetch helper:
+    - `benchmark/REFERENCE_WORKLOADS.md`
+    - `benchmark/reference_workloads.json`
+    - `benchmark/fetch_reference_datasets.py`
+- Dedicated Python benchmark lane:
+    - `python/benchmarks/run_pybcsv_benchmarks.py`
+    - `python/benchmarks/README.md`
+- Dedicated standalone C# benchmark lane:
+    - `csharp/benchmarks/Bcsv.Benchmarks.csproj`
+    - `csharp/benchmarks/Program.cs`
+    - `csharp/benchmarks/README.md`
 
 ## Lean Architecture Gate
 

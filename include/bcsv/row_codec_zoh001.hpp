@@ -332,7 +332,7 @@ RowCodecZoH001<LayoutStatic<ColumnTypes...>, Policy>::serialize(
         rowHeader.set();  // all columns "changed"
         buffer.resize(buffer.size() + rowHeader.sizeBytes());
 
-        serializeElementsZoH<0>(row, buffer, rowHeader);
+        serializeElementsZoHAllChanged<0>(row, buffer, rowHeader);
 
         std::memcpy(&buffer[bufferSizeOld], rowHeader.data(), rowHeader.sizeBytes());
 
@@ -379,6 +379,39 @@ void RowCodecZoH001<LayoutStatic<ColumnTypes...>, Policy>::serializeElementsZoH(
         }
         // Recurse to next element.
         serializeElementsZoH<Index + 1>(row, buffer, rowHeader);
+    }
+}
+
+template<TrackingPolicy Policy, typename... ColumnTypes>
+template<size_t Index>
+void RowCodecZoH001<LayoutStatic<ColumnTypes...>, Policy>::serializeElementsZoHAllChanged(
+    const RowType& row, ByteBuffer& buffer,
+    Bitset<COLUMN_COUNT>& rowHeader) const
+{
+    if constexpr (Index < COLUMN_COUNT) {
+        using T = typename RowType::template column_type<Index>;
+
+        if constexpr (std::is_same_v<T, bool>) {
+            rowHeader.set(Index, std::get<Index>(row.data_));
+        } else if constexpr (std::is_same_v<T, std::string>) {
+            const auto& value = std::get<Index>(row.data_);
+            uint16_t strLength = static_cast<uint16_t>(
+                std::min(value.size(), MAX_STRING_LENGTH));
+            const size_t old_size = buffer.size();
+
+            buffer.resize(buffer.size() + sizeof(uint16_t) + strLength);
+            std::memcpy(&buffer[old_size], &strLength, sizeof(uint16_t));
+            if (strLength > 0) {
+                std::memcpy(&buffer[old_size + sizeof(uint16_t)], value.data(), strLength);
+            }
+        } else {
+            const auto& value = std::get<Index>(row.data_);
+            const size_t old_size = buffer.size();
+            buffer.resize(buffer.size() + sizeof(T));
+            std::memcpy(&buffer[old_size], &value, sizeof(T));
+        }
+
+        serializeElementsZoHAllChanged<Index + 1>(row, buffer, rowHeader);
     }
 }
 

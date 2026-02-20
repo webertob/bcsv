@@ -579,23 +579,6 @@ namespace bcsv {
         Layout                  layout_;        // Shared layout data (no callbacks needed for views)
         RowCodecFlat001<Layout, TrackingPolicy::Disabled> codec_; // Wire-format metadata + per-column offsets (Item 11)
 
-        // Per-column offset pointer — cached from codec_.columnOffsets().data()
-        // to avoid vector indirection in inner loops (offsets_ptr_[i] per column).
-        // Other wire constants (wireBitsSize, wireFixedSize, etc.) are accessed
-        // directly from codec_ — they are only used once per call (pre-loop).
-        const uint32_t*         offsets_ptr_{nullptr};
-
-        mutable bool            bool_scratch_;    // scratch for raw get() returning span on BOOL columns
-
-        // Mutable data
-        std::span<std::byte>    buffer_;        // serialized data buffer (flat wire format)
-
-        /// Re-cache offsets pointer after codec_ setup or copy/move.
-        void cacheOffsetsPtr() noexcept {
-            offsets_ptr_ = codec_.columnOffsets().data();
-        }
-
-    
     public:
         RowView() = delete;
         RowView(const Layout& layout, std::span<std::byte> buffer = {});
@@ -603,9 +586,9 @@ namespace bcsv {
         RowView(RowView&& other) noexcept;
         ~RowView() = default;
 
-        [[nodiscard]] const std::span<std::byte>& buffer() const noexcept                   { return buffer_; }
+        [[nodiscard]] const std::span<std::byte>& buffer() const noexcept                   { return codec_.buffer(); }
         const Layout&               layout() const noexcept                                 { return layout_; }
-        void                        setBuffer(const std::span<std::byte> &buffer) noexcept  { buffer_ = buffer; }
+        void                        setBuffer(const std::span<std::byte> &buffer) noexcept  { codec_.setBuffer(buffer); }
         [[nodiscard]] Row           toRow() const;
         [[nodiscard]] bool          validate(bool deepValidation = true) const;
 
@@ -784,23 +767,23 @@ namespace bcsv {
     private:
         // Immutable after construction --> We need to protect these members from modification (const wont' work due to assignment & move operators)
         LayoutType              layout_;
-
-        // Mutable data
-        std::span<std::byte>    buffer_;
-        mutable bool            bool_scratch_{false};   // scratch for raw get() returning span on BOOL columns
+        Codec                   codec_;
 
     public:
 
         RowViewStatic() = delete;
         RowViewStatic(const LayoutType& layout, std::span<std::byte> buffer = {})
-            : layout_(layout), buffer_(buffer) {}
-        RowViewStatic(const RowViewStatic& other) = default;        // default copy constructor, as we don't own the buffer
-        RowViewStatic(RowViewStatic&& other) noexcept = default;    // default move constructor
+            : layout_(layout), codec_() {
+            codec_.setup(layout_);
+            codec_.setBuffer(buffer);
+        }
+        RowViewStatic(const RowViewStatic& other);
+        RowViewStatic(RowViewStatic&& other) noexcept;
         ~RowViewStatic() = default;
 
-        const std::span<std::byte>& buffer() const noexcept                                     { return buffer_; }
+        const std::span<std::byte>& buffer() const noexcept                                     { return codec_.buffer(); }
         const LayoutType&           layout() const noexcept                                     { return layout_; }
-        void                        setBuffer(const std::span<std::byte> &buffer) noexcept      { buffer_ = buffer; }
+        void                        setBuffer(const std::span<std::byte> &buffer) noexcept      { codec_.setBuffer(buffer); }
 
         // =========================================================================
         // 1. Static Access (Compile-Time) - Zero Copy where possible
@@ -865,10 +848,18 @@ namespace bcsv {
                                     template<RowVisitor Visitor>
         void                        visit(Visitor&& visitor);
 
-        RowViewStatic& operator=(const RowViewStatic& other) noexcept = default; // default copy assignment, as we don't own the buffer
-        RowViewStatic& operator=(RowViewStatic&& other) noexcept = default;      // default move assignment, as we don't own the buffer
+        RowViewStatic& operator=(const RowViewStatic& other) noexcept;
+        RowViewStatic& operator=(RowViewStatic&& other) noexcept;
 
     private:
+        void validateVisitRange(size_t startIndex, size_t count, const char* fnName) const;
+
+        template<RowVisitorConst Visitor, size_t... I>
+        void visitConstAtIndex(size_t index, Visitor&& visitor, std::index_sequence<I...>) const;
+
+        template<RowVisitor Visitor, size_t... I>
+        void visitMutableAtIndex(size_t index, Visitor&& visitor, std::index_sequence<I...>);
+
         template<size_t Index = 0>
         bool validateStringPayloads() const;
     };

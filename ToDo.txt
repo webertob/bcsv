@@ -377,8 +377,8 @@ Lean checklist gate (for every non-trivial item):
         - added missing out_of_range bounds check in RowImpl::get(span)
     [x] update ARCHITECTURE.md with RowView ↔ Codec relationship
     [x] update ITEM_11_PLAN.md with post-implementation assessment
-    [ ] clean up (dead code), i.e. remove StringAddr
-    [ ] clean up includes (regain compile speed, avoid cyclic dependencies, keep clangd happy)
+    [x] clean up (dead code), i.e. remove StringAddr
+    [x] clean up includes (regain compile speed, avoid cyclic dependencies, keep clangd happy)
     [ ] regain speed — benchmark pre-fetch impact, investigate remaining VisitConst_72col regression
     [ ] Compare memory footprint
     [ ] Consider Refactorings (redundant layout_ in codecs, setLayout() public, naming, reset() no-op)
@@ -404,34 +404,120 @@ Item:
 4. compare should be removed as it gets integrated into report.py, leaderboard should be removed. report_latest,md should be removed and does not need to be produced
 5. Unify documentation benchmark/OPERATOR_GUIDE.md and benchmark/SKILLS.md into benchmark/README.md addressing both agentic and human users reference this tocument in project root/SKILLS.md
 
-11. d Benchmark 
-Improve Execution Speed
-MACRO-SMALL should be sized to provide results for all workloads and bcsv-versions, with one repetion, on one CPU, no pining, within less than 3mins
-MACRO_LARGE should be sized to provide results for all workloads and bcsv-versions, with one repetion, on one CPU, no pining, wihtin less than 60mins.
-MICOR Benchmarks (Google), should use pining to CPU2, and be sized to run in less than 5mins
-external (3rd party) CSV library should be tested once for our workloads (single cpu 5 repetitions) and documented. No need to rerun on a host, if it has been done already, just use documented results. We are not developing this benchmark and can consider it constant. Perhaps we make s dedicated skript benchmark_3rd-party.py
+11. B Benchmarks:
+    - add reference workloads for timeseries data: https://www.vldb.org/pvldb/vol15/p3058-liakos.pdf
+    - create python based benchmarks
+    - create C# based benchmarks
 
+11. C Code Clearity:
+    Implementation started: 2026-02-20
+    Scope (Phase 1 + low-risk cleanup):
+    [x] consolidate duplicated visit range/buffer checks in RowView + RowViewStatic
+    [x] consolidate duplicated RowView string-cursor initialization for sparse access
+    [x] consolidate duplicated typed RowView preamble checks (visit<T>/visitConst<T>)
+    [x] remove RowCodecFlat001::setLayout() public API footgun; use setup() for rebinding
+    [x] continue consolidation of RowView/RowViewStatic dispatch internals (shared helpers)
+    [x] evaluate and document copy/move cost impact of setup()-based codec rebinding
+    [x] move RowView sparse validation/cursor initialization ownership to codec helpers (Flat001)
+    [x] add symmetric sparse helper contract to ZoH001 (delegates to flat_ for RowView-facing API)
+    [x] remove dead code (StringAddr) in follow-up
 
+    Boundary decision (11.C):
+    - RowView acts as sparse access façade/orchestrator.
+    - Codec owns sparse wire validation and support-state setup (range checks, typed checks, string cursors).
+    - Compile-time codec binding preserved (no runtime indirection introduced).
 
-11. Clean Up Code Implementation (11.a/11.b)
+    Rebinding cost snapshot (2026-02-20, bench_micro_types DEBUG build):
+    - BM_RowViewCopyConstruct_12col: ~137 ns
+    - BM_RowViewCopyAssign_12col: ~103 ns
+    - BM_RowViewMoveConstruct_12col: ~251 ns
+    - BM_RowViewMoveAssign_12col: ~223 ns
+    Notes:
+    - Move benchmarks include temporary source creation in the benchmark body (upper-bound style measurement).
+    - Debug build warning applies; use release benchmark binary for final gating decisions.
 
-Issue: Currently bool columns are stored within Row.bits_ / Rowstatic.bits_. But .bits_ is also used to track changes (TrackingPolicy == enabled). This adds deppendecies and divergent code paths. i.e. we cannot use the changes.any() to easily determine if we need to write this row when ZoH coded is used.
-Task: Modify Row(s) to use a dedictated bitset called changes_ if TrackingPolicy = enabled is defined. .bits_ should only contain values for bool columns. Update all functions that are involved in change tracking including visit, serialization and deserilization and change tracking functions itself.
+    Validation (Phase 1 checkpoint):
+    - Focused ctest cases PASS: RowView/RowViewStatic visit + codec dispatch
+    - Microbench smoke PASS: BM_RowViewVisit_* and BM_RowViewStaticVisit* (no obvious regression)
 
-    - Ensure Role Clarity Layout, Row, RowView, codecs
-    - Review member Elemenets Layout, Row, RowView, codecs
-    - Define layout functions getOffsetsAligned() getOffsetAligned(size_t column)
+    Status / Closure (2026-02-20):
+    [x] 11.A implemented and integrated (Serializer/Deserializer layer + codec dispatch architecture)
+    [x] 11.B implemented for correctness/hardening scope (with explicitly deferred perf/memory follow-ups)
+    [x] 11.C Phase 1 + low-risk cleanup implemented and validated
+    [x] Change packet 11.C CLOSED
 
-    - Review access patterns to avoid redundant range_checking
+    Deferred (explicitly tracked for future changes):
+    [ ] benchmark-driven speed regain for remaining VisitConst_72col regression
+    [ ] memory footprint comparison before/after Item 11 refactor
+    [ ] low-risk cleanup/refactoring leftovers (redundant layout_ in codecs, reset() no-op path review, naming consistency)
 
+    - Ensure roles of Row(s), Layout(s), RowCodec(s), FileCodec(s), Reader and Writter are well unterstood and documented.
+        Row: Stores data for a single row (bits_, data_, strg_), references a layout (layout_), Optionaly Tracking of changes (within bits_) to support Zoh or delta encoding. Row should query layout_ for information on data layout
+        RowView: Should provide similar/comparable API than row, but is aimed on accelerating sparse access to data. Hence reading not every row or just a few columns per row. The idea is that we can generate savings if we only decode/encode the actually requested column. Dense reads (all columns, all rows) through RowView most likley is more expensive. 
+        Layout: Defines the layout for a given file/dataset. Layout definition per column include column name and column type. Do size internal data structures (Row) and wire format it should provide columnOffsets() for aligned data and columnOffsetsPacked() for wired/packet data.
+                In the future Layout should also suoort column modifiers (volatile, sorted ascending, sorted descneding, smooth) to provide hints for the codecs on how the data is best compressed.
+        RowCodecs: Manage the encoding and decoding of rows. Operating on uncompressed data buffers. Going to hold temporary data and accelerator structures to accelerate decoding and encoding
+        FileCodes: Should help us to support different file structures. while all files share the same FileHeader that defines layout, bcsv version and encoding schema (fileFlags), it might be necesssary to support different file sturctures. I.e. packets are helpful to accelerate random/index based access to specific rows. Packets also help to limit data loss to certain file (row segments). However packets, come with additoonal complexity and uneven workloads. Realtime embedded systems might there for do better with a flat file format. Just appending rows sequentially without considering packets and packet based compression
+        Writer: API interface to write a bcsv file, selects the appropriate codecs based on user request. User must provide layout and based on the workload decides if tracking, Dense or spars operations are intended, as the select tracking policy and Row type.
+        Reader: API interface to read a bcsv file, selects the approriate codecs based on file header. user b providing layout and orw indicates if sparse operations or tracking is intended / required. By providing an prepopulated Layout (column definitions), Reader might perform a valdiation of the layout present in the file.
 
+    - Clean up members for Row(s), Layout(s) and Codec(s)
+        - no dupplication of informations (single source of truth)
+        - good access and solid naming pattern.
+        - avoid repetitive bounds/range checking within hot loops. cache/use the vectors instead of colIndex queries.
 
+        My Proposal on the data structure. Please review and discuss
+        Row {
+            layout_
+            bits_ (optionaly includes changes)
+            data_
+            strg_
+        }
 
+        RowStatic {
+            layout_
+            data_
+            optionaly (changes_)
+        }
 
-Review:
-BCSV Flex-ZoH Desne Write is 11% slower than best
-BCSV Static-ZoH Dense Read is 10% slower than best
-BCSV Static-ZoH Sparse Read is 8% slower than best
+        RowView {
+            layout_
+            codec_
+        }
+
+        RowStaticView {
+            layout_
+            codec_
+        }
+
+        Layout {
+            Data {
+                columnNames_
+                columnNameIndex_
+                columnTypes_ (enum)
+                columnOffsets_ (aligned, considering padding)
+                columnOffsetsPacked_ (packed, without padding i.e. wire format)
+                columnModifiers_ (enum)
+
+                columnCount_
+                columnCountBool_
+                columnCountStrings_
+            }
+
+            functions:
+                columnCount()
+                columnCount(colType)
+                columnModifiers()
+                columnModifier(colIndex)
+                columnNames()
+                columnName(colIndex)
+                columnOffsets()
+                columnOffset(colIndex)
+                columnOffsetsPacked()
+                columnOffsetPacked(colIndex)
+                columnTypes()
+                columnType(colIndex)
+        }
 
 
 12. Implement CSV write and read functionality using the BCSV interface

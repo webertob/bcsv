@@ -59,6 +59,18 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
             }
+        },
+        {
+            "name": "ninja-release-min",
+            "displayName": "Ninja Release (Minimal)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/ninja-release-min",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "BUILD_TESTS": "OFF",
+                "BUILD_EXAMPLES": "ON",
+                "BCSV_ENABLE_LEGACY_BENCHMARKS": "OFF"
+            }
         }
     ],
     "buildPresets": [
@@ -87,6 +99,10 @@
         {
             "name": "ninja-release-build",
             "configurePreset": "ninja-release"
+        },
+        {
+            "name": "ninja-release-min-build",
+            "configurePreset": "ninja-release-min"
         }
     ]
 }

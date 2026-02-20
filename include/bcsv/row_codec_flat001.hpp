@@ -17,13 +17,13 @@
  */
 
 #include "row_codec_flat001.h"
-#include "row_codec_detail.h"
 #include "row.h"
 
 #include <algorithm>
 #include <cassert>
 #include <cstring>
 #include <stdexcept>
+#include <string>
 
 namespace bcsv {
 
@@ -37,10 +37,24 @@ template<typename LayoutType, TrackingPolicy Policy>
 inline void RowCodecFlat001<LayoutType, Policy>::setup(const LayoutType& layout)
 {
     layout_ = &layout;
-    detail::computeWireMetadata(
-        layout.columnTypes(), offsets_,
-        wire_bits_size_, wire_data_size_, wire_strg_count_);
+    offsets_ = layout.columnOffsetsPacked();
+    wire_bits_size_  = static_cast<uint32_t>((layout.columnCount(ColumnType::BOOL) + 7u) / 8u);
+    wire_data_size_ = 0;
+    wire_strg_count_ = static_cast<uint32_t>(layout.columnCount(ColumnType::STRING));
+    
+    const size_t count = layout.columnCount();
+    const auto& types = layout.columnTypes();
+    const auto& packed_offsets = layout.columnOffsetsPacked();
+    for (size_t i = count; i-- > 0;) {
+        const ColumnType type = types[i];
+        if (type == ColumnType::BOOL || type == ColumnType::STRING) {
+            continue;
+        }
+        wire_data_size_ = packed_offsets[i] + static_cast<uint32_t>(sizeOf(type));
+        break;
+    }
     wire_fixed_size_ = wire_bits_size_ + wire_data_size_ + wire_strg_count_ * static_cast<uint32_t>(sizeof(uint16_t));
+    offsets_ptr_ = layout.columnOffsetsPacked().data();
 }
 
 
@@ -236,6 +250,86 @@ inline std::span<const std::byte> RowCodecFlat001<LayoutType, Policy>::readColum
     }
 }
 
+template<typename LayoutType, TrackingPolicy Policy>
+inline void RowCodecFlat001<LayoutType, Policy>::validateSparseRange(
+    std::span<const std::byte> buffer,
+    size_t startIndex,
+    size_t count,
+    const char* fnName) const
+{
+    assert(layout_ && "RowCodecFlat001::validateSparseRange() called before setup()");
+
+    if (count == 0) {
+        return;
+    }
+
+    const size_t endIndex = startIndex + count;
+    if constexpr (RANGE_CHECKING) {
+        if (endIndex > layout_->columnCount()) {
+            throw std::out_of_range(std::string(fnName) + ": Range [" + std::to_string(startIndex) +
+                ", " + std::to_string(endIndex) + ") exceeds column count " +
+                std::to_string(layout_->columnCount()));
+        }
+    } else {
+        assert(endIndex <= layout_->columnCount() && "RowView sparse range out of bounds");
+    }
+
+    if (buffer.size() < wireFixedSize()) [[unlikely]] {
+        throw std::runtime_error(std::string(fnName) + "() buffer too small for fixed wire section");
+    }
+}
+
+template<typename LayoutType, TrackingPolicy Policy>
+template<typename T>
+inline void RowCodecFlat001<LayoutType, Policy>::validateSparseTypedRange(
+    std::span<const std::byte> buffer,
+    size_t startIndex,
+    size_t count,
+    const char* fnName) const
+{
+    validateSparseRange(buffer, startIndex, count, fnName);
+    if (count == 0) {
+        return;
+    }
+
+    constexpr ColumnType expectedType = toColumnType<T>();
+    const ColumnType* types = layout_->columnTypes().data();
+    const size_t endIndex = startIndex + count;
+    for (size_t i = startIndex; i < endIndex; ++i) {
+        if (types[i] != expectedType) [[unlikely]] {
+            throw std::runtime_error(std::string(fnName) + ": Type mismatch at column " + std::to_string(i) +
+                ". Expected " + std::string(toString(expectedType)) +
+                ", actual " + std::string(toString(types[i])));
+        }
+    }
+}
+
+template<typename LayoutType, TrackingPolicy Policy>
+inline void RowCodecFlat001<LayoutType, Policy>::initializeSparseStringCursors(
+    std::span<const std::byte> buffer,
+    size_t startIndex,
+    size_t& strLensCursor,
+    size_t& strPayCursor,
+    const char* fnName) const
+{
+    assert(layout_ && "RowCodecFlat001::initializeSparseStringCursors() called before setup()");
+
+    strLensCursor = wireBitsSize() + wireDataSize();
+    strPayCursor  = wireFixedSize();
+
+    const ColumnType* types = layout_->columnTypes().data();
+    for (size_t j = 0; j < startIndex; ++j) {
+        if (types[j] == ColumnType::STRING) {
+            const uint16_t len = unalignedRead<uint16_t>(&buffer[strLensCursor]);
+            strLensCursor += sizeof(uint16_t);
+            strPayCursor += len;
+            if (strPayCursor > buffer.size()) [[unlikely]] {
+                throw std::runtime_error(std::string(fnName) + "() string payload out of bounds");
+            }
+        }
+    }
+}
+
 
 // ════════════════════════════════════════════════════════════════════════════
 // Partial specialization: RowCodecFlat001<LayoutStatic<Ts...>, Policy>
@@ -294,13 +388,22 @@ inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy>::serializeElem
         } else if constexpr (std::is_same_v<T, std::string>) {
             const std::string& str = std::get<Index>(row.data_);
             const uint16_t len = static_cast<uint16_t>(std::min(str.size(), MAX_STRING_LENGTH));
+            if (lenOff + sizeof(uint16_t) > buffer.size()) [[unlikely]] {
+                throw std::runtime_error("RowCodecFlat001::serialize() string length overflow");
+            }
             std::memcpy(&buffer[lenOff], &len, sizeof(uint16_t));
             lenOff += sizeof(uint16_t);
             if (len > 0) {
+                if (payOff + len > buffer.size()) [[unlikely]] {
+                    throw std::runtime_error("RowCodecFlat001::serialize() string payload overflow");
+                }
                 std::memcpy(&buffer[payOff], str.data(), len);
                 payOff += len;
             }
         } else {
+            if (dataOff + sizeof(T) > buffer.size()) [[unlikely]] {
+                throw std::runtime_error("RowCodecFlat001::serialize() scalar payload overflow");
+            }
             std::memcpy(&buffer[dataOff], &std::get<Index>(row.data_), sizeof(T));
             dataOff += sizeof(T);
         }
@@ -382,30 +485,119 @@ inline std::span<const std::byte> RowCodecFlat001<LayoutStatic<ColumnTypes...>, 
         return {};
     }
 
-    const ColumnType type = LayoutType::columnType(col);
-    const size_t off = WIRE_OFFSETS[col];
+    using ReadColumnFn = std::span<const std::byte> (*)(std::span<const std::byte>, bool&);
+    static constexpr auto handlers = []<size_t... I>(std::index_sequence<I...>) {
+        return std::array<ReadColumnFn, COLUMN_COUNT>{
+            +[](std::span<const std::byte> src, bool& scratch) -> std::span<const std::byte> {
+                using T = std::tuple_element_t<I, std::tuple<ColumnTypes...>>;
+                constexpr size_t off = WIRE_OFFSETS[I];
 
-    if (type == ColumnType::BOOL) {
-        size_t bytePos = off >> 3;
-        size_t bitPos  = off & 7;
-        boolScratch = (buffer[bytePos] & (std::byte{1} << bitPos)) != std::byte{0};
-        return { reinterpret_cast<const std::byte*>(&boolScratch), sizeof(bool) };
-    } else if (type == ColumnType::STRING) {
-        size_t lens_cursor = WIRE_BITS_SIZE + WIRE_DATA_SIZE;
-        size_t pay_cursor  = WIRE_FIXED_SIZE;
-        for (size_t s = 0; s < off; ++s) {
-            uint16_t len = unalignedRead<uint16_t>(&buffer[lens_cursor]);
-            lens_cursor += sizeof(uint16_t);
-            pay_cursor += len;
-            if (pay_cursor > buffer.size()) [[unlikely]] return {};
+                if constexpr (std::is_same_v<T, bool>) {
+                    constexpr size_t bytePos = off >> 3;
+                    constexpr size_t bitPos  = off & 7;
+                    scratch = (src[bytePos] & (std::byte{1} << bitPos)) != std::byte{0};
+                    return { reinterpret_cast<const std::byte*>(&scratch), sizeof(bool) };
+                } else if constexpr (std::is_same_v<T, std::string>) {
+                    constexpr size_t strIdx = off;
+                    size_t lens_cursor = WIRE_BITS_SIZE + WIRE_DATA_SIZE;
+                    size_t pay_cursor  = WIRE_FIXED_SIZE;
+                    for (size_t s = 0; s < strIdx; ++s) {
+                        uint16_t len = unalignedRead<uint16_t>(&src[lens_cursor]);
+                        lens_cursor += sizeof(uint16_t);
+                        pay_cursor += len;
+                        if (pay_cursor > src.size()) [[unlikely]] return {};
+                    }
+                    uint16_t len = unalignedRead<uint16_t>(&src[lens_cursor]);
+                    if (pay_cursor + len > src.size()) [[unlikely]] return {};
+                    return { src.data() + pay_cursor, len };
+                } else {
+                    constexpr size_t absOff = WIRE_BITS_SIZE + off;
+                    return { src.data() + absOff, sizeof(T) };
+                }
+            }...
+        };
+    }(std::make_index_sequence<COLUMN_COUNT>{});
+
+    return handlers[col](buffer, boolScratch);
+}
+
+template<TrackingPolicy Policy, typename... ColumnTypes>
+inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy>::validateSparseRange(
+    std::span<const std::byte> buffer,
+    size_t startIndex,
+    size_t count,
+    const char* fnName) const
+{
+    assert(layout_ && "RowCodecFlat001::validateSparseRange() called before setup()");
+
+    if (count == 0) {
+        return;
+    }
+
+    const size_t endIndex = startIndex + count;
+    if constexpr (RANGE_CHECKING) {
+        if (endIndex > COLUMN_COUNT) {
+            throw std::out_of_range(std::string(fnName) + ": Range [" + std::to_string(startIndex) +
+                ", " + std::to_string(endIndex) + ") exceeds column count " +
+                std::to_string(COLUMN_COUNT));
         }
-        uint16_t len = unalignedRead<uint16_t>(&buffer[lens_cursor]);
-        if (pay_cursor + len > buffer.size()) [[unlikely]] return {};
-        return { buffer.data() + pay_cursor, len };
     } else {
-        size_t absOff = WIRE_BITS_SIZE + off;
-        size_t fieldLen = sizeOf(type);
-        return { buffer.data() + absOff, fieldLen };
+        assert(endIndex <= COLUMN_COUNT && "RowViewStatic sparse range out of bounds");
+    }
+
+    if (buffer.size() < wireFixedSize()) [[unlikely]] {
+        throw std::runtime_error(std::string(fnName) + "() buffer too small for fixed wire section");
+    }
+}
+
+template<TrackingPolicy Policy, typename... ColumnTypes>
+template<typename T>
+inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy>::validateSparseTypedRange(
+    std::span<const std::byte> buffer,
+    size_t startIndex,
+    size_t count,
+    const char* fnName) const
+{
+    validateSparseRange(buffer, startIndex, count, fnName);
+    if (count == 0) {
+        return;
+    }
+
+    constexpr ColumnType expectedType = toColumnType<T>();
+    const ColumnType* types = layout_->columnTypes().data();
+    const size_t endIndex = startIndex + count;
+    for (size_t i = startIndex; i < endIndex; ++i) {
+        if (types[i] != expectedType) [[unlikely]] {
+            throw std::runtime_error(std::string(fnName) + ": Type mismatch at column " + std::to_string(i) +
+                ". Expected " + std::string(toString(expectedType)) +
+                ", actual " + std::string(toString(types[i])));
+        }
+    }
+}
+
+template<TrackingPolicy Policy, typename... ColumnTypes>
+inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy>::initializeSparseStringCursors(
+    std::span<const std::byte> buffer,
+    size_t startIndex,
+    size_t& strLensCursor,
+    size_t& strPayCursor,
+    const char* fnName) const
+{
+    assert(layout_ && "RowCodecFlat001::initializeSparseStringCursors() called before setup()");
+
+    strLensCursor = wireBitsSize() + wireDataSize();
+    strPayCursor  = wireFixedSize();
+
+    const ColumnType* types = layout_->columnTypes().data();
+    for (size_t j = 0; j < startIndex; ++j) {
+        if (types[j] == ColumnType::STRING) {
+            const uint16_t len = unalignedRead<uint16_t>(&buffer[strLensCursor]);
+            strLensCursor += sizeof(uint16_t);
+            strPayCursor += len;
+            if (strPayCursor > buffer.size()) [[unlikely]] {
+                throw std::runtime_error(std::string(fnName) + "() string payload out of bounds");
+            }
+        }
     }
 }
 

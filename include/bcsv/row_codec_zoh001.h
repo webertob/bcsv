@@ -94,6 +94,32 @@ public:
         return flat_.readColumn(buffer, col, boolScratch);
     }
 
+    void validateSparseRange(
+        std::span<const std::byte> buffer,
+        size_t startIndex,
+        size_t count,
+        const char* fnName) const {
+        flat_.validateSparseRange(buffer, startIndex, count, fnName);
+    }
+
+    template<typename T>
+    void validateSparseTypedRange(
+        std::span<const std::byte> buffer,
+        size_t startIndex,
+        size_t count,
+        const char* fnName) const {
+        flat_.template validateSparseTypedRange<T>(buffer, startIndex, count, fnName);
+    }
+
+    void initializeSparseStringCursors(
+        std::span<const std::byte> buffer,
+        size_t startIndex,
+        size_t& strLensCursor,
+        size_t& strPayCursor,
+        const char* fnName) const {
+        flat_.initializeSparseStringCursors(buffer, startIndex, strLensCursor, strPayCursor, fnName);
+    }
+
     // ── Wire metadata (delegates to flat codec) ─────────────────────────
     uint32_t wireBitsSize()  const noexcept { return flat_.wireBitsSize(); }
     uint32_t wireDataSize()  const noexcept { return flat_.wireDataSize(); }
@@ -146,6 +172,32 @@ public:
         return flat_.readColumn(buffer, col, boolScratch);
     }
 
+    void validateSparseRange(
+        std::span<const std::byte> buffer,
+        size_t startIndex,
+        size_t count,
+        const char* fnName) const {
+        flat_.validateSparseRange(buffer, startIndex, count, fnName);
+    }
+
+    template<typename T>
+    void validateSparseTypedRange(
+        std::span<const std::byte> buffer,
+        size_t startIndex,
+        size_t count,
+        const char* fnName) const {
+        flat_.template validateSparseTypedRange<T>(buffer, startIndex, count, fnName);
+    }
+
+    void initializeSparseStringCursors(
+        std::span<const std::byte> buffer,
+        size_t startIndex,
+        size_t& strLensCursor,
+        size_t& strPayCursor,
+        const char* fnName) const {
+        flat_.initializeSparseStringCursors(buffer, startIndex, strLensCursor, strPayCursor, fnName);
+    }
+
     // ── Wire metadata (delegates to flat codec) ─────────────────────────
     static constexpr uint32_t wireBitsSize()  noexcept { return decltype(flat_)::wireBitsSize(); }
     static constexpr uint32_t wireDataSize()  noexcept { return decltype(flat_)::wireDataSize(); }
@@ -168,6 +220,10 @@ private:
     template<size_t Index>
     void serializeElementsZoH(const RowType& row, ByteBuffer& buffer,
                                Bitset<COLUMN_COUNT>& rowHeader) const;
+
+    template<size_t Index>
+    void serializeElementsZoHAllChanged(const RowType& row, ByteBuffer& buffer,
+                                        Bitset<COLUMN_COUNT>& rowHeader) const;
 
     template<size_t Index>
     void deserializeElementsZoH(RowType& row, std::span<const std::byte>& buffer,

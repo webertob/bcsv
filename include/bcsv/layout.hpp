@@ -20,6 +20,7 @@
 #include "layout.h"
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstring>   // for std::memcmp
 #include <iomanip>
 #include <stdexcept>
@@ -42,7 +43,10 @@ namespace bcsv {
         , column_index_(other.column_index_)
         , column_types_(other.column_types_)
         , offsets_(other.offsets_)
+        , offsets_packed_(other.offsets_packed_)
         , tracked_mask_(other.tracked_mask_)
+        , column_count_bool_(other.column_count_bool_)
+        , column_count_strings_(other.column_count_strings_)
     {
         callbacks_.reserve(64);
     }
@@ -63,6 +67,23 @@ namespace bcsv {
     inline uint32_t Layout::Data::columnOffset(size_t index) const {
         checkRange(index);
         return offsets_[index];
+    }
+
+    inline uint32_t Layout::Data::columnOffsetPacked(size_t index) const {
+        checkRange(index);
+        return offsets_packed_[index];
+    }
+
+    inline size_t Layout::Data::columnCount(ColumnType type) const noexcept {
+        if (type == ColumnType::BOOL) return column_count_bool_;
+        if (type == ColumnType::STRING) return column_count_strings_;
+        size_t count = 0;
+        for(size_t i = 0; i < column_types_.size(); ++i) {
+            if (column_types_[i] == type) {
+                count++;
+            }
+        }
+        return count;
     }
 
     /// Compute unified offsets from column types.
@@ -116,6 +137,31 @@ namespace bcsv {
                 tracked_mask_[i] = true;
             }
         }
+
+        rebuildPackedMetadata();
+    }
+
+    inline void Layout::Data::rebuildPackedMetadata() {
+        const size_t n = column_types_.size();
+        offsets_packed_.resize(n);
+
+        uint32_t boolIdx = 0;
+        uint32_t dataOff = 0;
+        uint32_t strgIdx = 0;
+        for (size_t i = 0; i < n; ++i) {
+            ColumnType type = column_types_[i];
+            if (type == ColumnType::BOOL) {
+                offsets_packed_[i] = boolIdx++;
+            } else if (type == ColumnType::STRING) {
+                offsets_packed_[i] = strgIdx++;
+            } else {
+                offsets_packed_[i] = dataOff;
+                dataOff += static_cast<uint32_t>(sizeOf(type));
+            }
+        }
+
+        column_count_bool_ = boolIdx;
+        column_count_strings_ = strgIdx;
     }
 
     inline const std::string& Layout::Data::columnName(size_t index) const {
@@ -212,6 +258,8 @@ namespace bcsv {
             tracked_mask_.insert(position, true);
         }
 
+        rebuildPackedMetadata();
+
     }
 
     inline void Layout::Data::removeColumn(size_t index) {
@@ -260,6 +308,8 @@ namespace bcsv {
                 }
             }
         }
+
+        rebuildPackedMetadata();
     }
 
     inline void Layout::Data::setColumnName(size_t index, std::string name) {
@@ -371,7 +421,10 @@ namespace bcsv {
         column_index_.clear();
         column_types_.clear();
         offsets_.clear();
+        offsets_packed_.clear();
         tracked_mask_.resize(0);
+        column_count_bool_ = 0;
+        column_count_strings_ = 0;
         // Note: clear() doesn't trigger notifications
     }
 

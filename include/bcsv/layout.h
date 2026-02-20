@@ -97,11 +97,15 @@ namespace bcsv {
             ColumnNameIndex<0>                       column_index_;  // name --> column
             std::vector<ColumnType>                  column_types_;  // column --> type
             std::vector<uint32_t>                    offsets_;       // Unified per-column offsets into RowImpl's storage containers (bits_, data_, strg_). Meaning depends on columnType: BOOL→bit index in bits_, STRING→index in strg_, scalar→byte offset in data_ (aligned).
+            std::vector<uint32_t>                    offsets_packed_;// Per-column offsets in packed wire layout (BOOL→bit index, STRING→string index, scalar→byte offset without alignment)
             Bitset<>                                 tracked_mask_;  // Bit i set iff column i is NOT BOOL (scalar or string). Size == columnCount.
+            uint32_t                                 column_count_bool_{0};
+            uint32_t                                 column_count_strings_{0};
 
             // Internal helpers
             void rebuildColumnIndex();
             void rebuildOffsets();  // Recomputes offsets_ from column_types_
+            void rebuildPackedMetadata(); // Recomputes packed wire metadata from column_types_
             void checkRange(size_t index) const;
 
         public:
@@ -114,7 +118,8 @@ namespace bcsv {
 
             // ============================================================
             // Read-only accessors
-            // ============================================================           
+            // ============================================================
+            size_t columnCount(ColumnType type) const noexcept;           
             size_t columnCount() const noexcept { return column_types_.size(); }
             size_t columnIndex(const std::string& name) const { return column_index_[name]; }
             const std::string& columnName(size_t index) const;
@@ -124,6 +129,9 @@ namespace bcsv {
             bool isCompatible(const Data& other) const;
             uint32_t columnOffset(size_t index) const;
             const std::vector<uint32_t>& columnOffsets() const noexcept { return offsets_; }
+            uint32_t columnOffsetPacked(size_t index) const;
+            const std::vector<uint32_t>& columnOffsetsPacked() const noexcept { return offsets_packed_; }
+            
             Bitset<> boolMask() const noexcept { return ~tracked_mask_; }  // Derived: inverse of tracked_mask_
             const Bitset<>& trackedMask() const noexcept { return tracked_mask_; }
 
@@ -170,8 +178,7 @@ namespace bcsv {
         explicit Layout(DataPtr data) : data_(std::move(data)) {}
         Layout(const Layout& other) = default;  // Shallow copy (shares data)
         explicit Layout(const std::vector<ColumnDefinition>& columns);
-        explicit Layout(const std::vector<std::string>& columnNames, 
-                       const std::vector<ColumnType>& columnTypes);
+        explicit Layout(const std::vector<std::string>& columnNames, const std::vector<ColumnType>& columnTypes);
         ~Layout() = default;
 
         // ============================================================
@@ -213,9 +220,21 @@ namespace bcsv {
         uint32_t columnOffset(size_t index) const {
             return data_->columnOffset(index);
         }
+
+        uint32_t columnOffsetPacked(size_t index) const {
+            return data_->columnOffsetPacked(index);
+        }
         
         const std::vector<uint32_t>& columnOffsets() const noexcept {
             return data_->columnOffsets();
+        }
+
+        const std::vector<uint32_t>& columnOffsetsPacked() const noexcept {
+            return data_->columnOffsetsPacked();
+        }
+
+        size_t columnCount(ColumnType type) const noexcept {
+            return data_->columnCount(type);
         }
         
         Bitset<> boolMask() const noexcept {
@@ -333,6 +352,24 @@ namespace bcsv {
         using ColType           = std::tuple_element_t<Index, ColTypes>;
         using ColTypesArray     = std::array<ColumnType, sizeof...(ColumnTypes)>;
         static constexpr ColTypesArray COLUMN_TYPES = { toColumnType<ColumnTypes>()...  }; // column --> type
+        static constexpr size_t COLUMN_COUNT_BOOL = (0 + ... + (std::is_same_v<ColumnTypes, bool> ? 1 : 0));
+        static constexpr size_t COLUMN_COUNT_STRINGS = (0 + ... + (std::is_same_v<ColumnTypes, std::string> ? 1 : 0));
+
+        static constexpr std::array<uint32_t, sizeof...(ColumnTypes)> COLUMN_OFFSETS_PACKED = []() {
+            std::array<uint32_t, sizeof...(ColumnTypes)> r{};
+            uint32_t bi = 0, di = 0, si = 0;
+            size_t idx = 0;
+            auto assign = [&](auto tag) {
+                using T = typename decltype(tag)::type;
+                if constexpr (std::is_same_v<T, bool>)             r[idx] = bi++;
+                else if constexpr (std::is_same_v<T, std::string>) r[idx] = si++;
+                else { r[idx] = di; di += static_cast<uint32_t>(sizeof(T)); }
+                ++idx;
+            };
+            (assign(std::type_identity<ColumnTypes>{}), ...);
+            return r;
+        }();
+
 
         LayoutStatic();
         explicit LayoutStatic(DataPtr data);
@@ -356,6 +393,14 @@ namespace bcsv {
         static ColumnType               columnType(size_t index)                        { if (index >= sizeof...(ColumnTypes)) { throw std::out_of_range("LayoutStatic::columnType: Index out of range"); } return COLUMN_TYPES[index]; } // runtime version
         static constexpr const ColTypesArray& 
                                         columnTypes() noexcept                          { return COLUMN_TYPES; }
+        static constexpr size_t         columnCount(ColumnType type) noexcept {
+            if (type == ColumnType::BOOL) return COLUMN_COUNT_BOOL;
+            if (type == ColumnType::STRING) return COLUMN_COUNT_STRINGS;
+            return sizeof...(ColumnTypes) - COLUMN_COUNT_BOOL - COLUMN_COUNT_STRINGS;
+        }
+        static constexpr uint32_t       columnOffsetPacked(size_t index)                { return COLUMN_OFFSETS_PACKED[index]; }
+        static constexpr const std::array<uint32_t, sizeof...(ColumnTypes)>&
+                                        columnOffsetsPacked() noexcept                  { return COLUMN_OFFSETS_PACKED; }
         bool                            hasColumn(const std::string& name) const        { return data_->hasColumn(name); }
                                         
                                         template<typename OtherLayout>

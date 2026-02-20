@@ -31,7 +31,6 @@
 #include "byte_buffer.h"
 #include "layout.h"
 
-#include <array>
 #include <cstdint>
 #include <span>
 #include <type_traits>
@@ -65,6 +64,31 @@ public:
         std::span<const std::byte> buffer, size_t col,
         bool& boolScratch) const;
 
+    [[nodiscard]] std::span<const std::byte> readColumn(size_t col) const {
+        return readColumn(buffer_, col, bool_scratch_);
+    }
+
+    // ── Sparse RowView support (validation/cursor helpers) ─────────────
+    void validateSparseRange(
+        std::span<const std::byte> buffer,
+        size_t startIndex,
+        size_t count,
+        const char* fnName) const;
+
+    template<typename T>
+    void validateSparseTypedRange(
+        std::span<const std::byte> buffer,
+        size_t startIndex,
+        size_t count,
+        const char* fnName) const;
+
+    void initializeSparseStringCursors(
+        std::span<const std::byte> buffer,
+        size_t startIndex,
+        size_t& strLensCursor,
+        size_t& strPayCursor,
+        const char* fnName) const;
+
     // ── Wire metadata ───────────────────────────────────────────────────
     uint32_t wireBitsSize()  const noexcept { return wire_bits_size_; }
     uint32_t wireDataSize()  const noexcept { return wire_data_size_; }
@@ -72,8 +96,10 @@ public:
     uint32_t wireFixedSize() const noexcept { return wire_fixed_size_; }
     uint32_t columnOffset(size_t col) const noexcept { return offsets_[col]; }
     const std::vector<uint32_t>& columnOffsets() const noexcept { return offsets_; }
+    const uint32_t* columnOffsetsPtr() const noexcept { return offsets_ptr_; }
+    const std::span<std::byte>& buffer() const noexcept { return buffer_; }
+    void setBuffer(const std::span<std::byte>& buffer) noexcept { buffer_ = buffer; }
     bool isSetup() const noexcept { return layout_ != nullptr; }
-    void setLayout(const LayoutType& layout) noexcept { layout_ = &layout; }
 
 private:
     const LayoutType* layout_{nullptr};
@@ -82,6 +108,9 @@ private:
     uint32_t wire_strg_count_{0};
     uint32_t wire_fixed_size_{0};    // cached: bits + data + strg_count * sizeof(uint16_t)
     std::vector<uint32_t> offsets_;  // per-column section-relative offsets
+    const uint32_t* offsets_ptr_{nullptr};
+    mutable bool bool_scratch_{false};
+    std::span<std::byte> buffer_{};
 };
 
 
@@ -94,33 +123,24 @@ class RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy> {
     using RowType = typename LayoutType::template RowType<Policy>;
 
 public:
-    static constexpr size_t COLUMN_COUNT = sizeof...(ColumnTypes);
-    static constexpr size_t BOOL_COUNT   = (0 + ... + (std::is_same_v<ColumnTypes, bool> ? 1 : 0));
-    static constexpr size_t STRING_COUNT = (0 + ... + (std::is_same_v<ColumnTypes, std::string> ? 1 : 0));
+    static constexpr size_t COLUMN_COUNT = LayoutType::columnCount();
+    static constexpr size_t BOOL_COUNT   = LayoutType::COLUMN_COUNT_BOOL;
+    static constexpr size_t STRING_COUNT = LayoutType::COLUMN_COUNT_STRINGS;
 
     static constexpr size_t WIRE_BITS_SIZE  = (BOOL_COUNT + 7) / 8;
     static constexpr size_t WIRE_DATA_SIZE  = (0 + ... + (!std::is_same_v<ColumnTypes, bool> && !std::is_same_v<ColumnTypes, std::string> ? sizeof(ColumnTypes) : 0));
     static constexpr size_t WIRE_STRG_COUNT = STRING_COUNT;
     static constexpr size_t WIRE_FIXED_SIZE = WIRE_BITS_SIZE + WIRE_DATA_SIZE + WIRE_STRG_COUNT * sizeof(uint16_t);
 
-    static constexpr std::array<size_t, COLUMN_COUNT> WIRE_OFFSETS = []() {
-        std::array<size_t, COLUMN_COUNT> r{};
-        size_t bi = 0, di = 0, si = 0, idx = 0;
-        auto assign = [&](auto tag) {
-            using T = typename decltype(tag)::type;
-            if constexpr (std::is_same_v<T, bool>)             r[idx] = bi++;
-            else if constexpr (std::is_same_v<T, std::string>) r[idx] = si++;
-            else { r[idx] = di; di += sizeof(T); }
-            ++idx;
-        };
-        (assign(std::type_identity<ColumnTypes>{}), ...);
-        return r;
-    }();
+    static constexpr auto WIRE_OFFSETS = LayoutType::COLUMN_OFFSETS_PACKED;
 
     RowCodecFlat001() = default;
 
     // ── Lifecycle ────────────────────────────────────────────────────────
-    void setup(const LayoutType& layout) { layout_ = &layout; }
+    void setup(const LayoutType& layout) {
+        layout_ = &layout;
+        offsets_ptr_ = WIRE_OFFSETS.data();
+    }
     void reset() noexcept {} // Flat is stateless — no-op.
 
     // ── Bulk operations (Row — throughput path) ──────────────────────────
@@ -135,17 +155,47 @@ public:
         std::span<const std::byte> buffer, size_t col,
         bool& boolScratch) const;
 
+    [[nodiscard]] std::span<const std::byte> readColumn(size_t col) const {
+        return readColumn(buffer_, col, bool_scratch_);
+    }
+
+    // ── Sparse RowView support (validation/cursor helpers) ─────────────
+    void validateSparseRange(
+        std::span<const std::byte> buffer,
+        size_t startIndex,
+        size_t count,
+        const char* fnName) const;
+
+    template<typename T>
+    void validateSparseTypedRange(
+        std::span<const std::byte> buffer,
+        size_t startIndex,
+        size_t count,
+        const char* fnName) const;
+
+    void initializeSparseStringCursors(
+        std::span<const std::byte> buffer,
+        size_t startIndex,
+        size_t& strLensCursor,
+        size_t& strPayCursor,
+        const char* fnName) const;
+
     // ── Wire metadata ───────────────────────────────────────────────────
     static constexpr uint32_t wireBitsSize()  noexcept { return WIRE_BITS_SIZE; }
     static constexpr uint32_t wireDataSize()  noexcept { return WIRE_DATA_SIZE; }
     static constexpr uint32_t wireStrgCount() noexcept { return WIRE_STRG_COUNT; }
     static constexpr uint32_t wireFixedSize() noexcept { return WIRE_FIXED_SIZE; }
     static constexpr size_t   columnOffset(size_t col) noexcept { return WIRE_OFFSETS[col]; }
+    const uint32_t* columnOffsetsPtr() const noexcept { return offsets_ptr_; }
+    const std::span<std::byte>& buffer() const noexcept { return buffer_; }
+    void setBuffer(const std::span<std::byte>& buffer) noexcept { buffer_ = buffer; }
     bool isSetup() const noexcept { return layout_ != nullptr; }
-    void setLayout(const LayoutType& layout) noexcept { layout_ = &layout; }
 
 private:
     const LayoutType* layout_{nullptr};
+    const uint32_t* offsets_ptr_{WIRE_OFFSETS.data()};
+    mutable bool bool_scratch_{false};
+    std::span<std::byte> buffer_{};
 
     // ── Compile-time recursive helpers ───────────────────────────────────
     template<size_t Index>

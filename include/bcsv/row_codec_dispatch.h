@@ -37,9 +37,7 @@
 
 #include <cassert>
 #include <cstddef>
-#include <new>
 #include <span>
-#include <stdexcept>
 
 namespace bcsv {
 
