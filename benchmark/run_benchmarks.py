@@ -38,6 +38,11 @@ MACRO_FILE_STEMS = {
     "MACRO-LARGE": "macro_large",
 }
 
+LANGUAGE_SIZE_BY_TYPE = {
+    "MACRO-SMALL": "S",
+    "MACRO-LARGE": "L",
+}
+
 def project_root() -> Path:
     root = Path(__file__).resolve().parent.parent
     if not (root / "CMakeLists.txt").exists():
@@ -96,6 +101,23 @@ def parse_pin(value: str):
     raise ValueError("--pin must be NONE or CPU<id> (e.g. CPU2)")
 
 
+def parse_languages(value: str) -> list[str]:
+    if not value:
+        return []
+    items = [item.strip().lower() for item in value.split(",") if item.strip()]
+    allowed = {"python", "csharp"}
+    invalid = [item for item in items if item not in allowed]
+    if invalid:
+        raise ValueError(f"Unsupported language lane(s): {', '.join(invalid)}")
+    seen = set()
+    ordered = []
+    for item in items:
+        if item not in seen:
+            ordered.append(item)
+            seen.add(item)
+    return ordered
+
+
 def pin_cmd(cmd: list[str], pin_enabled: bool, pin_cpu: int) -> list[str]:
     if not pin_enabled:
         return cmd
@@ -108,7 +130,11 @@ def ensure_output_dir(root: Path, results_arg: str, git_label: str) -> Path:
     default_base = root / "benchmark" / "results" / socket.gethostname() / git_label
     base = Path(results_arg) if results_arg else default_base
     if not base.is_absolute():
-        base = root / "benchmark" / base
+        parts = base.parts
+        if parts and parts[0] == "benchmark":
+            base = root / base
+        else:
+            base = root / "benchmark" / base
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = base / timestamp
@@ -425,7 +451,13 @@ def latest_clean_run(current_run: Path) -> Path | None:
     return candidates[0][1]
 
 
-def run_report(out_dir: Path, baseline: Path | None, summary_only: bool = True):
+def run_report(out_dir: Path,
+               baseline: Path | None,
+               summary_only: bool = True,
+               python_json: Path | None = None,
+               csharp_json: Path | None = None,
+               baseline_python_json: Path | None = None,
+               baseline_csharp_json: Path | None = None):
     report_script = Path(__file__).resolve().parent / "report.py"
     if not report_script.exists():
         raise RuntimeError("Missing benchmark/report.py")
@@ -433,6 +465,14 @@ def run_report(out_dir: Path, baseline: Path | None, summary_only: bool = True):
     cmd = [sys.executable, str(report_script), str(out_dir)]
     if baseline is not None:
         cmd.extend(["--baseline", str(baseline)])
+    if python_json is not None:
+        cmd.extend(["--python-json", str(python_json)])
+    if csharp_json is not None:
+        cmd.extend(["--csharp-json", str(csharp_json)])
+    if baseline_python_json is not None:
+        cmd.extend(["--baseline-python-json", str(baseline_python_json)])
+    if baseline_csharp_json is not None:
+        cmd.extend(["--baseline-csharp-json", str(baseline_csharp_json)])
     if summary_only:
         cmd.append("--summary-only")
 
@@ -454,8 +494,117 @@ def write_manifest(out_dir: Path, args, run_types: list[str], pin_effective: boo
         "results_root_arg": args.results,
         "no_build": args.no_build,
         "no_report": args.no_report,
+        "languages": args.languages,
     }
     write_json(out_dir / "manifest.json", payload)
+
+
+def discover_language_json(run_dir: Path, language: str) -> Path | None:
+    if language == "python":
+        patterns = ["py_macro_results.json", "py_macro_results_*.json", "python/py_macro_results.json", "python/py_macro_results_*.json"]
+    elif language == "csharp":
+        patterns = ["cs_macro_results.json", "cs_macro_results_*.json", "csharp/cs_macro_results.json", "csharp/cs_macro_results_*.json"]
+    else:
+        return None
+
+    candidates = []
+    for pattern in patterns:
+        candidates.extend(run_dir.glob(pattern))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item.stat().st_mtime)
+
+
+def choose_language_size(run_types: list[str]) -> str:
+    if "MACRO-LARGE" in run_types:
+        return LANGUAGE_SIZE_BY_TYPE["MACRO-LARGE"]
+    if "MACRO-SMALL" in run_types:
+        return LANGUAGE_SIZE_BY_TYPE["MACRO-SMALL"]
+    return "S"
+
+
+def run_python_lane(root: Path, out_dir: Path, size_token: str) -> Path:
+    script = root / "python" / "benchmarks" / "run_pybcsv_benchmarks.py"
+    if not script.exists():
+        raise RuntimeError("Missing python benchmark runner: python/benchmarks/run_pybcsv_benchmarks.py")
+
+    python_exe = root / ".venv" / "bin" / "python"
+    interpreter = str(python_exe) if python_exe.exists() else sys.executable
+
+    target = out_dir / "py_macro_results.json"
+    cmd = [
+        interpreter,
+        str(script),
+        f"--size={size_token}",
+        f"--output={target}",
+    ]
+    result = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True)
+    (out_dir / "python_bench_stdout.log").write_text(result.stdout or "")
+    (out_dir / "python_bench_stderr.log").write_text(result.stderr or "")
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "Python benchmark lane failed")
+    if not target.exists():
+        raise RuntimeError("Python benchmark lane completed without py_macro_results.json")
+    return target
+
+
+def run_csharp_lane(root: Path, out_dir: Path, size_token: str) -> Path:
+    project = root / "csharp" / "benchmarks" / "Bcsv.Benchmarks.csproj"
+    if not project.exists():
+        raise RuntimeError("Missing C# benchmark project: csharp/benchmarks/Bcsv.Benchmarks.csproj")
+    if shutil.which("dotnet") is None:
+        raise RuntimeError("dotnet not found in PATH; install .NET SDK to run C# benchmark lane")
+
+    target = out_dir / "cs_macro_results.json"
+    framework = None
+    try:
+        runtimes = subprocess.run(
+            ["dotnet", "--list-runtimes"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        runtime_text = runtimes.stdout or ""
+        if "Microsoft.NETCore.App 8." in runtime_text:
+            framework = "net8.0"
+        elif "Microsoft.NETCore.App 10." in runtime_text:
+            framework = "net10.0"
+    except Exception:
+        framework = None
+
+    cmd = [
+        "dotnet",
+        "run",
+        "--project",
+        str(project),
+    ]
+    if framework is not None:
+        cmd.extend(["-f", framework])
+    cmd.extend([
+        "--",
+        f"--size={size_token}",
+        "--flags=none",
+        f"--output={target}",
+    ])
+
+    env = dict(os.environ)
+    lib_dir_candidates = [
+        root / "build" / "ninja-release",
+        root / "build" / "ninja-release" / "lib",
+    ]
+    lib_dir = next((candidate for candidate in lib_dir_candidates if candidate.exists()), None)
+    if lib_dir is not None:
+        existing = env.get("LD_LIBRARY_PATH", "")
+        env["LD_LIBRARY_PATH"] = f"{lib_dir}:{existing}" if existing else str(lib_dir)
+
+    result = subprocess.run(cmd, cwd=str(root), capture_output=True, text=True, env=env)
+    (out_dir / "csharp_bench_stdout.log").write_text(result.stdout or "")
+    (out_dir / "csharp_bench_stderr.log").write_text(result.stderr or "")
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "C# benchmark lane failed")
+    if not target.exists():
+        raise RuntimeError("C# benchmark lane completed without cs_macro_results.json")
+    return target
 
 
 def create_macro_compat_payload(out_dir: Path, run_types: list[str], payloads_by_type: dict[str, dict]) -> None:
@@ -502,6 +651,8 @@ def main() -> int:
                         help="Skip CMake configure/build")
     parser.add_argument("--no-report", action="store_true",
                         help="Skip report generation")
+    parser.add_argument("--languages", default="",
+                        help="Optional language lanes: python,csharp")
 
     args = parser.parse_args()
 
@@ -515,6 +666,7 @@ def main() -> int:
     try:
         run_types = parse_types(args.type)
         pin_enabled, pin_cpu = parse_pin(args.pin)
+        language_lanes = parse_languages(args.languages)
     except ValueError as error:
         print(f"ERROR: {error}")
         return 1
@@ -526,10 +678,10 @@ def main() -> int:
     build_dir = discover_build_dir(root)
 
     if not args.no_build:
-        print("[1/4] Configure + build benchmark targets")
+        print("[1/5] Configure + build benchmark targets")
         run_build(root, build_dir, args.build_type)
     else:
-        print("[1/4] Build skipped (--no-build)")
+        print("[1/5] Build skipped (--no-build)")
 
     executables = discover_executables(build_dir)
     if "MICRO" in run_types and "bench_micro_types" not in executables:
@@ -554,7 +706,7 @@ def main() -> int:
         pin_cpu if pin_effective else None,
     )
 
-    print(f"[2/4] Run selected benchmark types: {', '.join(run_types)}")
+    print(f"[2/5] Run selected benchmark types: {', '.join(run_types)}")
     run_payloads: dict[str, list[dict]] = {run_type: [] for run_type in run_types}
 
     for run_type in run_types:
@@ -605,18 +757,41 @@ def main() -> int:
 
     create_macro_compat_payload(out_dir, run_types, aggregated_macro_payloads)
 
+    language_outputs: dict[str, Path] = {}
+    if language_lanes:
+        print("[3/5] Run optional language benchmark lanes")
+        size_token = choose_language_size(run_types)
+        for lane in language_lanes:
+            print(f"  - {lane} (size={size_token})")
+            if lane == "python":
+                language_outputs["python"] = run_python_lane(root, out_dir, size_token)
+            elif lane == "csharp":
+                language_outputs["csharp"] = run_csharp_lane(root, out_dir, size_token)
+    else:
+        print("[3/5] Language lanes skipped (use --languages=python,csharp to enable)")
+
     write_manifest(out_dir, args, run_types, pin_effective, pin_cpu)
 
-    print("[3/4] Generate summary report")
+    print("[4/5] Generate summary report")
     if not args.no_report:
         baseline = latest_clean_run(out_dir)
-        run_report(out_dir, baseline, summary_only=True)
+        baseline_python_json = discover_language_json(baseline, "python") if baseline is not None else None
+        baseline_csharp_json = discover_language_json(baseline, "csharp") if baseline is not None else None
+        run_report(
+            out_dir,
+            baseline,
+            summary_only=True,
+            python_json=language_outputs.get("python"),
+            csharp_json=language_outputs.get("csharp"),
+            baseline_python_json=baseline_python_json,
+            baseline_csharp_json=baseline_csharp_json,
+        )
     else:
         print("  - skipped (--no-report)")
 
     print_operator_summary(out_dir, run_types, aggregated_macro_payloads)
 
-    print("[4/4] Completed")
+    print("[5/5] Completed")
     print(f"Output: {out_dir}")
     return 0
 

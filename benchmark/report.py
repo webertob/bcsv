@@ -76,6 +76,69 @@ def load_micro(run_dir: Path):
     return load_json(path)
 
 
+def load_language_rows(path: Path | None):
+    if path is None or not path.exists():
+        return []
+    payload = load_json(path)
+    return payload.get("results", [])
+
+
+def discover_language_json(run_dir: Path, language: str):
+    if language == "python":
+        patterns = [
+            "py_macro_results.json",
+            "py_macro_results_*.json",
+            "python/py_macro_results.json",
+            "python/py_macro_results_*.json",
+        ]
+    elif language == "csharp":
+        patterns = [
+            "cs_macro_results.json",
+            "cs_macro_results_*.json",
+            "csharp/cs_macro_results.json",
+            "csharp/cs_macro_results_*.json",
+        ]
+    else:
+        return None
+
+    candidates = []
+    for pattern in patterns:
+        candidates.extend(run_dir.glob(pattern))
+
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item.stat().st_mtime)
+
+
+def summarize_language_rows(rows):
+    if not rows:
+        return {}
+
+    by_mode = {}
+    for row in rows:
+        mode = row.get("mode", "unknown")
+        bucket = by_mode.setdefault(mode, {"write": [], "read": [], "size": []})
+        write = row.get("write_rows_per_sec")
+        read = row.get("read_rows_per_sec")
+        size = row.get("file_size")
+        if isinstance(write, (int, float)):
+            bucket["write"].append(float(write))
+        if isinstance(read, (int, float)):
+            bucket["read"].append(float(read))
+        if isinstance(size, (int, float)):
+            bucket["size"].append(float(size))
+
+    out = {}
+    for mode, data in by_mode.items():
+        out[mode] = {
+            "write_rows_per_sec_median": statistics.median(data["write"]) if data["write"] else None,
+            "read_rows_per_sec_median": statistics.median(data["read"]) if data["read"] else None,
+            "file_size_median": statistics.median(data["size"]) if data["size"] else None,
+            "count": len(data["write"]) if data["write"] else 0,
+        }
+    return out
+
+
 def compute_condensed_progress_metrics(results):
     if not results:
         return []
@@ -242,7 +305,13 @@ def latest_clean_run(current_run: Path, required_macro_types: set[str] | None = 
     return candidates[0]["run_dir"]
 
 
-def generate_summary_markdown(run_dir: Path, baseline_dir: Path | None, summary_only: bool):
+def generate_summary_markdown(run_dir: Path,
+                              baseline_dir: Path | None,
+                              summary_only: bool,
+                              python_json: Path | None = None,
+                              csharp_json: Path | None = None,
+                              baseline_python_json: Path | None = None,
+                              baseline_csharp_json: Path | None = None):
     platform = load_platform(run_dir)
     candidate_label = str(platform.get("git_label", platform.get("git_describe", run_dir.name)))
     candidate_run_id = run_dir.name
@@ -255,6 +324,23 @@ def generate_summary_markdown(run_dir: Path, baseline_dir: Path | None, summary_
         baseline_platform = load_platform(baseline_dir)
         baseline_macro_by_type = load_macro_rows_by_type(baseline_dir)
         baseline_micro = load_micro(baseline_dir)
+
+    # language-lane sidecars
+    if python_json is None:
+        python_json = discover_language_json(run_dir, "python")
+    if csharp_json is None:
+        csharp_json = discover_language_json(run_dir, "csharp")
+
+    if baseline_dir is not None:
+        if baseline_python_json is None:
+            baseline_python_json = discover_language_json(baseline_dir, "python")
+        if baseline_csharp_json is None:
+            baseline_csharp_json = discover_language_json(baseline_dir, "csharp")
+
+    python_rows = load_language_rows(python_json)
+    csharp_rows = load_language_rows(csharp_json)
+    baseline_python_rows = load_language_rows(baseline_python_json)
+    baseline_csharp_rows = load_language_rows(baseline_csharp_json)
     baseline_label = (
         str(baseline_platform.get("git_label", baseline_platform.get("git_describe", baseline_dir.name)))
         if baseline_dir is not None
@@ -414,6 +500,77 @@ def generate_summary_markdown(run_dir: Path, baseline_dir: Path | None, summary_
                 )
             lines.append("")
 
+    def emit_language_section(title, rows, baseline_rows, candidate_path: Path | None, baseline_path: Path | None):
+        def fmt_num(value):
+            if isinstance(value, (int, float)):
+                return f"{value:.0f}"
+            return "—"
+
+        lines.append(f"## {title}")
+        lines.append("")
+        if candidate_path is not None:
+            lines.append(f"Source: `{candidate_path}`")
+            lines.append("")
+        if not rows:
+            lines.append("No language benchmark data found.")
+            lines.append("")
+            return
+
+        current_summary = summarize_language_rows(rows)
+        baseline_summary = summarize_language_rows(baseline_rows)
+
+        lines.append("| Mode | Write Median (rows/s) | Read Median (rows/s) | File Size Median (bytes) | Samples |")
+        lines.append("|------|-----------------------:|----------------------:|--------------------------:|--------:|")
+        for mode in sorted(current_summary.keys()):
+            row = current_summary[mode]
+            lines.append(
+                f"| {mode}"
+                f" | {fmt_num(row.get('write_rows_per_sec_median'))}"
+                f" | {fmt_num(row.get('read_rows_per_sec_median'))}"
+                f" | {fmt_num(row.get('file_size_median'))}"
+                f" | {row.get('count', 0)} |"
+            )
+        lines.append("")
+
+        lines.append(f"## {title} Comparison")
+        lines.append("")
+        if not baseline_rows:
+            lines.append("No baseline language benchmark data available.")
+            lines.append("")
+            return
+        if baseline_path is not None:
+            lines.append(f"Baseline Source: `{baseline_path}`")
+            lines.append("")
+
+        lines.append("| Mode | Write Δ | Read Δ | Size Δ |")
+        lines.append("|------|--------:|-------:|-------:|")
+        all_modes = sorted(set(current_summary.keys()) | set(baseline_summary.keys()))
+        for mode in all_modes:
+            cur = current_summary.get(mode, {})
+            base = baseline_summary.get(mode, {})
+            lines.append(
+                f"| {mode}"
+                f" | {fmt_delta(cur.get('write_rows_per_sec_median'), base.get('write_rows_per_sec_median'), higher_is_better=True)}"
+                f" | {fmt_delta(cur.get('read_rows_per_sec_median'), base.get('read_rows_per_sec_median'), higher_is_better=True)}"
+                f" | {fmt_delta(cur.get('file_size_median'), base.get('file_size_median'), higher_is_better=False)} |"
+            )
+        lines.append("")
+
+    emit_language_section(
+        "Python Benchmark Matrix",
+        python_rows,
+        baseline_python_rows,
+        python_json,
+        baseline_python_json,
+    )
+    emit_language_section(
+        "C# Benchmark Matrix",
+        csharp_rows,
+        baseline_csharp_rows,
+        csharp_json,
+        baseline_csharp_json,
+    )
+
     git_label = str(platform.get("git_label", "wip")).lower()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     report_name = f"report_{git_label}_{timestamp}.md"
@@ -438,6 +595,14 @@ def main():
                         help="Optional baseline run directory for comparison")
     parser.add_argument("--summary-only", action="store_true",
                         help="Only include host + condensed matrix + condensed comparison")
+    parser.add_argument("--python-json", default=None,
+                        help="Optional path to Python benchmark JSON (py_macro_results*.json)")
+    parser.add_argument("--csharp-json", default=None,
+                        help="Optional path to C# benchmark JSON (cs_macro_results*.json)")
+    parser.add_argument("--baseline-python-json", default=None,
+                        help="Optional path to baseline Python benchmark JSON")
+    parser.add_argument("--baseline-csharp-json", default=None,
+                        help="Optional path to baseline C# benchmark JSON")
 
     args = parser.parse_args()
 
@@ -458,7 +623,20 @@ def main():
     if baseline_dir is not None and not baseline_dir.exists():
         baseline_dir = None
 
-    generate_summary_markdown(run_dir, baseline_dir, args.summary_only)
+    python_json = Path(args.python_json) if args.python_json else None
+    csharp_json = Path(args.csharp_json) if args.csharp_json else None
+    baseline_python_json = Path(args.baseline_python_json) if args.baseline_python_json else None
+    baseline_csharp_json = Path(args.baseline_csharp_json) if args.baseline_csharp_json else None
+
+    generate_summary_markdown(
+        run_dir,
+        baseline_dir,
+        args.summary_only,
+        python_json=python_json,
+        csharp_json=csharp_json,
+        baseline_python_json=baseline_python_json,
+        baseline_csharp_json=baseline_csharp_json,
+    )
     return 0
 
 

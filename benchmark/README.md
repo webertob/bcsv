@@ -48,6 +48,7 @@ python3 benchmark/run_benchmarks.py \
 - `--git=<label>` (default `WIP`, controls results bucket naming)
 - `--results=<path>` (default `benchmark/results/<hostname>/<git>`)
 - `--no-build` / `--no-report`
+- `--languages=python,csharp` (optional language lanes for Item 11.B)
 
 ## Standard Runs
 
@@ -60,6 +61,9 @@ python3 benchmark/run_benchmarks.py --type=MICRO --pin=CPU2
 
 # Full campaign (all three types)
 python3 benchmark/run_benchmarks.py --type=MICRO,MACRO-SMALL,MACRO-LARGE
+
+# Include Python language lane in the same run directory/report
+python3 benchmark/run_benchmarks.py --type=MACRO-SMALL --languages=python
 
 # Clean baseline run bucket
 python3 benchmark/run_benchmarks.py --type=MACRO-LARGE --git=clean
@@ -167,3 +171,43 @@ For `--repetitions > 1`, raw per-repetition artifacts are stored under `repeats/
 ## External CSV Benchmark Policy
 
 3rd-party CSV benchmarks are treated as one-time documented reference measurements and are not part of the default orchestrator flow.
+
+## Item 11.B Additions
+
+### Reference Time-Series Workloads
+
+Open-data reference mapping and cache/download workflow:
+- `benchmark/REFERENCE_WORKLOADS.md`
+- `benchmark/reference_workloads.json`
+- `benchmark/fetch_reference_datasets.py`
+
+Fetch datasets to non-versioned cache (`tmp/reference_datasets`):
+
+```bash
+python3 benchmark/fetch_reference_datasets.py
+```
+
+### Dedicated Python Benchmarks
+
+Python lane is intentionally separate from the C++ orchestrator and writes schema-compatible macro rows:
+
+```bash
+python3 python/benchmarks/run_pybcsv_benchmarks.py --size=S
+```
+
+Output default:
+- `benchmark/results/<hostname>/python/py_macro_results_<timestamp>.json`
+
+### Dedicated C# Benchmarks (Standalone .NET)
+
+Build native C API target, then run the .NET benchmark harness:
+
+```bash
+cmake --preset ninja-release
+cmake --build --preset ninja-release-build -j$(nproc) --target bcsv_c_api
+export LD_LIBRARY_PATH="$PWD/build/ninja-release/lib:$LD_LIBRARY_PATH"
+dotnet run --project csharp/benchmarks/Bcsv.Benchmarks.csproj -- --size=S
+```
+
+Output default:
+- `benchmark/results/<hostname>/csharp/cs_macro_results_<timestamp>.json`

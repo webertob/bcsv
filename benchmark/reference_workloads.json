@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "cache_root": "tmp/reference_datasets",
+  "paper": {
+    "title": "Chimp: Efficient Lossless Floating Point Compression for Time Series Databases",
+    "url": "https://www.vldb.org/pvldb/vol15/p3058-liakos.pdf"
+  },
+  "workloads": [
+    {
+      "id": "weather_timeseries",
+      "display_name": "Weather Time Series",
+      "source": "Kaggle Datasets mirror on GitHub",
+      "url": "https://raw.githubusercontent.com/plotly/datasets/master/2016-weather-data-seattle.csv",
+      "format": "csv",
+      "license_note": "Check source license before redistribution",
+      "maps_to_profile": "weather_timeseries",
+      "timeseries_characteristics": ["float-heavy", "seasonal trend", "sensor-like cadence"]
+    },
+    {
+      "id": "daily_temperature",
+      "display_name": "Daily Minimum Temperatures",
+      "source": "UCI mirror",
+      "url": "https://raw.githubusercontent.com/jbrownlee/Datasets/master/daily-min-temperatures.csv",
+      "format": "csv",
+      "license_note": "Check source license before redistribution",
+      "maps_to_profile": "realistic_measurement",
+      "timeseries_characteristics": ["univariate baseline", "smooth drift", "daily periodicity"]
+    },
+    {
+      "id": "airline_passengers",
+      "display_name": "Airline Passengers",
+      "source": "R datasets mirror",
+      "url": "https://raw.githubusercontent.com/jbrownlee/Datasets/master/airline-passengers.csv",
+      "format": "csv",
+      "license_note": "Check source license before redistribution",
+      "maps_to_profile": "simulation_smooth",
+      "timeseries_characteristics": ["trend + seasonality", "compact baseline", "forecast-style signal"]
+    }
+  ]
+}
