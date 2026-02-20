@@ -196,7 +196,7 @@ python/
 
 ## Compatibility
 
-- **Python**: 3.7+ (tested with 3.12)
+- **Python**: 3.11+ (tested with 3.12)
 - **Dependencies**:
   - numpy >= 1.19.0 (required)
   - pandas >= 1.3.0 (optional, for DataFrame integration)

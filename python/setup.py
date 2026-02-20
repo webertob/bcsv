@@ -189,24 +189,13 @@ def get_version():
                     return line.split('=')[1].strip().strip('"').strip("'")
     return "0.1.0"
 
-# Define include paths - both for development and distribution
-include_dirs = []
-
-# For development and distribution builds (when BCSV headers are in parent directory)
-dev_include_dir = project_root / "include"
-include_dirs.extend([
-    str(dev_include_dir),  # BCSV headers
-    str(dev_include_dir / "lz4-1.10.0"),  # LZ4 headers
-    str(dev_include_dir / "boost-1.89.0"),  # Always add Boost headers
-])
-
-# For distribution build (when headers might be bundled)
+# Define include paths from one root only (mirrored python/include tree)
+# This avoids accidental mixing of root and mirrored headers during compilation.
 local_include_dir = current_dir / "include"
-if local_include_dir.exists():
-    include_dirs.extend([
-        str(local_include_dir),
-        str(local_include_dir / "lz4-1.10.0"),
-    ])
+include_dirs = [
+    str(local_include_dir),
+    str(local_include_dir / "lz4-1.10.0"),
+]
 
 # Add pybind11 include if available
 if PYBIND11_AVAILABLE:
