@@ -28,6 +28,7 @@
  *     --scenario=LIST  Comma-separated sparse scenarios to run (default: all)
  *     --tracking=MODE  both|enabled|disabled (default: both)
  *     --storage=MODE   both|flexible|static (default: both)
+ *     --codec=MODE     both|dense|zoh (default: both)
  *     --list           List available profiles and exit
  *     --list-scenarios List available sparse scenarios and exit
  *     --help           Show CLI help and examples
@@ -176,10 +177,12 @@ using RealisticMeasurementLayoutStatic = LayoutFromTypeList_t<ConcatTypeLists<
 
 enum class TrackingSelection { Both, Enabled, Disabled };
 enum class StorageSelection { Both, Flexible, Static };
+enum class CodecSelection { Both, Dense, ZoH };
 
 struct ModeSelection {
     TrackingSelection tracking = TrackingSelection::Both;
     StorageSelection storage = StorageSelection::Both;
+    CodecSelection codec = CodecSelection::Both;
 };
 
 struct ProfileCapabilities {
@@ -222,6 +225,14 @@ inline bool includesFlexible(StorageSelection s) {
 
 inline bool includesStatic(StorageSelection s) {
     return s == StorageSelection::Both || s == StorageSelection::Static;
+}
+
+inline bool includesDense(CodecSelection c) {
+    return c == CodecSelection::Both || c == CodecSelection::Dense;
+}
+
+inline bool includesZoH(CodecSelection c) {
+    return c == CodecSelection::Both || c == CodecSelection::ZoH;
 }
 
 template<typename Fn>
@@ -424,6 +435,20 @@ StorageSelection parseStorageSelection(const std::string& value, std::string& er
     }
     error = "Unknown --storage=" + value + " (expected both|flexible|static)";
     return StorageSelection::Both;
+}
+
+CodecSelection parseCodecSelection(const std::string& value, std::string& error) {
+    if (value.empty() || value == "both") {
+        return CodecSelection::Both;
+    }
+    if (value == "dense" || value == "flat") {
+        return CodecSelection::Dense;
+    }
+    if (value == "zoh") {
+        return CodecSelection::ZoH;
+    }
+    error = "Unknown --codec=" + value + " (expected both|dense|zoh)";
+    return CodecSelection::Both;
 }
 
 std::string makeScenarioDatasetName(const std::string& base, const SparseScenario& scenario) {
@@ -1268,66 +1293,78 @@ std::vector<bench::BenchmarkResult> benchmarkProfile(const bench::DatasetProfile
 
         if (includesFlexible(modeSelection.storage)) {
             if (includesTrackingDisabled(modeSelection.tracking)) {
-                auto flexResult = benchmarkBCSVFlexible(profile, numRows, scenario, quiet);
-                if (hasCsvBaseline && csvResult.file_size > 0) {
-                    flexResult.compression_ratio = static_cast<double>(flexResult.file_size) / csvResult.file_size;
+                if (includesDense(modeSelection.codec)) {
+                    auto flexResult = benchmarkBCSVFlexible(profile, numRows, scenario, quiet);
+                    if (hasCsvBaseline && csvResult.file_size > 0) {
+                        flexResult.compression_ratio = static_cast<double>(flexResult.file_size) / csvResult.file_size;
+                    }
+                    results.push_back(flexResult);
                 }
-                results.push_back(flexResult);
             }
 
             if (includesTrackingEnabled(modeSelection.tracking)) {
-                if (supportsNoCopyTrackedFlexible(profile)) {
-                    auto flexTrackedResult = benchmarkBCSVFlexibleTracked(profile, numRows, scenario, quiet);
-                    if (hasCsvBaseline && csvResult.file_size > 0) {
-                        flexTrackedResult.compression_ratio = static_cast<double>(flexTrackedResult.file_size) / csvResult.file_size;
-                    }
-                    results.push_back(flexTrackedResult);
-                } else {
-                    results.push_back(makeSkippedResult(
-                        profile,
-                        numRows,
-                        scenario,
-                        "BCSV Flexible [trk=on]",
-                        "no-copy generator unavailable"));
-                    if (!quiet) {
-                        std::cerr << "  [" << makeScenarioRunLabel(profile, scenario)
-                                  << "] skip BCSV Flexible [trk=on]: no-copy generator unavailable\n";
+                if (includesDense(modeSelection.codec)) {
+                    if (supportsNoCopyTrackedFlexible(profile)) {
+                        auto flexTrackedResult = benchmarkBCSVFlexibleTracked(profile, numRows, scenario, quiet);
+                        if (hasCsvBaseline && csvResult.file_size > 0) {
+                            flexTrackedResult.compression_ratio = static_cast<double>(flexTrackedResult.file_size) / csvResult.file_size;
+                        }
+                        results.push_back(flexTrackedResult);
+                    } else {
+                        results.push_back(makeSkippedResult(
+                            profile,
+                            numRows,
+                            scenario,
+                            "BCSV Flexible [trk=on]",
+                            "no-copy generator unavailable"));
+                        if (!quiet) {
+                            std::cerr << "  [" << makeScenarioRunLabel(profile, scenario)
+                                      << "] skip BCSV Flexible [trk=on]: no-copy generator unavailable\n";
+                        }
                     }
                 }
 
-                auto zohResult = benchmarkBCSVFlexibleZoH(profile, numRows, scenario, quiet);
-                if (hasCsvBaseline && csvResult.file_size > 0) {
-                    zohResult.compression_ratio = static_cast<double>(zohResult.file_size) / csvResult.file_size;
+                if (includesZoH(modeSelection.codec)) {
+                    auto zohResult = benchmarkBCSVFlexibleZoH(profile, numRows, scenario, quiet);
+                    if (hasCsvBaseline && csvResult.file_size > 0) {
+                        zohResult.compression_ratio = static_cast<double>(zohResult.file_size) / csvResult.file_size;
+                    }
+                    results.push_back(zohResult);
                 }
-                results.push_back(zohResult);
             }
         }
 
         if (includesStatic(modeSelection.storage) && supportsStaticMode(profile)) {
             if (includesTrackingDisabled(modeSelection.tracking)) {
-                auto staticResult = benchmarkBCSVStatic(profile, numRows, scenario, quiet);
-                if (hasCsvBaseline && csvResult.file_size > 0) {
-                    staticResult.compression_ratio = static_cast<double>(staticResult.file_size) / csvResult.file_size;
+                if (includesDense(modeSelection.codec)) {
+                    auto staticResult = benchmarkBCSVStatic(profile, numRows, scenario, quiet);
+                    if (hasCsvBaseline && csvResult.file_size > 0) {
+                        staticResult.compression_ratio = static_cast<double>(staticResult.file_size) / csvResult.file_size;
+                    }
+                    results.push_back(staticResult);
                 }
-                results.push_back(staticResult);
             }
 
             if (includesTrackingEnabled(modeSelection.tracking)) {
-                auto staticTrackedResult = benchmarkBCSVStaticTracked(profile, numRows, scenario, quiet);
-                if (hasCsvBaseline && csvResult.file_size > 0) {
-                    staticTrackedResult.compression_ratio = static_cast<double>(staticTrackedResult.file_size) / csvResult.file_size;
+                if (includesDense(modeSelection.codec)) {
+                    auto staticTrackedResult = benchmarkBCSVStaticTracked(profile, numRows, scenario, quiet);
+                    if (hasCsvBaseline && csvResult.file_size > 0) {
+                        staticTrackedResult.compression_ratio = static_cast<double>(staticTrackedResult.file_size) / csvResult.file_size;
+                    }
+                    results.push_back(staticTrackedResult);
                 }
-                results.push_back(staticTrackedResult);
 
-                auto staticZoHResult = benchmarkBCSVStaticZoH(profile, numRows, scenario, quiet);
-                if (hasCsvBaseline && csvResult.file_size > 0) {
-                    staticZoHResult.compression_ratio = static_cast<double>(staticZoHResult.file_size) / csvResult.file_size;
+                if (includesZoH(modeSelection.codec)) {
+                    auto staticZoHResult = benchmarkBCSVStaticZoH(profile, numRows, scenario, quiet);
+                    if (hasCsvBaseline && csvResult.file_size > 0) {
+                        staticZoHResult.compression_ratio = static_cast<double>(staticZoHResult.file_size) / csvResult.file_size;
+                    }
+                    results.push_back(staticZoHResult);
                 }
-                results.push_back(staticZoHResult);
             }
         } else if (includesStatic(modeSelection.storage)) {
             const std::string staticSkipReason = "no-copy static generator unavailable or layout >128 cols";
-            if (includesTrackingDisabled(modeSelection.tracking)) {
+            if (includesTrackingDisabled(modeSelection.tracking) && includesDense(modeSelection.codec)) {
                 results.push_back(makeSkippedResult(
                     profile,
                     numRows,
@@ -1335,13 +1372,15 @@ std::vector<bench::BenchmarkResult> benchmarkProfile(const bench::DatasetProfile
                     "BCSV Static [trk=off]",
                     staticSkipReason));
             }
-            if (includesTrackingEnabled(modeSelection.tracking)) {
+            if (includesTrackingEnabled(modeSelection.tracking) && includesDense(modeSelection.codec)) {
                 results.push_back(makeSkippedResult(
                     profile,
                     numRows,
                     scenario,
                     "BCSV Static [trk=on]",
                     staticSkipReason));
+            }
+            if (includesTrackingEnabled(modeSelection.tracking) && includesZoH(modeSelection.codec)) {
                 results.push_back(makeSkippedResult(
                     profile,
                     numRows,
@@ -1401,6 +1440,7 @@ int main(int argc, char* argv[]) {
             << "  --scenario=LIST\n"
             << "  --tracking=both|enabled|disabled   (default: both)\n"
             << "  --storage=both|flexible|static     (default: both)\n"
+            << "  --codec=both|dense|zoh            (default: both)\n"
             << "  --list\n"
             << "  --list-scenarios\n"
             << "  --quiet\n"
@@ -1409,7 +1449,8 @@ int main(int argc, char* argv[]) {
             << "Examples:\n"
             << "  bench_macro_datasets --profile=rtl_waveform --rows=10000 --tracking=enabled\n"
             << "  bench_macro_datasets --storage=static --scenario=baseline,sparse_columns_k1\n"
-            << "  bench_macro_datasets --tracking=disabled --storage=flexible\n\n"
+            << "  bench_macro_datasets --tracking=disabled --storage=flexible --codec=dense\n"
+            << "  bench_macro_datasets --tracking=enabled --storage=static --codec=zoh\n\n"
             << "Profiles (" << profileNames.size() << "):\n";
         for (const auto& name : profileNames) {
             std::cout << "  - " << name << "\n";
@@ -1459,6 +1500,7 @@ int main(int argc, char* argv[]) {
     std::string scenarioFilter = bench::getArgString(args, "scenario", "");
     std::string trackingFilter = bench::getArgString(args, "tracking", "both");
     std::string storageFilter = bench::getArgString(args, "storage", "both");
+    std::string codecFilter = bench::getArgString(args, "codec", "both");
     bool quiet = bench::hasArg(args, "quiet");
     bool noCleanup = bench::hasArg(args, "no-cleanup");
     std::string buildType = bench::getArgString(args, "build-type", "Release");
@@ -1473,6 +1515,16 @@ int main(int argc, char* argv[]) {
     modeSelection.storage = parseStorageSelection(storageFilter, modeError);
     if (!modeError.empty()) {
         std::cerr << "ERROR: " << modeError << "\n";
+        return 1;
+    }
+    modeSelection.codec = parseCodecSelection(codecFilter, modeError);
+    if (!modeError.empty()) {
+        std::cerr << "ERROR: " << modeError << "\n";
+        return 1;
+    }
+    if (modeSelection.codec == CodecSelection::ZoH
+        && modeSelection.tracking == TrackingSelection::Disabled) {
+        std::cerr << "ERROR: --codec=zoh requires --tracking=enabled or --tracking=both\n";
         return 1;
     }
 
@@ -1509,6 +1561,7 @@ int main(int argc, char* argv[]) {
                   << "Scenarios: " << scenarios.size() << "\n"
                   << "Tracking: " << trackingFilter << "\n"
                   << "Storage: " << storageFilter << "\n"
+                  << "Codec: " << codecFilter << "\n"
                   << "Rows: " << (rowOverride > 0 ? std::to_string(rowOverride) : "profile defaults") << "\n"
                   << "Build: " << buildType << "\n\n";
     }

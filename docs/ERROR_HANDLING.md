@@ -2,7 +2,7 @@
 
 **Status:** ✅ Production Ready  
 **Last Updated:** February 4, 2026  
-**Test Coverage:** 187/187 tests passing (100%)
+**Test Coverage:** Covered by the active automated test suite (see `tests/` and CI).
 
 ---
 
@@ -173,18 +173,18 @@ All tests in [tests/error_handling_test.cpp](../tests/error_handling_test.cpp):
 11. ✅ **GetErrorMsg_AllCases** - Reader error message coverage
 12. ✅ **Writer_GetErrorMsg_AllCases** - Writer error message coverage
 
-### Total Test Suite: 187 Tests ✅
+### Total Test Suite: Continuously Evolving ✅
 
-- **Core functionality**: 32 tests
-- **Boundary conditions**: 12 tests  
-- **Vectorized operations**: 13 tests
-- **Parameterized type tests**: 66 tests
-- **Edge cases**: 6 tests
-- **VLE encoding**: 8 tests
-- **LZ4 streaming**: 18 tests
-- **FileFooter**: 18 tests
-- **Error handling**: 12 tests
-- **Performance**: 2 benchmarks
+- **Core functionality**: covered
+- **Boundary conditions**: covered
+- **Vectorized operations**: covered
+- **Parameterized type tests**: covered
+- **Edge cases**: covered
+- **VLE encoding**: covered
+- **LZ4 streaming**: covered
+- **FileFooter**: covered
+- **Error handling**: covered
+- **Performance checks**: benchmark suite maintained separately
 
 **Coverage highlights:**
 - ✅ All public API methods
@@ -304,7 +304,7 @@ bool processData(const std::string& filename) {
 
 ### Stable API (v1.3.0+)
 
-The following error handling interfaces are **stable** and will not change:
+The following error handling interfaces are **stable** within the v1.x line:
 
 ```cpp
 // Reader
@@ -385,7 +385,7 @@ These would be considered for v2.0+ if user demand exists.
 ✅ **Complete error handling implementation**
 - Both Reader and Writer support `getErrorMsg()`
 - All error paths properly handle and report errors
-- 187/187 tests passing including 12 dedicated error handling tests
+- Dedicated error handling tests are part of the active suite
 - Production-ready with DEBUG_OUTPUTS control
 - Comprehensive documentation for users
 

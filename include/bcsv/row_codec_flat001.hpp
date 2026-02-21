@@ -24,6 +24,7 @@
 #include <cstring>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace bcsv {
 
@@ -37,14 +38,12 @@ template<typename LayoutType, TrackingPolicy Policy>
 inline void RowCodecFlat001<LayoutType, Policy>::setup(const LayoutType& layout)
 {
     layout_ = &layout;
-    offsets_ = layout.columnOffsetsPacked();
-    wire_bits_size_  = static_cast<uint32_t>((layout.columnCount(ColumnType::BOOL) + 7u) / 8u);
     wire_data_size_ = 0;
-    wire_strg_count_ = static_cast<uint32_t>(layout.columnCount(ColumnType::STRING));
+    packed_offsets_ = &layout.columnOffsetsPacked();
     
     const size_t count = layout.columnCount();
     const auto& types = layout.columnTypes();
-    const auto& packed_offsets = layout.columnOffsetsPacked();
+    const auto& packed_offsets = *packed_offsets_;
     for (size_t i = count; i-- > 0;) {
         const ColumnType type = types[i];
         if (type == ColumnType::BOOL || type == ColumnType::STRING) {
@@ -53,8 +52,7 @@ inline void RowCodecFlat001<LayoutType, Policy>::setup(const LayoutType& layout)
         wire_data_size_ = packed_offsets[i] + static_cast<uint32_t>(sizeOf(type));
         break;
     }
-    wire_fixed_size_ = wire_bits_size_ + wire_data_size_ + wire_strg_count_ * static_cast<uint32_t>(sizeof(uint16_t));
-    offsets_ptr_ = layout.columnOffsetsPacked().data();
+    offsets_ptr_ = packed_offsets.data();
 }
 
 
@@ -67,7 +65,7 @@ inline std::span<std::byte> RowCodecFlat001<LayoutType, Policy>::serialize(
     assert(layout_ && "RowCodecFlat001::serialize() called before setup()");
 
     const size_t   off_row  = buffer.size();
-    const uint32_t bits_sz  = wire_bits_size_;
+    const uint32_t bits_sz  = wireBitsSize();
     const uint32_t data_sz  = wire_data_size_;
     const uint32_t fixed_sz = wireFixedSize();
     const size_t   count    = layout_->columnCount();
@@ -142,7 +140,7 @@ inline void RowCodecFlat001<LayoutType, Policy>::deserialize(
 {
     assert(layout_ && "RowCodecFlat001::deserialize() called before setup()");
 
-    const uint32_t bits_sz  = wire_bits_size_;
+    const uint32_t bits_sz  = wireBitsSize();
     const uint32_t data_sz  = wire_data_size_;
     const uint32_t fixed_sz = wireFixedSize();
     const size_t   count    = layout_->columnCount();
@@ -222,7 +220,7 @@ inline std::span<const std::byte> RowCodecFlat001<LayoutType, Policy>::readColum
     }
 
     const ColumnType type = layout_->columnType(col);
-    const uint32_t off = offsets_[col];
+    const uint32_t off = offsets_ptr_[col];
 
     if (type == ColumnType::BOOL) {
         size_t bytePos = off >> 3;
@@ -231,7 +229,7 @@ inline std::span<const std::byte> RowCodecFlat001<LayoutType, Policy>::readColum
         return { reinterpret_cast<const std::byte*>(&boolScratch), sizeof(bool) };
     } else if (type == ColumnType::STRING) {
         // Scan strg_lengths to find payload offset for string index 'off'
-        size_t lens_cursor = wire_bits_size_ + wire_data_size_;
+        size_t lens_cursor = wireBitsSize() + wire_data_size_;
         size_t pay_cursor  = fixed_sz;
         for (uint32_t s = 0; s < off; ++s) {
             uint16_t len = unalignedRead<uint16_t>(&buffer[lens_cursor]);
@@ -244,7 +242,7 @@ inline std::span<const std::byte> RowCodecFlat001<LayoutType, Policy>::readColum
         return { buffer.data() + pay_cursor, len };
     } else {
         // Scalar: absolute position = wire_bits_size_ + section-relative offset
-        size_t absOff = wire_bits_size_ + off;
+        size_t absOff = wireBitsSize() + off;
         size_t fieldLen = sizeOf(type);
         return { buffer.data() + absOff, fieldLen };
     }
@@ -326,6 +324,389 @@ inline void RowCodecFlat001<LayoutType, Policy>::initializeSparseStringCursors(
             if (strPayCursor > buffer.size()) [[unlikely]] {
                 throw std::runtime_error(std::string(fnName) + "() string payload out of bounds");
             }
+        }
+    }
+}
+
+template<typename LayoutType, TrackingPolicy Policy>
+template<typename Visitor>
+inline void RowCodecFlat001<LayoutType, Policy>::visitConstSparse(
+    size_t startIndex,
+    size_t count,
+    Visitor&& visitor,
+    const char* fnName) const
+{
+    if (count == 0) {
+        return;
+    }
+
+    const auto buffer = std::span<const std::byte>(buffer_.data(), buffer_.size());
+    validateSparseRange(buffer, startIndex, count, fnName);
+    const size_t endIndex = startIndex + count;
+
+    const ColumnType* types = layout_->columnTypes().data();
+    const uint32_t wire_data_off = wireBitsSize();
+    size_t str_lens_cursor = 0;
+    size_t str_pay_cursor  = 0;
+    initializeSparseStringCursors(buffer, startIndex, str_lens_cursor, str_pay_cursor, fnName);
+
+    for (size_t i = startIndex; i < endIndex; ++i) {
+        const ColumnType type = types[i];
+        const uint32_t off = offsets_ptr_[i];
+
+        switch(type) {
+            case ColumnType::BOOL: {
+                const size_t bytePos = off >> 3;
+                const size_t bitPos  = off & 7;
+                const bool value = (buffer[bytePos] & (std::byte{1} << bitPos)) != std::byte{0};
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::INT8: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                int8_t value;
+                std::memcpy(&value, ptr, sizeof(int8_t));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::INT16: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                int16_t value;
+                std::memcpy(&value, ptr, sizeof(int16_t));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::INT32: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                int32_t value;
+                std::memcpy(&value, ptr, sizeof(int32_t));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::INT64: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                int64_t value;
+                std::memcpy(&value, ptr, sizeof(int64_t));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::UINT8: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                uint8_t value;
+                std::memcpy(&value, ptr, sizeof(uint8_t));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::UINT16: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                uint16_t value;
+                std::memcpy(&value, ptr, sizeof(uint16_t));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::UINT32: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                uint32_t value;
+                std::memcpy(&value, ptr, sizeof(uint32_t));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::UINT64: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                uint64_t value;
+                std::memcpy(&value, ptr, sizeof(uint64_t));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::FLOAT: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                float value;
+                std::memcpy(&value, ptr, sizeof(float));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::DOUBLE: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                double value;
+                std::memcpy(&value, ptr, sizeof(double));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::STRING: {
+                const uint16_t strLength = unalignedRead<uint16_t>(&buffer[str_lens_cursor]);
+                str_lens_cursor += sizeof(uint16_t);
+
+                if (str_pay_cursor + strLength > buffer.size()) [[unlikely]] {
+                    throw std::runtime_error(std::string(fnName) + "() string payload out of bounds");
+                }
+
+                const std::string_view strValue(
+                    reinterpret_cast<const char*>(&buffer[str_pay_cursor]),
+                    strLength
+                );
+                str_pay_cursor += strLength;
+                visitor(i, strValue);
+                break;
+            }
+            default: [[unlikely]]
+                throw std::runtime_error(std::string(fnName) + "() unsupported column type");
+        }
+    }
+}
+
+template<typename LayoutType, TrackingPolicy Policy>
+template<typename Visitor>
+inline void RowCodecFlat001<LayoutType, Policy>::visitSparse(
+    size_t startIndex,
+    size_t count,
+    Visitor&& visitor,
+    const char* fnName)
+{
+    if (count == 0) {
+        return;
+    }
+
+    auto& buffer = buffer_;
+    validateSparseRange(std::span<const std::byte>(buffer.data(), buffer.size()), startIndex, count, fnName);
+    const size_t endIndex = startIndex + count;
+
+    const ColumnType* types = layout_->columnTypes().data();
+    const uint32_t wire_data_off = wireBitsSize();
+    size_t str_lens_cursor = 0;
+    size_t str_pay_cursor  = 0;
+    initializeSparseStringCursors(std::span<const std::byte>(buffer.data(), buffer.size()), startIndex, str_lens_cursor, str_pay_cursor, fnName);
+
+    for (size_t i = startIndex; i < endIndex; ++i) {
+        const ColumnType type = types[i];
+        const uint32_t off = offsets_ptr_[i];
+
+        auto dispatch = [&](auto&& value) {
+            using T = std::decay_t<decltype(value)>;
+            if constexpr (std::is_invocable_v<Visitor, size_t, T&, bool&>) {
+                bool changed = true;
+                visitor(i, value, changed);
+                return changed;
+            } else {
+                static_assert(std::is_invocable_v<Visitor, size_t, T&>,
+                              "RowView::visit() requires (size_t, T&) or (size_t, T&, bool&)");
+                visitor(i, value);
+                return true;
+            }
+        };
+
+        auto visitScalar = [&](auto type_tag) {
+            using Scalar = decltype(type_tag);
+            const size_t pos = wire_data_off + off;
+            Scalar value = unalignedRead<Scalar>(buffer.data() + pos);
+            const bool changed = dispatch(value);
+            if (changed) {
+                unalignedWrite<Scalar>(buffer.data() + pos, value);
+            }
+        };
+
+        switch(type) {
+            case ColumnType::BOOL: {
+                const size_t bytePos = off >> 3;
+                const size_t bitPos  = off & 7;
+                bool value = (buffer[bytePos] & (std::byte{1} << bitPos)) != std::byte{0};
+                const bool changed = dispatch(value);
+                if (changed) {
+                    if (value) buffer[bytePos] |= std::byte{1} << bitPos;
+                    else       buffer[bytePos] &= ~(std::byte{1} << bitPos);
+                }
+                break;
+            }
+            case ColumnType::INT8:
+                visitScalar(int8_t{});
+                break;
+            case ColumnType::INT16:
+                visitScalar(int16_t{});
+                break;
+            case ColumnType::INT32:
+                visitScalar(int32_t{});
+                break;
+            case ColumnType::INT64:
+                visitScalar(int64_t{});
+                break;
+            case ColumnType::UINT8:
+                visitScalar(uint8_t{});
+                break;
+            case ColumnType::UINT16:
+                visitScalar(uint16_t{});
+                break;
+            case ColumnType::UINT32:
+                visitScalar(uint32_t{});
+                break;
+            case ColumnType::UINT64:
+                visitScalar(uint64_t{});
+                break;
+            case ColumnType::FLOAT:
+                visitScalar(float{});
+                break;
+            case ColumnType::DOUBLE:
+                visitScalar(double{});
+                break;
+            case ColumnType::STRING: {
+                const uint16_t strLength = unalignedRead<uint16_t>(&buffer[str_lens_cursor]);
+                str_lens_cursor += sizeof(uint16_t);
+
+                if (str_pay_cursor + strLength > buffer.size()) [[unlikely]] {
+                    throw std::runtime_error(std::string(fnName) + "() string payload out of bounds");
+                }
+
+                std::string_view strValue(
+                    reinterpret_cast<const char*>(&buffer[str_pay_cursor]),
+                    strLength
+                );
+                str_pay_cursor += strLength;
+
+                dispatch(strValue);
+                break;
+            }
+            default: [[unlikely]]
+                throw std::runtime_error(std::string(fnName) + "() unsupported column type");
+        }
+    }
+}
+
+template<typename LayoutType, TrackingPolicy Policy>
+template<typename T, typename Visitor>
+inline void RowCodecFlat001<LayoutType, Policy>::visitSparseTyped(
+    size_t startIndex,
+    size_t count,
+    Visitor&& visitor,
+    const char* fnName)
+{
+    if (count == 0) {
+        return;
+    }
+
+    auto& buffer = buffer_;
+    validateSparseTypedRange<T>(std::span<const std::byte>(buffer.data(), buffer.size()), startIndex, count, fnName);
+    const size_t endIndex = startIndex + count;
+
+    const uint32_t wire_data_off = wireBitsSize();
+    size_t str_lens_cursor = 0;
+    size_t str_pay_cursor  = 0;
+    if constexpr (std::is_same_v<T, std::string_view> || std::is_same_v<T, std::string>) {
+        initializeSparseStringCursors(std::span<const std::byte>(buffer.data(), buffer.size()), startIndex, str_lens_cursor, str_pay_cursor, fnName);
+    }
+
+    for (size_t i = startIndex; i < endIndex; ++i) {
+        const uint32_t off = offsets_ptr_[i];
+
+        if constexpr (std::is_same_v<T, bool>) {
+            const size_t bytePos = off >> 3;
+            const size_t bitPos  = off & 7;
+            bool value = (buffer[bytePos] & (std::byte{1} << bitPos)) != std::byte{0};
+            bool changed = true;
+            if constexpr (std::is_invocable_v<Visitor, size_t, bool&, bool&>) {
+                visitor(i, value, changed);
+            } else {
+                visitor(i, value);
+            }
+            if (changed) {
+                if (value) buffer[bytePos] |= std::byte{1} << bitPos;
+                else       buffer[bytePos] &= ~(std::byte{1} << bitPos);
+            }
+        } else if constexpr (std::is_same_v<T, std::string_view> || std::is_same_v<T, std::string>) {
+            const uint16_t strLength = unalignedRead<uint16_t>(&buffer[str_lens_cursor]);
+            str_lens_cursor += sizeof(uint16_t);
+
+            if (str_pay_cursor + strLength > buffer.size()) [[unlikely]] {
+                throw std::runtime_error(std::string(fnName) + "() string payload out of bounds");
+            }
+
+            std::string_view sv(
+                reinterpret_cast<const char*>(&buffer[str_pay_cursor]),
+                strLength
+            );
+            str_pay_cursor += strLength;
+
+            if constexpr (std::is_invocable_v<Visitor, size_t, std::string_view&, bool&>) {
+                bool changed = true;
+                visitor(i, sv, changed);
+            } else if constexpr (std::is_invocable_v<Visitor, size_t, std::string_view&>) {
+                visitor(i, sv);
+            } else if constexpr (std::is_invocable_v<Visitor, size_t, std::string&, bool&>) {
+                std::string tmp(sv);
+                bool changed = true;
+                visitor(i, tmp, changed);
+            } else {
+                std::string tmp(sv);
+                visitor(i, tmp);
+            }
+        } else {
+            const size_t pos = wire_data_off + off;
+            T value = unalignedRead<T>(buffer.data() + pos);
+            bool changed = true;
+            if constexpr (std::is_invocable_v<Visitor, size_t, T&, bool&>) {
+                visitor(i, value, changed);
+            } else {
+                visitor(i, value);
+            }
+            if (changed) {
+                unalignedWrite<T>(buffer.data() + pos, value);
+            }
+        }
+    }
+}
+
+template<typename LayoutType, TrackingPolicy Policy>
+template<typename T, typename Visitor>
+inline void RowCodecFlat001<LayoutType, Policy>::visitConstSparseTyped(
+    size_t startIndex,
+    size_t count,
+    Visitor&& visitor,
+    const char* fnName) const
+{
+    if (count == 0) {
+        return;
+    }
+
+    const auto buffer = std::span<const std::byte>(buffer_.data(), buffer_.size());
+    validateSparseTypedRange<T>(buffer, startIndex, count, fnName);
+    const size_t endIndex = startIndex + count;
+
+    const uint32_t wire_data_off = wireBitsSize();
+    size_t str_lens_cursor = 0;
+    size_t str_pay_cursor  = 0;
+    if constexpr (std::is_same_v<T, std::string_view> || std::is_same_v<T, std::string>) {
+        initializeSparseStringCursors(buffer, startIndex, str_lens_cursor, str_pay_cursor, fnName);
+    }
+
+    for (size_t i = startIndex; i < endIndex; ++i) {
+        const uint32_t off = offsets_ptr_[i];
+
+        if constexpr (std::is_same_v<T, bool>) {
+            const size_t bytePos = off >> 3;
+            const size_t bitPos  = off & 7;
+            const bool value = (buffer[bytePos] & (std::byte{1} << bitPos)) != std::byte{0};
+            visitor(i, value);
+        } else if constexpr (std::is_same_v<T, std::string_view> || std::is_same_v<T, std::string>) {
+            const uint16_t strLength = unalignedRead<uint16_t>(&buffer[str_lens_cursor]);
+            str_lens_cursor += sizeof(uint16_t);
+
+            if (str_pay_cursor + strLength > buffer.size()) [[unlikely]] {
+                throw std::runtime_error(std::string(fnName) + "() string payload out of bounds");
+            }
+
+            const std::string_view sv(
+                reinterpret_cast<const char*>(&buffer[str_pay_cursor]),
+                strLength
+            );
+            str_pay_cursor += strLength;
+
+            if constexpr (std::is_same_v<T, std::string_view>) {
+                visitor(i, sv);
+            } else {
+                const std::string tmp(sv);
+                visitor(i, tmp);
+            }
+        } else {
+            const std::byte* ptr = &buffer[wire_data_off + off];
+            T value = unalignedRead<T>(ptr);
+            visitor(i, value);
         }
     }
 }
@@ -597,6 +978,247 @@ inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy>::initializeSpa
             if (strPayCursor > buffer.size()) [[unlikely]] {
                 throw std::runtime_error(std::string(fnName) + "() string payload out of bounds");
             }
+        }
+    }
+}
+
+template<TrackingPolicy Policy, typename... ColumnTypes>
+template<typename Visitor>
+inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy>::visitConstSparse(
+    size_t startIndex,
+    size_t count,
+    Visitor&& visitor,
+    const char* fnName) const
+{
+    if (count == 0) {
+        return;
+    }
+
+    const auto buffer = std::span<const std::byte>(buffer_.data(), buffer_.size());
+    validateSparseRange(buffer, startIndex, count, fnName);
+    const size_t endIndex = startIndex + count;
+
+    const ColumnType* types = layout_->columnTypes().data();
+    const uint32_t wire_data_off = wireBitsSize();
+    size_t str_lens_cursor = 0;
+    size_t str_pay_cursor  = 0;
+    initializeSparseStringCursors(buffer, startIndex, str_lens_cursor, str_pay_cursor, fnName);
+
+    for (size_t i = startIndex; i < endIndex; ++i) {
+        const ColumnType type = types[i];
+        const uint32_t off = offsets_ptr_[i];
+
+        switch(type) {
+            case ColumnType::BOOL: {
+                const size_t bytePos = off >> 3;
+                const size_t bitPos  = off & 7;
+                const bool value = (buffer[bytePos] & (std::byte{1} << bitPos)) != std::byte{0};
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::INT8: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                int8_t value;
+                std::memcpy(&value, ptr, sizeof(int8_t));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::INT16: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                int16_t value;
+                std::memcpy(&value, ptr, sizeof(int16_t));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::INT32: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                int32_t value;
+                std::memcpy(&value, ptr, sizeof(int32_t));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::INT64: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                int64_t value;
+                std::memcpy(&value, ptr, sizeof(int64_t));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::UINT8: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                uint8_t value;
+                std::memcpy(&value, ptr, sizeof(uint8_t));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::UINT16: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                uint16_t value;
+                std::memcpy(&value, ptr, sizeof(uint16_t));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::UINT32: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                uint32_t value;
+                std::memcpy(&value, ptr, sizeof(uint32_t));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::UINT64: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                uint64_t value;
+                std::memcpy(&value, ptr, sizeof(uint64_t));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::FLOAT: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                float value;
+                std::memcpy(&value, ptr, sizeof(float));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::DOUBLE: {
+                const std::byte* ptr = &buffer[wire_data_off + off];
+                double value;
+                std::memcpy(&value, ptr, sizeof(double));
+                visitor(i, value);
+                break;
+            }
+            case ColumnType::STRING: {
+                const uint16_t strLength = unalignedRead<uint16_t>(&buffer[str_lens_cursor]);
+                str_lens_cursor += sizeof(uint16_t);
+
+                if (str_pay_cursor + strLength > buffer.size()) [[unlikely]] {
+                    throw std::runtime_error(std::string(fnName) + "() string payload out of bounds");
+                }
+
+                const std::string_view strValue(
+                    reinterpret_cast<const char*>(&buffer[str_pay_cursor]),
+                    strLength
+                );
+                str_pay_cursor += strLength;
+                visitor(i, strValue);
+                break;
+            }
+            default: [[unlikely]]
+                throw std::runtime_error(std::string(fnName) + "() unsupported column type");
+        }
+    }
+}
+
+template<TrackingPolicy Policy, typename... ColumnTypes>
+template<typename Visitor>
+inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy>::visitSparse(
+    size_t startIndex,
+    size_t count,
+    Visitor&& visitor,
+    const char* fnName)
+{
+    if (count == 0) {
+        return;
+    }
+
+    auto& buffer = buffer_;
+    validateSparseRange(std::span<const std::byte>(buffer.data(), buffer.size()), startIndex, count, fnName);
+    const size_t endIndex = startIndex + count;
+
+    const ColumnType* types = layout_->columnTypes().data();
+    const uint32_t wire_data_off = wireBitsSize();
+    size_t str_lens_cursor = 0;
+    size_t str_pay_cursor  = 0;
+    initializeSparseStringCursors(std::span<const std::byte>(buffer.data(), buffer.size()), startIndex, str_lens_cursor, str_pay_cursor, fnName);
+
+    for (size_t i = startIndex; i < endIndex; ++i) {
+        const ColumnType type = types[i];
+        const uint32_t off = offsets_ptr_[i];
+
+        auto dispatch = [&](auto&& value) {
+            using T = std::decay_t<decltype(value)>;
+            if constexpr (std::is_invocable_v<Visitor, size_t, T&, bool&>) {
+                bool changed = true;
+                visitor(i, value, changed);
+                return changed;
+            } else {
+                static_assert(std::is_invocable_v<Visitor, size_t, T&>,
+                              "RowViewStatic::visit() requires (size_t, T&) or (size_t, T&, bool&)");
+                visitor(i, value);
+                return true;
+            }
+        };
+
+        auto visitScalar = [&](auto type_tag) {
+            using Scalar = decltype(type_tag);
+            const size_t pos = wire_data_off + off;
+            Scalar value = unalignedRead<Scalar>(buffer.data() + pos);
+            const bool changed = dispatch(value);
+            if (changed) {
+                unalignedWrite<Scalar>(buffer.data() + pos, value);
+            }
+        };
+
+        switch(type) {
+            case ColumnType::BOOL: {
+                const size_t bytePos = off >> 3;
+                const size_t bitPos  = off & 7;
+                bool value = (buffer[bytePos] & (std::byte{1} << bitPos)) != std::byte{0};
+                const bool changed = dispatch(value);
+                if (changed) {
+                    if (value) buffer[bytePos] |= std::byte{1} << bitPos;
+                    else       buffer[bytePos] &= ~(std::byte{1} << bitPos);
+                }
+                break;
+            }
+            case ColumnType::INT8:
+                visitScalar(int8_t{});
+                break;
+            case ColumnType::INT16:
+                visitScalar(int16_t{});
+                break;
+            case ColumnType::INT32:
+                visitScalar(int32_t{});
+                break;
+            case ColumnType::INT64:
+                visitScalar(int64_t{});
+                break;
+            case ColumnType::UINT8:
+                visitScalar(uint8_t{});
+                break;
+            case ColumnType::UINT16:
+                visitScalar(uint16_t{});
+                break;
+            case ColumnType::UINT32:
+                visitScalar(uint32_t{});
+                break;
+            case ColumnType::UINT64:
+                visitScalar(uint64_t{});
+                break;
+            case ColumnType::FLOAT:
+                visitScalar(float{});
+                break;
+            case ColumnType::DOUBLE:
+                visitScalar(double{});
+                break;
+            case ColumnType::STRING: {
+                const uint16_t strLength = unalignedRead<uint16_t>(&buffer[str_lens_cursor]);
+                str_lens_cursor += sizeof(uint16_t);
+
+                if (str_pay_cursor + strLength > buffer.size()) [[unlikely]] {
+                    throw std::runtime_error(std::string(fnName) + "() string payload out of bounds");
+                }
+
+                std::string_view strValue(
+                    reinterpret_cast<const char*>(&buffer[str_pay_cursor]),
+                    strLength
+                );
+                str_pay_cursor += strLength;
+
+                dispatch(strValue);
+                break;
+            }
+            default: [[unlikely]]
+                throw std::runtime_error(std::string(fnName) + "() unsupported column type");
         }
     }
 }

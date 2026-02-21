@@ -1572,125 +1572,7 @@ namespace bcsv {
      */
     template<RowVisitorConst Visitor>
     inline void RowView::visitConst(size_t startIndex, Visitor&& visitor, size_t count) const {
-        if (count == 0) return;
-        const auto& buffer = codec_.buffer();
-        const uint32_t* offsets = codec_.columnOffsetsPtr();
-        codec_.validateSparseRange(buffer, startIndex, count, "RowView::visitConst");
-        size_t endIndex = startIndex + count;
-        
-        // Pre-fetch raw type array — avoids per-iteration data_-> pointer chase and checkRange()
-        const ColumnType* types = layout_.columnTypes().data();
-
-        // Core implementation: iterate and dispatch for each column.
-        // For strings we maintain cursors across iterations to avoid re-scanning.
-        const uint32_t wire_data_off = codec_.wireBitsSize();
-        size_t str_lens_cursor = 0;
-        size_t str_pay_cursor  = 0;
-        codec_.initializeSparseStringCursors(buffer, startIndex, str_lens_cursor, str_pay_cursor, "RowView::visitConst");
-
-        for (size_t i = startIndex; i < endIndex; ++i) {
-            const ColumnType type = types[i];
-            uint32_t off = offsets[i];
-            
-            switch(type) {
-                case ColumnType::BOOL: {
-                    size_t bytePos = off >> 3;
-                    size_t bitPos  = off & 7;
-                    bool value = (buffer[bytePos] & (std::byte{1} << bitPos)) != std::byte{0};
-                    visitor(i, value);
-                    break;
-                }
-                case ColumnType::INT8: {
-                    const std::byte* ptr = &buffer[wire_data_off + off];
-                    int8_t value;
-                    std::memcpy(&value, ptr, sizeof(int8_t));
-                    visitor(i, value);
-                    break;
-                }
-                case ColumnType::INT16: {
-                    const std::byte* ptr = &buffer[wire_data_off + off];
-                    int16_t value;
-                    std::memcpy(&value, ptr, sizeof(int16_t));
-                    visitor(i, value);
-                    break;
-                }
-                case ColumnType::INT32: {
-                    const std::byte* ptr = &buffer[wire_data_off + off];
-                    int32_t value;
-                    std::memcpy(&value, ptr, sizeof(int32_t));
-                    visitor(i, value);
-                    break;
-                }
-                case ColumnType::INT64: {
-                    const std::byte* ptr = &buffer[wire_data_off + off];
-                    int64_t value;
-                    std::memcpy(&value, ptr, sizeof(int64_t));
-                    visitor(i, value);
-                    break;
-                }
-                case ColumnType::UINT8: {
-                    const std::byte* ptr = &buffer[wire_data_off + off];
-                    uint8_t value;
-                    std::memcpy(&value, ptr, sizeof(uint8_t));
-                    visitor(i, value);
-                    break;
-                }
-                case ColumnType::UINT16: {
-                    const std::byte* ptr = &buffer[wire_data_off + off];
-                    uint16_t value;
-                    std::memcpy(&value, ptr, sizeof(uint16_t));
-                    visitor(i, value);
-                    break;
-                }
-                case ColumnType::UINT32: {
-                    const std::byte* ptr = &buffer[wire_data_off + off];
-                    uint32_t value;
-                    std::memcpy(&value, ptr, sizeof(uint32_t));
-                    visitor(i, value);
-                    break;
-                }
-                case ColumnType::UINT64: {
-                    const std::byte* ptr = &buffer[wire_data_off + off];
-                    uint64_t value;
-                    std::memcpy(&value, ptr, sizeof(uint64_t));
-                    visitor(i, value);
-                    break;
-                }
-                case ColumnType::FLOAT: {
-                    const std::byte* ptr = &buffer[wire_data_off + off];
-                    float value;
-                    std::memcpy(&value, ptr, sizeof(float));
-                    visitor(i, value);
-                    break;
-                }
-                case ColumnType::DOUBLE: {
-                    const std::byte* ptr = &buffer[wire_data_off + off];
-                    double value;
-                    std::memcpy(&value, ptr, sizeof(double));
-                    visitor(i, value);
-                    break;
-                }
-                case ColumnType::STRING: {
-                    // Read length from strg_lengths section
-                    uint16_t strLength = unalignedRead<uint16_t>(&buffer[str_lens_cursor]);
-                    str_lens_cursor += sizeof(uint16_t);
-                    
-                    if (str_pay_cursor + strLength > buffer.size()) [[unlikely]] {
-                        throw std::runtime_error("RowView::visitConst() string payload out of bounds");
-                    }
-                    
-                    std::string_view strValue(
-                        reinterpret_cast<const char*>(&buffer[str_pay_cursor]), 
-                        strLength
-                    );
-                    str_pay_cursor += strLength;
-                    visitor(i, strValue);
-                    break;
-                }
-                default: [[unlikely]]
-                    throw std::runtime_error("RowView::visitConst() unsupported column type");
-            }
-        }
+        codec_.visitConstSparse(startIndex, count, std::forward<Visitor>(visitor), "RowView::visitConst");
     }
 
     /** @brief Visit all columns with read-only access (zero-copy view)
@@ -1752,131 +1634,7 @@ namespace bcsv {
      */
     template<RowVisitor Visitor>
     inline void RowView::visit(size_t startIndex, Visitor&& visitor, size_t count) {
-        if (count == 0) return;
-        auto& buffer = codec_.buffer();
-        const uint32_t* offsets = codec_.columnOffsetsPtr();
-        codec_.validateSparseRange(buffer, startIndex, count, "RowView::visit");
-        size_t endIndex = startIndex + count;
-        
-        // Pre-fetch raw type array — avoids per-iteration data_-> pointer chase and checkRange()
-        const ColumnType* types = layout_.columnTypes().data();
-
-        // Core implementation: iterate and dispatch for each column (flat wire format).
-        const uint32_t wire_data_off = codec_.wireBitsSize();
-        size_t str_lens_cursor = 0;
-        size_t str_pay_cursor  = 0;
-        codec_.initializeSparseStringCursors(buffer, startIndex, str_lens_cursor, str_pay_cursor, "RowView::visit");
-
-        for (size_t i = startIndex; i < endIndex; ++i) {
-            const ColumnType type = types[i];
-            uint32_t off = offsets[i];
-
-            auto dispatch = [&](auto&& value) {
-                using T = std::decay_t<decltype(value)>;
-                if constexpr (std::is_invocable_v<Visitor, size_t, T&, bool&>) {
-                    bool changed = true;
-                    visitor(i, value, changed);
-                    return changed;
-                } else {
-                    static_assert(std::is_invocable_v<Visitor, size_t, T&>,
-                                  "RowView::visit() requires (size_t, T&) or (size_t, T&, bool&)");
-                    visitor(i, value);
-                    return true;
-                }
-            };
-
-            auto visitScalar = [&](auto type_tag) {
-                using Scalar = decltype(type_tag);
-                size_t pos = wire_data_off + off;
-                Scalar value = unalignedRead<Scalar>(buffer.data() + pos);
-                bool changed = dispatch(value);
-                if (changed) {
-                    unalignedWrite<Scalar>(buffer.data() + pos, value);
-                }
-            };
-
-            switch(type) {
-                case ColumnType::BOOL: {
-                    // Read-modify-write cycle for bit-packed bools
-                    size_t bytePos = off >> 3;
-                    size_t bitPos  = off & 7;
-                    bool value = (buffer[bytePos] & (std::byte{1} << bitPos)) != std::byte{0};
-                    bool changed = dispatch(value);
-                    // Write back potentially modified value
-                    if (changed) {
-                        if (value) buffer[bytePos] |= std::byte{1} << bitPos;
-                        else       buffer[bytePos] &= ~(std::byte{1} << bitPos);
-                    }
-                    break;
-                }
-                case ColumnType::INT8:
-                    visitScalar(int8_t{});
-                    break;
-                case ColumnType::INT16:
-                {
-                    visitScalar(int16_t{});
-                    break;
-                }
-                case ColumnType::INT32:
-                {
-                    visitScalar(int32_t{});
-                    break;
-                }
-                case ColumnType::INT64:
-                {
-                    visitScalar(int64_t{});
-                    break;
-                }
-                case ColumnType::UINT8:
-                    visitScalar(uint8_t{});
-                    break;
-                case ColumnType::UINT16:
-                {
-                    visitScalar(uint16_t{});
-                    break;
-                }
-                case ColumnType::UINT32:
-                {
-                    visitScalar(uint32_t{});
-                    break;
-                }
-                case ColumnType::UINT64:
-                {
-                    visitScalar(uint64_t{});
-                    break;
-                }
-                case ColumnType::FLOAT:
-                {
-                    visitScalar(float{});
-                    break;
-                }
-                case ColumnType::DOUBLE:
-                {
-                    visitScalar(double{});
-                    break;
-                }
-                case ColumnType::STRING: {
-                    // Strings are read-only in mutable visit (cannot resize buffer)
-                    uint16_t strLength = unalignedRead<uint16_t>(&buffer[str_lens_cursor]);
-                    str_lens_cursor += sizeof(uint16_t);
-
-                    if (str_pay_cursor + strLength > buffer.size()) [[unlikely]] {
-                        throw std::runtime_error("RowView::visit() string payload out of bounds");
-                    }
-
-                    std::string_view strValue(
-                        reinterpret_cast<const char*>(&buffer[str_pay_cursor]),
-                        strLength
-                    );
-                    str_pay_cursor += strLength;
-
-                    dispatch(strValue);
-                    break;
-                }
-                default: [[unlikely]]
-                    throw std::runtime_error("RowView::visit() unsupported column type");
-            }
-        }
+        codec_.visitSparse(startIndex, count, std::forward<Visitor>(visitor), "RowView::visit");
     }
 
     /** @brief Visit all columns with mutable access (primitives only)
@@ -1923,82 +1681,7 @@ namespace bcsv {
     template<typename T, typename Visitor>
         requires TypedRowVisitor<Visitor, T>
     inline void RowView::visit(size_t startIndex, Visitor&& visitor, size_t count) {
-        if (count == 0) return;
-        auto& buffer = codec_.buffer();
-        const uint32_t* offsets = codec_.columnOffsetsPtr();
-        codec_.template validateSparseTypedRange<T>(buffer, startIndex, count, "RowView::visit<T>");
-        size_t endIndex = startIndex + count;
-
-        // Maintain string cursors for sequential scanning
-        const uint32_t wire_data_off = codec_.wireBitsSize();
-        size_t str_lens_cursor = 0;
-        size_t str_pay_cursor  = 0;
-        if constexpr (std::is_same_v<T, std::string_view> || std::is_same_v<T, std::string>) {
-            codec_.initializeSparseStringCursors(buffer, startIndex, str_lens_cursor, str_pay_cursor, "RowView::visit<T>");
-        }
-
-        for (size_t i = startIndex; i < endIndex; ++i) {
-            uint32_t off = offsets[i];
-
-            if constexpr (std::is_same_v<T, bool>) {
-                // Bool: read-modify-write for bit-packed storage
-                size_t bytePos = off >> 3;
-                size_t bitPos  = off & 7;
-                bool value = (buffer[bytePos] & (std::byte{1} << bitPos)) != std::byte{0};
-                bool changed = true;
-                if constexpr (std::is_invocable_v<Visitor, size_t, bool&, bool&>) {
-                    visitor(i, value, changed);
-                } else {
-                    visitor(i, value);
-                }
-                // Write back
-                if (changed) {
-                    if (value) buffer[bytePos] |= std::byte{1} << bitPos;
-                    else       buffer[bytePos] &= ~(std::byte{1} << bitPos);
-                }
-            } else if constexpr (std::is_same_v<T, std::string_view> || std::is_same_v<T, std::string>) {
-                // Strings: read-only (buffer is fixed-size, cannot resize)
-                uint16_t strLength = unalignedRead<uint16_t>(&buffer[str_lens_cursor]);
-                str_lens_cursor += sizeof(uint16_t);
-
-                if (str_pay_cursor + strLength > buffer.size()) [[unlikely]] {
-                    throw std::runtime_error("RowView::visit<T>() string payload out of bounds");
-                }
-
-                std::string_view sv(
-                    reinterpret_cast<const char*>(&buffer[str_pay_cursor]),
-                    strLength
-                );
-                str_pay_cursor += strLength;
-
-                if constexpr (std::is_invocable_v<Visitor, size_t, std::string_view&, bool&>) {
-                    bool changed = true;
-                    visitor(i, sv, changed);
-                } else if constexpr (std::is_invocable_v<Visitor, size_t, std::string_view&>) {
-                    visitor(i, sv);
-                } else if constexpr (std::is_invocable_v<Visitor, size_t, std::string&, bool&>) {
-                    std::string tmp(sv);
-                    bool changed = true;
-                    visitor(i, tmp, changed);
-                } else {
-                    std::string tmp(sv);
-                    visitor(i, tmp);
-                }
-            } else {
-                // Scalar: copy-in/out (safe on unaligned packed wire data)
-                size_t pos = wire_data_off + off;
-                T value = unalignedRead<T>(buffer.data() + pos);
-                bool changed = true;
-                if constexpr (std::is_invocable_v<Visitor, size_t, T&, bool&>) {
-                    visitor(i, value, changed);
-                } else {
-                    visitor(i, value);
-                }
-                if (changed) {
-                    unalignedWrite<T>(buffer.data() + pos, value);
-                }
-            }
-        }
+        codec_.template visitSparseTyped<T>(startIndex, count, std::forward<Visitor>(visitor), "RowView::visit<T>");
     }
 
     /** @brief Type-safe const visit: iterate RowView columns of known type T (read-only, compile-time dispatch)
@@ -2024,55 +1707,7 @@ namespace bcsv {
     template<typename T, typename Visitor>
         requires TypedRowVisitorConst<Visitor, T>
     inline void RowView::visitConst(size_t startIndex, Visitor&& visitor, size_t count) const {
-        if (count == 0) return;
-        const auto& buffer = codec_.buffer();
-        const uint32_t* offsets = codec_.columnOffsetsPtr();
-        codec_.template validateSparseTypedRange<T>(buffer, startIndex, count, "RowView::visitConst<T>");
-        size_t endIndex = startIndex + count;
-
-        // Maintain string cursors for sequential scanning
-        const uint32_t wire_data_off = codec_.wireBitsSize();
-        size_t str_lens_cursor = 0;
-        size_t str_pay_cursor  = 0;
-        if constexpr (std::is_same_v<T, std::string_view> || std::is_same_v<T, std::string>) {
-            codec_.initializeSparseStringCursors(buffer, startIndex, str_lens_cursor, str_pay_cursor, "RowView::visitConst<T>");
-        }
-
-        for (size_t i = startIndex; i < endIndex; ++i) {
-            uint32_t off = offsets[i];
-
-            if constexpr (std::is_same_v<T, bool>) {
-                size_t bytePos = off >> 3;
-                size_t bitPos  = off & 7;
-                bool value = (buffer[bytePos] & (std::byte{1} << bitPos)) != std::byte{0};
-                visitor(i, value);
-            } else if constexpr (std::is_same_v<T, std::string_view> || std::is_same_v<T, std::string>) {
-                uint16_t strLength = unalignedRead<uint16_t>(&buffer[str_lens_cursor]);
-                str_lens_cursor += sizeof(uint16_t);
-
-                if (str_pay_cursor + strLength > buffer.size()) [[unlikely]] {
-                    throw std::runtime_error("RowView::visitConst<T>() string payload out of bounds");
-                }
-
-                const std::string_view sv(
-                    reinterpret_cast<const char*>(&buffer[str_pay_cursor]),
-                    strLength
-                );
-                str_pay_cursor += strLength;
-
-                if constexpr (std::is_same_v<T, std::string_view>) {
-                    visitor(i, sv);
-                } else {
-                    const std::string tmp(sv);
-                    visitor(i, tmp);
-                }
-            } else {
-                // Scalar: safe unaligned read (data section)
-                const std::byte* ptr = &buffer[wire_data_off + off];
-                T value = unalignedRead<T>(ptr);
-                visitor(i, value);
-            }
-        }
+        codec_.template visitConstSparseTyped<T>(startIndex, count, std::forward<Visitor>(visitor), "RowView::visitConst<T>");
     }
 
     // ========================================================================
@@ -2979,86 +2614,6 @@ namespace bcsv {
     }
 
     template<typename... ColumnTypes>
-    void RowViewStatic<ColumnTypes...>::validateVisitRange(size_t startIndex, size_t count, const char* fnName) const {
-        if (count == 0) {
-            return;
-        }
-
-        const size_t endIndex = startIndex + count;
-        if constexpr (RANGE_CHECKING) {
-            if (endIndex > COLUMN_COUNT) {
-                throw std::out_of_range(std::string(fnName) + ": Range [" + std::to_string(startIndex) +
-                    ", " + std::to_string(endIndex) + ") exceeds column count " +
-                    std::to_string(COLUMN_COUNT));
-            }
-        } else {
-            assert(endIndex <= COLUMN_COUNT && "RowViewStatic::visit: Range out of bounds");
-        }
-
-        if (codec_.buffer().size() < WIRE_FIXED_SIZE) {
-            throw std::runtime_error(std::string(fnName) + "() buffer too small for fixed wire section");
-        }
-    }
-
-    template<typename... ColumnTypes>
-    template<RowVisitorConst Visitor, size_t... I>
-    void RowViewStatic<ColumnTypes...>::visitConstAtIndex(size_t index, Visitor&& visitor, std::index_sequence<I...>) const {
-        ((I == index ? (visitor(I, get<I>()), true) : false) || ...);
-    }
-
-    template<typename... ColumnTypes>
-    template<RowVisitor Visitor, size_t... I>
-    void RowViewStatic<ColumnTypes...>::visitMutableAtIndex(size_t index, Visitor&& visitor, std::index_sequence<I...>) {
-        ([&] {
-            if (I == index) {
-                using ColType = column_type<I>;
-                bool changed = true;
-
-                if constexpr (std::is_same_v<ColType, bool>) {
-                    constexpr size_t off = WIRE_OFFSETS[I];
-                    auto buffer = codec_.buffer();
-                    const size_t byteIdx = off >> 3;
-                    const std::byte bitMask = std::byte{1} << (off & 7);
-                    ColType value = (buffer[byteIdx] & bitMask) != std::byte{0};
-
-                    if constexpr (std::is_invocable_v<Visitor, size_t, ColType&, bool&>) {
-                        visitor(I, value, changed);
-                    } else {
-                        visitor(I, value);
-                    }
-
-                    if (changed) {
-                        if (value) buffer[byteIdx] |=  bitMask;
-                        else       buffer[byteIdx] &= ~bitMask;
-                    }
-                } else if constexpr (std::is_same_v<ColType, std::string>) {
-                    auto str_view = get<I>();
-
-                    if constexpr (std::is_invocable_v<Visitor, size_t, decltype(str_view), bool&>) {
-                        visitor(I, str_view, changed);
-                    } else {
-                        visitor(I, str_view);
-                    }
-                } else {
-                    constexpr size_t offset = WIRE_BITS_SIZE + WIRE_OFFSETS[I];
-                    auto buffer = codec_.buffer();
-                    ColType value = unalignedRead<ColType>(buffer.data() + offset);
-
-                    if constexpr (std::is_invocable_v<Visitor, size_t, ColType&, bool&>) {
-                        visitor(I, value, changed);
-                    } else {
-                        visitor(I, value);
-                    }
-
-                    if (changed) {
-                        unalignedWrite<ColType>(buffer.data() + offset, value);
-                    }
-                }
-            }
-        }(), ...);
-    }
-
-    template<typename... ColumnTypes>
     template<size_t Index>
     bool RowViewStatic<ColumnTypes...>::validateStringPayloads() const {
         if constexpr (Index >= COLUMN_COUNT) {
@@ -3101,14 +2656,7 @@ namespace bcsv {
     template<typename... ColumnTypes>
     template<RowVisitorConst Visitor>
     void RowViewStatic<ColumnTypes...>::visitConst(size_t startIndex, Visitor&& visitor, size_t count) const {
-        if (count == 0) return;
-        validateVisitRange(startIndex, count, "RowViewStatic::visitConst");
-        size_t endIndex = startIndex + count;
-        
-        // Runtime loop with compile-time type dispatch
-        for (size_t i = startIndex; i < endIndex; ++i) {
-            visitConstAtIndex(i, visitor, std::make_index_sequence<COLUMN_COUNT>{});
-        }
+        codec_.visitConstSparse(startIndex, count, std::forward<Visitor>(visitor), "RowViewStatic::visitConst");
     }
 
     /** @brief Visit all columns with read-only access (compile-time, zero-copy)
@@ -3169,14 +2717,7 @@ namespace bcsv {
     template<typename... ColumnTypes>
     template<RowVisitor Visitor>
     void RowViewStatic<ColumnTypes...>::visit(size_t startIndex, Visitor&& visitor, size_t count) {
-        if (count == 0) return;
-        validateVisitRange(startIndex, count, "RowViewStatic::visit");
-        size_t endIndex = startIndex + count;
-        
-        // Runtime loop with compile-time type dispatch and change tracking
-        for (size_t i = startIndex; i < endIndex; ++i) {
-            visitMutableAtIndex(i, visitor, std::make_index_sequence<COLUMN_COUNT>{});
-        }
+        codec_.visitSparse(startIndex, count, std::forward<Visitor>(visitor), "RowViewStatic::visit");
     }
 
     /** @brief Visit all columns with mutable access (compile-time, primitives only)

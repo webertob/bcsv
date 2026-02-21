@@ -112,6 +112,7 @@ int main() {
 - **Compression:** 15-25% of CSV size (LZ4), 3-4% with Zero-Order Hold
 
 **Run benchmarks locally:**
+
 ```bash
 # Quick macro smoke run (default)
 python3 benchmark/run_benchmarks.py
@@ -204,7 +205,7 @@ For language bindings and embedded systems.
 
 ## Project Structure
 
-```
+```text
 bcsv/
 ├── include/bcsv/          # 📦 Header-only library (copy this to integrate)
 │   ├── bcsv.h             #    Main include file
@@ -222,7 +223,7 @@ bcsv/
 │   ├── csv2bcsv.cpp       #    CSV → BCSV converter
 │   └── bcsv2csv.cpp       #    BCSV → CSV converter
 │
-├── tests/                 # ✅ Comprehensive test suite (187 tests)
+├── tests/                 # ✅ Comprehensive test suite
 ├── python/                # 🐍 Python package (pip install)
 ├── unity/                 # 🎮 C# Unity integration
 ├── cmake/                 # 🔧 Build system utilities
@@ -269,8 +270,8 @@ See [docs/ERROR_HANDLING.md](docs/ERROR_HANDLING.md) for complete guide.
 cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 
-# Run tests (187 tests)
-./build/bin/bcsv_gtest
+# Run tests
+ctest --test-dir build --output-on-failure
 
 # Try examples
 ./build/bin/example
@@ -300,6 +301,7 @@ target_link_libraries(your_target PRIVATE bcsv)
 - **C++20 Standard Library** - No other runtime dependencies
 
 **Build/test only:**
+
 - Google Test (auto-fetched)
 - pybind11 (auto-fetched for Python)
 

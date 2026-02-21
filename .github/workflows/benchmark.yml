@@ -73,6 +73,12 @@ jobs:
     - name: Build CLI tools
       run: cmake --build build --target csv2bcsv bcsv2csv -j$(nproc)
 
+    - name: Build core tests
+      run: cmake --build build --target bcsv_gtest test_c_api test_row_api -j$(nproc)
+
+    - name: Run core tests
+      run: ctest --test-dir build --output-on-failure
+
     - name: Run benchmark sweep (MACRO-SMALL)
       run: |
         RUN_ROOT="${{ runner.temp }}/bench_results/pr-${{ github.event.number }}"
@@ -85,11 +91,11 @@ jobs:
           --no-build
 
     - name: Resolve run directory
+      id: resolve_pr
       run: |
         RUN_ROOT="${{ runner.temp }}/bench_results/pr-${{ github.event.number }}"
         RUN_DIR=$(ls -1dt "$RUN_ROOT"/* | head -1)
-        echo "RUN_ROOT=$RUN_ROOT" >> "$GITHUB_ENV"
-        echo "RUN_DIR=$RUN_DIR" >> "$GITHUB_ENV"
+        echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
 
     - name: Verify report exists
       run: |
@@ -100,13 +106,13 @@ jobs:
       with:
         name: benchmark-results-pr-${{ github.event.number }}
         path: |
-          ${{ env.RUN_DIR }}
+          ${{ steps.resolve_pr.outputs.run_dir }}
         retention-days: 30
 
     - name: Post summary to PR
       if: always()
       run: |
-        REPORT="$RUN_DIR/report.md"
+        REPORT="${{ steps.resolve_pr.outputs.run_dir }}/report.md"
         if [ -f "$REPORT" ]; then
           echo "## Benchmark Results (MACRO-SMALL — PR #${{ github.event.number }})" > comment.md
           echo "" >> comment.md
@@ -148,6 +154,9 @@ jobs:
     - name: Build all benchmarks
       run: cmake --build build -j$(nproc)
 
+    - name: Run core tests
+      run: ctest --test-dir build --output-on-failure
+
     - name: Run full benchmark sweep
       run: |
         RUN_ROOT="${{ runner.temp }}/bench_results/release-${{ github.ref_name }}"
@@ -160,23 +169,23 @@ jobs:
           --no-build
 
     - name: Resolve run directory
+      id: resolve_release
       run: |
         RUN_ROOT="${{ runner.temp }}/bench_results/release-${{ github.ref_name }}"
         RUN_DIR=$(ls -1dt "$RUN_ROOT"/* | head -1)
-        echo "RUN_ROOT=$RUN_ROOT" >> "$GITHUB_ENV"
-        echo "RUN_DIR=$RUN_DIR" >> "$GITHUB_ENV"
+        echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
 
     - name: Upload benchmark results
       uses: actions/upload-artifact@v4
       with:
         name: benchmark-results-${{ github.ref_name }}
         path: |
-          ${{ env.RUN_DIR }}
+          ${{ steps.resolve_release.outputs.run_dir }}
         retention-days: 90
 
     - name: Post release summary
       run: |
-        REPORT="$RUN_DIR/report.md"
+        REPORT="${{ steps.resolve_release.outputs.run_dir }}/report.md"
         if [ -f "$REPORT" ]; then
           echo "## Benchmark Results — ${{ github.ref_name }}" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
@@ -215,6 +224,9 @@ jobs:
     - name: Build all benchmarks
       run: cmake --build build -j$(nproc)
 
+    - name: Run core tests
+      run: ctest --test-dir build --output-on-failure
+
     - name: Run benchmarks (${{ inputs.type }})
       run: |
         RUN_ROOT="${{ runner.temp }}/bench_results/manual"
@@ -227,23 +239,23 @@ jobs:
           --no-build
 
     - name: Resolve run directory
+      id: resolve_manual
       run: |
         RUN_ROOT="${{ runner.temp }}/bench_results/manual"
         RUN_DIR=$(ls -1dt "$RUN_ROOT"/* | head -1)
-        echo "RUN_ROOT=$RUN_ROOT" >> "$GITHUB_ENV"
-        echo "RUN_DIR=$RUN_DIR" >> "$GITHUB_ENV"
+        echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
 
     - name: Upload results
       uses: actions/upload-artifact@v4
       with:
         name: benchmark-results-manual
         path: |
-          ${{ env.RUN_DIR }}
+          ${{ steps.resolve_manual.outputs.run_dir }}
         retention-days: 90
 
     - name: Post summary
       run: |
-        REPORT="$RUN_DIR/report.md"
+        REPORT="${{ steps.resolve_manual.outputs.run_dir }}/report.md"
         if [ -f "$REPORT" ]; then
           echo "## Benchmark (${{ inputs.type }})" >> "$GITHUB_STEP_SUMMARY"
           cat "$REPORT" >> "$GITHUB_STEP_SUMMARY"

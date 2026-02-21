@@ -13,7 +13,7 @@
  * @file bcsv.h
  * @brief Binary CSV (BCSV) Library - Main Header with Declarations
  * 
- * A C++17 header-only library for reading and writing binary CSV files
+ * A C++20 header-only library for reading and writing binary CSV files
  * with type safety, compression support, and efficient I/O operations.
  * 
  * This header includes all BCSV component declarations:
@@ -39,7 +39,7 @@
 #include "row.h"
 #include "row_codec_flat001.h"  // Flat001 codec (Item 11)
 #include "row_codec_zoh001.h"   // ZoH001 codec (Item 11)
-#include "row_codec_variant.h"  // Variant dispatch (Item 11)
+#include "row_codec_dispatch.h" // Runtime dispatch (Item 11)
 #include "row_visitors.h"  // Row visitor pattern concepts and helpers
 #include "writer.h"
 

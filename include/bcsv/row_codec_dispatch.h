@@ -11,24 +11,14 @@
 
 /**
  * @file row_codec_dispatch.h
- * @brief CodecDispatch — runtime codec selection for the Reader.
+ * @brief RowCodecDispatch — runtime codec selection with managed lifetime.
  *
- * Resolves the concrete codec (Flat001 or ZoH001) at file-open time based on
- * file flags. Hot-path methods (deserialize, reset) use function pointers —
- * one indirect call per row, zero per-row branching.
+ * Runtime codec selection happens once (typically at file-open time) and hot
+ * loops dispatch through pre-bound function pointers (serialize/deserialize/reset)
+ * without per-row branching.
  *
- * TrackingPolicy and file codec are orthogonal axes. The programmer chooses
- * the Policy (Enabled/Disabled) when constructing the Reader. The file's codec
- * (Flat/ZoH) is determined by its header flags. CodecDispatch bridges the two:
- *   - selectCodec() reads the file flags, constructs the correct codec in
- *     union storage, and wires function pointers.
- *   - deserialize()/reset() forward through function pointers.
- *
- * The Writer retains compile-time RowCodecType (std::conditional_t) — it knows
- * what codec it writes. Runtime flexibility is a Reader concern.
- *
- * @see row_codec_flat001.h, row_codec_zoh001.h for the concrete codecs.
- * @see ITEM_11_PLAN.md §7.3 for design rationale.
+ * Writer remains compile-time codec bound. This dispatch is intended for Reader
+ * side runtime codec selection and similar runtime-driven paths.
  */
 
 #include "row_codec_flat001.h"
@@ -38,225 +28,227 @@
 #include <cassert>
 #include <cstddef>
 #include <span>
+#include <stdexcept>
+#include <utility>
 
 namespace bcsv {
 
-// ────────────────────────────────────────────────────────────────────────────
-// Primary template: CodecDispatch for dynamic Layout
-// ────────────────────────────────────────────────────────────────────────────
+enum class RowCodecId : uint8_t {
+    FLAT001,
+    ZOH001,
+};
+
 template<typename LayoutType, TrackingPolicy Policy = TrackingPolicy::Disabled>
-class CodecDispatch {
+class RowCodecDispatch {
     using RowType = typename LayoutType::template RowType<Policy>;
     using FlatCodec = RowCodecFlat001<LayoutType, Policy>;
     using ZoHCodec  = RowCodecZoH001<LayoutType, Policy>;
 
 public:
-    // ── Function-pointer types ───────────────────────────────────────────
-    using DeserializeFn = void (*)(const void* codec,
-                                    std::span<const std::byte> buffer,
-                                    RowType& row);
-    using ResetFn       = void (*)(const void* codec);
+    using SerializeFn = std::span<std::byte> (*)(void* codec, RowType& row, ByteBuffer& buffer);
+    using DeserializeFn = void (*)(void* codec, std::span<const std::byte> buffer, RowType& row);
+    using ResetFn = void (*)(void* codec);
+    using DestroyFn = void (*)(void* codec);
+    using CloneFn = void* (*)(const void* codec);
 
-    CodecDispatch() = default;
-    ~CodecDispatch() { destroy(); }
+    RowCodecDispatch() = default;
+    explicit RowCodecDispatch(const LayoutType& layout) : layout_(&layout) {}
+    ~RowCodecDispatch() { destroy(); }
 
-    // Non-copyable, non-movable (codec contains layout pointer — not relocatable)
-    CodecDispatch(const CodecDispatch&) = delete;
-    CodecDispatch& operator=(const CodecDispatch&) = delete;
+    RowCodecDispatch(const RowCodecDispatch& other) {
+        copyFrom(other);
+    }
 
-    // ── Codec selection (called once at file-open time) ──────────────────
+    RowCodecDispatch& operator=(const RowCodecDispatch& other) {
+        if (this != &other) {
+            destroy();
+            copyFrom(other);
+        }
+        return *this;
+    }
 
-    /// Select and initialize the codec based on file flags.
-    /// Reads ZERO_ORDER_HOLD to choose ZoH001 vs Flat001.
-    void selectCodec(FileFlags flags, const LayoutType& layout) {
+    RowCodecDispatch(RowCodecDispatch&& other) noexcept {
+        moveFrom(std::move(other));
+    }
+
+    RowCodecDispatch& operator=(RowCodecDispatch&& other) noexcept {
+        if (this != &other) {
+            destroy();
+            moveFrom(std::move(other));
+        }
+        return *this;
+    }
+
+    void setLayout(const LayoutType& layout) noexcept {
+        layout_ = &layout;
+    }
+
+    void setup(RowCodecId id) {
+        if (!layout_) {
+            throw std::logic_error("RowCodecDispatch::setup() failed: layout is not set");
+        }
+
         destroy();
-
-        if ((flags & FileFlags::ZERO_ORDER_HOLD) != FileFlags::NONE) {
-            auto* codec = new (&storage_.zoh) ZoHCodec();
-            codec->setup(layout);
-            active_ = ActiveCodec::ZoH;
-            deserialize_fn_ = &deserializeZoH;
-            reset_fn_       = &resetZoH;
-        } else {
-            auto* codec = new (&storage_.flat) FlatCodec();
-            codec->setup(layout);
-            active_ = ActiveCodec::Flat;
-            deserialize_fn_ = &deserializeFlat;
-            reset_fn_       = &resetFlat;
+        switch (id) {
+            case RowCodecId::FLAT001: {
+                auto* codec = new FlatCodec();
+                codec->setup(*layout_);
+                ctx_ = codec;
+                codec_id_ = id;
+                serialize_fn_ = &serializeFlat;
+                deserialize_fn_ = &deserializeFlat;
+                reset_fn_ = &resetFlat;
+                destroy_fn_ = &destroyFlat;
+                clone_fn_ = &cloneFlat;
+                break;
+            }
+            case RowCodecId::ZOH001: {
+                auto* codec = new ZoHCodec();
+                codec->setup(*layout_);
+                ctx_ = codec;
+                codec_id_ = id;
+                serialize_fn_ = &serializeZoH;
+                deserialize_fn_ = &deserializeZoH;
+                reset_fn_ = &resetZoH;
+                destroy_fn_ = &destroyZoH;
+                clone_fn_ = &cloneZoH;
+                break;
+            }
+            default:
+                throw std::logic_error("RowCodecDispatch::setup() failed: unsupported codec id");
         }
     }
 
-    // ── Hot-path methods (function-pointer dispatch) ─────────────────────
+    void setup(RowCodecId id, const LayoutType& layout) {
+        layout_ = &layout;
+        setup(id);
+    }
+
+    void selectCodec(FileFlags flags, const LayoutType& layout) {
+        const RowCodecId id = ((flags & FileFlags::ZERO_ORDER_HOLD) != FileFlags::NONE)
+            ? RowCodecId::ZOH001
+            : RowCodecId::FLAT001;
+        setup(id, layout);
+    }
+
+    void destroy() noexcept {
+        if (ctx_ != nullptr && destroy_fn_ != nullptr) {
+            destroy_fn_(ctx_);
+        }
+        ctx_ = nullptr;
+        serialize_fn_ = nullptr;
+        deserialize_fn_ = nullptr;
+        reset_fn_ = nullptr;
+        destroy_fn_ = nullptr;
+        clone_fn_ = nullptr;
+    }
+
+    std::span<std::byte> serialize(RowType& row, ByteBuffer& buffer) const {
+        assert(ctx_ != nullptr && serialize_fn_ != nullptr && "RowCodecDispatch::serialize() before setup()");
+        return serialize_fn_(ctx_, row, buffer);
+    }
 
     void deserialize(std::span<const std::byte> buffer, RowType& row) const {
-        assert(active_ != ActiveCodec::None && "CodecDispatch::deserialize() before selectCodec()");
-        deserialize_fn_(activePtr(), buffer, row);
+        assert(ctx_ != nullptr && deserialize_fn_ != nullptr && "RowCodecDispatch::deserialize() before setup()");
+        deserialize_fn_(ctx_, buffer, row);
     }
 
     void reset() const {
-        assert(active_ != ActiveCodec::None && "CodecDispatch::reset() before selectCodec()");
-        reset_fn_(activePtr());
+        assert(ctx_ != nullptr && reset_fn_ != nullptr && "RowCodecDispatch::reset() before setup()");
+        reset_fn_(ctx_);
     }
 
-    // ── Query ────────────────────────────────────────────────────────────
-    bool isSetup() const noexcept { return active_ != ActiveCodec::None; }
-    bool isZoH()   const noexcept { return active_ == ActiveCodec::ZoH; }
-    bool isFlat()  const noexcept { return active_ == ActiveCodec::Flat; }
-
-    /// Access the flat codec (always available — ZoH composes flat internally).
-    /// Used for wire metadata queries (wireBitsSize, wireFixedSize, etc.).
-    const FlatCodec& flat() const noexcept {
-        if (active_ == ActiveCodec::ZoH) {
-            return storage_.zoh.flat();
-        }
-        return storage_.flat;
-    }
+    bool isSetup() const noexcept { return ctx_ != nullptr; }
+    bool isZoH() const noexcept { return isSetup() && codec_id_ == RowCodecId::ZOH001; }
+    bool isFlat() const noexcept { return isSetup() && codec_id_ == RowCodecId::FLAT001; }
+    RowCodecId codecId() const noexcept { return codec_id_; }
 
 private:
-    enum class ActiveCodec : uint8_t { None, Flat, ZoH };
-
-    union Storage {
-        FlatCodec flat;
-        ZoHCodec  zoh;
-        Storage() {}   // No default construction of members
-        ~Storage() {}  // Destruction handled by CodecDispatch::destroy()
-    };
-
-    Storage       storage_;
-    ActiveCodec   active_{ActiveCodec::None};
+    const LayoutType* layout_{nullptr};
+    RowCodecId codec_id_{RowCodecId::FLAT001};
+    void* ctx_{nullptr};
+    SerializeFn serialize_fn_{nullptr};
     DeserializeFn deserialize_fn_{nullptr};
-    ResetFn       reset_fn_{nullptr};
+    ResetFn reset_fn_{nullptr};
+    DestroyFn destroy_fn_{nullptr};
+    CloneFn clone_fn_{nullptr};
 
-    const void* activePtr() const noexcept {
-        switch (active_) {
-            case ActiveCodec::Flat: return &storage_.flat;
-            case ActiveCodec::ZoH:  return &storage_.zoh;
-            default:                return nullptr;
+    void copyFrom(const RowCodecDispatch& other) {
+        layout_ = other.layout_;
+        codec_id_ = other.codec_id_;
+        serialize_fn_ = other.serialize_fn_;
+        deserialize_fn_ = other.deserialize_fn_;
+        reset_fn_ = other.reset_fn_;
+        destroy_fn_ = other.destroy_fn_;
+        clone_fn_ = other.clone_fn_;
+
+        if (other.ctx_ != nullptr && clone_fn_ != nullptr) {
+            ctx_ = clone_fn_(other.ctx_);
+        } else {
+            ctx_ = nullptr;
         }
     }
 
-    void destroy() noexcept {
-        switch (active_) {
-            case ActiveCodec::Flat: storage_.flat.~FlatCodec(); break;
-            case ActiveCodec::ZoH:  storage_.zoh.~ZoHCodec();  break;
-            case ActiveCodec::None: break;
-        }
-        active_ = ActiveCodec::None;
+    void moveFrom(RowCodecDispatch&& other) noexcept {
+        layout_ = other.layout_;
+        codec_id_ = other.codec_id_;
+        ctx_ = other.ctx_;
+        serialize_fn_ = other.serialize_fn_;
+        deserialize_fn_ = other.deserialize_fn_;
+        reset_fn_ = other.reset_fn_;
+        destroy_fn_ = other.destroy_fn_;
+        clone_fn_ = other.clone_fn_;
+
+        other.ctx_ = nullptr;
+        other.serialize_fn_ = nullptr;
+        other.deserialize_fn_ = nullptr;
+        other.reset_fn_ = nullptr;
+        other.destroy_fn_ = nullptr;
+        other.clone_fn_ = nullptr;
     }
 
-    // ── Static trampolines (function-pointer targets) ────────────────────
-    static void deserializeFlat(const void* codec,
-                                 std::span<const std::byte> buffer,
-                                 RowType& row) {
-        static_cast<const FlatCodec*>(codec)->deserialize(buffer, row);
+    static std::span<std::byte> serializeFlat(void* codec, RowType& row, ByteBuffer& buffer) {
+        return static_cast<FlatCodec*>(codec)->serialize(row, buffer);
     }
 
-    static void deserializeZoH(const void* codec,
-                                std::span<const std::byte> buffer,
-                                RowType& row) {
-        static_cast<const ZoHCodec*>(codec)->deserialize(buffer, row);
+    static std::span<std::byte> serializeZoH(void* codec, RowType& row, ByteBuffer& buffer) {
+        return static_cast<ZoHCodec*>(codec)->serialize(row, buffer);
     }
 
-    static void resetFlat(const void* codec) {
-        // Flat codec reset is a no-op, but call it for interface consistency.
-        (void)codec;
+    static void deserializeFlat(void* codec, std::span<const std::byte> buffer, RowType& row) {
+        static_cast<FlatCodec*>(codec)->deserialize(buffer, row);
     }
 
-    static void resetZoH(const void* codec) {
-        const_cast<ZoHCodec*>(static_cast<const ZoHCodec*>(codec))->reset();
+    static void deserializeZoH(void* codec, std::span<const std::byte> buffer, RowType& row) {
+        static_cast<ZoHCodec*>(codec)->deserialize(buffer, row);
+    }
+
+    static void resetFlat(void* codec) {
+        static_cast<FlatCodec*>(codec)->reset();
+    }
+
+    static void resetZoH(void* codec) {
+        static_cast<ZoHCodec*>(codec)->reset();
+    }
+
+    static void destroyFlat(void* codec) {
+        delete static_cast<FlatCodec*>(codec);
+    }
+
+    static void destroyZoH(void* codec) {
+        delete static_cast<ZoHCodec*>(codec);
+    }
+
+    static void* cloneFlat(const void* codec) {
+        return new FlatCodec(*static_cast<const FlatCodec*>(codec));
+    }
+
+    static void* cloneZoH(const void* codec) {
+        return new ZoHCodec(*static_cast<const ZoHCodec*>(codec));
     }
 };
 
-
-// ────────────────────────────────────────────────────────────────────────────
-// Partial specialization: CodecDispatch for LayoutStatic<ColumnTypes...>
-//
-// Unlike the dynamic primary template, this specialization uses direct calls
-// instead of function pointers. The codec types (FlatCodec, ZoHCodec) are
-// fully known at compile time — only the Flat-vs-ZoH choice is runtime.
-// A single predictable branch replaces the indirect call, allowing the
-// compiler to inline deserialize/reset into the Reader's hot loop.
-// ────────────────────────────────────────────────────────────────────────────
-template<TrackingPolicy Policy, typename... ColumnTypes>
-class CodecDispatch<LayoutStatic<ColumnTypes...>, Policy> {
-    using LayoutType = LayoutStatic<ColumnTypes...>;
-    using RowType    = typename LayoutType::template RowType<Policy>;
-    using FlatCodec  = RowCodecFlat001<LayoutType, Policy>;
-    using ZoHCodec   = RowCodecZoH001<LayoutType, Policy>;
-
-public:
-    CodecDispatch() = default;
-    ~CodecDispatch() { destroy(); }
-
-    CodecDispatch(const CodecDispatch&) = delete;
-    CodecDispatch& operator=(const CodecDispatch&) = delete;
-
-    void selectCodec(FileFlags flags, const LayoutType& layout) {
-        destroy();
-
-        if ((flags & FileFlags::ZERO_ORDER_HOLD) != FileFlags::NONE) {
-            new (&storage_.zoh) ZoHCodec();
-            storage_.zoh.setup(layout);
-            active_ = ActiveCodec::ZoH;
-        } else {
-            new (&storage_.flat) FlatCodec();
-            storage_.flat.setup(layout);
-            active_ = ActiveCodec::Flat;
-        }
-    }
-
-    // Direct-call dispatch — branch is 100% predictable (same codec for entire
-    // file), and the compiler can inline both FlatCodec::deserialize and
-    // ZoHCodec::deserialize since the call targets are statically known.
-    void deserialize(std::span<const std::byte> buffer, RowType& row) const {
-        assert(active_ != ActiveCodec::None && "CodecDispatch::deserialize() before selectCodec()");
-        if (active_ == ActiveCodec::ZoH) {
-            storage_.zoh.deserialize(buffer, row);
-        } else {
-            storage_.flat.deserialize(buffer, row);
-        }
-    }
-
-    void reset() const {
-        assert(active_ != ActiveCodec::None && "CodecDispatch::reset() before selectCodec()");
-        if (active_ == ActiveCodec::ZoH) {
-            const_cast<ZoHCodec&>(storage_.zoh).reset();
-        }
-        // Flat reset is a no-op — skip entirely.
-    }
-
-    bool isSetup() const noexcept { return active_ != ActiveCodec::None; }
-    bool isZoH()   const noexcept { return active_ == ActiveCodec::ZoH; }
-    bool isFlat()  const noexcept { return active_ == ActiveCodec::Flat; }
-
-    const FlatCodec& flat() const noexcept {
-        if (active_ == ActiveCodec::ZoH) {
-            return storage_.zoh.flat();
-        }
-        return storage_.flat;
-    }
-
-private:
-    enum class ActiveCodec : uint8_t { None, Flat, ZoH };
-
-    union Storage {
-        FlatCodec flat;
-        ZoHCodec  zoh;
-        Storage() {}
-        ~Storage() {}
-    };
-
-    Storage     storage_;
-    ActiveCodec active_{ActiveCodec::None};
-
-    void destroy() noexcept {
-        switch (active_) {
-            case ActiveCodec::Flat: storage_.flat.~FlatCodec(); break;
-            case ActiveCodec::ZoH:  storage_.zoh.~ZoHCodec();  break;
-            case ActiveCodec::None: break;
-        }
-        active_ = ActiveCodec::None;
-    }
-};
+template<typename LayoutType, TrackingPolicy Policy = TrackingPolicy::Disabled>
+using CodecDispatch = RowCodecDispatch<LayoutType, Policy>;
 
 } // namespace bcsv

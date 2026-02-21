@@ -670,7 +670,12 @@ inline size_t validateFile(const std::string& filepath) {
 
 /// Generate a temporary file path for benchmark artifacts
 inline std::string tempFilePath(const std::string& prefix, const std::string& extension) {
-    return prefix + "_bench" + extension;
+    std::error_code ec;
+    const auto absolute = std::filesystem::absolute(prefix + "_bench" + extension, ec);
+    if (ec) {
+        return prefix + "_bench" + extension;
+    }
+    return absolute.string();
 }
 
 /// Print a results table to stdout for human consumption

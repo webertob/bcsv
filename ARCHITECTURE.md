@@ -163,7 +163,7 @@ Technical design, requirements, and implementation roadmap
 #### NFR3: Maintainability
 - **Header-only library** (easy integration)
 - **Modern C++** (concepts, templates, smart pointers)
-- **Comprehensive tests** (59 test cases, 100% pass rate)
+- **Comprehensive tests** (continuously validated in CI)
 - **Automated versioning** (git tag-based)
 - **CI/CD pipeline** (GitHub Actions)
 

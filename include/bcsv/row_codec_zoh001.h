@@ -19,9 +19,8 @@
  *   - BOOL columns: bit is the boolean VALUE (always present)
  *   - Non-BOOL columns: bit is the CHANGE FLAG (1 = column data follows)
  *
- * Composes RowCodecFlat001 internally — first-row-in-packet is a full flat row,
- * subsequent rows are ZoH-delta encoded. Per-column access (readColumn) delegates
- * to the flat codec since ZoH is only a transport optimization.
+ * First row in packet is full-row emit semantics; subsequent rows are ZoH-delta
+ * encoded. The codec provides its own sparse helper and metadata interface.
  *
  * TrackingPolicy and codec are orthogonal axes:
  *   - Enabled: row.bits_ (dynamic) / row.changes_ (static) are columnCount-sized
@@ -42,17 +41,18 @@
  *   LayoutType     — bcsv::Layout (dynamic) or bcsv::LayoutStatic<Ts...>
  *   Policy         — TrackingPolicy::Disabled or TrackingPolicy::Enabled
  *
- * @see row_codec_flat001.h for the flat codec this composes.
  * @see ITEM_11_PLAN.md for architecture and design rationale.
  */
 
-#include "row_codec_flat001.h"
 #include "definitions.h"
 #include "bitset.h"
+#include "layout.h"
 
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <type_traits>
+#include <vector>
 
 namespace bcsv {
 
@@ -85,55 +85,10 @@ public:
     void deserialize(
         std::span<const std::byte> buffer, RowType& row) const;
 
-    // ── Per-column access (RowView — sparse/lazy path) ──────────────────
-    // ZoH is a transport optimization — per-column access uses the flat format.
-    // These delegate directly to the internal flat codec.
-    [[nodiscard]] std::span<const std::byte> readColumn(
-        std::span<const std::byte> buffer, size_t col,
-        bool& boolScratch) const {
-        return flat_.readColumn(buffer, col, boolScratch);
-    }
-
-    void validateSparseRange(
-        std::span<const std::byte> buffer,
-        size_t startIndex,
-        size_t count,
-        const char* fnName) const {
-        flat_.validateSparseRange(buffer, startIndex, count, fnName);
-    }
-
-    template<typename T>
-    void validateSparseTypedRange(
-        std::span<const std::byte> buffer,
-        size_t startIndex,
-        size_t count,
-        const char* fnName) const {
-        flat_.template validateSparseTypedRange<T>(buffer, startIndex, count, fnName);
-    }
-
-    void initializeSparseStringCursors(
-        std::span<const std::byte> buffer,
-        size_t startIndex,
-        size_t& strLensCursor,
-        size_t& strPayCursor,
-        const char* fnName) const {
-        flat_.initializeSparseStringCursors(buffer, startIndex, strLensCursor, strPayCursor, fnName);
-    }
-
-    // ── Wire metadata (delegates to flat codec) ─────────────────────────
-    uint32_t wireBitsSize()  const noexcept { return flat_.wireBitsSize(); }
-    uint32_t wireDataSize()  const noexcept { return flat_.wireDataSize(); }
-    uint32_t wireStrgCount() const noexcept { return flat_.wireStrgCount(); }
-    uint32_t wireFixedSize() const noexcept { return flat_.wireFixedSize(); }
-    uint32_t columnOffset(size_t col) const noexcept { return flat_.columnOffset(col); }
-    bool isSetup() const noexcept { return flat_.isSetup(); }
-
-    // ── Access to inner flat codec ──────────────────────────────────────
-    const RowCodecFlat001<LayoutType, Policy>& flat() const noexcept { return flat_; }
-
 private:
-    RowCodecFlat001<LayoutType, Policy> flat_;   // composition
     const LayoutType* layout_{nullptr};
+    uint32_t wire_data_size_{0};
+    const std::vector<uint32_t>* packed_offsets_{nullptr};
     mutable Bitset<> wire_bits_;  // Wire change header (columnCount-sized).
                                   // Shortcut when Enabled: unused — row.bits_ IS wire format.
                                   // General when Disabled: intermediate for value comparison.
@@ -151,6 +106,15 @@ class RowCodecZoH001<LayoutStatic<ColumnTypes...>, Policy> {
 
 public:
     static constexpr size_t COLUMN_COUNT = sizeof...(ColumnTypes);
+    static constexpr size_t BOOL_COUNT   = LayoutType::COLUMN_COUNT_BOOL;
+    static constexpr size_t STRING_COUNT = LayoutType::COLUMN_COUNT_STRINGS;
+
+    static constexpr size_t WIRE_BITS_SIZE  = (BOOL_COUNT + 7) / 8;
+    static constexpr size_t WIRE_DATA_SIZE  = (0 + ... + (!std::is_same_v<ColumnTypes, bool> && !std::is_same_v<ColumnTypes, std::string> ? sizeof(ColumnTypes) : 0));
+    static constexpr size_t WIRE_STRG_COUNT = STRING_COUNT;
+    static constexpr size_t WIRE_FIXED_SIZE = WIRE_BITS_SIZE + WIRE_DATA_SIZE + WIRE_STRG_COUNT * sizeof(uint16_t);
+
+    static constexpr auto WIRE_OFFSETS = LayoutType::COLUMN_OFFSETS_PACKED;
 
     RowCodecZoH001() = default;
 
@@ -165,51 +129,7 @@ public:
     void deserialize(
         std::span<const std::byte> buffer, RowType& row) const;
 
-    // ── Per-column access (delegates to flat codec) ─────────────────────
-    [[nodiscard]] std::span<const std::byte> readColumn(
-        std::span<const std::byte> buffer, size_t col,
-        bool& boolScratch) const {
-        return flat_.readColumn(buffer, col, boolScratch);
-    }
-
-    void validateSparseRange(
-        std::span<const std::byte> buffer,
-        size_t startIndex,
-        size_t count,
-        const char* fnName) const {
-        flat_.validateSparseRange(buffer, startIndex, count, fnName);
-    }
-
-    template<typename T>
-    void validateSparseTypedRange(
-        std::span<const std::byte> buffer,
-        size_t startIndex,
-        size_t count,
-        const char* fnName) const {
-        flat_.template validateSparseTypedRange<T>(buffer, startIndex, count, fnName);
-    }
-
-    void initializeSparseStringCursors(
-        std::span<const std::byte> buffer,
-        size_t startIndex,
-        size_t& strLensCursor,
-        size_t& strPayCursor,
-        const char* fnName) const {
-        flat_.initializeSparseStringCursors(buffer, startIndex, strLensCursor, strPayCursor, fnName);
-    }
-
-    // ── Wire metadata (delegates to flat codec) ─────────────────────────
-    static constexpr uint32_t wireBitsSize()  noexcept { return decltype(flat_)::wireBitsSize(); }
-    static constexpr uint32_t wireDataSize()  noexcept { return decltype(flat_)::wireDataSize(); }
-    static constexpr uint32_t wireStrgCount() noexcept { return decltype(flat_)::wireStrgCount(); }
-    static constexpr uint32_t wireFixedSize() noexcept { return decltype(flat_)::wireFixedSize(); }
-    static constexpr size_t   columnOffset(size_t col) noexcept { return decltype(flat_)::columnOffset(col); }
-    bool isSetup() const noexcept { return flat_.isSetup(); }
-
-    const RowCodecFlat001<LayoutType, Policy>& flat() const noexcept { return flat_; }
-
 private:
-    RowCodecFlat001<LayoutType, Policy> flat_;   // composition
     const LayoutType* layout_{nullptr};
     mutable Bitset<COLUMN_COUNT> wire_bits_;  // Wire change header.
                                                // Shortcut when Enabled: unused — row.changes_ IS wire format.

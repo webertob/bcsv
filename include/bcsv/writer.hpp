@@ -31,15 +31,15 @@
 
 namespace bcsv {
 
-    template<LayoutConcept LayoutType, TrackingPolicy Policy>
-    Writer<LayoutType, Policy>::Writer(const LayoutType& layout) 
+    template<LayoutConcept LayoutType, TrackingPolicy Policy, typename CodecType>
+    Writer<LayoutType, Policy, CodecType>::Writer(const LayoutType& layout)
         : file_header_(layout.columnCount(), 1)
         , row_(layout)
     {
     }
 
-    template<LayoutConcept LayoutType, TrackingPolicy Policy>
-    Writer<LayoutType, Policy>::~Writer() {
+    template<LayoutConcept LayoutType, TrackingPolicy Policy, typename CodecType>
+    Writer<LayoutType, Policy, CodecType>::~Writer() {
         if (isOpen()) {
             close();
         }
@@ -48,8 +48,8 @@ namespace bcsv {
      /**
      * @brief Close the binary file
      */
-    template<LayoutConcept LayoutType, TrackingPolicy Policy>
-    void Writer<LayoutType, Policy>::close() {
+    template<LayoutConcept LayoutType, TrackingPolicy Policy, typename CodecType>
+    void Writer<LayoutType, Policy, CodecType>::close() {
         if (!stream_.is_open()) {
             return;
         }
@@ -73,8 +73,8 @@ namespace bcsv {
         row_cnt_ = 0;       
     }
 
-    template<LayoutConcept LayoutType, TrackingPolicy Policy>
-    void Writer<LayoutType, Policy>::flush() {
+    template<LayoutConcept LayoutType, TrackingPolicy Policy, typename CodecType>
+    void Writer<LayoutType, Policy, CodecType>::flush() {
         if (!stream_.is_open()) {
             return;
         }
@@ -87,8 +87,8 @@ namespace bcsv {
      * @param overwrite Whether to overwrite existing files (default: false)
      * @return true if file was successfully opened, false otherwise
      */
-    template<LayoutConcept LayoutType, TrackingPolicy Policy>
-    bool Writer<LayoutType, Policy>::open(const FilePath& filepath, bool overwrite, size_t compressionLevel, size_t blockSizeKB, FileFlags flags) {
+    template<LayoutConcept LayoutType, TrackingPolicy Policy, typename CodecType>
+    bool Writer<LayoutType, Policy, CodecType>::open(const FilePath& filepath, bool overwrite, size_t compressionLevel, size_t blockSizeKB, FileFlags flags) {
         err_msg_.clear();
         
         if(isOpen()) {
@@ -193,8 +193,8 @@ namespace bcsv {
         return true;
     }
 
-    template<LayoutConcept LayoutType, TrackingPolicy Policy>
-    void Writer<LayoutType, Policy>::closePacket() {
+    template<LayoutConcept LayoutType, TrackingPolicy Policy, typename CodecType>
+    void Writer<LayoutType, Policy, CodecType>::closePacket() {
         if (!stream_.is_open()) {
             throw std::runtime_error("Error: File is not open");
         }
@@ -213,8 +213,8 @@ namespace bcsv {
         packet_open_ = false;
     }
 
-    template<LayoutConcept LayoutType, TrackingPolicy Policy>
-    void Writer<LayoutType, Policy>::openPacket() {
+    template<LayoutConcept LayoutType, TrackingPolicy Policy, typename CodecType>
+    void Writer<LayoutType, Policy, CodecType>::openPacket() {
         if (!stream_.is_open()) {
             throw std::runtime_error("Error: File is not open");
         }
@@ -244,8 +244,8 @@ namespace bcsv {
         packet_open_ = true;
     }
 
-    template<LayoutConcept LayoutType, TrackingPolicy Policy>
-    void Writer<LayoutType, Policy>::writeRow() {
+    template<LayoutConcept LayoutType, TrackingPolicy Policy, typename CodecType>
+    void Writer<LayoutType, Policy, CodecType>::writeRow() {
         if (!stream_.is_open()) {
             throw std::runtime_error("Error: File is not open");
         }
@@ -301,8 +301,8 @@ namespace bcsv {
         }
     }
 
-    template<LayoutConcept LayoutType, TrackingPolicy Policy>
-    void Writer<LayoutType, Policy>::writeRowLength(size_t length)
+    template<LayoutConcept LayoutType, TrackingPolicy Policy, typename CodecType>
+    void Writer<LayoutType, Policy, CodecType>::writeRowLength(size_t length)
     {
         assert(stream_.is_open());
         assert(packet_open_);

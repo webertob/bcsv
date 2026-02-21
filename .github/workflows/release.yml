@@ -5,7 +5,7 @@
 # Licensed under the MIT License. See LICENSE file in the project root 
 # for full license information.
 
-name: Release and Version Update
+name: Release
 
 on:
   push:
@@ -13,18 +13,17 @@ on:
       - 'v*.*.*'  # Triggers on version tags like v1.0.4, v2.1.0, etc.
 
 permissions:
-  contents: write  # Allow the workflow to commit changes
+  contents: write
 
 jobs:
-  update-version:
+  release:
     runs-on: ubuntu-latest
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        token: ${{ secrets.GITHUB_TOKEN }}
-        fetch-depth: 0  # Fetch all history for proper git operations
+        fetch-depth: 0
     
     - name: Extract version from tag
       id: version
@@ -91,53 +90,39 @@ jobs:
           exit 1
         fi
     
-    - name: Check for changes
-      id: changes
+    - name: Prepare include artifact
+      id: artifact
       run: |
-        if git diff --quiet include/bcsv/version_generated.h; then
-          echo "No changes to commit (version already up to date)"
-          echo "has_changes=false" >> $GITHUB_OUTPUT
-        else
-          echo "Version header has changes"
-          echo "has_changes=true" >> $GITHUB_OUTPUT
-        fi
-    
-    - name: Commit updated version
-      if: steps.changes.outputs.has_changes == 'true'
-      run: |
-        git config user.name "github-actions[bot]"
-        git config user.email "github-actions[bot]@users.noreply.github.com"
-        
-        git add include/bcsv/version_generated.h
-        git commit -m "Auto-update version to ${{ steps.version.outputs.version }} for release ${{ steps.version.outputs.tag_name }}"
-        
-        # Push the commit back to the repository
-        git push origin HEAD:master
-        
-        echo "✓ Committed version update to repository"
-    
+        VERSION="${{ steps.version.outputs.version }}"
+        STAGE_DIR=$(mktemp -d)
+        cp -R include "$STAGE_DIR/include"
+        ZIP_PATH="$RUNNER_TEMP/bcsv-include-v${VERSION}.zip"
+        (cd "$STAGE_DIR" && zip -r "$ZIP_PATH" include)
+        echo "zip_path=$ZIP_PATH" >> $GITHUB_OUTPUT
+
     - name: Create Release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      uses: softprops/action-gh-release@v2
       with:
         tag_name: ${{ steps.version.outputs.tag_name }}
-        release_name: Release ${{ steps.version.outputs.tag_name }}
+        name: Release ${{ steps.version.outputs.tag_name }}
+        files: |
+          ${{ steps.artifact.outputs.zip_path }}
+        generate_release_notes: true
         body: |
           ## BCSV Release ${{ steps.version.outputs.version }}
           
-          This release automatically updates the embedded version to match the git tag.
+          This release embeds version metadata matching the git tag.
           
           ### Changes in this release:
-          - Version updated to ${{ steps.version.outputs.version }}
-          - Auto-generated version header synchronized with git tag
+          - Version metadata generated from tag `${{ steps.version.outputs.tag_name }}`
+          - Header-only include artifact attached for direct consumption
           
           ### For developers:
-          This release ensures that downloading the header files directly from GitHub 
-          will include the correct version information without requiring CMake or Git.
+          This release workflow is tag-driven and does not mutate repository branches.
+          The attached include artifact provides deterministic header-only distribution.
           
           ### Usage:
-          Simply download the `include/` directory and use BCSV as a header-only library.
+          Download the attached `bcsv-include-v*.zip` and use BCSV as a header-only library.
           The version information is embedded and accessible via:
           ```cpp
           #include "bcsv/definitions.h"
@@ -150,5 +135,5 @@ jobs:
       run: |
         echo "🎉 Release workflow completed successfully!"
         echo "📦 Release ${{ steps.version.outputs.tag_name }} created"
-        echo "📝 Version header updated to ${{ steps.version.outputs.version }}"
-        echo "✅ Repository ready for header-only distribution"
+        echo "📝 Version metadata generated for ${{ steps.version.outputs.version }}"
+        echo "✅ Header-only include artifact attached to release"

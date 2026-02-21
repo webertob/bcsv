@@ -239,7 +239,7 @@ Lean checklist gate (for every non-trivial item):
         - RowView mutable scalar access uses reinterpret_cast on packed (potentially unaligned) wire data.
         - Multiple RowView paths read string-length/scalar bytes without consistent pre-checks for buffer bounds.
         - RowView vectorized get/set contract is inconsistent (bool-return API but may still throw via range/type path).
-        - setColumns(columnNames, columnTypes) can desync attached rows (missing observer notification in bulk path).
+        - setColumns(columnNames, columnTypes) observer notification path required verification.
         - Keep behavior/API unchanged while fixing safety and consistency; validate with focused RowView/Layout tests.
 
     Lean Checklist Summary (Item 10 closeout)
@@ -519,6 +519,20 @@ Item:
                 columnType(colIndex)
         }
 
+11.D Codec Architecture clarification
+
+RowCodecDisptach {
+    private:
+        using DeserializeFn = void (*)(const void* codec, std::span<const std::byte> buffer, RowType& row);
+        using ResetFn       = void (*)(const void* codec);
+        using SerializeFn   = std::span<std::byte> (*)(const void* codec, ByteBuffer& buffer, const RowType& row)
+        
+        RowCodecId codec_id_;
+        uintptr_t  codec_;
+}
+
+
+
 
 11.D Follow-up actions (post 11.C closure)
     Goal:
@@ -555,6 +569,37 @@ Item:
     - Complexity budget: pending
     - Safety guardrails: pending
     - Compatibility impact: pending
+
+
+11.E Critical hardening and quality gate (post-review actions)
+    Goal:
+    - Close high-impact safety/process gaps before next check-in and release iteration.
+
+    Scope:
+    [ ] E1 Release workflow hardening
+        - Remove branch mutation from tag-release workflow (no auto push to master/main from CI).
+        - Use maintained release action and attach deterministic include artifact for header-only users.
+        - Why: prevents accidental branch rewrites and improves release reproducibility/auditability.
+
+    [ ] E2 Runtime dispatch guard hardening
+        - Replace assert-only safety assumptions in runtime codec dispatch hot paths with explicit runtime guard behavior in non-debug builds.
+        - Define deterministic failure semantics (clear error path instead of UB risk when invariants are violated).
+        - Why: assert-only checks do not protect release builds.
+
+    [ ] E3 Compatibility policy + tooling
+        - Document forward/backward read-compatibility expectations per version lane.
+        - Add CI compatibility lane (read older sample files + validate expected rejection/acceptance semantics).
+        - Why: current strict minor/version handling and roadmap language can surprise users.
+
+    [ ] E4 CI correctness lane before benchmark lane
+        - Run core C++/C-API tests before benchmark sweeps in benchmark workflow.
+        - Fail fast on correctness regressions; benchmark artifacts only for validated builds.
+        - Why: performance numbers are only useful when functional correctness is already green.
+
+    [ ] E5 Lint baseline cleanup
+        - Remove markdown hard tabs and list-spacing violations in active docs.
+        - Resolve workflow context warnings reported by editor diagnostics.
+        - Why: keeps pre-checkin quality gate stable and reduces noisy diagnostics.
 
 
 12. Implement CSV write and read functionality using the BCSV interface
@@ -697,5 +742,5 @@ LOW PRIORITY / Known Issues (from 8.h review, 2026-02-12):
       Not portable across different endianness or word sizes. Document in wire format spec if cross-platform needed.
     - Bool changed flag in mutable visit() is passed to the visitor but silently ignored on write-back. 
       Document that changed parameter is read-only for bool columns.
-    - setColumns(vector<string>, vector<ColumnType>) does not trigger observer notification (pre-existing). 
-      Rows attached to layout will be out-of-sync if this overload is called. Add notification or document restriction.
+        - setColumns(vector<string>, vector<ColumnType>) observer-notification gap is resolved in current layout path.
+            Keep coverage in tests to prevent regression.

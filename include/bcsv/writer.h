@@ -14,12 +14,14 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <type_traits>
 
 #include "definitions.h"
 #include "byte_buffer.h"
 #include "layout.h"
 #include "row.h"
-#include "row_codec_variant.h"
+#include "row_codec_flat001.h"
+#include "row_codec_zoh001.h"
 #include "file_header.h"
 #include "file_footer.h"
 #include "lz4_stream.hpp"
@@ -27,10 +29,21 @@
 
 namespace bcsv {
 
+    template<LayoutConcept LayoutType, TrackingPolicy Policy = TrackingPolicy::Disabled>
+    using DefaultRowCodecForPolicy = std::conditional_t<
+        isTrackingEnabled(Policy),
+        RowCodecZoH001<LayoutType, Policy>,
+        RowCodecFlat001<LayoutType, Policy>
+    >;
+
     /**
      * @brief Class for writing BCSV binary files
      */
-    template<LayoutConcept LayoutType, TrackingPolicy Policy = TrackingPolicy::Disabled>
+    template<
+        LayoutConcept LayoutType,
+        TrackingPolicy Policy = TrackingPolicy::Disabled,
+        typename CodecType = DefaultRowCodecForPolicy<LayoutType, Policy>
+    >
     class Writer {
         using RowType           = typename LayoutType::template RowType<Policy>;
         using FilePath          = std::filesystem::path;
@@ -38,22 +51,23 @@ namespace bcsv {
         std::string             err_msg_;                    // last error message description
         FileHeader              file_header_;                // File header for accessing flags and metadata
         FilePath                file_path_;                  // Always present
-        std::ofstream           stream_;                    // Always binary file stream
-        std::optional<LZ4CompressionStreamInternalBuffer<MAX_ROW_LENGTH>> 
-                                lz4_stream_;                 // std::nullopt if compressionLevel == 0
-        
+        std::ofstream           stream_;                     // Always binary file stream
+        std::optional<LZ4CompressionStreamInternalBuffer<MAX_ROW_LENGTH>>
+                                lz4_stream_;                // std::nullopt if compressionLevel == 0
+
         // Packet management
         PacketIndex             packet_index_;               // Builds index in memory (if NO_FILE_INDEX not set)
         Checksum::Streaming     packet_hash_;                // Streaming payload checksum for current packet
         bool                    packet_open_ = false;        // Whether a packet has been started
         size_t                  packet_size_;                // Bytes written in current packet payload
-        
+
         // Buffers for streaming compression (pre-allocated, reused)
-        ByteBuffer              row_buffer_raw_;              // Serialized raw row
-        ByteBuffer              row_buffer_prev_;             // Previous row for ZoH comparison
+        ByteBuffer              row_buffer_raw_;             // Serialized raw row
+        ByteBuffer              row_buffer_prev_;            // Previous row for ZoH comparison
         uint64_t                row_cnt_;                    // Total rows written across all packets
         RowType                 row_;
-        RowCodecType<LayoutType, Policy> codec_;           // Codec for serialize dispatch (Item 11)
+        CodecType               codec_;                      // Compile-time selected codec
+
     public:
         Writer() = delete;
         Writer(const LayoutType& layout);
@@ -73,11 +87,14 @@ namespace bcsv {
         void                    writeRow();
 
     private:
-        void                    closePacket();              
-        void                    openPacket();         
+        void                    closePacket();
+        void                    openPacket();
         bool                    isZoHRepeat();
         void                    writeRowLength(size_t length);
     };
+
+    template<LayoutConcept LayoutType>
+    using WriterFlat = Writer<LayoutType, TrackingPolicy::Disabled>;
 
     template<LayoutConcept LayoutType>
     using WriterZoH = Writer<LayoutType, TrackingPolicy::Enabled>;

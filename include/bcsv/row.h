@@ -852,14 +852,6 @@ namespace bcsv {
         RowViewStatic& operator=(RowViewStatic&& other) noexcept;
 
     private:
-        void validateVisitRange(size_t startIndex, size_t count, const char* fnName) const;
-
-        template<RowVisitorConst Visitor, size_t... I>
-        void visitConstAtIndex(size_t index, Visitor&& visitor, std::index_sequence<I...>) const;
-
-        template<RowVisitor Visitor, size_t... I>
-        void visitMutableAtIndex(size_t index, Visitor&& visitor, std::index_sequence<I...>);
-
         template<size_t Index = 0>
         bool validateStringPayloads() const;
     };

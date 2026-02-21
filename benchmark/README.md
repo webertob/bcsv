@@ -5,6 +5,7 @@ Single source of truth for benchmark operation (human + agent).
 ## Scope
 
 The benchmark workflow is intentionally reduced to three run types:
+
 - `MICRO` (Google Benchmark micro suite)
 - `MACRO-SMALL` (macro suite at 10k rows)
 - `MACRO-LARGE` (macro suite at 500k rows)
@@ -14,12 +15,8 @@ Legacy compare/leaderboard/report-latest flows are removed. Reporting and compar
 Current macro dataset catalog contains 14 profiles, including string-heavy reference workloads:
 `event_log`, `iot_fleet`, and `financial_orders`.
 
-Macro runs execute the following **5 modes**:
-- `CSV`
-- `BCSV Flexible`
-- `BCSV Flexible ZoH`
-- `BCSV Static`
-- `BCSV Static ZoH`
+Macro runs execute mode families across storage (`flexible|static`), tracking (`trk=off|trk=on`),
+and codec (`dense|ZoH`) depending on CLI filters.
 
 ## Build
 
@@ -38,22 +35,24 @@ build/ninja-release/bin/bench_macro_datasets --help
 
 # Run one profile with selected scenarios
 build/ninja-release/bin/bench_macro_datasets \
-	--profile=rtl_waveform \
-	--rows=10000 \
-	--scenario=baseline,sparse_columns_k1
+  --profile=rtl_waveform \
+  --rows=10000 \
+  --scenario=baseline,sparse_columns_k1
 
 # Force narrow-terminal summary output
 build/ninja-release/bin/bench_macro_datasets \
-	--size=S \
-	--summary=compact \
-	--output=macro_small_results.json
+  --size=S \
+  --summary=compact \
+  --output=macro_small_results.json
 ```
 
 Summary modes:
+
 - `--summary=full` (default): full metrics table
 - `--summary=compact`: terminal-friendly compact table (fits narrow terminals)
 
 Discovery helpers:
+
 - `--list` prints all profile names
 - `--list-scenarios` prints all scenario IDs
 
@@ -61,11 +60,11 @@ Discovery helpers:
 
 ```bash
 python3 benchmark/run_benchmarks.py \
-	--type=MACRO-SMALL \
-	--repetitions=1 \
-	--cpus=1 \
-	--pin=NONE \
-	--git=WIP
+  --type=MACRO-SMALL \
+  --repetitions=1 \
+  --cpus=1 \
+  --pin=NONE \
+  --git=WIP
 ```
 
 ### Flags
@@ -78,6 +77,11 @@ python3 benchmark/run_benchmarks.py \
 - `--results=<path>` (default `benchmark/results/<hostname>/<git>`)
 - `--no-build` / `--no-report`
 - `--languages=python,csharp` (optional language lanes for Item 11.B)
+- `--macro-profile=<name>` (pass-through to `bench_macro_datasets --profile`)
+- `--macro-scenario=<csv>` (pass-through to `bench_macro_datasets --scenario`)
+- `--macro-tracking=both|enabled|disabled` (default `both`)
+- `--macro-storage=both|flexible|static` (default `both`)
+- `--macro-codec=both|dense|zoh` (default `both`)
 
 ## Standard Runs
 
@@ -90,6 +94,20 @@ python3 benchmark/run_benchmarks.py --type=MICRO --pin=CPU2
 
 # Full campaign (all three types)
 python3 benchmark/run_benchmarks.py --type=MICRO,MACRO-SMALL,MACRO-LARGE
+
+# Isolated macro family: flexible + tracking disabled + dense only
+python3 benchmark/run_benchmarks.py \
+  --type=MACRO-SMALL \
+  --macro-storage=flexible \
+  --macro-tracking=disabled \
+  --macro-codec=dense
+
+# Isolated macro family: static + tracking enabled + ZoH only
+python3 benchmark/run_benchmarks.py \
+  --type=MACRO-SMALL \
+  --macro-storage=static \
+  --macro-tracking=enabled \
+  --macro-codec=zoh
 
 # Include Python language lane in the same run directory/report
 python3 benchmark/run_benchmarks.py --type=MACRO-SMALL --languages=python
@@ -108,22 +126,22 @@ rm -rf benchmark/results && mkdir -p benchmark/results
 
 # 2) Clean baseline from a fresh clone at the selected git ref
 python3 benchmark/build_and_run.py \
-	--git-ref HEAD \
-	--types MICRO,MACRO-SMALL,MACRO-LARGE \
-	--repetitions 5 \
-	--temp-root /tmp/bcsv \
-	--results-root benchmark/results/$(hostname) \
-	--pin NONE
+  --git-ref HEAD \
+  --types MICRO,MACRO-SMALL,MACRO-LARGE \
+  --repetitions 5 \
+  --temp-root /tmp/bcsv \
+  --results-root benchmark/results/$(hostname) \
+  --pin NONE
 
 # 3) Current workspace run (WIP) compared against latest clean baseline
 python3 benchmark/run_benchmarks.py \
-	--type=MICRO,MACRO-SMALL,MACRO-LARGE \
-	--repetitions=5 \
-	--cpus=1 \
-	--pin=NONE \
-	--git=WIP \
-	--results=benchmark/results/$(hostname)/WIP \
-	--no-build
+  --type=MICRO,MACRO-SMALL,MACRO-LARGE \
+  --repetitions=5 \
+  --cpus=1 \
+  --pin=NONE \
+  --git=WIP \
+  --results=benchmark/results/$(hostname)/WIP \
+  --no-build
 ```
 
 ### Interleaved Pair Comparison (Operator Utility)
@@ -133,10 +151,10 @@ generate a single pair-wise + aggregate markdown summary:
 
 ```bash
 python3 benchmark/interleaved_compare.py \
-	--baseline-root benchmark/results/$(hostname)/clean_interleaved \
-	--candidate-root benchmark/results/$(hostname)/wip_interleaved \
-	--expected-pairs 5 \
-	--run-type MACRO-SMALL
+  --baseline-root benchmark/results/$(hostname)/clean_interleaved \
+  --candidate-root benchmark/results/$(hostname)/wip_interleaved \
+  --expected-pairs 5 \
+  --run-type MACRO-SMALL
 ```
 
 ### True Interleaved Pair Runner (Head-to-Head)
@@ -147,26 +165,27 @@ to expose both candidates to similar thermal/power conditions.
 
 ```bash
 python3 benchmark/run_interleaved_pairs.py \
-	--baseline-bin /tmp/bcsv/<git-hash>/build/ninja-release/bin \
-	--candidate-bin build/ninja-release/bin \
-	--baseline-label git-<git-hash>-clean \
-	--candidate-label WIP \
-	--types MICRO,MACRO-SMALL \
-	--repetitions 5 \
-	--results-root benchmark/results/$(hostname)/interleaved_h2h
+  --baseline-bin /tmp/bcsv/<git-hash>/build/ninja-release/bin \
+  --candidate-bin build/ninja-release/bin \
+  --baseline-label git-<git-hash>-clean \
+  --candidate-label WIP \
+  --types MICRO,MACRO-SMALL \
+  --repetitions 5 \
+  --results-root benchmark/results/$(hostname)/interleaved_h2h
 ```
 
 Then compare the pair roots:
 
 ```bash
 python3 benchmark/interleaved_compare.py \
-	--baseline-root benchmark/results/$(hostname)/interleaved_h2h/git-<git-hash>-clean \
-	--candidate-root benchmark/results/$(hostname)/interleaved_h2h/WIP \
-	--expected-pairs 5 \
-	--run-type MACRO-SMALL
+  --baseline-root benchmark/results/$(hostname)/interleaved_h2h/git-<git-hash>-clean \
+  --candidate-root benchmark/results/$(hostname)/interleaved_h2h/WIP \
+  --expected-pairs 5 \
+  --run-type MACRO-SMALL
 ```
 
 Default output:
+
 - `benchmark/results/<hostname>/interleaved_5x_comparison.md`
 
 The script also prints a concise terminal summary (median/min/max deltas per metric)
@@ -175,19 +194,22 @@ Scores and comparison matrices are computed only from workloads present in both
 baseline and candidate runs; excluded workloads are listed explicitly in the report.
 
 Delta conventions used by comparison reports:
+
 - Macro write/read deltas are expressed as **execution-time change** (derived from throughput).
-	Positive means WIP is slower; negative means WIP is faster.
+  Positive means WIP is slower; negative means WIP is faster.
 - Micro deltas are expressed as latency change (`real_time` ns).
-	Positive means WIP is slower; negative means WIP is faster.
+  Positive means WIP is slower; negative means WIP is faster.
 - Compression/file-size deltas use `(WIP - baseline) / baseline`.
-	Positive means WIP output is larger.
+  Positive means WIP output is larger.
 
 Supported run types for `--run-type`:
+
 - `MACRO-SMALL`
 - `MACRO-LARGE`
 - `MICRO` (latency deltas, using `micro_results.json`)
 
 Temp clone location defaults:
+
 - Linux: `/tmp/bcsv/<git-hash>`
 - Windows: `C:/temp/bcsv/<git-hash>`
 
@@ -196,6 +218,46 @@ Temp clone location defaults:
 - `MACRO-SMALL` should complete in < 3 minutes.
 - `MACRO-LARGE` should complete in < 60 minutes.
 - `MICRO` should run pinned to `CPU2` and complete in < 5 minutes.
+
+## Task 11D Profiling (Linux, non-mixing)
+
+Use isolated runs to avoid mixing strategy families in one result set.
+
+```bash
+# 1) Dense-only, flexible tracked-off
+python3 benchmark/run_benchmarks.py \
+  --type=MACRO-SMALL \
+  --macro-storage=flexible \
+  --macro-tracking=disabled \
+  --macro-codec=dense \
+  --pin=CPU2
+
+# 2) Dense-only, static tracked-off
+python3 benchmark/run_benchmarks.py \
+  --type=MACRO-SMALL \
+  --macro-storage=static \
+  --macro-tracking=disabled \
+  --macro-codec=dense \
+  --pin=CPU2
+
+# 3) ZoH-only, flexible tracked-on
+python3 benchmark/run_benchmarks.py \
+  --type=MACRO-SMALL \
+  --macro-storage=flexible \
+  --macro-tracking=enabled \
+  --macro-codec=zoh \
+  --pin=CPU2
+
+# 4) ZoH-only, static tracked-on
+python3 benchmark/run_benchmarks.py \
+  --type=MACRO-SMALL \
+  --macro-storage=static \
+  --macro-tracking=enabled \
+  --macro-codec=zoh \
+  --pin=CPU2
+```
+
+For hotspot attribution, run profiler passes on a single isolated family at a time.
 
 ## Reporting
 
@@ -212,9 +274,11 @@ python3 benchmark/report.py <candidate_run_dir> --baseline <baseline_run_dir>
 ```
 
 Generated summary report name:
+
 - `report_<git_label>_<timestamp>.md`
 
 Report content is intentionally concise:
+
 - Host information
 - Condensed Performance Matrix
 - Condensed Performance Matrix Comparison
@@ -222,6 +286,7 @@ Report content is intentionally concise:
 ## Outputs
 
 Each run directory contains:
+
 - `platform.json`
 - `manifest.json`
 - `macro_small_results.json` (when `MACRO-SMALL` selected)
@@ -246,6 +311,7 @@ For `--repetitions > 1`, raw per-repetition artifacts are stored under `repeats/
 ### Reference Time-Series Workloads
 
 Open-data reference mapping and cache/download workflow:
+
 - `benchmark/REFERENCE_WORKLOADS.md`
 - `benchmark/reference_workloads.json`
 - `benchmark/fetch_reference_datasets.py`
@@ -265,6 +331,7 @@ python3 python/benchmarks/run_pybcsv_benchmarks.py --size=S
 ```
 
 Output default:
+
 - `benchmark/results/<hostname>/python/py_macro_results_<timestamp>.json`
 
 ### Dedicated C# Benchmarks (Standalone .NET)
@@ -279,4 +346,5 @@ dotnet run --project csharp/benchmarks/Bcsv.Benchmarks.csproj -- --size=S
 ```
 
 Output default:
+
 - `benchmark/results/<hostname>/csharp/cs_macro_results_<timestamp>.json`

@@ -370,6 +370,8 @@ def write_platform_json(out_dir: Path, build_type: str, git_label: str,
 
 def run_macro(executable: Path, out_dir: Path, run_type: str, rows: int,
               build_type: str, pin_enabled: bool, pin_cpu: int,
+              profile: str, scenario: str,
+              tracking: str, storage: str, codec: str,
               timeout: int = 3600):
     stem = MACRO_FILE_STEMS[run_type]
     output_file = out_dir / f"{stem}_results.json"
@@ -381,7 +383,14 @@ def run_macro(executable: Path, out_dir: Path, run_type: str, rows: int,
         f"--output={output_file}",
         f"--build-type={build_type}",
         f"--rows={rows}",
+        f"--tracking={tracking}",
+        f"--storage={storage}",
+        f"--codec={codec}",
     ]
+    if profile:
+        cmd.append(f"--profile={profile}")
+    if scenario:
+        cmd.append(f"--scenario={scenario}")
     cmd = pin_cmd(cmd, pin_enabled, pin_cpu)
 
     result = subprocess.run(cmd, timeout=timeout, capture_output=True, text=True)
@@ -495,6 +504,11 @@ def write_manifest(out_dir: Path, args, run_types: list[str], pin_effective: boo
         "no_build": args.no_build,
         "no_report": args.no_report,
         "languages": args.languages,
+        "macro_profile": args.macro_profile,
+        "macro_scenario": args.macro_scenario,
+        "macro_tracking": args.macro_tracking,
+        "macro_storage": args.macro_storage,
+        "macro_codec": args.macro_codec,
     }
     write_json(out_dir / "manifest.json", payload)
 
@@ -653,6 +667,16 @@ def main() -> int:
                         help="Skip report generation")
     parser.add_argument("--languages", default="",
                         help="Optional language lanes: python,csharp")
+    parser.add_argument("--macro-profile", default="",
+                        help="Optional macro profile filter passed to bench_macro_datasets --profile")
+    parser.add_argument("--macro-scenario", default="",
+                        help="Optional macro scenario filter passed to bench_macro_datasets --scenario")
+    parser.add_argument("--macro-tracking", default="both",
+                        help="Macro tracking mode: both|enabled|disabled (default: both)")
+    parser.add_argument("--macro-storage", default="both",
+                        help="Macro storage mode: both|flexible|static (default: both)")
+    parser.add_argument("--macro-codec", default="both",
+                        help="Macro codec family: both|dense|zoh (default: both)")
 
     args = parser.parse_args()
 
@@ -661,6 +685,22 @@ def main() -> int:
         return 1
     if args.cpus < 1:
         print("ERROR: --cpus must be >= 1")
+        return 1
+
+    valid_tracking = {"both", "enabled", "disabled"}
+    valid_storage = {"both", "flexible", "static"}
+    valid_codec = {"both", "dense", "zoh"}
+    args.macro_tracking = (args.macro_tracking or "both").strip().lower()
+    args.macro_storage = (args.macro_storage or "both").strip().lower()
+    args.macro_codec = (args.macro_codec or "both").strip().lower()
+    if args.macro_tracking not in valid_tracking:
+        print("ERROR: --macro-tracking must be one of both|enabled|disabled")
+        return 1
+    if args.macro_storage not in valid_storage:
+        print("ERROR: --macro-storage must be one of both|flexible|static")
+        return 1
+    if args.macro_codec not in valid_codec:
+        print("ERROR: --macro-codec must be one of both|dense|zoh")
         return 1
 
     try:
@@ -707,6 +747,12 @@ def main() -> int:
     )
 
     print(f"[2/5] Run selected benchmark types: {', '.join(run_types)}")
+    macro_filters = (
+        f"profile={args.macro_profile or 'all'}, "
+        f"scenario={args.macro_scenario or 'all'}, "
+        f"tracking={args.macro_tracking}, storage={args.macro_storage}, codec={args.macro_codec}"
+    )
+    print(f"      Macro filters: {macro_filters}")
     run_payloads: dict[str, list[dict]] = {run_type: [] for run_type in run_types}
 
     for repetition_idx in range(args.repetitions):
@@ -730,6 +776,11 @@ def main() -> int:
                     args.build_type,
                     pin_enabled,
                     pin_cpu,
+                    args.macro_profile,
+                    args.macro_scenario,
+                    args.macro_tracking,
+                    args.macro_storage,
+                    args.macro_codec,
                 )
                 run_payloads[run_type].append(payload)
 
