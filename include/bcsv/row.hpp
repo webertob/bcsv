@@ -1537,8 +1537,7 @@ namespace bcsv {
             for(size_t i = 0; i < col_count; ++i) {
                 if (types[i] == ColumnType::STRING) {
                     if (lens_cursor + sizeof(uint16_t) > size) return false;
-                    uint16_t len = 0;
-                    memcpy(&len, data + lens_cursor, sizeof(uint16_t));
+                    uint16_t len = unalignedRead<uint16_t>(data + lens_cursor);
                     lens_cursor += sizeof(uint16_t);
                     if (pay_cursor + len > size) {
                         return false;
@@ -2351,9 +2350,7 @@ namespace bcsv {
         } else {
             // Scalar: offset within data section
             constexpr size_t absOff = WIRE_BITS_SIZE + off;
-            T val;
-            std::memcpy(&val, buffer.data() + absOff, sizeof(T));
-            return val;
+            return unalignedRead<T>(buffer.data() + absOff);
         }
     }
 
@@ -2450,9 +2447,7 @@ namespace bcsv {
             for (size_t i = 0; i < dst.size(); ++i) {
                 auto span = get(index + i);
                 if (span.empty()) return false;
-                bool val;
-                std::memcpy(&val, span.data(), sizeof(bool));
-                dst[i] = val;
+                dst[i] = unalignedRead<bool>(span.data());
             }
         } else {
             // Scalars: contiguous in data section — bulk memcpy via WIRE_OFFSETS

@@ -10,6 +10,8 @@
 #pragma once
 
 #include <cstdint>
+#include <array>
+#include <bit>
 #include <cstring>
 #include <iosfwd>
 #include <iostream>
@@ -110,10 +112,13 @@ namespace bcsv {
          * @return true if read successful and header is valid
          */
         bool read(std::istream& stream, bool silent = false) {
-            stream.read(reinterpret_cast<char*>(this), sizeof(PacketHeader));
-            if (stream.gcount() != sizeof(PacketHeader)) {
+            std::array<std::byte, sizeof(PacketHeader)> raw{};
+            stream.read(reinterpret_cast<char*>(raw.data()), raw.size());
+            if (stream.gcount() != static_cast<std::streamsize>(raw.size())) {
                 return false;
             }
+
+            *this = std::bit_cast<PacketHeader>(raw);
             
             if (!isValidMagic()) {
                 if (!silent) {
@@ -180,13 +185,15 @@ namespace bcsv {
                         break;
                     }
                     
-                    // We have enough data - read header directly from buffer
-                    PacketHeader* candidate = reinterpret_cast<PacketHeader*>(buffer.data() + pos);
+                    // We have enough data - decode candidate header from bytes
+                    std::array<std::byte, HEADER_SIZE> rawCandidate{};
+                    std::memcpy(rawCandidate.data(), buffer.data() + pos, HEADER_SIZE);
+                    PacketHeader candidate = std::bit_cast<PacketHeader>(rawCandidate);
                     
                     // Validate magic (redundant but fast check)
-                    if (candidate->isValidMagic() && candidate->validateChecksum()) {
+                    if (candidate.isValidMagic() && candidate.validateChecksum()) {
                         // Valid header found - copy to this object
-                        std::memcpy(this, candidate, HEADER_SIZE);
+                        *this = candidate;
                         
                         // Calculate actual file position
                         position = bufferStartPos + static_cast<std::streamoff>(pos);
@@ -222,7 +229,8 @@ namespace bcsv {
          */
         static bool write(std::ostream& stream, uint64_t firstRow) {
             PacketHeader header(firstRow);
-            stream.write(reinterpret_cast<const char*>(&header), sizeof(PacketHeader));
+            const auto raw = std::bit_cast<std::array<std::byte, sizeof(PacketHeader)>>(header);
+            stream.write(reinterpret_cast<const char*>(raw.data()), static_cast<std::streamsize>(raw.size()));
             return stream.good();
         }
     };

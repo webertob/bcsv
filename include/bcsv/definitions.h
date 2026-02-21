@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <string>
 #include <cstddef>
+#include <array>
+#include <bit>
 #include <variant>
 #include <limits>
 #include <cstring>
@@ -449,15 +451,16 @@ namespace bcsv {
     template<typename T>
     inline T unalignedRead(const void *src) {
         static_assert(std::is_trivially_copyable_v<T>, "unalignedRead requires trivially copyable type");
-        T value{};
-        std::memcpy(&value, src, sizeof(T));
-        return value;
+        std::array<std::byte, sizeof(T)> raw{};
+        std::memcpy(raw.data(), src, sizeof(T));
+        return std::bit_cast<T>(raw);
     }
 
     template<typename T>
     inline void unalignedWrite(void *dst, const T& value) {
         static_assert(std::is_trivially_copyable_v<T>, "unalignedWrite requires trivially copyable type");
-        std::memcpy(dst, &value, sizeof(T));
+        const auto raw = std::bit_cast<std::array<std::byte, sizeof(T)>>(value);
+        std::memcpy(dst, raw.data(), sizeof(T));
     }
 
     namespace detail {
