@@ -13,9 +13,11 @@ on:
     paths:
       - 'include/**'
       - 'tests/**'
+      - 'benchmark/**'
       - 'examples/**'
       - 'CMakeLists.txt'
       - 'tests/CMakeLists.txt'
+      - 'benchmark/CMakeLists.txt'
   push:
     tags:
       - 'v*'
@@ -64,8 +66,8 @@ jobs:
           -G Ninja \
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
           -DCMAKE_CXX_FLAGS="${{ env.CXX_FLAGS }}" \
-          -DBCSV_ENABLE_BENCHMARKS=ON \
-          -DBCSV_ENABLE_MICRO_BENCHMARKS=ON
+          -DBCSV_BUILD_BENCHMARKS=ON \
+          -DBCSV_BUILD_MICRO_BENCHMARKS=ON
 
     - name: Build benchmarks
       run: cmake --build build --target bench_macro_datasets bench_micro_types bench_generate_csv -j$(nproc)
@@ -82,7 +84,7 @@ jobs:
     - name: Run benchmark sweep (MACRO-SMALL)
       run: |
         RUN_ROOT="${{ runner.temp }}/bench_results/pr-${{ github.event.number }}"
-        python3 benchmark/run_benchmarks.py \
+        python3 benchmark/run.py wip \
           --type=MACRO-SMALL \
           --repetitions=1 \
           --build-type=Release \
@@ -99,7 +101,7 @@ jobs:
 
     - name: Verify report exists
       run: |
-        test -f "$RUN_DIR/report.md"
+        test -f "${{ steps.resolve_pr.outputs.run_dir }}/report.md"
 
     - name: Upload benchmark results
       uses: actions/upload-artifact@v4
@@ -147,8 +149,8 @@ jobs:
           -G Ninja \
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
           -DCMAKE_CXX_FLAGS="${{ env.CXX_FLAGS }}" \
-          -DBCSV_ENABLE_BENCHMARKS=ON \
-          -DBCSV_ENABLE_MICRO_BENCHMARKS=ON \
+          -DBCSV_BUILD_BENCHMARKS=ON \
+          -DBCSV_BUILD_MICRO_BENCHMARKS=ON \
           -DBCSV_ENABLE_EXTERNAL_CSV_BENCH=ON
 
     - name: Build all benchmarks
@@ -160,7 +162,7 @@ jobs:
     - name: Run full benchmark sweep
       run: |
         RUN_ROOT="${{ runner.temp }}/bench_results/release-${{ github.ref_name }}"
-        python3 benchmark/run_benchmarks.py \
+        python3 benchmark/run.py wip \
           --type=MICRO,MACRO-SMALL,MACRO-LARGE \
           --repetitions=3 \
           --build-type=Release \
@@ -217,8 +219,8 @@ jobs:
           -G Ninja \
           -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
           -DCMAKE_CXX_FLAGS="${{ env.CXX_FLAGS }}" \
-          -DBCSV_ENABLE_BENCHMARKS=ON \
-          -DBCSV_ENABLE_MICRO_BENCHMARKS=ON \
+          -DBCSV_BUILD_BENCHMARKS=ON \
+          -DBCSV_BUILD_MICRO_BENCHMARKS=ON \
           -DBCSV_ENABLE_EXTERNAL_CSV_BENCH=ON
 
     - name: Build all benchmarks
@@ -230,7 +232,7 @@ jobs:
     - name: Run benchmarks (${{ inputs.type }})
       run: |
         RUN_ROOT="${{ runner.temp }}/bench_results/manual"
-        python3 benchmark/run_benchmarks.py \
+        python3 benchmark/run.py wip \
           --type=${{ inputs.type }} \
           --repetitions=${{ inputs.repetitions }} \
           --build-type=Release \

@@ -18,28 +18,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-
-TYPE_CHOICES = ("MICRO", "MACRO-SMALL", "MACRO-LARGE")
-TYPE_ROWS = {
-    "MACRO-SMALL": 10_000,
-    "MACRO-LARGE": 500_000,
-}
-
-
-def parse_types(value: str) -> list[str]:
-    items = [item.strip().upper() for item in value.split(",") if item.strip()]
-    if not items:
-        raise ValueError("--types must include at least one type")
-    invalid = [item for item in items if item not in TYPE_CHOICES]
-    if invalid:
-        raise ValueError(f"Unsupported type(s): {', '.join(invalid)}")
-    seen: set[str] = set()
-    out: list[str] = []
-    for item in items:
-        if item not in seen:
-            out.append(item)
-            seen.add(item)
-    return out
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib.constants import TYPE_ROWS  # noqa: E402
+from lib.runner import parse_types   # noqa: E402
 
 
 def _run_parallel_pair(

@@ -112,5 +112,5 @@ cmake --build --preset ninja-release-build -j$(nproc) && ./build/ninja-release/b
 ./build/ninja-debug/bin/example && ./build/ninja-debug/bin/example_static
 
 # 5. Benchmark smoke test (release only)
-python3 benchmark/run_benchmarks.py --type=MICRO --no-report
+python3 benchmark/run.py wip --type=MICRO --no-report
 ```

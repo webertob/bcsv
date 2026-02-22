@@ -115,7 +115,7 @@ int main() {
 
 ```bash
 # Quick macro smoke run (default)
-python3 benchmark/run_benchmarks.py
+python3 benchmark/run.py wip
 
 # Direct macro CLI overview (profiles/scenarios/examples)
 build/ninja-release/bin/bench_macro_datasets --help
@@ -124,10 +124,10 @@ build/ninja-release/bin/bench_macro_datasets --help
 build/ninja-release/bin/bench_macro_datasets --size=S --summary=compact
 
 # Micro benchmark pinned to CPU2
-python3 benchmark/run_benchmarks.py --type=MICRO --pin=CPU2
+python3 benchmark/run.py wip --type=MICRO --pin=CPU2
 
 # Combined campaign
-python3 benchmark/run_benchmarks.py --type=MICRO,MACRO-SMALL,MACRO-LARGE
+python3 benchmark/run.py wip --type=MICRO,MACRO-SMALL,MACRO-LARGE
 
 # Manual compare report (candidate vs baseline)
 python3 benchmark/report.py <candidate_run_dir> --baseline <baseline_run_dir>

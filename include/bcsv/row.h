@@ -508,7 +508,7 @@ namespace bcsv {
         void                        trackingResetChanged() noexcept;
 
     public:
-        RowImpl() = delete; // no default constructor, we always need a layout
+        RowImpl() = delete; // no default co,nstructor, we always need a layout
         RowImpl(const Layout& layout);
         RowImpl(const RowImpl& other);
         RowImpl(RowImpl&& other) noexcept;

@@ -5,7 +5,7 @@ build-release/
 build-debug/
 build/
 bin/
-lib/
+/lib/
 
 # Ignore IDE files
 .vscode/

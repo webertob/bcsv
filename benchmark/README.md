@@ -58,62 +58,79 @@ Discovery helpers:
 
 ## Streamlined CLI
 
+All benchmark workflows are accessible through a single entry point:
+
 ```bash
-python3 benchmark/run_benchmarks.py \
-  --type=MACRO-SMALL \
-  --repetitions=1 \
-  --cpus=1 \
-  --pin=NONE \
-  --git=WIP
+python3 benchmark/run.py <subcommand> [options]
 ```
 
-### Flags
+### Subcommands
+
+| Command | Purpose |
+|---------|---------|
+| `wip` | Run benchmarks on the current working-tree build (default workflow) |
+| `baseline` | Clone a git ref, build, and benchmark into a clean baseline directory |
+| `compare` | Generate a markdown comparison report between two run directories |
+| `interleaved` | Run head-to-head interleaved pairs and produce a comparison |
+
+### `wip` flags
 
 - `--type=MICRO,MACRO-SMALL,MACRO-LARGE` (comma-separated, default `MACRO-SMALL`)
 - `--repetitions=<N>` (default `1`)
-- `--cpus=<N>` (default `1`, reserved for future parallel workers)
 - `--pin=NONE|CPU<id>` (default `NONE`, example `CPU2`)
 - `--git=<label>` (default `WIP`, controls results bucket naming)
 - `--results=<path>` (default `benchmark/results/<hostname>/<git>`)
 - `--no-build` / `--no-report`
-- `--languages=python,csharp` (optional language lanes for Item 11.B)
+- `--languages=python,csharp` (optional language lanes)
 - `--macro-profile=<name>` (pass-through to `bench_macro_datasets --profile`)
 - `--macro-scenario=<csv>` (pass-through to `bench_macro_datasets --scenario`)
 - `--macro-tracking=both|enabled|disabled` (default `both`)
 - `--macro-storage=both|flexible|static` (default `both`)
 - `--macro-codec=both|dense|zoh` (default `both`)
+- `--detail` (show per-profile breakdown table in operator summary)
+
+## Operator Summary Output
+
+The terminal operator summary includes:
+
+- **Wall-clock timing**: total benchmark execution time per run type
+- **Profile coverage**: `N/M` column shows how many profiles contributed to each mode's median
+  (Static modes only run on profiles with no-copy generators: `mixed_generic`, `sparse_events`)
+- **Noise flags**: a `~` marker appears when stdev exceeds the median (CV > 1.0),
+  indicating high across-profile variance — consider re-running with `--pin` or more `--repetitions`
+- **Per-profile breakdown** (`--detail`): write rows/s for every profile × mode combination
 
 ## Standard Runs
 
 ```bash
 # Default developer run
-python3 benchmark/run_benchmarks.py
+python3 benchmark/run.py wip
 
 # Micro benchmark pinned to CPU2 (target <5 min)
-python3 benchmark/run_benchmarks.py --type=MICRO --pin=CPU2
+python3 benchmark/run.py wip --type=MICRO --pin=CPU2
 
 # Full campaign (all three types)
-python3 benchmark/run_benchmarks.py --type=MICRO,MACRO-SMALL,MACRO-LARGE
+python3 benchmark/run.py wip --type=MICRO,MACRO-SMALL,MACRO-LARGE
 
 # Isolated macro family: flexible + tracking disabled + dense only
-python3 benchmark/run_benchmarks.py \
+python3 benchmark/run.py wip \
   --type=MACRO-SMALL \
   --macro-storage=flexible \
   --macro-tracking=disabled \
   --macro-codec=dense
 
 # Isolated macro family: static + tracking enabled + ZoH only
-python3 benchmark/run_benchmarks.py \
+python3 benchmark/run.py wip \
   --type=MACRO-SMALL \
   --macro-storage=static \
   --macro-tracking=enabled \
   --macro-codec=zoh
 
 # Include Python language lane in the same run directory/report
-python3 benchmark/run_benchmarks.py --type=MACRO-SMALL --languages=python
+python3 benchmark/run.py wip --type=MACRO-SMALL --languages=python
 
 # Clean baseline run bucket
-python3 benchmark/run_benchmarks.py --type=MACRO-LARGE --git=clean
+python3 benchmark/run.py wip --type=MACRO-LARGE --git=clean
 ```
 
 ## Baseline + WIP Recipe (Recommended)
@@ -125,7 +142,7 @@ Use this flow for reproducible comparison between a clean commit baseline and cu
 rm -rf benchmark/results && mkdir -p benchmark/results
 
 # 2) Clean baseline from a fresh clone at the selected git ref
-python3 benchmark/build_and_run.py \
+python3 benchmark/run.py baseline \
   --git-ref HEAD \
   --types MICRO,MACRO-SMALL,MACRO-LARGE \
   --repetitions 5 \
@@ -134,10 +151,9 @@ python3 benchmark/build_and_run.py \
   --pin NONE
 
 # 3) Current workspace run (WIP) compared against latest clean baseline
-python3 benchmark/run_benchmarks.py \
+python3 benchmark/run.py wip \
   --type=MICRO,MACRO-SMALL,MACRO-LARGE \
   --repetitions=5 \
-  --cpus=1 \
   --pin=NONE \
   --git=WIP \
   --results=benchmark/results/$(hostname)/WIP \
@@ -160,8 +176,20 @@ python3 benchmark/interleaved_compare.py \
 ### True Interleaved Pair Runner (Head-to-Head)
 
 For strict interleaving semantics (`for repetition -> for benchmark type -> run A/B pair`),
-use the dedicated runner below. It executes each pair **in parallel** (no pinning by default)
-to expose both candidates to similar thermal/power conditions.
+use the unified CLI's `interleaved` subcommand:
+
+```bash
+python3 benchmark/run.py interleaved \
+  --baseline-bin /tmp/bcsv/<git-hash>/build/ninja-release/bin \
+  --candidate-bin build/ninja-release/bin \
+  --baseline-label git-<git-hash>-clean \
+  --candidate-label WIP \
+  --types MICRO,MACRO-SMALL \
+  --repetitions 5 \
+  --results-root benchmark/results/$(hostname)/interleaved_h2h
+```
+
+Or use the individual scripts directly:
 
 ```bash
 python3 benchmark/run_interleaved_pairs.py \
@@ -170,8 +198,7 @@ python3 benchmark/run_interleaved_pairs.py \
   --baseline-label git-<git-hash>-clean \
   --candidate-label WIP \
   --types MICRO,MACRO-SMALL \
-  --repetitions 5 \
-  --results-root benchmark/results/$(hostname)/interleaved_h2h
+  --repetitions 5
 ```
 
 Then compare the pair roots:
@@ -225,7 +252,7 @@ Use isolated runs to avoid mixing strategy families in one result set.
 
 ```bash
 # 1) Dense-only, flexible tracked-off
-python3 benchmark/run_benchmarks.py \
+python3 benchmark/run.py wip \
   --type=MACRO-SMALL \
   --macro-storage=flexible \
   --macro-tracking=disabled \
@@ -233,7 +260,7 @@ python3 benchmark/run_benchmarks.py \
   --pin=CPU2
 
 # 2) Dense-only, static tracked-off
-python3 benchmark/run_benchmarks.py \
+python3 benchmark/run.py wip \
   --type=MACRO-SMALL \
   --macro-storage=static \
   --macro-tracking=disabled \
@@ -241,7 +268,7 @@ python3 benchmark/run_benchmarks.py \
   --pin=CPU2
 
 # 3) ZoH-only, flexible tracked-on
-python3 benchmark/run_benchmarks.py \
+python3 benchmark/run.py wip \
   --type=MACRO-SMALL \
   --macro-storage=flexible \
   --macro-tracking=enabled \
@@ -249,7 +276,7 @@ python3 benchmark/run_benchmarks.py \
   --pin=CPU2
 
 # 4) ZoH-only, static tracked-on
-python3 benchmark/run_benchmarks.py \
+python3 benchmark/run.py wip \
   --type=MACRO-SMALL \
   --macro-storage=static \
   --macro-tracking=enabled \
@@ -261,16 +288,19 @@ For hotspot attribution, run profiler passes on a single isolated family at a ti
 
 ## Reporting
 
-`run_benchmarks.py` calls `benchmark/report.py` automatically (unless `--no-report`).
+`run.py wip` calls `benchmark/report.py` automatically (unless `--no-report`).
 
 Manual usage:
 
 ```bash
 # Auto-compare against latest git-clean run if available
-python3 benchmark/report.py benchmark/results/<hostname>/WIP/<run_timestamp>
+python3 benchmark/run.py compare benchmark/results/<hostname>/WIP/<run_timestamp>
 
 # Explicit baseline comparison
-python3 benchmark/report.py <candidate_run_dir> --baseline <baseline_run_dir>
+python3 benchmark/run.py compare <candidate_run_dir> --baseline <baseline_run_dir>
+
+# Full report with detail tables
+python3 benchmark/run.py compare <run_dir> --baseline <baseline_dir> --full
 ```
 
 Generated summary report name:
@@ -280,8 +310,9 @@ Generated summary report name:
 Report content is intentionally concise:
 
 - Host information
-- Condensed Performance Matrix
+- Condensed Performance Matrix (with `~` noise markers when CV > 1.0)
 - Condensed Performance Matrix Comparison
+- Baseline staleness warning (when baseline is > 7 days old)
 
 ## Outputs
 
@@ -301,6 +332,10 @@ Each run directory contains:
 
 For `--repetitions > 1`, raw per-repetition artifacts are stored under `repeats/run_<N>/` and top-level
 `macro_*_results.json` / `micro_results.json` contain median-aggregated results across repetitions.
+
+Skipped results (e.g., Static modes on profiles without no-copy generators) are automatically
+stripped from stored JSON files. Only `status: "ok"` rows are retained; a `skipped_count` field
+records how many were removed.
 
 ## External CSV Benchmark Policy
 

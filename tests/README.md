@@ -452,8 +452,8 @@ bench_macro_datasets    Macro: full write→read→validate cycles per dataset p
 bench_micro_types       Micro: per-type Get/Set, VisitConst, Serialize (Google Benchmark)
 ```
 
-Orchestrated by **`benchmark/run_benchmarks.py`** using a reduced CLI surface:
-`--type`, `--repetitions`, `--cpus`, `--pin`, `--git`, `--results`.
+Orchestrated by **`benchmark/run.py`** using a unified CLI with subcommands:
+`wip`, `baseline`, `compare`, `interleaved`.
 
 Macro benchmarks run in 5 modes: `CSV`, `BCSV Flexible`, `BCSV Flexible ZoH`,
 `BCSV Static`, `BCSV Static ZoH`.
@@ -481,13 +481,13 @@ Macro benchmarks run in 5 modes: `CSV`, `BCSV Flexible`, `BCSV Flexible ZoH`,
 
 ```bash
 # Default run (MACRO-SMALL)
-python3 benchmark/run_benchmarks.py
+python3 benchmark/run.py wip
 
 # Micro benchmark pinned to CPU2
-python3 benchmark/run_benchmarks.py --type=MICRO --pin=CPU2
+python3 benchmark/run.py wip --type=MICRO --pin=CPU2
 
 # Full campaign
-python3 benchmark/run_benchmarks.py --type=MICRO,MACRO-SMALL,MACRO-LARGE
+python3 benchmark/run.py wip --type=MICRO,MACRO-SMALL,MACRO-LARGE
 
 # Explicit comparison report
 python3 benchmark/report.py <candidate-run-dir> --baseline <baseline-run-dir>

@@ -111,7 +111,7 @@ cmake --preset ninja-release && cmake --build --preset ninja-release-build -j$(n
 ./build/ninja-release/bin/bcsv_gtest
 
 # Quick benchmark smoke test
-python3 benchmark/run_benchmarks.py --type=MICRO --no-report
+python3 benchmark/run.py wip --type=MICRO --no-report
 ```
 
 ## Public API Classes

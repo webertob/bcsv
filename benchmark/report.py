@@ -14,18 +14,12 @@ import argparse
 import json
 import statistics
 import sys
-from collections import OrderedDict
 from datetime import datetime
 from pathlib import Path
 
-
-MODE_ALIASES = OrderedDict([
-    ("CSV", ["CSV"]),
-    ("BCSV Flex Flat (Standard)", ["BCSV Flexible", "BCSV Flat", "BCSV Standard", "BCSV Flexible Flat"]),
-    ("BCSV Flex-ZoH", ["BCSV Flexible ZoH", "BCSV ZoH", "BCSV Flexible-ZoH"]),
-    ("BCSV Static Flat (Standard)", ["BCSV Static", "BCSV Static Flat", "BCSV Static Standard"]),
-    ("BCSV Static-ZoH", ["BCSV Static ZoH", "BCSV Static-ZoH"]),
-])
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib.constants import MODE_ALIASES, mode_base, pick_mode_rows  # noqa: E402
+from lib.discovery import latest_clean_run  # noqa: E402
 
 
 def _is_ok_row(row: dict) -> bool:
@@ -149,8 +143,8 @@ def compute_condensed_progress_metrics(results):
     if not results:
         return []
 
-    def pick_mode_rows(rows, aliases):
-        return [row for row in rows if row.get("mode") in aliases]
+    def pick_mode_rows_local(rows, aliases):
+        return pick_mode_rows(rows, aliases)
 
     def med_std(values):
         if not values:
@@ -161,13 +155,13 @@ def compute_condensed_progress_metrics(results):
 
     csv_size_by_key = {}
     for row in results:
-        if row.get("mode") == "CSV":
+        if mode_base(str(row.get("mode", ""))) == "CSV":
             key = (row.get("dataset"), row.get("scenario_id", "baseline"))
             csv_size_by_key[key] = row.get("file_size", 0)
 
     rows_out = []
     for display_mode, aliases in MODE_ALIASES.items():
-        mode_rows = pick_mode_rows(results, aliases)
+        mode_rows = [r for r in pick_mode_rows_local(results, aliases) if r.get("status") != "skipped"]
         dense_rows = [row for row in mode_rows if row.get("scenario_id", "baseline") == "baseline"]
         sparse_rows = [row for row in mode_rows if row.get("scenario_id", "baseline") != "baseline"]
 
@@ -190,7 +184,7 @@ def compute_condensed_progress_metrics(results):
 
         comp_ratios = []
         for row in mode_rows:
-            if row.get("mode") == "CSV":
+            if mode_base(str(row.get("mode", ""))) == "CSV":
                 comp_ratios.append(1.0)
                 continue
             key = (row.get("dataset"), row.get("scenario_id", "baseline"))
@@ -227,7 +221,11 @@ def fmt_med_std(median_val, stdev_val, decimals=2):
         return "—"
     if stdev_val is None:
         stdev_val = 0.0
-    return f"{median_val:.{decimals}f} ± {stdev_val:.{decimals}f}"
+    text = f"{median_val:.{decimals}f} ± {stdev_val:.{decimals}f}"
+    # Noise flag: append ~ when CV > 1.0
+    if median_val != 0 and stdev_val / abs(median_val) > 1.0:
+        text += " ~"
+    return text
 
 
 def fmt_delta_relative(current, baseline):
@@ -259,60 +257,6 @@ def micro_group_medians(micro_payload):
         if values:
             out[label] = statistics.median(values)
     return out
-
-
-def latest_clean_run(current_run: Path, required_macro_types: set[str] | None = None, require_micro: bool = False):
-    host_root = current_run.parent.parent
-    if not host_root.exists():
-        return None
-
-    required_macro_types = required_macro_types or set()
-    candidates = []
-    for git_bucket in host_root.iterdir():
-        if not git_bucket.is_dir():
-            continue
-        if "wip" in git_bucket.name.lower():
-            continue
-        for run_dir in git_bucket.iterdir():
-            if not run_dir.is_dir() or run_dir == current_run:
-                continue
-            if not (run_dir / "platform.json").exists():
-                continue
-
-            macro_by_type = load_macro_rows_by_type(run_dir)
-            candidate_macro_types = {macro_type for macro_type, rows in macro_by_type.items() if rows}
-            candidate_has_micro = bool(micro_group_medians(load_micro(run_dir)))
-
-            has_any_data = bool(candidate_macro_types) or candidate_has_micro
-            if not has_any_data:
-                continue
-
-            macro_overlap = len(required_macro_types & candidate_macro_types)
-            missing_macro = len(required_macro_types - candidate_macro_types)
-            missing_micro = 1 if (require_micro and not candidate_has_micro) else 0
-            exact_match = (missing_macro == 0 and missing_micro == 0)
-
-            candidates.append({
-                "run_dir": run_dir,
-                "mtime": run_dir.stat().st_mtime,
-                "exact_match": exact_match,
-                "missing_total": missing_macro + missing_micro,
-                "macro_overlap": macro_overlap,
-            })
-
-    if not candidates:
-        return None
-
-    candidates.sort(
-        key=lambda item: (
-            item["exact_match"],
-            -item["missing_total"],
-            item["macro_overlap"],
-            item["mtime"],
-        ),
-        reverse=True,
-    )
-    return candidates[0]["run_dir"]
 
 
 def generate_summary_markdown(run_dir: Path,
@@ -357,6 +301,15 @@ def generate_summary_markdown(run_dir: Path,
         else None
     )
     baseline_run_id = baseline_dir.name if baseline_dir is not None else None
+
+    # Staleness check: warn when baseline age > 7 days
+    baseline_age_days: float | None = None
+    if baseline_dir is not None:
+        try:
+            baseline_mtime = (baseline_dir / "platform.json").stat().st_mtime
+            baseline_age_days = (datetime.now().timestamp() - baseline_mtime) / 86400.0
+        except OSError:
+            pass
 
     lines = []
     lines.append("# BCSV Benchmark Summary Report")
@@ -419,6 +372,10 @@ def generate_summary_markdown(run_dir: Path,
             baseline_by_mode = {row["mode"]: row for row in baseline_condensed}
             lines.append(f"Candidate: `{candidate_label}` (run `{candidate_run_id}`)")
             lines.append(f"Baseline: `{baseline_label}` (run `{baseline_run_id}`)")
+            if baseline_age_days is not None and baseline_age_days > 7:
+                lines.append(f"")
+                lines.append(f"> **Warning:** baseline is {baseline_age_days:.0f} days old — results may not be comparable due to system configuration drift.")
+                lines.append(f"")
             lines.append("Delta is current run vs baseline.")
             lines.append("Positive write/read delta means current run is slower (derived from rows/s). Negative means faster.")
             lines.append("Positive compression delta means current run files are larger. Negative means smaller.")

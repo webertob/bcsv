@@ -21,9 +21,13 @@ import argparse
 import json
 import socket
 import statistics
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from lib.constants import mode_base  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -165,11 +169,11 @@ def metric_delta_from_common(
 ) -> tuple[float | None, int]:
     baseline_keys = {
         key for key, row in baseline_map.items()
-        if key[1] == scenario and str(row.get("mode", "?")) == spec.mode and isinstance(row.get(spec.key), (int, float))
+        if key[1] == scenario and mode_base(str(row.get("mode", "?"))) == spec.mode and isinstance(row.get(spec.key), (int, float))
     }
     candidate_keys = {
         key for key, row in candidate_map.items()
-        if key[1] == scenario and str(row.get("mode", "?")) == spec.mode and isinstance(row.get(spec.key), (int, float))
+        if key[1] == scenario and mode_base(str(row.get("mode", "?"))) == spec.mode and isinstance(row.get(spec.key), (int, float))
     }
     common_keys = sorted(baseline_keys & candidate_keys)
     if not common_keys:
