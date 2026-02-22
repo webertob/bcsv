@@ -21,13 +21,13 @@ TEST(CodecZoH001DynamicTest, FirstRowAndRoundTrip) {
         {"s", ColumnType::STRING}
     });
 
-    RowTracked<TrackingPolicy::Enabled> row(layout);
+    Row row(layout);
     row.set<bool>(0, true);
     row.set<int32_t>(1, 42);
     row.set<double>(2, 3.14);
     row.set<std::string_view>(3, "hello");
 
-    RowCodecZoH001<Layout, TrackingPolicy::Enabled> codec;
+    RowCodecZoH001<Layout> codec;
     codec.setup(layout);
     codec.reset();
 
@@ -35,7 +35,7 @@ TEST(CodecZoH001DynamicTest, FirstRowAndRoundTrip) {
     auto wire = codec.serialize(row, buf);
     ASSERT_FALSE(wire.empty());
 
-    RowTracked<TrackingPolicy::Enabled> out(layout);
+    Row out(layout);
     codec.deserialize(wire, out);
 
     EXPECT_TRUE(out.get<bool>(0));
@@ -51,12 +51,12 @@ TEST(CodecZoH001DynamicTest, NoChangesAfterFirstRowReturnsEmpty) {
         {"s", ColumnType::STRING}
     });
 
-    RowTracked<TrackingPolicy::Enabled> row(layout);
+    Row row(layout);
     row.set<bool>(0, false);
     row.set<int32_t>(1, 1);
     row.set<std::string_view>(2, "x");
 
-    RowCodecZoH001<Layout, TrackingPolicy::Enabled> codec;
+    RowCodecZoH001<Layout> codec;
     codec.setup(layout);
     codec.reset();
 
@@ -81,7 +81,7 @@ TEST(CodecZoH001DynamicTest, DisabledPolicyStillRoundTrips) {
     row.set<int32_t>(1, 77);
     row.set<std::string_view>(2, "abc");
 
-    RowCodecZoH001<Layout, TrackingPolicy::Disabled> codec;
+    RowCodecZoH001<Layout> codec;
     codec.setup(layout);
     codec.reset();
 
@@ -98,7 +98,7 @@ TEST(CodecZoH001DynamicTest, DisabledPolicyStillRoundTrips) {
 
 TEST(CodecZoH001StaticTest, EnabledRoundTrip) {
     using SLayout = LayoutStatic<bool, int32_t, std::string>;
-    using SRow = RowStaticTracked<TrackingPolicy::Enabled, bool, int32_t, std::string>;
+    using SRow = RowStatic<bool, int32_t, std::string>;
 
     SLayout layout;
     SRow row(layout);
@@ -106,7 +106,7 @@ TEST(CodecZoH001StaticTest, EnabledRoundTrip) {
     row.set<1>(123);
     row.set<2>(std::string("static"));
 
-    RowCodecZoH001<SLayout, TrackingPolicy::Enabled> codec;
+    RowCodecZoH001<SLayout> codec;
     codec.setup(layout);
     codec.reset();
 
@@ -123,7 +123,7 @@ TEST(CodecZoH001StaticTest, EnabledRoundTrip) {
 
 TEST(CodecZoH001StaticTest, NoChangesAfterFirstRowReturnsEmpty) {
     using SLayout = LayoutStatic<bool, int32_t, std::string>;
-    using SRow = RowStaticTracked<TrackingPolicy::Enabled, bool, int32_t, std::string>;
+    using SRow = RowStatic<bool, int32_t, std::string>;
 
     SLayout layout;
     SRow row(layout);
@@ -131,7 +131,7 @@ TEST(CodecZoH001StaticTest, NoChangesAfterFirstRowReturnsEmpty) {
     row.set<1>(10);
     row.set<2>(std::string("x"));
 
-    RowCodecZoH001<SLayout, TrackingPolicy::Enabled> codec;
+    RowCodecZoH001<SLayout> codec;
     codec.setup(layout);
     codec.reset();
 

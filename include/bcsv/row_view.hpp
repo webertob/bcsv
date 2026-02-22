@@ -299,7 +299,7 @@ namespace bcsv {
     {
         Row row(layout());
         try {
-            RowCodecFlat001<Layout, TrackingPolicy::Disabled> codec;
+            RowCodecFlat001<Layout> codec;
             codec.setup(layout_);
             codec.deserialize(codec_.buffer(), row);
         } catch (const std::exception& e) {

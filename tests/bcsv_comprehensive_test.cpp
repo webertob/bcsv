@@ -308,7 +308,7 @@ protected:
     }
     
     // Overloaded validation for RowStatic (owning) types
-    void validateStaticRowData(const TestData& expected, const typename FullTestLayoutStatic::RowType<>& actual, size_t row_index) {
+    void validateStaticRowData(const TestData& expected, const typename FullTestLayoutStatic::RowType& actual, size_t row_index) {
         EXPECT_EQ(expected.bool1, actual.template get<0>()) << "Row " << row_index << " bool1 mismatch";
         EXPECT_EQ(expected.bool2, actual.template get<1>()) << "Row " << row_index << " bool2 mismatch";
         EXPECT_EQ(expected.int8_1, actual.template get<2>()) << "Row " << row_index << " int8_1 mismatch";
@@ -2311,7 +2311,7 @@ TEST_F(BCSVTestSuite, ZoH_FlexibleInterface_BasicFunctionality) {
     
     // Write using flexible interface with ZoH
     {
-        bcsv::Writer<bcsv::Layout, bcsv::TrackingPolicy::Enabled> writer(layout);
+        bcsv::WriterZoH<bcsv::Layout> writer(layout);
         if (!writer.open(filename, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
             FAIL() << "Failed to open writer for ZoH flexible test";
         }
@@ -2329,7 +2329,7 @@ TEST_F(BCSVTestSuite, ZoH_FlexibleInterface_BasicFunctionality) {
     
     // Read back using flexible interface
     {
-        bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Enabled> reader;
+        bcsv::Reader<bcsv::Layout> reader;
         if (!reader.open(filename)) {
             FAIL() << "Failed to open reader for ZoH flexible test";
         }
@@ -2384,7 +2384,7 @@ TEST_F(BCSVTestSuite, ZoH_StaticInterface_BasicFunctionality) {
     
     // Write using static interface with ZoH
     {
-        bcsv::Writer<ZoHLayout, bcsv::TrackingPolicy::Enabled> writer(layout);
+        bcsv::WriterZoH<ZoHLayout> writer(layout);
         if (!writer.open(filename, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
             FAIL() << "Failed to open writer for ZoH static test";
         }
@@ -2403,7 +2403,7 @@ TEST_F(BCSVTestSuite, ZoH_StaticInterface_BasicFunctionality) {
     
     // Read back using static interface
     {
-        bcsv::Reader<ZoHLayout, bcsv::TrackingPolicy::Enabled> reader;
+        bcsv::Reader<ZoHLayout> reader;
         if (!reader.open(filename)) {
             FAIL() << "Failed to open reader for ZoH static test";
         }
@@ -2458,7 +2458,7 @@ TEST_F(BCSVTestSuite, ZoH_CrossCompatibility_FlexibleToStatic) {
     
     // Write with flexible interface using ZoH
     {
-        bcsv::Writer<bcsv::Layout, bcsv::TrackingPolicy::Enabled> writer(flexLayout);
+        bcsv::WriterZoH<bcsv::Layout> writer(flexLayout);
         if (!writer.open(filename, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
             FAIL() << "Failed to open writer for ZoH flex→static test";
         }
@@ -2476,7 +2476,7 @@ TEST_F(BCSVTestSuite, ZoH_CrossCompatibility_FlexibleToStatic) {
     
     // Read with static interface
     {
-        bcsv::Reader<StaticLayout, bcsv::TrackingPolicy::Enabled> reader;
+        bcsv::Reader<StaticLayout> reader;
         if (!reader.open(filename)) {
             FAIL() << "Failed to open file for ZoH static read";
         }
@@ -2529,7 +2529,7 @@ TEST_F(BCSVTestSuite, ZoH_CrossCompatibility_StaticToFlexible) {
     
     // Write with static interface using ZoH
     {
-        bcsv::Writer<TestLayout, bcsv::TrackingPolicy::Enabled> writer(layout);
+        bcsv::WriterZoH<TestLayout> writer(layout);
         if (!writer.open(filename, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
             FAIL() << "Failed to open writer for ZoH static→flex test";
         }
@@ -2547,7 +2547,7 @@ TEST_F(BCSVTestSuite, ZoH_CrossCompatibility_StaticToFlexible) {
     
     // Read with flexible interface
     {
-        bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Enabled> reader;
+        bcsv::Reader<bcsv::Layout> reader;
         if (!reader.open(filename)) {
             FAIL() << "Failed to open file for ZoH flexible read";
         }
@@ -2599,7 +2599,7 @@ TEST_F(BCSVTestSuite, ZoH_CrossCompatibility_FlexibleToFlexible) {
     
     // Write using ZoH
     {
-        bcsv::Writer<bcsv::Layout, bcsv::TrackingPolicy::Enabled> writer(layout);
+        bcsv::WriterZoH<bcsv::Layout> writer(layout);
         if (!writer.open(filename, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
             FAIL() << "Failed to open writer for ZoH flex→flex test";
         }
@@ -2618,7 +2618,7 @@ TEST_F(BCSVTestSuite, ZoH_CrossCompatibility_FlexibleToFlexible) {
     
     // Read using flexible interface
     {
-        bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Enabled> reader;
+        bcsv::Reader<bcsv::Layout> reader;
         if (!reader.open(filename)) {
             FAIL() << "Failed to open file for ZoH flexible read";
         }
@@ -2667,7 +2667,7 @@ TEST_F(BCSVTestSuite, ZoH_CrossCompatibility_StaticToStatic) {
     
     // Write using static interface with ZoH
     {
-        bcsv::Writer<TestLayout, bcsv::TrackingPolicy::Enabled> writer(layout);
+        bcsv::WriterZoH<TestLayout> writer(layout);
         if (!writer.open(filename, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
             FAIL() << "Failed to open writer for ZoH static→static test";
         }
@@ -2686,7 +2686,7 @@ TEST_F(BCSVTestSuite, ZoH_CrossCompatibility_StaticToStatic) {
     
     // Read using static interface
     {
-        bcsv::Reader<TestLayout, bcsv::TrackingPolicy::Enabled> reader;
+        bcsv::Reader<TestLayout> reader;
         if (!reader.open(filename)) {
             FAIL() << "Failed to open file for ZoH static read";
         }
@@ -2745,7 +2745,7 @@ TEST_F(BCSVTestSuite, ZoH_CompressionEffectiveness) {
     
     // Write same data with ZoH compression
     {
-        bcsv::Writer<bcsv::Layout, bcsv::TrackingPolicy::Enabled> writer(layout);
+        bcsv::WriterZoH<bcsv::Layout> writer(layout);
         if (!writer.open(zoh_file, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
             FAIL() << "Failed to open ZoH compression file";
         }
@@ -2797,7 +2797,7 @@ TEST_F(BCSVTestSuite, ZoH_CompressionEffectiveness) {
     
     // Read ZoH file
     {
-        bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Enabled> reader;
+        bcsv::Reader<bcsv::Layout> reader;
         reader.open(zoh_file);
         while (reader.readNext()) {
             zoh_data.emplace_back(
@@ -3428,7 +3428,7 @@ TEST_F(BCSVTestSuite, Ref_SerializeRoundTrip) {
     row.ref<std::string>(22) = "Serialize me";
 
     bcsv::ByteBuffer buffer;
-    bcsv::RowCodecFlat001<bcsv::Layout, bcsv::TrackingPolicy::Disabled> codec;
+    bcsv::RowCodecFlat001<bcsv::Layout> codec;
     codec.setup(layout);
     auto span = codec.serialize(row, buffer);
     ASSERT_GT(span.size(), 0u) << "Serialized row must be non-empty";

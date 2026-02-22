@@ -31,7 +31,7 @@ void assertStringColumnsArePopulatedByGenerators(const bench::DatasetProfile& pr
     bcsv::Row randomRow(profile.layout);
     profile.generate(randomRow, 17);
 
-    bcsv::RowImpl<bcsv::TrackingPolicy::Enabled> zohRow(profile.layout);
+    bcsv::Row zohRow(profile.layout);
     profile.generateZoH(zohRow, 17);
 
     for (size_t i = 0; i < profile.layout.columnCount(); ++i) {
@@ -129,9 +129,9 @@ TEST(BenchmarkProfiles, EventLogSchemaMatchesProposalShape) {
         [&profile](bcsv::Row& row, size_t index) { profile.generate(row, index); },
         {0u, 1u, 2u, 10u, 13u, 23u}
     );
-    assertGeneratorDeterminism<bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>>(
+    assertGeneratorDeterminism<bcsv::Row>(
         profile,
-        [&profile](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t index) { profile.generateZoH(row, index); },
+        [&profile](bcsv::Row& row, size_t index) { profile.generateZoH(row, index); },
         {0u, 1u, 2u, 10u, 13u, 23u}
     );
 }
@@ -148,9 +148,9 @@ TEST(BenchmarkProfiles, IotFleetSchemaMatchesProposalShape) {
         [&profile](bcsv::Row& row, size_t index) { profile.generate(row, index); },
         {0u, 1u, 2u, 4u, 8u, 11u, 15u}
     );
-    assertGeneratorDeterminism<bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>>(
+    assertGeneratorDeterminism<bcsv::Row>(
         profile,
-        [&profile](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t index) { profile.generateZoH(row, index); },
+        [&profile](bcsv::Row& row, size_t index) { profile.generateZoH(row, index); },
         {0u, 1u, 2u, 4u, 8u, 11u, 15u}
     );
 }
@@ -167,9 +167,9 @@ TEST(BenchmarkProfiles, FinancialOrdersSchemaMatchesProposalShape) {
         [&profile](bcsv::Row& row, size_t index) { profile.generate(row, index); },
         {0u, 1u, 2u, 5u, 10u, 11u, 18u}
     );
-    assertGeneratorDeterminism<bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>>(
+    assertGeneratorDeterminism<bcsv::Row>(
         profile,
-        [&profile](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t index) { profile.generateZoH(row, index); },
+        [&profile](bcsv::Row& row, size_t index) { profile.generateZoH(row, index); },
         {0u, 1u, 2u, 5u, 10u, 11u, 18u}
     );
 }

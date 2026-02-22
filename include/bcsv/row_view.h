@@ -40,7 +40,7 @@ namespace bcsv {
     class RowView {
         // Immutable after construction
         Layout                  layout_;        // Shared layout data (no callbacks needed for views)
-        RowCodecFlat001<Layout, TrackingPolicy::Disabled> codec_; // Wire-format metadata + per-column offsets
+        RowCodecFlat001<Layout> codec_; // Wire-format metadata + per-column offsets
 
     public:
         RowView() = delete;
@@ -104,7 +104,7 @@ namespace bcsv {
     class RowViewStatic {
     public:
         using LayoutType = LayoutStatic<ColumnTypes...>;
-        using Codec = RowCodecFlat001<LayoutType, TrackingPolicy::Disabled>;
+        using Codec = RowCodecFlat001<LayoutType>;
         static constexpr size_t COLUMN_COUNT = LayoutType::columnCount();
 
         template<size_t Index>

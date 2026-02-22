@@ -227,7 +227,7 @@ TYPED_TEST(RowTypedTest, Serialization) {
     
     // Serialize via codec
     ByteBuffer buffer;
-    RowCodecFlat001<Layout, TrackingPolicy::Disabled> codec;
+    RowCodecFlat001<Layout> codec;
     codec.setup(this->layout_);
     auto serialized = codec.serialize(row1, buffer);
     ASSERT_FALSE(serialized.empty())

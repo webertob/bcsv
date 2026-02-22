@@ -28,7 +28,11 @@ namespace bcsv {
     
     // Configuration
     constexpr bool RANGE_CHECKING = true;
-    constexpr bool DEBUG_OUTPUTS  = true;       // sends information to std::cerr and std::cout to support development and debugging             
+#ifndef NDEBUG
+    constexpr bool DEBUG_OUTPUTS  = true;       // sends information to std::cerr and std::cout to support development and debugging
+#else
+    constexpr bool DEBUG_OUTPUTS  = false;      // disabled in release builds
+#endif             
 
     // Version information (from auto-generated header)
     constexpr int VERSION_MAJOR = version::MAJOR;
@@ -518,14 +522,5 @@ namespace bcsv {
             is_string_like_v<std::decay_t<T>> ||
             (std::is_convertible_v<std::decay_t<T>, bool> && !std::is_arithmetic_v<std::decay_t<T>>);  // For std::_Bit_reference
     }    
-    
-    enum class TrackingPolicy : uint8_t {
-        Disabled,
-        Enabled
-    };
-
-    constexpr bool isTrackingEnabled(TrackingPolicy policy) noexcept {
-        return policy == TrackingPolicy::Enabled;
-    }
 
 } // namespace bcsv

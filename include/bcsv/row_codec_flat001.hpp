@@ -29,13 +29,13 @@
 namespace bcsv {
 
 // ════════════════════════════════════════════════════════════════════════════
-// Primary template: RowCodecFlat001<Layout, Policy> — dynamic layout
+// Primary template: RowCodecFlat001<Layout> — dynamic layout
 // ════════════════════════════════════════════════════════════════════════════
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
 
-template<typename LayoutType, TrackingPolicy Policy>
-inline void RowCodecFlat001<LayoutType, Policy>::setup(const LayoutType& layout)
+template<typename LayoutType>
+inline void RowCodecFlat001<LayoutType>::setup(const LayoutType& layout)
 {
     layout_ = &layout;
     wire_data_size_ = 0;
@@ -58,8 +58,8 @@ inline void RowCodecFlat001<LayoutType, Policy>::setup(const LayoutType& layout)
 
 // ── Bulk serialize (Row → wire bytes) ────────────────────────────────────────
 
-template<typename LayoutType, TrackingPolicy Policy>
-inline std::span<std::byte> RowCodecFlat001<LayoutType, Policy>::serialize(
+template<typename LayoutType>
+inline std::span<std::byte> RowCodecFlat001<LayoutType>::serialize(
     const RowType& row, ByteBuffer& buffer) const
 {
     assert(layout_ && "RowCodecFlat001::serialize() called before setup()");
@@ -70,7 +70,6 @@ inline std::span<std::byte> RowCodecFlat001<LayoutType, Policy>::serialize(
     const uint32_t fixed_sz = wireFixedSize();
     const size_t   count    = layout_->columnCount();
 
-    // Local pointers — one indirection per vector, amortised over the loop
     const ColumnType* types   = layout_->columnTypes().data();
     const uint32_t*   offsets = layout_->columnOffsets().data();
 
@@ -85,14 +84,9 @@ inline std::span<std::byte> RowCodecFlat001<LayoutType, Policy>::serialize(
     // Resize buffer once for the entire row
     buffer.resize(off_row + fixed_sz + strg_payload);
 
-    // Clear bits section (padding bits must be zero)
+    // bits_ is sequentially packed bool values — bulk copy
     if (bits_sz > 0) {
-        if constexpr (!isTrackingEnabled(Policy)) {
-            // Non-tracking: bits_ is already sequentially packed, bulk copy
-            std::memcpy(&buffer[off_row], row.bits_.data(), bits_sz);
-        } else {
-            std::memset(&buffer[off_row], 0, bits_sz);
-        }
+        std::memcpy(&buffer[off_row], row.bits_.data(), bits_sz);
     }
 
     // ── Single-pass: serialize all sections in one column loop ─────
@@ -106,11 +100,6 @@ inline std::span<std::byte> RowCodecFlat001<LayoutType, Policy>::serialize(
         const uint32_t   off  = offsets[i];
 
         if (type == ColumnType::BOOL) {
-            if constexpr (isTrackingEnabled(Policy)) {
-                if (row.bits_[i]) {
-                    buffer[off_row + (bool_idx >> 3)] |= std::byte{1} << (bool_idx & 7);
-                }
-            }
             ++bool_idx;
         } else if (type == ColumnType::STRING) {
             const std::string& str = row.strg_[off];
@@ -134,8 +123,8 @@ inline std::span<std::byte> RowCodecFlat001<LayoutType, Policy>::serialize(
 
 // ── Bulk deserialize (wire bytes → Row) ──────────────────────────────────────
 
-template<typename LayoutType, TrackingPolicy Policy>
-inline void RowCodecFlat001<LayoutType, Policy>::deserialize(
+template<typename LayoutType>
+inline void RowCodecFlat001<LayoutType>::deserialize(
     std::span<const std::byte> buffer, RowType& row) const
 {
     assert(layout_ && "RowCodecFlat001::deserialize() called before setup()");
@@ -152,10 +141,9 @@ inline void RowCodecFlat001<LayoutType, Policy>::deserialize(
     const ColumnType* types   = layout_->columnTypes().data();
     const uint32_t*   offsets = layout_->columnOffsets().data();
 
-    if constexpr (!isTrackingEnabled(Policy)) {
-        if (bits_sz > 0) {
-            std::memcpy(row.bits_.data(), &buffer[0], bits_sz);
-        }
+    // bits_ is sequentially packed bool values — bulk copy
+    if (bits_sz > 0) {
+        std::memcpy(row.bits_.data(), &buffer[0], bits_sz);
     }
 
     size_t bool_idx = 0;
@@ -168,10 +156,6 @@ inline void RowCodecFlat001<LayoutType, Policy>::deserialize(
         const uint32_t   off  = offsets[i];
 
         if (type == ColumnType::BOOL) {
-            if constexpr (isTrackingEnabled(Policy)) {
-                bool val = (buffer[bool_idx >> 3] & (std::byte{1} << (bool_idx & 7))) != std::byte{0};
-                row.bits_[i] = val;
-            }
             ++bool_idx;
         } else if (type == ColumnType::STRING) {
             uint16_t len = 0;
@@ -195,23 +179,17 @@ inline void RowCodecFlat001<LayoutType, Policy>::deserialize(
             wire_off += len;
         }
     }
-
-    // When tracking is enabled, mark all non-BOOL columns as changed.
-    // Flat format carries full row data — every column is "changed".
-    if constexpr (isTrackingEnabled(Policy)) {
-        row.trackingSetAllChanged();
-    }
 }
 
 
 // ════════════════════════════════════════════════════════════════════════════
-// Partial specialization: RowCodecFlat001<LayoutStatic<Ts...>, Policy>
+// Partial specialization: RowCodecFlat001<LayoutStatic<Ts...>>
 // ════════════════════════════════════════════════════════════════════════════
 
 // ── Bulk serialize (static Row → wire bytes) ─────────────────────────────────
 
-template<TrackingPolicy Policy, typename... ColumnTypes>
-inline std::span<std::byte> RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy>::serialize(
+template<typename... ColumnTypes>
+inline std::span<std::byte> RowCodecFlat001<LayoutStatic<ColumnTypes...>>::serialize(
     const RowType& row, ByteBuffer& buffer) const
 {
     assert(layout_ && "RowCodecFlat001::serialize() called before setup()");
@@ -245,9 +223,9 @@ inline std::span<std::byte> RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy
     return {&buffer[offRow], buffer.size() - offRow};
 }
 
-template<TrackingPolicy Policy, typename... ColumnTypes>
+template<typename... ColumnTypes>
 template<size_t Index>
-inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy>::serializeElements(
+inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>>::serializeElements(
     const RowType& row, ByteBuffer& buffer, size_t offRow,
     size_t& boolIdx, size_t& dataOff, size_t& lenOff, size_t& payOff) const
 {
@@ -287,8 +265,8 @@ inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy>::serializeElem
 
 // ── Bulk deserialize (wire bytes → static Row) ──────────────────────────────
 
-template<TrackingPolicy Policy, typename... ColumnTypes>
-inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy>::deserialize(
+template<typename... ColumnTypes>
+inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>>::deserialize(
     std::span<const std::byte> buffer, RowType& row) const
 {
     assert(layout_ && "RowCodecFlat001::deserialize() called before setup()");
@@ -301,17 +279,11 @@ inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy>::deserialize(
     size_t lenOff  = WIRE_BITS_SIZE + WIRE_DATA_SIZE;
     size_t payOff  = WIRE_FIXED_SIZE;
     deserializeElements<0>(buffer, row, boolIdx, dataOff, lenOff, payOff);
-
-    // When tracking is enabled, mark all non-BOOL columns as changed.
-    // Flat format carries full row data — every column is "changed".
-    if constexpr (isTrackingEnabled(Policy)) {
-        row.trackingSetAllChanged();
-    }
 }
 
-template<TrackingPolicy Policy, typename... ColumnTypes>
+template<typename... ColumnTypes>
 template<size_t Index>
-inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy>::deserializeElements(
+inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>>::deserializeElements(
     const std::span<const std::byte>& srcBuffer, RowType& row,
     size_t& boolIdx, size_t& dataOff, size_t& lenOff, size_t& payOff) const
 {

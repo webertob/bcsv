@@ -38,11 +38,11 @@ enum class RowCodecId : uint8_t {
     ZOH001,
 };
 
-template<typename LayoutType, TrackingPolicy Policy = TrackingPolicy::Disabled>
+template<typename LayoutType>
 class RowCodecDispatch {
-    using RowType = typename LayoutType::template RowType<Policy>;
-    using FlatCodec = RowCodecFlat001<LayoutType, Policy>;
-    using ZoHCodec  = RowCodecZoH001<LayoutType, Policy>;
+    using RowType = typename LayoutType::RowType;
+    using FlatCodec = RowCodecFlat001<LayoutType>;
+    using ZoHCodec  = RowCodecZoH001<LayoutType>;
 
 public:
     using SerializeFn = std::span<std::byte> (*)(void* codec, RowType& row, ByteBuffer& buffer);
@@ -248,7 +248,7 @@ private:
     }
 };
 
-template<typename LayoutType, TrackingPolicy Policy = TrackingPolicy::Disabled>
-using CodecDispatch = RowCodecDispatch<LayoutType, Policy>;
+template<typename LayoutType>
+using CodecDispatch = RowCodecDispatch<LayoutType>;
 
 } // namespace bcsv

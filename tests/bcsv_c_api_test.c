@@ -323,6 +323,77 @@ void test_writer_reader_api() {
     TEST_END();
 }
 
+/* Test ZoH writer via C API (#24) */
+void test_zoh_writer_api() {
+    TEST_START("ZoH Writer API");
+    
+    const char* test_filename = "/tmp/bcsv_capi_zoh_test.bcsv";
+    
+    /* Create layout */
+    bcsv_layout_t layout = bcsv_layout_create();
+    bcsv_layout_add_column(layout, 0, "flag", BCSV_TYPE_BOOL);
+    bcsv_layout_add_column(layout, 1, "value", BCSV_TYPE_INT32);
+    
+    /* Create ZoH writer */
+    bcsv_writer_t writer = bcsv_writer_create_zoh(layout);
+    TEST_ASSERT(writer != NULL, "ZoH writer created");
+    
+    /* Open with ZoH flag */
+    bool ok = bcsv_writer_open(writer, test_filename, true, 1, 64, BCSV_FLAG_ZOH);
+    TEST_ASSERT(ok, "ZoH writer opened");
+    TEST_ASSERT(bcsv_writer_is_open(writer), "ZoH writer is open");
+    
+    /* Write 3 rows */
+    bcsv_row_t row = bcsv_writer_row(writer);
+    TEST_ASSERT(row != NULL, "ZoH writer row accessible");
+    
+    bcsv_row_set_bool(row, 0, true);
+    bcsv_row_set_int32(row, 1, 10);
+    bcsv_writer_next(writer);
+    
+    bcsv_row_set_bool(row, 0, false);
+    bcsv_row_set_int32(row, 1, 10);  /* same value, ZoH should compress */
+    bcsv_writer_next(writer);
+    
+    bcsv_row_set_bool(row, 0, false);
+    bcsv_row_set_int32(row, 1, 20);
+    bcsv_writer_next(writer);
+    
+    TEST_ASSERT(bcsv_writer_index(writer) == 3, "ZoH wrote 3 rows");
+    
+    bcsv_writer_close(writer);
+    bcsv_writer_destroy(writer);
+    
+    /* Read back */
+    bcsv_reader_t reader = bcsv_reader_create(BCSV_READ_MODE_STRICT);
+    ok = bcsv_reader_open(reader, test_filename);
+    TEST_ASSERT(ok, "Reader opened ZoH file");
+    
+    TEST_ASSERT(bcsv_reader_next(reader), "Read ZoH row 1");
+    const_bcsv_row_t rrow = bcsv_reader_row(reader);
+    TEST_ASSERT(bcsv_row_get_bool(rrow, 0) == true, "Row 1 flag=true");
+    TEST_ASSERT(bcsv_row_get_int32(rrow, 1) == 10, "Row 1 value=10");
+    
+    TEST_ASSERT(bcsv_reader_next(reader), "Read ZoH row 2");
+    rrow = bcsv_reader_row(reader);
+    TEST_ASSERT(bcsv_row_get_bool(rrow, 0) == false, "Row 2 flag=false");
+    TEST_ASSERT(bcsv_row_get_int32(rrow, 1) == 10, "Row 2 value=10");
+    
+    TEST_ASSERT(bcsv_reader_next(reader), "Read ZoH row 3");
+    rrow = bcsv_reader_row(reader);
+    TEST_ASSERT(bcsv_row_get_bool(rrow, 0) == false, "Row 3 flag=false");
+    TEST_ASSERT(bcsv_row_get_int32(rrow, 1) == 20, "Row 3 value=20");
+    
+    TEST_ASSERT(!bcsv_reader_next(reader), "No more rows");
+    
+    bcsv_reader_close(reader);
+    bcsv_reader_destroy(reader);
+    bcsv_layout_destroy(layout);
+    remove(test_filename);
+    
+    TEST_END();
+}
+
 int main() {
     printf("BCSV C API Comprehensive Test Suite\n");
     printf("====================================\n");
@@ -330,6 +401,7 @@ int main() {
     test_layout_api();
     test_row_api();
     test_writer_reader_api();
+    test_zoh_writer_api();
     
     printf("\n====================================\n");
     printf("Test Results: %d/%d tests passed\n", tests_passed, tests_run);

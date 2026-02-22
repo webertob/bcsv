@@ -23,6 +23,7 @@
 #include <cstddef>
 #include <cstring>   // for std::memcmp
 #include <iomanip>
+#include <ostream>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -34,7 +35,7 @@ namespace bcsv {
     // ========================================================================
 
     inline Layout::Data::Data() {
-        callbacks_.reserve(64);  // Reserve typical capacity to avoid early reallocations
+        callbacks_.reserve(4);  // Typical: 1 Writer + 1-2 Rows
     }
 
     inline Layout::Data::Data(const Data& other)
@@ -44,7 +45,6 @@ namespace bcsv {
         , column_types_(other.column_types_)
         , offsets_(other.offsets_)
         , offsets_packed_(other.offsets_packed_)
-        , tracked_mask_(other.tracked_mask_)
         , column_count_bool_(other.column_count_bool_)
         , column_count_strings_(other.column_count_strings_)
     {
@@ -115,8 +115,6 @@ namespace bcsv {
     inline void Layout::Data::rebuildOffsets() {
         const size_t n = column_types_.size();
         offsets_.resize(n);
-        tracked_mask_.resize(n);
-        tracked_mask_.reset();
 
         uint32_t bitIdx  = 0;
         uint32_t dataOff = 0;
@@ -127,14 +125,12 @@ namespace bcsv {
                 offsets_[i] = bitIdx++;
             } else if (type == ColumnType::STRING) {
                 offsets_[i] = strgIdx++;
-                tracked_mask_[i] = true;
             } else {
                 uint32_t alignment = static_cast<uint32_t>(alignOf(type));
                 uint32_t size = static_cast<uint32_t>(sizeOf(type));
                 dataOff = (dataOff + (alignment - 1)) & ~(alignment - 1);
                 offsets_[i] = dataOff;
                 dataOff += size;
-                tracked_mask_[i] = true;
             }
         }
 
@@ -199,8 +195,12 @@ namespace bcsv {
         const bool isAppend = (position == column_types_.size() - 1); // we already inserted into column_types_
         if (type == ColumnType::BOOL) {
             if (isAppend) {
-                // O(1): offset = count of existing BOOL columns = total - tracked
-                offsets_.push_back(static_cast<uint32_t>(tracked_mask_.size() - tracked_mask_.count()));
+                // O(1): offset = count of existing BOOL columns
+                uint32_t boolCount = 0;
+                for (size_t i = 0; i < position; ++i) {
+                    if (column_types_[i] == ColumnType::BOOL) ++boolCount;
+                }
+                offsets_.push_back(boolCount);
             } else {
                 uint32_t boolIdx = 0;
                 for (size_t i = 0; i < position; ++i) {
@@ -211,7 +211,6 @@ namespace bcsv {
                     if (column_types_[i] == ColumnType::BOOL) offsets_[i]++;
                 }
             }
-            tracked_mask_.insert(position, false);
         } else if (type == ColumnType::STRING) {
             // String offset = sequential string index (count of STRING columns before us).
             // O(n) scan — acceptable since string-append is not the hot path (bool-append is).
@@ -229,7 +228,6 @@ namespace bcsv {
                     }
                 }
             }
-            tracked_mask_.insert(position, true);
         } else {
             // Scalar: byte offset depends on alignment
             uint32_t dataOff = 0;
@@ -255,7 +253,6 @@ namespace bcsv {
                     }
                 }
             }
-            tracked_mask_.insert(position, true);
         }
 
         rebuildPackedMetadata();
@@ -282,7 +279,6 @@ namespace bcsv {
         column_types_.erase(column_types_.begin() + index);
 
         // Incremental offset/mask update.
-        tracked_mask_.erase(index);
         offsets_.erase(offsets_.begin() + index);
 
         if (removedType == ColumnType::BOOL) {
@@ -422,7 +418,6 @@ namespace bcsv {
         column_types_.clear();
         offsets_.clear();
         offsets_packed_.clear();
-        tracked_mask_.resize(0);
         column_count_bool_ = 0;
         column_count_strings_ = 0;
         // Note: clear() doesn't trigger notifications
@@ -487,6 +482,25 @@ namespace bcsv {
             return memcmp(columnTypes().data(), other.columnTypes().data(), columnTypes().size() * sizeof(ColumnType)) == 0;   
         }
         return false;
+    }
+
+    /**
+     * @brief Full equality: same column types AND same column names.
+     * Use isCompatible() for structural-only (type) comparison.
+     */
+    template<typename OtherLayout>
+    inline bool Layout::operator==(const OtherLayout& other) const {
+        if (!isCompatible(other)) {
+            return false;
+        }
+        // Types match — now compare names
+        const size_t n = columnCount();
+        for (size_t i = 0; i < n; ++i) {
+            if (columnName(i) != other.columnName(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     template<typename OtherLayout>
@@ -638,6 +652,28 @@ namespace bcsv {
             const auto& other_types = other.columnTypes();
             return std::memcmp(COLUMN_TYPES.data(), other_types.data(), N * sizeof(ColumnType)) == 0;
         }
+    }
+
+
+
+    /**
+     * @brief Full equality: same column types AND same column names.
+     * Use isCompatible() for structural-only (type) comparison.
+     */
+    template<typename... ColumnTypes>
+    template<typename OtherLayout>
+    inline bool LayoutStatic<ColumnTypes...>::operator==(const OtherLayout& other) const {
+        if (!isCompatible(other)) {
+            return false;
+        }
+        // Types match — now compare names
+        constexpr size_t N = sizeof...(ColumnTypes);
+        for (size_t i = 0; i < N; ++i) {
+            if (data_->columnName(i) != other.columnName(i)) {
+                return false;
+            }
+        }
+        return true;
     }
 
 

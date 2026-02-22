@@ -1564,6 +1564,8 @@ void Bitset<N>::writeTo(void* dst, size_t capacity) const {
     if (capacity < byteCount()) {
         throw std::out_of_range("Bitset::writeTo: insufficient capacity");
     }
+    // Ensure padding bits in the last word are zero before export
+    const_cast<Bitset*>(this)->clearUnusedBits();
     std::memcpy(dst, data(), byteCount());
 }
 

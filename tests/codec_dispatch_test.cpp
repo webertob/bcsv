@@ -92,7 +92,7 @@ void writeFlatFlexible(const std::string& path) {
 
 void writeZoHFlexible(const std::string& path) {
     auto layout = createFlexLayout();
-    bcsv::Writer<bcsv::Layout, bcsv::TrackingPolicy::Enabled> writer(layout);
+    bcsv::WriterZoH<bcsv::Layout> writer(layout);
     ASSERT_TRUE(writer.open(path, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD))
         << writer.getErrorMsg();
     for (const auto& d : TEST_DATA) {
@@ -121,7 +121,7 @@ void writeFlatStatic(const std::string& path) {
 
 void writeZoHStatic(const std::string& path) {
     auto layout = createStaticLayout();
-    bcsv::Writer<StaticLayout, bcsv::TrackingPolicy::Enabled> writer(layout);
+    bcsv::WriterZoH<StaticLayout> writer(layout);
     ASSERT_TRUE(writer.open(path, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD))
         << writer.getErrorMsg();
     for (const auto& d : TEST_DATA) {
@@ -191,7 +191,7 @@ TEST_F(CodecDispatchFlexTest, FlatFile_DisabledReader) {
     const auto path = testPath("dispatch_flat_disabled.bcsv");
     writeFlatFlexible(path);
 
-    bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Disabled> reader;
+    bcsv::Reader<bcsv::Layout> reader;
     ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
     verifyData(reader);
     reader.close();
@@ -202,7 +202,7 @@ TEST_F(CodecDispatchFlexTest, ZoHFile_EnabledReader) {
     const auto path = testPath("dispatch_zoh_enabled.bcsv");
     writeZoHFlexible(path);
 
-    bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Enabled> reader;
+    bcsv::Reader<bcsv::Layout> reader;
     ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
     verifyData(reader);
     reader.close();
@@ -213,7 +213,7 @@ TEST_F(CodecDispatchFlexTest, FlatFile_EnabledReader) {
     const auto path = testPath("dispatch_flat_enabled.bcsv");
     writeFlatFlexible(path);
 
-    bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Enabled> reader;
+    bcsv::Reader<bcsv::Layout> reader;
     ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
     EXPECT_TRUE(reader.isOpen());
     verifyData(reader);
@@ -225,7 +225,7 @@ TEST_F(CodecDispatchFlexTest, ZoHFile_DisabledReader) {
     const auto path = testPath("dispatch_zoh_disabled.bcsv");
     writeZoHFlexible(path);
 
-    bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Disabled> reader;
+    bcsv::Reader<bcsv::Layout> reader;
     ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
     EXPECT_TRUE(reader.isOpen());
     verifyData(reader);
@@ -248,7 +248,7 @@ TEST_F(CodecDispatchStaticTest, FlatFile_DisabledReader) {
     const auto path = testPath("dispatch_static_flat_disabled.bcsv");
     writeFlatStatic(path);
 
-    bcsv::Reader<StaticLayout, bcsv::TrackingPolicy::Disabled> reader;
+    bcsv::Reader<StaticLayout> reader;
     ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
     verifyDataStatic(reader);
     reader.close();
@@ -259,7 +259,7 @@ TEST_F(CodecDispatchStaticTest, ZoHFile_EnabledReader) {
     const auto path = testPath("dispatch_static_zoh_enabled.bcsv");
     writeZoHStatic(path);
 
-    bcsv::Reader<StaticLayout, bcsv::TrackingPolicy::Enabled> reader;
+    bcsv::Reader<StaticLayout> reader;
     ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
     verifyDataStatic(reader);
     reader.close();
@@ -270,7 +270,7 @@ TEST_F(CodecDispatchStaticTest, FlatFile_EnabledReader) {
     const auto path = testPath("dispatch_static_flat_enabled.bcsv");
     writeFlatStatic(path);
 
-    bcsv::Reader<StaticLayout, bcsv::TrackingPolicy::Enabled> reader;
+    bcsv::Reader<StaticLayout> reader;
     ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
     verifyDataStatic(reader);
     reader.close();
@@ -281,7 +281,7 @@ TEST_F(CodecDispatchStaticTest, ZoHFile_DisabledReader) {
     const auto path = testPath("dispatch_static_zoh_disabled.bcsv");
     writeZoHStatic(path);
 
-    bcsv::Reader<StaticLayout, bcsv::TrackingPolicy::Disabled> reader;
+    bcsv::Reader<StaticLayout> reader;
     ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
     verifyDataStatic(reader);
     reader.close();
@@ -310,7 +310,7 @@ TEST(CodecDispatchUnitTest, SelectFlat) {
 
 TEST(CodecDispatchUnitTest, SelectZoH) {
     auto layout = createFlexLayout();
-    bcsv::CodecDispatch<bcsv::Layout, bcsv::TrackingPolicy::Enabled> dispatch;
+    bcsv::CodecDispatch<bcsv::Layout> dispatch;
     dispatch.selectCodec(bcsv::FileFlags::ZERO_ORDER_HOLD, layout);
     EXPECT_TRUE(dispatch.isSetup());
     EXPECT_FALSE(dispatch.isFlat());

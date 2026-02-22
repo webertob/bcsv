@@ -28,6 +28,29 @@ void set_last_error(const char* where, const std::exception& ex) noexcept {
 void set_last_error_unknown(const char* where) noexcept {
     g_last_error = std::string(where) + ": unknown exception";
 }
+
+// Tagged wrapper to support both Flat and ZoH writers behind void*
+struct WriterHandle {
+    enum class Type { Flat, ZoH } type;
+    void* ptr;
+};
+
+template<typename F>
+auto visit_writer(WriterHandle* h, F&& fn) {
+    if (h->type == WriterHandle::Type::ZoH)
+        return fn(static_cast<bcsv::WriterZoH<bcsv::Layout>*>(h->ptr));
+    else
+        return fn(static_cast<bcsv::Writer<bcsv::Layout>*>(h->ptr));
+}
+
+template<typename F>
+auto visit_writer(const WriterHandle* h, F&& fn) {
+    if (h->type == WriterHandle::Type::ZoH)
+        return fn(static_cast<const bcsv::WriterZoH<bcsv::Layout>*>(h->ptr));
+    else
+        return fn(static_cast<const bcsv::Writer<bcsv::Layout>*>(h->ptr));
+}
+
 } // namespace
 
 #define BCSV_CAPI_TRY_RETURN(where, fallback, expr) \
@@ -229,42 +252,67 @@ size_t bcsv_reader_index(const_bcsv_reader_t reader) {
 // Writer API
 bcsv_writer_t bcsv_writer_create(bcsv_layout_t layout) {
     BCSV_CAPI_TRY_RETURN("bcsv_writer_create", nullptr, ([&]() {
-        bcsv::Writer<bcsv::Layout>* writer = nullptr;
+        auto* h = new WriterHandle();
+        h->type = WriterHandle::Type::Flat;
         if (layout) {
-            writer = new bcsv::Writer<bcsv::Layout>(*static_cast<bcsv::Layout*>(layout));
+            h->ptr = new bcsv::Writer<bcsv::Layout>(*static_cast<bcsv::Layout*>(layout));
         } else {
-            bcsv_layout_t empty_layout = bcsv_layout_create();
-            writer = new bcsv::Writer<bcsv::Layout>(*static_cast<bcsv::Layout*>(empty_layout));
-            bcsv_layout_destroy(empty_layout);
+            bcsv::Layout empty;
+            h->ptr = new bcsv::Writer<bcsv::Layout>(empty);
         }
-        return reinterpret_cast<bcsv_writer_t>(writer);
+        return reinterpret_cast<bcsv_writer_t>(h);
+    })())
+}
+
+bcsv_writer_t bcsv_writer_create_zoh(bcsv_layout_t layout) {
+    BCSV_CAPI_TRY_RETURN("bcsv_writer_create_zoh", nullptr, ([&]() {
+        auto* h = new WriterHandle();
+        h->type = WriterHandle::Type::ZoH;
+        if (layout) {
+            h->ptr = new bcsv::WriterZoH<bcsv::Layout>(*static_cast<bcsv::Layout*>(layout));
+        } else {
+            bcsv::Layout empty;
+            h->ptr = new bcsv::WriterZoH<bcsv::Layout>(empty);
+        }
+        return reinterpret_cast<bcsv_writer_t>(h);
     })())
 }
 
 void bcsv_writer_destroy(bcsv_writer_t writer) {
-    BCSV_CAPI_TRY_VOID("bcsv_writer_destroy", delete static_cast<bcsv::Writer<bcsv::Layout>*>(writer))
+    BCSV_CAPI_TRY_VOID("bcsv_writer_destroy", ([&]() {
+        auto* h = static_cast<WriterHandle*>(writer);
+        visit_writer(h, [](auto* w) { delete w; });
+        delete h;
+    })())
 }
 
 void bcsv_writer_close(bcsv_writer_t writer) {
-    BCSV_CAPI_TRY_VOID("bcsv_writer_close", static_cast<bcsv::Writer<bcsv::Layout>*>(writer)->close())
+    BCSV_CAPI_TRY_VOID("bcsv_writer_close", visit_writer(static_cast<WriterHandle*>(writer), [](auto* w) { w->close(); }))
 }
 
 void bcsv_writer_flush(bcsv_writer_t writer) {
-    BCSV_CAPI_TRY_VOID("bcsv_writer_flush", static_cast<bcsv::Writer<bcsv::Layout>*>(writer)->flush())
+    BCSV_CAPI_TRY_VOID("bcsv_writer_flush", visit_writer(static_cast<WriterHandle*>(writer), [](auto* w) { w->flush(); }))
 }
 
 bool bcsv_writer_open(bcsv_writer_t writer, const char* filename, bool overwrite, int compress, int block_size_kb, bcsv_file_flags_t flags) {
     try {
-        auto* w = static_cast<bcsv::Writer<bcsv::Layout>*>(writer);
-        bool ok = w->open(filename,
+        auto* h = static_cast<WriterHandle*>(writer);
+        // Auto-set ZoH flag for ZoH writers so the file header is correct
+        // even if the caller forgets to pass BCSV_FLAG_ZOH
+        if (h->type == WriterHandle::Type::ZoH) {
+            flags = static_cast<bcsv_file_flags_t>(flags | BCSV_FLAG_ZOH);
+        }
+        bool ok = visit_writer(h, [&](auto* w) {
+            return w->open(filename,
                           overwrite,
                           static_cast<size_t>(compress),
                           static_cast<size_t>(block_size_kb),
                           static_cast<bcsv::FileFlags>(flags));
+        });
         if (ok) {
             clear_last_error();
         } else {
-            g_last_error = w->getErrorMsg();
+            visit_writer(h, [](auto* w) { g_last_error = w->getErrorMsg(); });
         }
         return ok;
     } catch (const std::exception& ex) {
@@ -277,34 +325,32 @@ bool bcsv_writer_open(bcsv_writer_t writer, const char* filename, bool overwrite
 }
 
 bool bcsv_writer_is_open(const_bcsv_writer_t writer) {
-    BCSV_CAPI_TRY_RETURN("bcsv_writer_is_open", false, static_cast<const bcsv::Writer<bcsv::Layout>*>(writer)->isOpen())
+    BCSV_CAPI_TRY_RETURN("bcsv_writer_is_open", false, visit_writer(static_cast<const WriterHandle*>(writer), [](auto* w) { return w->isOpen(); }))
 }
 
 #ifdef _WIN32
 const wchar_t* bcsv_writer_filename(const_bcsv_writer_t writer) {
-    BCSV_CAPI_TRY_RETURN("bcsv_writer_filename", static_cast<const wchar_t*>(nullptr), ([&]() {
-        const auto* w = static_cast<const bcsv::Writer<bcsv::Layout>*>(writer);
-        const auto& path = w->filePath();
-        return path.c_str();
-    })())
+    BCSV_CAPI_TRY_RETURN("bcsv_writer_filename", static_cast<const wchar_t*>(nullptr), visit_writer(static_cast<const WriterHandle*>(writer), [](auto* w) -> const wchar_t* {
+        return w->filePath().c_str();
+    }))
 }
 #else
 const char* bcsv_writer_filename(const_bcsv_writer_t writer) {
-    BCSV_CAPI_TRY_RETURN("bcsv_writer_filename", static_cast<const char*>(nullptr), ([&]() {
-        const auto* w = static_cast<const bcsv::Writer<bcsv::Layout>*>(writer);
-        const auto& path = w->filePath();
-        return path.c_str();
-    })())
+    BCSV_CAPI_TRY_RETURN("bcsv_writer_filename", static_cast<const char*>(nullptr), visit_writer(static_cast<const WriterHandle*>(writer), [](auto* w) -> const char* {
+        return w->filePath().c_str();
+    }))
 }
 #endif
 
 const_bcsv_layout_t bcsv_writer_layout(const_bcsv_writer_t writer) {
-    BCSV_CAPI_TRY_RETURN("bcsv_writer_layout", static_cast<const_bcsv_layout_t>(nullptr), static_cast<const_bcsv_layout_t>(&static_cast<const bcsv::Writer<bcsv::Layout>*>(writer)->layout()))
+    BCSV_CAPI_TRY_RETURN("bcsv_writer_layout", static_cast<const_bcsv_layout_t>(nullptr), visit_writer(static_cast<const WriterHandle*>(writer), [](auto* w) -> const_bcsv_layout_t {
+        return static_cast<const_bcsv_layout_t>(&w->layout());
+    }))
 }
 
 bool bcsv_writer_next(bcsv_writer_t writer) {
     try {
-        static_cast<bcsv::Writer<bcsv::Layout>*>(writer)->writeRow();
+        visit_writer(static_cast<WriterHandle*>(writer), [](auto* w) { w->writeRow(); });
         clear_last_error();
         return true;
     } catch (const std::exception& ex) {
@@ -317,11 +363,13 @@ bool bcsv_writer_next(bcsv_writer_t writer) {
 }
 
 bcsv_row_t bcsv_writer_row(bcsv_writer_t writer) {
-    BCSV_CAPI_TRY_RETURN("bcsv_writer_row", static_cast<bcsv_row_t>(nullptr), static_cast<bcsv_row_t>(&static_cast<bcsv::Writer<bcsv::Layout>*>(writer)->row()))
+    BCSV_CAPI_TRY_RETURN("bcsv_writer_row", static_cast<bcsv_row_t>(nullptr), visit_writer(static_cast<WriterHandle*>(writer), [](auto* w) -> bcsv_row_t {
+        return static_cast<bcsv_row_t>(&w->row());
+    }))
 }
 
 size_t bcsv_writer_index(const_bcsv_writer_t writer) {
-    BCSV_CAPI_TRY_RETURN("bcsv_writer_index", 0u, static_cast<const bcsv::Writer<bcsv::Layout>*>(writer)->rowCount())
+    BCSV_CAPI_TRY_RETURN("bcsv_writer_index", 0u, visit_writer(static_cast<const WriterHandle*>(writer), [](auto* w) -> size_t { return w->rowCount(); }))
 }
 
 // Row API

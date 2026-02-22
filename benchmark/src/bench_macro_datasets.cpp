@@ -641,11 +641,10 @@ bool validateRowByScenarioExact(const SparseScenario& scenario,
     return true;
 }
 
-template<bcsv::TrackingPolicy P1, bcsv::TrackingPolicy P2>
 void validateRowByScenario(const SparseScenario& scenario,
                            size_t rowIndex,
-                           const bcsv::RowImpl<P1>& expected,
-                           const bcsv::RowImpl<P2>& actual,
+                           const bcsv::Row& expected,
+                           const bcsv::Row& actual,
                            const bcsv::Layout& layout,
                            const std::vector<size_t>& selectedColumns,
                            bench::RoundTripValidator& validator)
@@ -889,10 +888,10 @@ bench::BenchmarkResult benchmarkBCSVFlexibleZoH(const bench::DatasetProfile& pro
 
     const std::string filename = bench::tempFilePath(profile.name + scenarioFileTag(scenario) + "_flex_zoh", ".bcsv");
 
-    // ----- Write (ZoH requires TrackingPolicy::Enabled) -----
+    // ----- Write (ZoH codec) -----
     bench::Timer timer;
     {
-        bcsv::Writer<bcsv::Layout, bcsv::TrackingPolicy::Enabled> writer(profile.layout);
+        bcsv::WriterZoH<bcsv::Layout> writer(profile.layout);
         if (!writer.open(filename, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
             result.validation_error = "Cannot open BCSV ZoH file: " + writer.getErrorMsg();
             return result;
@@ -923,13 +922,13 @@ bench::BenchmarkResult benchmarkBCSVFlexibleZoH(const bench::DatasetProfile& pro
 
     // ----- Read and validate -----
     bench::RoundTripValidator validator;
-    bcsv::RowImpl<bcsv::TrackingPolicy::Enabled> expectedRow(profile.layout);
+    bcsv::Row expectedRow(profile.layout);
     const auto selectedColumns = buildSelectedColumns(profile.layout, scenario.columns_k);
     const auto predicateColumn = findFirstNumericColumn(profile.layout);
     size_t processedRows = 0;
 
     {
-        bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Enabled> reader;
+        bcsv::Reader<bcsv::Layout> reader;
         if (!reader.open(filename)) {
             result.validation_error = "Cannot read BCSV ZoH file: " + reader.getErrorMsg();
             return result;
@@ -990,7 +989,7 @@ bench::BenchmarkResult benchmarkBCSVFlexibleTracked(const bench::DatasetProfile&
 
     bench::Timer timer;
     {
-        bcsv::Writer<bcsv::Layout, bcsv::TrackingPolicy::Enabled> writer(profile.layout);
+        bcsv::WriterZoH<bcsv::Layout> writer(profile.layout);
         if (!writer.open(filename, true, 1)) {
             result.validation_error = "Cannot open BCSV file: " + writer.getErrorMsg();
             return result;
@@ -1024,7 +1023,7 @@ bench::BenchmarkResult benchmarkBCSVFlexibleTracked(const bench::DatasetProfile&
     size_t processedRows = 0;
 
     {
-        bcsv::Reader<bcsv::Layout, bcsv::TrackingPolicy::Enabled> reader;
+        bcsv::Reader<bcsv::Layout> reader;
         if (!reader.open(filename)) {
             result.validation_error = "Cannot read BCSV file: " + reader.getErrorMsg();
             return result;
@@ -1070,15 +1069,17 @@ bench::BenchmarkResult benchmarkBCSVFlexibleTracked(const bench::DatasetProfile&
     return result;
 }
 
-template<typename StaticLayout, bcsv::TrackingPolicy Policy>
+template<typename StaticLayout, bool UseZoH = false>
 bench::BenchmarkResult runStaticLayoutVariant(const bench::DatasetProfile& profile,
                                               size_t numRows,
                                               const SparseScenario& scenario,
                                               bool quiet,
                                               const std::string& modeLabel,
-                                              const std::string& suffix,
-                                              bool useZoH)
+                                              const std::string& suffix)
 {
+    using WriterType = std::conditional_t<UseZoH,
+        bcsv::WriterZoH<StaticLayout>, bcsv::Writer<StaticLayout>>;
+
     bench::BenchmarkResult result;
     applyScenarioMetadata(result, profile, numRows, scenario, modeLabel, "deserialize_first");
 
@@ -1088,8 +1089,8 @@ bench::BenchmarkResult runStaticLayoutVariant(const bench::DatasetProfile& profi
     {
         StaticLayout layoutStatic;
         layoutStatic = profile.layout;
-        bcsv::Writer<StaticLayout, Policy> writer(layoutStatic);
-        const bool opened = useZoH
+        WriterType writer(layoutStatic);
+        const bool opened = UseZoH
             ? writer.open(filename, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)
             : writer.open(filename, true, 1);
         if (!opened) {
@@ -1100,7 +1101,7 @@ bench::BenchmarkResult runStaticLayoutVariant(const bench::DatasetProfile& profi
         timer.start();
         for (size_t i = 0; i < numRows; ++i) {
             auto& row = writer.row();
-            const bool generated = useZoH
+            const bool generated = UseZoH
                 ? generateProfileZoHNoCopy(profile, row, i)
                 : generateProfileNonZoHNoCopy(profile, row, i);
             if (!generated) {
@@ -1123,7 +1124,7 @@ bench::BenchmarkResult runStaticLayoutVariant(const bench::DatasetProfile& profi
     }
 
     bcsv::Row expectedRow(profile.layout);
-    bcsv::RowImpl<bcsv::TrackingPolicy::Enabled> expectedZoHRow(profile.layout);
+    bcsv::Row expectedZoHRow(profile.layout);
     const auto selectedColumns = buildSelectedColumns(profile.layout, scenario.columns_k);
     const auto predicateColumn = findFirstNumericColumn(profile.layout);
     size_t processedRows = 0;
@@ -1133,7 +1134,7 @@ bench::BenchmarkResult runStaticLayoutVariant(const bench::DatasetProfile& profi
     {
         StaticLayout layoutStatic;
         layoutStatic = profile.layout;
-        bcsv::Reader<StaticLayout, Policy> reader;
+        bcsv::Reader<StaticLayout> reader;
         if (!reader.open(filename)) {
             result.validation_error = "Cannot read BCSV Static file: " + reader.getErrorMsg();
             return result;
@@ -1143,7 +1144,7 @@ bench::BenchmarkResult runStaticLayoutVariant(const bench::DatasetProfile& profi
         timer.start();
         while (reader.readNext()) {
             const auto& row = reader.row();
-            if (useZoH) {
+            if constexpr (UseZoH) {
                 if (!generateProfileZoHNoCopy(profile, expectedZoHRow, rowsRead)) {
                     result.validation_error = "No-copy static expected-row generator unavailable for profile: " + profile.name;
                     reader.close();
@@ -1209,21 +1210,20 @@ bench::BenchmarkResult benchmarkBCSVStaticVariant(const bench::DatasetProfile& p
                                                   bool quiet,
                                                   const std::string& modeLabel,
                                                   const std::string& suffix,
-                                                  bool trackingEnabled,
                                                   bool useZoH)
 {
     bench::BenchmarkResult result;
     bool dispatched = false;
 
-    if (trackingEnabled) {
+    if (useZoH) {
         dispatched = dispatchStaticLayoutForProfile(profile, [&]<typename StaticLayout>() {
-            result = runStaticLayoutVariant<StaticLayout, bcsv::TrackingPolicy::Enabled>(
-                profile, numRows, scenario, quiet, modeLabel, suffix, useZoH);
+            result = runStaticLayoutVariant<StaticLayout, true>(
+                profile, numRows, scenario, quiet, modeLabel, suffix);
         });
     } else {
         dispatched = dispatchStaticLayoutForProfile(profile, [&]<typename StaticLayout>() {
-            result = runStaticLayoutVariant<StaticLayout, bcsv::TrackingPolicy::Disabled>(
-                profile, numRows, scenario, quiet, modeLabel, suffix, useZoH);
+            result = runStaticLayoutVariant<StaticLayout, false>(
+                profile, numRows, scenario, quiet, modeLabel, suffix);
         });
     }
 
@@ -1241,7 +1241,7 @@ bench::BenchmarkResult benchmarkBCSVStatic(const bench::DatasetProfile& profile,
                                            const SparseScenario& scenario,
                                            bool quiet)
 {
-    return benchmarkBCSVStaticVariant(profile, numRows, scenario, quiet, "BCSV Static [trk=off]", "_static_trk_off", false, false);
+    return benchmarkBCSVStaticVariant(profile, numRows, scenario, quiet, "BCSV Static", "_static", false);
 }
 
 bench::BenchmarkResult benchmarkBCSVStaticTracked(const bench::DatasetProfile& profile,
@@ -1249,7 +1249,7 @@ bench::BenchmarkResult benchmarkBCSVStaticTracked(const bench::DatasetProfile& p
                                                   const SparseScenario& scenario,
                                                   bool quiet)
 {
-    return benchmarkBCSVStaticVariant(profile, numRows, scenario, quiet, "BCSV Static [trk=on]", "_static_trk_on", true, false);
+    return benchmarkBCSVStaticVariant(profile, numRows, scenario, quiet, "BCSV Static", "_static", false);
 }
 
 bench::BenchmarkResult benchmarkBCSVStaticZoH(const bench::DatasetProfile& profile,
@@ -1257,7 +1257,7 @@ bench::BenchmarkResult benchmarkBCSVStaticZoH(const bench::DatasetProfile& profi
                                               const SparseScenario& scenario,
                                               bool quiet)
 {
-    return benchmarkBCSVStaticVariant(profile, numRows, scenario, quiet, "BCSV Static ZoH [trk=on]", "_static_zoh", true, true);
+    return benchmarkBCSVStaticVariant(profile, numRows, scenario, quiet, "BCSV Static ZoH", "_static_zoh", true);
 }
 
 /// Run all benchmarks for a single dataset profile

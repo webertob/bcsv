@@ -21,7 +21,6 @@
  *
  * Template parameters:
  *   LayoutType     — bcsv::Layout (dynamic) or bcsv::LayoutStatic<Ts...>
- *   Policy         — TrackingPolicy::Disabled or TrackingPolicy::Enabled
  *
  * @see ITEM_11_PLAN.md for architecture and design rationale.
  */
@@ -40,9 +39,9 @@ namespace bcsv {
 // ────────────────────────────────────────────────────────────────────────────
 // Primary template: RowCodecFlat001 for dynamic Layout
 // ────────────────────────────────────────────────────────────────────────────
-template<typename LayoutType, TrackingPolicy Policy = TrackingPolicy::Disabled>
+template<typename LayoutType>
 class RowCodecFlat001 {
-    using RowType = typename LayoutType::template RowType<Policy>;
+    using RowType = typename LayoutType::RowType;
 
 public:
     RowCodecFlat001() = default;
@@ -83,10 +82,10 @@ private:
 // ────────────────────────────────────────────────────────────────────────────
 // Partial specialization: RowCodecFlat001 for LayoutStatic<ColumnTypes...>
 // ────────────────────────────────────────────────────────────────────────────
-template<TrackingPolicy Policy, typename... ColumnTypes>
-class RowCodecFlat001<LayoutStatic<ColumnTypes...>, Policy> {
+template<typename... ColumnTypes>
+class RowCodecFlat001<LayoutStatic<ColumnTypes...>> {
     using LayoutType = LayoutStatic<ColumnTypes...>;
-    using RowType = typename LayoutType::template RowType<Policy>;
+    using RowType = typename LayoutType::RowType;
 
 public:
     static constexpr size_t COLUMN_COUNT = LayoutType::columnCount();

@@ -14,7 +14,6 @@
 #include <filesystem>
 #include <optional>
 #include <string>
-#include <type_traits>
 
 #include "definitions.h"
 #include "byte_buffer.h"
@@ -29,23 +28,15 @@
 
 namespace bcsv {
 
-    template<LayoutConcept LayoutType, TrackingPolicy Policy = TrackingPolicy::Disabled>
-    using DefaultRowCodecForPolicy = std::conditional_t<
-        isTrackingEnabled(Policy),
-        RowCodecZoH001<LayoutType, Policy>,
-        RowCodecFlat001<LayoutType, Policy>
-    >;
-
     /**
      * @brief Class for writing BCSV binary files
      */
     template<
         LayoutConcept LayoutType,
-        TrackingPolicy Policy = TrackingPolicy::Disabled,
-        typename CodecType = DefaultRowCodecForPolicy<LayoutType, Policy>
+        typename CodecType = RowCodecFlat001<LayoutType>
     >
     class Writer {
-        using RowType           = typename LayoutType::template RowType<Policy>;
+        using RowType           = typename LayoutType::RowType;
         using FilePath          = std::filesystem::path;
 
         std::string             err_msg_;                    // last error message description
@@ -84,6 +75,7 @@ namespace bcsv {
         RowType&                row()                           { return row_; }
         const RowType&          row() const                     { return row_; }
         size_t                  rowCount() const                { return row_cnt_; }
+        void                    write(const RowType& row);
         void                    writeRow();
 
     private:
@@ -94,9 +86,9 @@ namespace bcsv {
     };
 
     template<LayoutConcept LayoutType>
-    using WriterFlat = Writer<LayoutType, TrackingPolicy::Disabled>;
+    using WriterFlat = Writer<LayoutType, RowCodecFlat001<LayoutType>>;
 
     template<LayoutConcept LayoutType>
-    using WriterZoH = Writer<LayoutType, TrackingPolicy::Enabled>;
+    using WriterZoH = Writer<LayoutType, RowCodecZoH001<LayoutType>>;
 
 } // namespace bcsv

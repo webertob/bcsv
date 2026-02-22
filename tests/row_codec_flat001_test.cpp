@@ -10,7 +10,7 @@
 /**
  * @file row_codec_flat001_test.cpp
  * @brief Parity tests for RowCodecFlat001 — verifies byte-identical output
- *        compared to the existing RowImpl::serializeTo/deserializeFrom.
+ *        compared to the existing Row::serializeTo/deserializeFrom.
  *
  * Tests cover:
  *   - Dynamic Layout: serialize, deserialize per type
@@ -77,7 +77,7 @@ TEST_F(CodecFlat001DynamicTest, SerializeRoundtrip_Untracked) {
 }
 
 TEST_F(CodecFlat001DynamicTest, SerializeRoundtrip_Tracked) {
-    RowTracked<TrackingPolicy::Enabled> row(layout_);
+    Row row(layout_);
     row.set<bool>(0, true);
     row.set<int32_t>(1, -99);
     row.set<double>(2, 2.718);
@@ -86,13 +86,13 @@ TEST_F(CodecFlat001DynamicTest, SerializeRoundtrip_Tracked) {
     row.set<bool>(5, true);
     row.set<std::string_view>(6, "");
 
-    RowCodecFlat001<Layout, TrackingPolicy::Enabled> codec;
+    RowCodecFlat001<Layout> codec;
     codec.setup(layout_);
     ByteBuffer buf;
     auto wire = codec.serialize(row, buf);
     ASSERT_FALSE(wire.empty());
 
-    RowTracked<TrackingPolicy::Enabled> rowBack(layout_);
+    Row rowBack(layout_);
     codec.deserialize(wire, rowBack);
     EXPECT_EQ(row.get<bool>(0), rowBack.get<bool>(0));
     EXPECT_EQ(row.get<int32_t>(1), rowBack.get<int32_t>(1));
@@ -131,7 +131,7 @@ TEST_F(CodecFlat001DynamicTest, DeserializeParity_Untracked) {
 }
 
 TEST_F(CodecFlat001DynamicTest, DeserializeParity_Tracked) {
-    RowTracked<TrackingPolicy::Enabled> row(layout_);
+    Row row(layout_);
     row.set<bool>(0, false);
     row.set<int32_t>(1, 0);
     row.set<double>(2, 0.0);
@@ -140,12 +140,12 @@ TEST_F(CodecFlat001DynamicTest, DeserializeParity_Tracked) {
     row.set<bool>(5, true);
     row.set<std::string_view>(6, "nonempty");
 
-    RowCodecFlat001<Layout, TrackingPolicy::Enabled> codec;
+    RowCodecFlat001<Layout> codec;
     codec.setup(layout_);
     ByteBuffer buf;
     auto wire = codec.serialize(row, buf);
 
-    RowTracked<TrackingPolicy::Enabled> rowNew(layout_);
+    Row rowNew(layout_);
     codec.deserialize(wire, rowNew);
 
     EXPECT_EQ(row.get<bool>(0), rowNew.get<bool>(0));

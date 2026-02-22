@@ -80,7 +80,7 @@
  * }, 50);
  * @endcode
  *
- * visit<T>() and visitConst<T>() are available on RowImpl and RowStaticImpl.
+ * visit<T>() and visitConst<T>() are available on Row and RowStatic.
  * 
  * @subsection helper_visitors Using Helper Types
  * 
@@ -139,23 +139,6 @@ template<typename Visitor, typename T>
 concept RowMutableVisitor = std::invocable<Visitor, size_t, T&>;
 
 /**
- * @brief Concept for mutable row visitors with fine-grained change tracking
- * 
- * A RowMutableVisitorWithTracking must be invocable with:
- * - size_t index (column index)
- * - T& value (mutable reference to column value)
- * - bool& changed (output parameter: set to true if column was modified)
- * 
- * This allows the visitor to opt-out of marking columns as changed when
- * no actual modification occurred, optimizing ZoH compression.
- * 
- * @tparam Visitor The visitor callable type
- * @tparam T The column value type
- */
-template<typename Visitor, typename T>
-concept RowMutableVisitorWithTracking = std::invocable<Visitor, size_t, T&, bool&>;
-
-/**
  * @brief Concept for compile-time visitors used with RowStatic
  * 
  * A RowStaticReadOnlyVisitor must be invocable with:
@@ -189,7 +172,7 @@ concept RowStaticReadOnlyVisitor =
  * - Concrete lambda signatures (no if-constexpr chains needed)
  * - Type-safe bulk operations on homogeneous column ranges
  * 
- * @note Defined in row.h since it is required by RowImpl's visit<T>() declaration.
+ * @note Defined in row.h since it is required by Row's visit<T>() declaration.
  *       Documented here for reference.
  * 
  * @code

@@ -746,3 +746,16 @@ LOW PRIORITY / Known Issues (from 8.h review, 2026-02-12):
       Document that changed parameter is read-only for bool columns.
         - setColumns(vector<string>, vector<ColumnType>) observer-notification gap is resolved in current layout path.
             Keep coverage in tests to prevent regression.
+
+Deferred items from critical review (2025 review, Phases 1-5):
+    [ ] #5  RowStatic: add compile-time static_assert that all ColumnTypes are bcsv-supported types
+            (bool, uint8..uint64, int8..int64, float, double, std::string). Currently silently
+            compiles for unsupported types and fails at runtime.
+    [ ] #8  BitBool / VLE cleanup: audit unused vle shift-after-decode paths and remove dead code
+            from vle.hpp. Unify naming: "wire_bits" vs "bits_" vs "changed_bits".
+    [ ] #14 Writer::writeRow() isZoHRepeat: the serialized buffer comparison duplicates the codec's
+            own change detection. Consider having the codec return an empty span for ZoH repeats
+            so writeRow() doesn't need a separate memcmp.
+    [ ] #25 Add operator<< for Row (dynamic) similar to the existing Layout operator<<.
+            Print column values in a human-readable format for debugging.
+    [ ] P6  Future: consider size_t vs int for column indices in Row API (currently int).

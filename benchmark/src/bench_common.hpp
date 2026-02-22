@@ -310,8 +310,7 @@ public:
     }
 
     /// Write a single data row using visitConst() + to_chars buffer
-    template<bcsv::TrackingPolicy Policy>
-    void writeRow(const bcsv::RowImpl<Policy>& row) {
+    void writeRow(const bcsv::Row& row) {
         buf_.clear();
         row.visitConst([this](size_t index, const auto& value) {
             if (index > 0) buf_.push_back(delimiter_);
@@ -395,8 +394,8 @@ public:
 
     /// Parse one CSV line into a Row, using the layout for type information.
     /// Returns false if the line could not be parsed (e.g., wrong column count).
-    template<bcsv::TrackingPolicy Policy>
-    bool parseLine(const std::string& line, const bcsv::Layout& layout, bcsv::RowImpl<Policy>& row) {
+    template<bcsv::LayoutConcept LayoutType>
+    bool parseLine(const std::string& line, const LayoutType& layout, typename LayoutType::RowType& row) {
         cells_.clear();
         splitLine(line, cells_);
 
@@ -545,10 +544,9 @@ public:
     explicit RoundTripValidator(size_t maxErrors = 10) : maxErrors_(maxErrors) {}
 
     /// Compare a single cell between two rows. Returns true if match.
-    template<bcsv::TrackingPolicy P1, bcsv::TrackingPolicy P2>
     bool compareCell(size_t rowIdx, size_t colIdx,
-                     const bcsv::RowImpl<P1>& expected,
-                     const bcsv::RowImpl<P2>& actual,
+                     const bcsv::Row& expected,
+                     const bcsv::Row& actual,
                      const bcsv::Layout& layout) 
     {
         bool match = false;

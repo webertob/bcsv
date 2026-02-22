@@ -228,7 +228,7 @@ std::vector<SampleData> readZoHBCSV() {
 
     // Step 2: Create a reader
     const std::string filename = "example_flexible_zoh.bcsv";
-    bcsv::ReaderZoH<bcsv::Layout> reader;
+    bcsv::Reader<bcsv::Layout> reader;
     if (!reader.open(filename)) {
         std::cerr << "Failed to open file: " << filename << "\n";
         return readData;

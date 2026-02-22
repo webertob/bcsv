@@ -30,10 +30,10 @@ namespace bcsv {
     /**
      * @brief Class for reading BCSV binary files
      */
-    template<LayoutConcept LayoutType, TrackingPolicy Policy = TrackingPolicy::Disabled>
+    template<LayoutConcept LayoutType>
     class Reader {
     protected:
-        using RowType           = typename LayoutType::template RowType<Policy>;
+        using RowType           = typename LayoutType::RowType;
         using FilePath          = std::filesystem::path;
 
         std::string             err_msg_;                // last error message description
@@ -53,7 +53,7 @@ namespace bcsv {
         ByteBuffer              row_buffer_;             // current row, encoded data (decompressed)
         size_t                  row_pos_;                // postion of current row in file (0-based row counter)
         RowType                 row_;                   // current row, decoded data
-        CodecDispatch<LayoutType, Policy> codec_;      // Runtime codec dispatch (Item 11 Phase 7)
+        CodecDispatch<LayoutType> codec_;      // Runtime codec dispatch (Item 11 Phase 7)
         
     public:
         /**
@@ -81,17 +81,14 @@ namespace bcsv {
         bool                    readFileHeader();
     };
 
-    template<LayoutConcept LayoutType>
-    using ReaderZoH = Reader<LayoutType, TrackingPolicy::Enabled>;
-
     /**
      * @brief Class for direct access reading of BCSV binary files
      */
-    template<LayoutConcept LayoutType, TrackingPolicy Policy = TrackingPolicy::Disabled>
-    class ReaderDirectAccess : public Reader<LayoutType, Policy> {
+    template<LayoutConcept LayoutType>
+    class ReaderDirectAccess : public Reader<LayoutType> {
     protected:
-        using Base              = Reader<LayoutType, Policy>;
-        using RowType           = typename LayoutType::template RowType<Policy>;
+        using Base              = Reader<LayoutType>;
+        using RowType           = typename LayoutType::RowType;
         using FilePath          = std::filesystem::path;
 
         FileFooter  file_footer_;

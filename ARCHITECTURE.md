@@ -269,16 +269,7 @@ in-memory data storage.
 
 #### Architecture
 
-TrackingPolicy and file codec are **orthogonal axes**:
-- **TrackingPolicy** configures row/codec behavior (storage shape and internal tracking flow).
-- **File codec** is a file property: "how are rows encoded on disk?"
-
-All four combinations work:
-
-| | Flat001 file | ZoH001 file |
-|---|---|---|
-| **Disabled** | Natural fit. Full decode without exposed tracking surface. | ZoH codec reads wire header into internal `wire_bits_`. Extracts bools → `row.bits_[boolIdx]`. No per-column change flags are surfaced. |
-| **Enabled** | Full decode. Codec marks internal non-BOOL tracking bits as changed after deserialize. | Fast path: wire header → `row.bits_` directly (zero-copy alias) for internal tracking and bool values. |
+The file codec determines how rows are encoded on disk:
 
 ```
 Writer ──── RowCodecType ──▶ RowCodecFlat001  or  RowCodecZoH001
@@ -292,9 +283,9 @@ Reader ──── CodecDispatch ──▶ RowCodecFlat001  or  RowCodecZoH001
 
 | Class | File | Encoding | State |
 |-------|------|----------|-------|
-| `RowCodecFlat001<Layout, Policy>` | `row_codec_flat001.h/hpp` | Dense flat encoding | Wire metadata + per-column offsets |
-| `RowCodecZoH001<Layout, Policy>` | `row_codec_zoh001.h/hpp` | Zero-Order-Hold delta | Composes `RowCodecFlat001` for first-row; internal `wire_bits_` for change header |
-| `CodecDispatch<Layout, Policy>` | `row_codec_dispatch.h` | Runtime dispatch | Union storage + function pointers |
+| `RowCodecFlat001<Layout>` | `row_codec_flat001.h/hpp` | Dense flat encoding | Wire metadata + per-column offsets |
+| `RowCodecZoH001<Layout>` | `row_codec_zoh001.h/hpp` | Zero-Order-Hold delta | Composes `RowCodecFlat001` for first-row; internal `wire_bits_` for change header |
+| `CodecDispatch<Layout>` | `row_codec_dispatch.h` | Runtime dispatch | Union storage + function pointers |
 
 Each codec provides:
 - `setup(layout)` — compute wire-format metadata from the layout
@@ -308,11 +299,11 @@ Wire-format metadata (`wireBitsSize`, `wireDataSize`, `wireStrgCount`,
 
 #### Codec Selection
 
-**Writer** holds `RowCodecType<Layout, Policy>` — a `std::conditional_t` that
-resolves to the concrete codec at compile time. The Writer knows what format
-it writes. All serialize calls are direct member function calls, fully inlined.
+**Writer** holds `RowCodecType<Layout>` — a compile-time selected codec.
+The Writer knows what format it writes. All serialize calls are direct member
+function calls, fully inlined.
 
-**Reader** holds `CodecDispatch<Layout, Policy>` — runtime codec selection via
+**Reader** holds `CodecDispatch<Layout>` — runtime codec selection via
 function pointers. At `open()` time, `CodecDispatch::selectCodec(flags, layout)`
 reads the file's `ZERO_ORDER_HOLD` flag, constructs the correct codec in union
 storage via placement new, and wires function pointers. Subsequent `deserialize()`

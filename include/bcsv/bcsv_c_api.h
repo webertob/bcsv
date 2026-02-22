@@ -110,7 +110,8 @@ size_t              bcsv_reader_index   (const_bcsv_reader_t reader);    // retu
 // These functions operate on writer objects, which write BCSV files row by row
 // Writers can be opened in strict or resilient mode (handle schema mismatches)
 // Writers provide access to the current row and its index
-bcsv_writer_t       bcsv_writer_create  (bcsv_layout_t layout);
+bcsv_writer_t       bcsv_writer_create      (bcsv_layout_t layout);
+bcsv_writer_t       bcsv_writer_create_zoh  (bcsv_layout_t layout);
 void                bcsv_writer_destroy (bcsv_writer_t writer);
 
 void                bcsv_writer_close   (bcsv_writer_t writer);

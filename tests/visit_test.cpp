@@ -18,19 +18,19 @@
 using namespace bcsv;
 
 // Helper: serialize a Row via codec (replaces removed Row::serializeTo)
-template<typename LayoutT, TrackingPolicy P = TrackingPolicy::Disabled>
-std::span<std::byte> codecSerialize(const typename LayoutT::template RowType<P>& row,
+template<typename LayoutT>
+std::span<std::byte> codecSerialize(const typename LayoutT::RowType& row,
                                      ByteBuffer& buffer, const LayoutT& layout) {
-    RowCodecFlat001<LayoutT, P> codec;
+    RowCodecFlat001<LayoutT> codec;
     codec.setup(layout);
     return codec.serialize(row, buffer);
 }
 
 // Helper: serialize a Row via ZoH codec (replaces removed Row::serializeToZoH)
 template<typename LayoutT>
-std::span<std::byte> codecSerializeZoH(const typename LayoutT::template RowType<TrackingPolicy::Enabled>& row,
+std::span<std::byte> codecSerializeZoH(const typename LayoutT::RowType& row,
                                         ByteBuffer& buffer, const LayoutT& layout) {
-    RowCodecZoH001<LayoutT, TrackingPolicy::Enabled> codec;
+    RowCodecZoH001<LayoutT> codec;
     codec.setup(layout);
     return codec.serialize(row, buffer);
 }
@@ -309,7 +309,7 @@ TEST(VisitTest, RowMutableVisit) {
     row.set(2, 30.0f);
     
     // Mutable visit: multiply all values by 2
-    row.visit([&](size_t, auto& value, bool&) {
+    row.visit([&](size_t, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             value *= 2;
@@ -333,7 +333,7 @@ TEST(VisitTest, RowMutableVisitStrings) {
     row.set(1, int32_t(10));
     
     // Mutable visit: can modify strings
-    row.visit([&](size_t, auto& value, bool&) {
+    row.visit([&](size_t, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_same_v<T, std::string>) {
             value += " Smith";
@@ -356,7 +356,7 @@ TEST(VisitTest, RowStaticMutableVisit) {
     row.set<2>(15.0f);
     
     // Mutable visit with compile-time indices
-    row.visit([&](auto, auto& value, bool&) {
+    row.visit([&](auto, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             value *= 3;
@@ -391,12 +391,10 @@ TEST(VisitTest, MutableVisitNormalization) {
     magnitude = std::sqrt(magnitude);
     
     // Normalize vector using mutable visit
-    row.visit([&](size_t, auto& value, bool& change) {
+    row.visit([&](size_t, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             value /= magnitude;
-        } else {
-            change = false;
         }
     });
     
@@ -430,9 +428,8 @@ TEST(VisitTest, TypedVisitScalarReadWrite) {
     row.set(2, 3.0);
     
     // Typed mutable visit: multiply all doubles by 10
-    row.visit<double>(0, [](size_t, double& val, bool& changed) {
+    row.visit<double>(0, [](size_t, double& val) {
         val *= 10.0;
-        changed = true;
     }, 3);
     
     EXPECT_NEAR(row.get<double>(0), 10.0, 0.01);
@@ -488,9 +485,8 @@ TEST(VisitTest, TypedVisitSingleColumn) {
     EXPECT_EQ(strResult, "hello");
     
     // Mutable visit: modify the double
-    row.visit<double>(1, [](size_t, double& val, bool& changed) {
+    row.visit<double>(1, [](size_t, double& val) {
         val = 2.718;
-        changed = true;
     });
     EXPECT_NEAR(row.get<double>(1), 2.718, 0.001);
 }
@@ -515,7 +511,7 @@ TEST(VisitTest, TypedVisitBool) {
     EXPECT_EQ(trueCount, 2);
     
     // Mutable visit: flip all bools
-    row.visit<bool>(0, [](size_t, bool& val, bool&) {
+    row.visit<bool>(0, [](size_t, bool& val) {
         val = !val;
     }, 3);
     
@@ -535,9 +531,8 @@ TEST(VisitTest, TypedVisitString) {
     row.set(1, std::string("world"));
     
     // Mutable visit: append suffix
-    row.visit<std::string>(0, [](size_t, std::string& val, bool& changed) {
+    row.visit<std::string>(0, [](size_t, std::string& val) {
         val += "!";
-        changed = true;
     }, 2);
     
     EXPECT_EQ(row.get<std::string>(0), "hello!");
@@ -556,13 +551,13 @@ TEST(VisitTest, TypedVisitTypeMismatchThrows) {
     
     // Visiting INT32 column as DOUBLE should throw
     EXPECT_THROW(
-        row.visit<double>(0, [](size_t, double&, bool&) {}, 1),
+        row.visit<double>(0, [](size_t, double&) {}, 1),
         std::runtime_error
     );
     
     // Visiting 2 columns where types differ should throw
     EXPECT_THROW(
-        row.visit<int32_t>(0, [](size_t, int32_t&, bool&) {}, 2),
+        row.visit<int32_t>(0, [](size_t, int32_t&) {}, 2),
         std::runtime_error
     );
     
@@ -583,7 +578,7 @@ TEST(VisitTest, TypedVisitRangeOutOfBoundsThrows) {
     
     // Range exceeds column count
     EXPECT_THROW(
-        row.visit<int32_t>(0, [](size_t, int32_t&, bool&) {}, 5),
+        row.visit<int32_t>(0, [](size_t, int32_t&) {}, 5),
         std::out_of_range
     );
     
@@ -599,7 +594,7 @@ TEST(VisitTest, TypedVisitZeroCount) {
     
     int callCount = 0;
     // count=0 should be a no-op
-    row.visit<int32_t>(0, [&](size_t, int32_t&, bool&) { callCount++; }, 0);
+    row.visit<int32_t>(0, [&](size_t, int32_t&) { callCount++; }, 0);
     EXPECT_EQ(callCount, 0);
     
     row.visitConst<int32_t>(0, [&](size_t, const int32_t&) { callCount++; }, 0);

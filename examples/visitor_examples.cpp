@@ -116,25 +116,22 @@ void example_change_tracking() {
         {"name", ColumnType::STRING}
     });
     
-    RowTracked<TrackingPolicy::Enabled> row(layout);
+    Row row(layout);
     row.set(0, 10.0);
     row.set(1, int32_t(20));
     row.set(2, std::string("test"));
     
-    // Visitor with fine-grained tracking
-    row.visit([](size_t index, auto& value, bool& changed) {
+    // Mutable visitor — modifies values in-place
+    row.visit([](size_t index, auto& value) {
         using T = std::decay_t<decltype(value)>;
         
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
             auto old = value;
             value *= 2;  // Double all numeric values
-            changed = (value != old);
             
-            std::cout << "Column " << index << ": " << old << " -> " << value 
-                      << " (changed: " << (changed ? "yes" : "no") << ")\n";
+            std::cout << "Column " << index << ": " << old << " -> " << value << "\n";
         } else {
             // Don't modify strings
-            changed = false;
             std::cout << "Column " << index << ": skipped (string)\n";
         }
     });
@@ -378,10 +375,9 @@ void example_typed_visit() {
 
     std::cout << "  Mean: " << (sum / 5.0) << " °C, Range: [" << minVal << ", " << maxVal << "]\n";
 
-    // Scale all temperatures with visit<T>() and change tracking
-    row.visit<double>(0, [](size_t, double& temp, bool& changed) {
+    // Scale all temperatures with visit<T>()
+    row.visit<double>(0, [](size_t, double& temp) {
         temp = temp * 1.8 + 32.0;  // Convert to Fahrenheit
-        changed = true;
     }, 5);
 
     std::cout << "  After C→F conversion:\n";
@@ -403,11 +399,11 @@ void example_typed_visit_2param() {
         {"z", ColumnType::INT32}
     });
 
-    RowTracked<TrackingPolicy::Enabled> row(layout);
+    Row row(layout);
     row.set<int32_t>(0, 10);
     row.set<int32_t>(1, 20);
     row.set<int32_t>(2, 30);
-    // 2-param visitor: all visited columns automatically marked changed
+    // 2-param visitor: mutate values in-place
     row.visit<int32_t>(0, [](size_t, int32_t& val) {
         val += 100;
     }, 3);

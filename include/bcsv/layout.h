@@ -16,10 +16,9 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <sys/types.h>
 #include <vector>
 #include <cstdint>
-#include <iostream>
+#include <iosfwd>
 #include <memory>
 #include "bitset.h"
 #include "column_name_index.h"
@@ -27,8 +26,8 @@
 
 // Forward declarations to avoid circular dependencies
 namespace bcsv {
-    template<TrackingPolicy Policy> class RowImpl;
-    template<TrackingPolicy Policy, typename... ColumnTypes> class RowStaticImpl;
+    class Row;
+    template<typename... ColumnTypes> class RowStatic;
 }
 
 namespace bcsv {
@@ -57,8 +56,8 @@ namespace bcsv {
         { layout.setColumnName(index, name)             };  // No return type constraint (may return void or bool, may throw on error)
         { const_layout.isCompatible(const_layout)       } -> std::convertible_to<bool>;
 
-        // Type information (for static layouts)
-        typename T::template RowType<TrackingPolicy::Disabled>;  // Each layout must define its row type
+        // Type information
+        typename T::RowType;  // Each layout must define its row type
     };
 
     /**
@@ -93,9 +92,8 @@ namespace bcsv {
             std::vector<std::string>                 column_names_;  // column --> name
             ColumnNameIndex<0>                       column_index_;  // name --> column
             std::vector<ColumnType>                  column_types_;  // column --> type
-            std::vector<uint32_t>                    offsets_;       // Unified per-column offsets into RowImpl's storage containers (bits_, data_, strg_). Meaning depends on columnType: BOOL→bit index in bits_, STRING→index in strg_, scalar→byte offset in data_ (aligned).
+            std::vector<uint32_t>                    offsets_;       // Unified per-column offsets into Row's storage containers (bits_, data_, strg_). Meaning depends on columnType: BOOL→bit index in bits_, STRING→index in strg_, scalar→byte offset in data_ (aligned).
             std::vector<uint32_t>                    offsets_packed_;// Per-column offsets in packed wire layout (BOOL→bit index, STRING→string index, scalar→byte offset without alignment)
-            Bitset<>                                 tracked_mask_;  // Bit i set iff column i is NOT BOOL (scalar or string). Size == columnCount.
             uint32_t                                 column_count_bool_{0};
             uint32_t                                 column_count_strings_{0};
 
@@ -122,6 +120,7 @@ namespace bcsv {
             const std::string& columnName(size_t index) const;
             ColumnType columnType(size_t index) const;
             const std::vector<ColumnType>& columnTypes() const noexcept { return column_types_; }
+            const std::vector<std::string>& columnNames() const noexcept { return column_names_; }
             bool hasColumn(const std::string& name) const { return column_index_.contains(name); }
             bool isCompatible(const Data& other) const;
             uint32_t columnOffset(size_t index) const;
@@ -129,9 +128,6 @@ namespace bcsv {
             uint32_t columnOffsetPacked(size_t index) const;
             const std::vector<uint32_t>& columnOffsetsPacked() const noexcept { return offsets_packed_; }
             
-            Bitset<> boolMask() const noexcept { return ~tracked_mask_; }  // Derived: inverse of tracked_mask_
-            const Bitset<>& trackedMask() const noexcept { return tracked_mask_; }
-
             /// Compute unified offsets from a type vector. Used by Row's onLayoutUpdate to pre-compute new offsets
             /// before the layout has been updated. Returns total data_ byte size via out parameter.
             static void computeOffsets(const std::vector<ColumnType>& types, std::vector<uint32_t>& offsets, uint32_t& dataSize);
@@ -164,8 +160,7 @@ namespace bcsv {
         DataPtr data_;
 
     public:
-        template<TrackingPolicy Policy = TrackingPolicy::Disabled>
-        using RowType     = RowImpl<Policy>;
+        using RowType     = Row;
 
         // ============================================================
         // Constructors
@@ -233,14 +228,6 @@ namespace bcsv {
             return data_->columnCount(type);
         }
         
-        Bitset<> boolMask() const noexcept {
-            return data_->boolMask();
-        }
-        
-        const Bitset<>& trackedMask() const noexcept {
-            return data_->trackedMask();
-        }
-
         const std::vector<ColumnType>& columnTypes() const noexcept { 
             return data_->columnTypes(); 
         }
@@ -291,7 +278,7 @@ namespace bcsv {
         Layout& operator=(const OtherLayout& other);
 
         template<typename OtherLayout>
-        bool operator==(const OtherLayout& other) const { return isCompatible(*other.data_); }
+        bool operator==(const OtherLayout& other) const;
     };
 
     /**
@@ -340,8 +327,7 @@ namespace bcsv {
         void checkRange(size_t index) const;
 
     public:
-        template<TrackingPolicy Policy = TrackingPolicy::Disabled>
-        using RowType           = RowStaticImpl<Policy, ColumnTypes...>;
+        using RowType           = RowStatic<ColumnTypes...>;
         using ColTypes          = std::tuple<ColumnTypes...>;
                                   template<size_t Index>
         using ColType           = std::tuple_element_t<Index, ColTypes>;
@@ -410,7 +396,7 @@ namespace bcsv {
         LayoutStatic&                   operator=(const OtherLayout& other);           // Copies column names if layouts are compatible (types must match)
         
                                         template<typename OtherLayout>
-        bool                            operator==(const OtherLayout& other) const { return isCompatible(other); }
+        bool                            operator==(const OtherLayout& other) const;
     };
 
     // Stream operator for Layout - provides human-readable column information

@@ -61,9 +61,8 @@ namespace bcsv {
  * │   Byte 1: [bool15|...|bool8]  (if bool_count > 8)             │
  * └─────────────────────────────────────────────────────────────────┘
  * 
- * For RowImpl with TrackingPolicy::Disabled, bits_ can be memcpy'd directly
- * (size == ⌈bool_count / 8⌉). For TrackingPolicy::Enabled, bool values are
- * extracted via the layout's boolMask() (derived from ~tracked_mask_) since bits_ also holds change flags.
+ * For Row, bits_ can be memcpy'd directly
+ * (size == ⌈bool_count / 8⌉) between row and wire format.
  * 
  * =============================================================================
  * SECTION 2: DATA_ (Scalar values)
@@ -311,8 +310,8 @@ namespace bcsv {
  * ZoH SERIALIZATION ALGORITHM
  * =============================================================================
  * 
- * 1. Check if any non-BOOL changes exist (internal tracking state):
- *    if (!trackingAnyChanged()) return; // Skip serialization entirely
+ * 1. Check if any non-BOOL changes exist (compare with codec's previous row state):
+ *    if (no columns changed) return; // Skip serialization entirely
  * 
  * 2. Reserve space for change Bitset:
  *    bitset_size = (COLUMN_COUNT + 7) / 8; // Round up to bytes
@@ -371,7 +370,6 @@ namespace bcsv {
  * - Perfect for sensor data, financial tickers, configuration changes
  * 
  * Trade-offs:
- * - Requires change tracking overhead during data modification
  * - Not suitable for rapidly-changing data (overhead exceeds benefits)
  * - Deserialization requires maintaining previous row state
  * - Slightly more complex serialization/deserialization logic
@@ -389,24 +387,11 @@ namespace bcsv {
 
 
 
-    // Mutable visitor concept: accepts either (size_t, T&, bool&) or (size_t, T&) signature
+    // Mutable visitor concept: accepts (size_t, T&) signature
     // Uses || (OR) to check if visitor accepts the pattern with at least one BCSV type
     // Generic lambdas with auto& will satisfy this constraint
     template<typename V>
     concept RowVisitor = 
-        std::is_invocable_v<V, size_t, bool&, bool&> ||
-        std::is_invocable_v<V, size_t, int8_t&, bool&> ||
-        std::is_invocable_v<V, size_t, int16_t&, bool&> ||
-        std::is_invocable_v<V, size_t, int32_t&, bool&> ||
-        std::is_invocable_v<V, size_t, int64_t&, bool&> ||
-        std::is_invocable_v<V, size_t, uint8_t&, bool&> ||
-        std::is_invocable_v<V, size_t, uint16_t&, bool&> ||
-        std::is_invocable_v<V, size_t, uint32_t&, bool&> ||
-        std::is_invocable_v<V, size_t, uint64_t&, bool&> ||
-        std::is_invocable_v<V, size_t, float&, bool&> ||
-        std::is_invocable_v<V, size_t, double&, bool&> ||
-        std::is_invocable_v<V, size_t, std::string&, bool&> ||
-        std::is_invocable_v<V, size_t, std::string_view&, bool&> ||
         std::is_invocable_v<V, size_t, bool&> ||
         std::is_invocable_v<V, size_t, int8_t&> ||
         std::is_invocable_v<V, size_t, int16_t&> ||
@@ -440,11 +425,10 @@ namespace bcsv {
         std::is_invocable_v<V, size_t, const std::string&> ||
         std::is_invocable_v<V, size_t, const std::string_view&>;
 
-    // Typed mutable visitor concept: accepts (size_t, T&, bool&) or (size_t, T&) for a specific type T
+    // Typed mutable visitor concept: accepts (size_t, T&) for a specific type T
     // Used by visit<T>() for compile-time type-safe iteration over homogeneous column ranges
     template<typename V, typename T>
     concept TypedRowVisitor = 
-        std::is_invocable_v<V, size_t, T&, bool&> ||
         std::is_invocable_v<V, size_t, T&>;
 
     // Typed const visitor concept: accepts (size_t, const T&) for a specific type T
@@ -456,64 +440,47 @@ namespace bcsv {
     /* Dynamic row with flexible layout (runtime-defined)
      *
      * Storage is split into three type-family containers:
-     *   bits_  — Bitset storing bool column values (and change flags when tracking enabled)
+     *   bits_  — Bitset storing bool column values
      *   data_  — contiguous byte buffer for scalar/arithmetic column values (aligned)
      *   strg_  — vector of strings for string column values
      *
      * Per-column offsets live in Layout::Data (shared across all rows sharing the same layout).
      * The meaning of layout_.columnOffset(i) depends on columnType(i):
-     *   BOOL   → bit index into bits_  (when tracking disabled; when enabled, column index i is used directly)
+     *   BOOL   → bit index into bits_
      *   STRING → index into strg_
      *   scalar → byte offset into data_
      *
-     * When tracking is enabled, bits_.size() == columnCount. Bit i is:
-     *   - the bool VALUE for BOOL columns (no separate change tracking for bools)
-     *   - the CHANGE FLAG for non-BOOL columns (1 = changed since last reset)
-     * When tracking is disabled, bits_.size() == number of BOOL columns only.
+     * bits_.size() == number of BOOL columns only.
      */
     // Forward declarations for codec friend access
-    template<typename LayoutType, TrackingPolicy P> class RowCodecFlat001;
-    template<typename LayoutType, TrackingPolicy P> class RowCodecZoH001;
+    template<typename LayoutType> class RowCodecFlat001;
+    template<typename LayoutType> class RowCodecZoH001;
 
-    template<TrackingPolicy Policy>
-    class RowImpl {
+    class Row {
         // Codec friend access — direct access to bits_, data_, strg_ for serialization.
         // See docs/ITEM_11_PLAN.md §5 for rationale.
-        template<typename LT, TrackingPolicy P> friend class RowCodecFlat001;
-        template<typename LT, TrackingPolicy P> friend class RowCodecZoH001;
+        template<typename LT> friend class RowCodecFlat001;
+        template<typename LT> friend class RowCodecZoH001;
 
     private:
         // Immutable after construction
         Layout                      layout_;               // Shared layout data with observer callbacks
 
         // Mutable data — three type-family storage containers
-        Bitset<>                    bits_;                  // Bool values + change tracking (see class comment for semantics)
+        Bitset<>                    bits_;                  // Bool values (one bit per BOOL column)
         std::vector<std::byte>      data_;                 // Aligned scalar/arithmetic column values (no bools, no strings)
         std::vector<std::string>    strg_;                 // String column values
 
         // Observer callback for layout changes
         void onLayoutUpdate(const std::vector<Layout::Data::Change>& changes);
 
-        // Helper: get the bits_ index for a given column
-        inline size_t bitsIndex(size_t columnIndex) const noexcept {
-            if constexpr (isTrackingEnabled(Policy)) {
-                return columnIndex;  // bits_.size() == columnCount, direct index
-            } else {
-                return layout_.columnOffset(columnIndex);  // sequential bool index
-            }
-        }
-
-        [[nodiscard]] bool          trackingAnyChanged() const noexcept;
-        void                        trackingSetAllChanged() noexcept;
-        void                        trackingResetChanged() noexcept;
-
     public:
-        RowImpl() = delete; // no default co,nstructor, we always need a layout
-        RowImpl(const Layout& layout);
-        RowImpl(const RowImpl& other);
-        RowImpl(RowImpl&& other) noexcept;
+        Row() = delete; // no default constructor, we always need a layout
+        Row(const Layout& layout);
+        Row(const Row& other);
+        Row(Row&& other);
 
-        ~RowImpl();
+        ~Row();
 
         void                        clear();
         const Layout&               layout() const noexcept         { return layout_; }
@@ -528,7 +495,7 @@ namespace bcsv {
         [[nodiscard]] bool          get(size_t index, T &dst) const;                        // Flexible: allows type conversions, returns false on failure
 
                                     template<typename T>
-        [[nodiscard]] decltype(auto) ref(size_t index);                                      // get a mutable reference to the internal data (returns T& for scalars/strings, Bitset<>::reference for bool, marks column as changed)
+        [[nodiscard]] decltype(auto) ref(size_t index);                                      // get a mutable reference to the internal data (returns T& for scalars/strings, Bitset<>::reference for bool)
 
                                     template<detail::BcsvAssignable T>
         void                        set(size_t index, const T& value);
@@ -544,11 +511,11 @@ namespace bcsv {
                                     template<RowVisitorConst Visitor>
         void                        visitConst(Visitor&& visitor) const;
 
-        /** @brief Visit columns with mutable access and change tracking. @see row.hpp */
+        /** @brief Visit columns with mutable access. @see row.hpp */
                                     template<RowVisitor Visitor>
         void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1);
 
-        /** @brief Visit all columns with mutable access and change tracking. @see row.hpp */
+        /** @brief Visit all columns with mutable access. @see row.hpp */
                                     template<RowVisitor Visitor>
         void                        visit(Visitor&& visitor);
 
@@ -562,19 +529,14 @@ namespace bcsv {
                                         requires TypedRowVisitorConst<Visitor, T>
         void                        visitConst(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
 
-        RowImpl&                    operator=(const RowImpl& other);               // Throws std::invalid_argument if layouts incompatible
-        RowImpl&                    operator=(RowImpl&& other) noexcept;
+        Row&                        operator=(const Row& other);               // Throws std::invalid_argument if layouts incompatible
+        Row&                        operator=(Row&& other);
     };
 
-    template<TrackingPolicy Policy>
-    using RowTracked = RowImpl<Policy>;
 
-    using Row = RowImpl<TrackingPolicy::Disabled>;
-
-
-    /* Dynamic row with static layout (compile-time defined) */
-    template<TrackingPolicy Policy = TrackingPolicy::Disabled, typename... ColumnTypes>
-    class RowStaticImpl {
+    /* Static row with compile-time defined layout */
+    template<typename... ColumnTypes>
+    class RowStatic {
     public:
         using LayoutType = LayoutStatic<ColumnTypes...>;
         static constexpr size_t COLUMN_COUNT = LayoutType::columnCount();
@@ -582,10 +544,10 @@ namespace bcsv {
         template<size_t Index>
         using column_type = std::tuple_element_t<Index, typename LayoutType::ColTypes>;
 
-        // Codec friend access — direct access to data_, changes_ for serialization.
+        // Codec friend access — direct access to data_ for serialization.
         // See docs/ITEM_11_PLAN.md §5 for rationale.
-        template<typename LT, TrackingPolicy P> friend class RowCodecFlat001;
-        template<typename LT, TrackingPolicy P> friend class RowCodecZoH001;
+        template<typename LT> friend class RowCodecFlat001;
+        template<typename LT> friend class RowCodecZoH001;
 
     private:
         // Immutable after construction
@@ -593,19 +555,14 @@ namespace bcsv {
 
         // Mutable data
         typename LayoutType::ColTypes   data_;
-        Bitset<COLUMN_COUNT>            changes_;
-
-        [[nodiscard]] bool              trackingAnyChanged() const noexcept     { return isTrackingEnabled(Policy) ? changes_.any() : true; }
-        void                            trackingSetAllChanged() noexcept         { if constexpr (isTrackingEnabled(Policy)) { changes_.set(); } }
-        void                            trackingResetChanged() noexcept          { if constexpr (isTrackingEnabled(Policy)) { changes_.reset(); } }
 
     public:
         // Constructors
-        RowStaticImpl() = delete;
-        RowStaticImpl(const LayoutType& layout);
-        RowStaticImpl(const RowStaticImpl& other) = default;        // default copy constructor, tuple manges copying its members including strings
-        RowStaticImpl(RowStaticImpl&& other) noexcept = default;    // default move constructor, tuple manges moving its members including strings
-        ~RowStaticImpl() = default;
+        RowStatic() = delete;
+        RowStatic(const LayoutType& layout);
+        RowStatic(const RowStatic& other) = default;        // default copy constructor, tuple manages copying its members including strings
+        RowStatic(RowStatic&& other) noexcept = default;    // default move constructor, tuple manages moving its members including strings
+        ~RowStatic() = default;
        
                                     template<size_t Index = 0>
         void                        clear();
@@ -635,7 +592,7 @@ namespace bcsv {
         [[nodiscard]] bool          get(size_t index, T &dst) const noexcept;               // Flexible: allows type conversions, returns false on failure.
         
                                     template<typename T>
-        [[nodiscard]] T&            ref(size_t index);                                      // get a mutable reference to the internal data (no type conversion, may throw, marks column as changed)   
+        [[nodiscard]] T&            ref(size_t index);                                      // get a mutable reference to the internal data (no type conversion, may throw)
 
                                     template<size_t Index, typename T>
         void                        set(const T& value);                                    // scalar compile-time indexed access
@@ -654,22 +611,16 @@ namespace bcsv {
                                     template<RowVisitorConst Visitor>
         void                        visitConst(Visitor&& visitor) const;
         
-        /** @brief Visit columns with mutable access and tracking (compile-time). @see row.hpp */
+        /** @brief Visit columns with mutable access (compile-time). @see row.hpp */
                                     template<RowVisitor Visitor>
         void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1);
 
-        /** @brief Visit all columns with mutable access and tracking (compile-time). @see row.hpp */
+        /** @brief Visit all columns with mutable access (compile-time). @see row.hpp */
                                     template<RowVisitor Visitor>
         void                        visit(Visitor&& visitor);
 
-        RowStaticImpl& operator=(const RowStaticImpl& other) noexcept = default; // default copy assignment, tuple manges copying its members including strings
-        RowStaticImpl& operator=(RowStaticImpl&& other) noexcept = default;      // default move assignment, tuple manges moving its members including strings
+        RowStatic& operator=(const RowStatic& other) = default;          // default copy assignment, tuple manages copying its members including strings (may throw on string alloc)
+        RowStatic& operator=(RowStatic&& other) noexcept = default;      // default move assignment, tuple manages moving its members including strings
     };
-
-    template<typename... ColumnTypes>
-    using RowStatic = RowStaticImpl<TrackingPolicy::Disabled, ColumnTypes...>;
-
-    template<TrackingPolicy Policy, typename... ColumnTypes>
-    using RowStaticTracked = RowStaticImpl<Policy, ColumnTypes...>;
 
 } // namespace bcsv

@@ -20,26 +20,15 @@
  *   - Non-BOOL columns: bit is the CHANGE FLAG (1 = column data follows)
  *
  * First row in packet is full-row emit semantics; subsequent rows are ZoH-delta
- * encoded. The codec provides its own sparse helper and metadata interface.
- *
- * TrackingPolicy and codec are orthogonal axes:
- *   - Enabled: row.bits_ (dynamic) / row.changes_ (static) are columnCount-sized
- *     and can be used directly as the wire change header (fast path, no copy).
- *   - Disabled: row.bits_ is boolCount-sized. The codec uses an internal
- *     wire_bits_ member to hold the columnCount-sized wire change header,
- *     translating to/from the row as needed.
+ * encoded. The codec maintains a local copy of the previous row to detect
+ * changes during serialization (double-buffer strategy to avoid allocations).
  *
  * The Writer is responsible for:
  *   - Calling reset() at packet boundaries
  *   - Detecting ZoH repeats (byte-identical serialized rows → write length 0)
  *
- * Change tracking is internal-only:
- *   - reset() marks next row as full-row emit in Enabled mode
- *   - serialize() updates internal tracking flags as needed
- *
  * Template parameters:
  *   LayoutType     — bcsv::Layout (dynamic) or bcsv::LayoutStatic<Ts...>
- *   Policy         — TrackingPolicy::Disabled or TrackingPolicy::Enabled
  *
  * @see ITEM_11_PLAN.md for architecture and design rationale.
  */
@@ -51,6 +40,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <span>
+#include <string>
 #include <type_traits>
 #include <vector>
 
@@ -59,9 +49,9 @@ namespace bcsv {
 // ────────────────────────────────────────────────────────────────────────────
 // Primary template: RowCodecZoH001 for dynamic Layout
 // ────────────────────────────────────────────────────────────────────────────
-template<typename LayoutType, TrackingPolicy Policy = TrackingPolicy::Enabled>
+template<typename LayoutType>
 class RowCodecZoH001 {
-    using RowType = typename LayoutType::template RowType<Policy>;
+    using RowType = typename LayoutType::RowType;
 
 public:
     RowCodecZoH001() = default;
@@ -73,11 +63,10 @@ public:
     // ── Bulk operations (Row — throughput path) ──────────────────────────
 
     /// Serialize using ZoH encoding.
+    /// Compares current row against local prev-row copy to detect changes.
     /// Returns empty span if no changes (ZoH "all unchanged" — caller writes length 0).
-    /// The caller (Writer) is responsible for detecting byte-identical repeats
-    /// of the returned span and writing length 0 for those as well.
     [[nodiscard]] std::span<std::byte> serialize(
-        RowType& row, ByteBuffer& buffer);
+        const RowType& row, ByteBuffer& buffer);
 
     /// Deserialize a ZoH-encoded buffer into the row.
     /// Only changed columns are updated — unchanged columns retain their
@@ -89,9 +78,17 @@ private:
     const LayoutType* layout_{nullptr};
     uint32_t wire_data_size_{0};
     const std::vector<uint32_t>* packed_offsets_{nullptr};
-    mutable Bitset<> wire_bits_;  // Wire change header (columnCount-sized).
-                                  // Shortcut when Enabled: unused — row.bits_ IS wire format.
-                                  // General when Disabled: intermediate for value comparison.
+
+    // Wire change header (columnCount-sized bitset for building ZoH wire format)
+    mutable Bitset<> wire_bits_;
+
+    // Mask with bits set only for non-bool columns (used for ZoH "nothing changed" check)
+    Bitset<> non_bool_mask_;
+
+    // Local prev-row copy for change detection (double-buffer strategy)
+    Bitset<> prev_bits_;                    // Previous bool values (boolCount-sized)
+    std::vector<std::byte> prev_data_;      // Previous scalar data
+    std::vector<std::string> prev_strg_;    // Previous string values
     bool first_row_in_packet_{true};
 };
 
@@ -99,10 +96,10 @@ private:
 // ────────────────────────────────────────────────────────────────────────────
 // Partial specialization: RowCodecZoH001 for LayoutStatic<ColumnTypes...>
 // ────────────────────────────────────────────────────────────────────────────
-template<TrackingPolicy Policy, typename... ColumnTypes>
-class RowCodecZoH001<LayoutStatic<ColumnTypes...>, Policy> {
+template<typename... ColumnTypes>
+class RowCodecZoH001<LayoutStatic<ColumnTypes...>> {
     using LayoutType = LayoutStatic<ColumnTypes...>;
-    using RowType = typename LayoutType::template RowType<Policy>;
+    using RowType = typename LayoutType::RowType;
 
 public:
     static constexpr size_t COLUMN_COUNT = sizeof...(ColumnTypes);
@@ -124,30 +121,40 @@ public:
 
     // ── Bulk operations (Row — throughput path) ──────────────────────────
     [[nodiscard]] std::span<std::byte> serialize(
-        RowType& row, ByteBuffer& buffer);
+        const RowType& row, ByteBuffer& buffer);
 
     void deserialize(
         std::span<const std::byte> buffer, RowType& row) const;
 
 private:
     const LayoutType* layout_{nullptr};
-    mutable Bitset<COLUMN_COUNT> wire_bits_;  // Wire change header.
-                                               // Shortcut when Enabled: unused — row.changes_ IS wire format.
-                                               // General when Disabled: intermediate for value comparison.
+    mutable Bitset<COLUMN_COUNT> wire_bits_;  // Wire change header
     bool first_row_in_packet_{true};
+
+    // Local prev-row copy for change detection (tuple-based storage)
+    std::tuple<ColumnTypes...> prev_data_;
 
     // ── Compile-time recursive helpers ───────────────────────────────────
     template<size_t Index>
     void serializeElementsZoH(const RowType& row, ByteBuffer& buffer,
-                               Bitset<COLUMN_COUNT>& rowHeader) const;
+                               const Bitset<COLUMN_COUNT>& rowHeader, size_t& writeOff) const;
 
     template<size_t Index>
     void serializeElementsZoHAllChanged(const RowType& row, ByteBuffer& buffer,
-                                        Bitset<COLUMN_COUNT>& rowHeader) const;
+                                        Bitset<COLUMN_COUNT>& rowHeader, size_t& writeOff) const;
+
+    /// Compute payload size for changed non-bool columns (fold expression).
+    static size_t computePayloadSize(const RowType& row, const Bitset<COLUMN_COUNT>& header);
+
+    /// Compute payload size when all non-bool columns are emitted.
+    static size_t computePayloadSizeAll(const RowType& row);
 
     template<size_t Index>
     void deserializeElementsZoH(RowType& row, std::span<const std::byte>& buffer,
                                  const Bitset<COLUMN_COUNT>& header) const;
+
+    template<size_t Index>
+    void copyRowToPrev(const RowType& row);
 };
 
 } // namespace bcsv

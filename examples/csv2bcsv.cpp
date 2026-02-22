@@ -809,7 +809,7 @@ int main(int argc, char* argv[]) {
         };
 
         if (config.use_zoh) {
-            bcsv::Writer<bcsv::Layout, bcsv::TrackingPolicy::Enabled> writer(layout);
+            bcsv::WriterZoH<bcsv::Layout> writer(layout);
             write_rows(writer);
         } else {
             bcsv::Writer<bcsv::Layout> writer(layout);

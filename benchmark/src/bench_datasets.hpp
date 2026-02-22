@@ -55,7 +55,7 @@ namespace bench {
 using RowGenerator = std::function<void(bcsv::Row& row, size_t rowIndex)>;
 
 /// Callback type for generating time-series (ZoH-friendly) data
-using RowGeneratorZoH = std::function<void(bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t rowIndex)>;
+using RowGeneratorZoH = std::function<void(bcsv::Row& row, size_t rowIndex)>;
 
 struct DatasetProfile {
     std::string  name;
@@ -282,7 +282,7 @@ inline DatasetProfile createMixedGenericProfile() {
         datagen::fillRowRandom(row, rowIndex, layout);
     };
 
-    p.generateZoH = [layout = p.layout](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t rowIndex) {
+    p.generateZoH = [layout = p.layout](bcsv::Row& row, size_t rowIndex) {
         datagen::fillRowTimeSeries(row, rowIndex, layout, 100);
     };
 
@@ -318,7 +318,7 @@ inline DatasetProfile createSparseEventsProfile() {
 
     // ZoH-favorable: only ~1% of rows have changes, values change every 100 rows
     // but with long stable periods
-    p.generateZoH = [layout = p.layout](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t rowIndex) {
+    p.generateZoH = [layout = p.layout](bcsv::Row& row, size_t rowIndex) {
         // Very sparse: change interval of 500 rows (0.2% change rate per column)
         datagen::fillRowTimeSeries(row, rowIndex, layout, 500);
     };
@@ -379,7 +379,7 @@ inline DatasetProfile createSensorNoisyProfile() {
     };
 
     // ZoH: sensors with slow drift (good for ZoH compression)
-    p.generateZoH = [](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t rowIndex) {
+    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
         row.set(static_cast<size_t>(0), static_cast<uint64_t>(1640995200000ULL + rowIndex * 1000));
         row.set(static_cast<size_t>(1), static_cast<uint32_t>(rowIndex));
 
@@ -501,7 +501,7 @@ inline DatasetProfile createStringHeavyProfile() {
     };
 
     // ZoH-favorable: strings repeat more, values change slowly
-    p.generateZoH = [layout = p.layout](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t rowIndex) {
+    p.generateZoH = [layout = p.layout](bcsv::Row& row, size_t rowIndex) {
         // Scalars: slow change
         size_t segment = rowIndex / 100;
         row.set(static_cast<size_t>(0), static_cast<int32_t>(rowIndex));
@@ -568,7 +568,7 @@ inline DatasetProfile createBoolHeavyProfile() {
     };
 
     // ZoH: booleans flip every 200 rows, scalars every 500
-    p.generateZoH = [](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t rowIndex) {
+    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
         size_t boolSeg = rowIndex / 200;
         for (size_t i = 0; i < 128; ++i) {
             // Stagger flips: column i flips at different phase offsets
@@ -613,7 +613,7 @@ inline DatasetProfile createArithmeticWideProfile() {
 
     // ZoH generator: also volatile (short change interval = 5 rows)
     // This deliberately stresses ZoH — minimal compression opportunity
-    p.generateZoH = [layout = p.layout](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t rowIndex) {
+    p.generateZoH = [layout = p.layout](bcsv::Row& row, size_t rowIndex) {
         datagen::fillRowTimeSeries(row, rowIndex, layout, 5);
     };
 
@@ -663,7 +663,7 @@ inline DatasetProfile createSimulationSmoothProfile() {
     };
 
     // ZoH: smooth drift, values change only every 1000 rows (very compressible)
-    p.generateZoH = [](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t rowIndex) {
+    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
         row.set(static_cast<size_t>(0), static_cast<uint64_t>(rowIndex));
         row.set(static_cast<size_t>(1), static_cast<double>(rowIndex) * 0.001);
         size_t segment = rowIndex / 1000;
@@ -772,7 +772,7 @@ inline DatasetProfile createWeatherTimeseriesProfile() {
     };
 
     // ZoH: weather changes slowly, station/region fixed for long runs
-    p.generateZoH = [](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t rowIndex) {
+    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
         size_t col = 0;
         row.set(col++, static_cast<uint64_t>(1704067200000ULL + rowIndex * 60000));
         // Station and region change every 10000 rows (station deployment)
@@ -844,7 +844,7 @@ inline DatasetProfile createHighCardinalityStringProfile() {
     };
 
     // ZoH: UUIDs assigned per batch (change every 500 rows)
-    p.generateZoH = [](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t rowIndex) {
+    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
         row.set(static_cast<size_t>(0), static_cast<uint64_t>(rowIndex));
         size_t batchSeg = rowIndex / 500;
         row.set(static_cast<size_t>(1), static_cast<uint32_t>(batchSeg));
@@ -960,7 +960,7 @@ inline DatasetProfile createEventLogProfile() {
         row.set(static_cast<size_t>(26), static_cast<uint32_t>(rowIndex / 50));
     };
 
-    p.generateZoH = [](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t rowIndex) {
+    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
         static const std::array<std::string, 5> logLevels = {
             "TRACE", "DEBUG", "INFO", "WARN", "ERROR"
         };
@@ -1105,7 +1105,7 @@ inline DatasetProfile createIotFleetProfile() {
         }
     };
 
-    p.generateZoH = [](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t rowIndex) {
+    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
         static const std::array<std::string, 10> sensorTypes = {
             "temperature", "humidity", "pressure", "co2", "vibration",
             "light", "noise", "flow", "ph", "occupancy"
@@ -1263,7 +1263,7 @@ inline DatasetProfile createFinancialOrdersProfile() {
         row.set(static_cast<size_t>(21), static_cast<uint64_t>(rowIndex));
     };
 
-    p.generateZoH = [](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t rowIndex) {
+    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
         static const std::array<std::string, 50> tickers = {
             "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "ORCL", "INTC", "AMD",
             "NFLX", "ADBE", "CRM", "PYPL", "QCOM", "AVGO", "TXN", "IBM", "CSCO", "MU",
@@ -1404,7 +1404,7 @@ inline DatasetProfile createRealisticMeasurementProfile() {
     };
 
     // ZoH generator: realistic multi-phase, multi-rate pattern
-    p.generateZoH = [](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t rowIndex) {
+    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
         const size_t N = 500000;  // assumed total rows for phase calc
         double progress = static_cast<double>(rowIndex) / static_cast<double>(N);
 
@@ -1552,7 +1552,7 @@ inline DatasetProfile createRtlWaveformProfile() {
     };
 
     // ZoH generator: realistic waveform patterns
-    p.generateZoH = [](bcsv::RowImpl<bcsv::TrackingPolicy::Enabled>& row, size_t rowIndex) {
+    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
         // ── Monotonic counters (always change) ──
         row.set(static_cast<size_t>(0), static_cast<uint64_t>(rowIndex));
         row.set(static_cast<size_t>(1), static_cast<uint64_t>(rowIndex * 10));
