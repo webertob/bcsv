@@ -300,7 +300,6 @@ Each codec provides:
 - `setup(layout)` — compute wire-format metadata from the layout
 - `serialize(row, buffer) → span<byte>` — encode a row to wire format
 - `deserialize(span, row)` — decode wire format into a row
-- `readColumn(span, index) → span<byte>` — zero-copy column access (used by RowView)
 - `reset()` — clear per-packet state (ZoH change tracking)
 
 Wire-format metadata (`wireBitsSize`, `wireDataSize`, `wireStrgCount`,
@@ -336,16 +335,6 @@ with Row's three-container storage layout.
 
 Static-layout codecs (`RowCodecFlat001<LayoutStatic<Ts...>, P>`) use
 `constexpr` wire metadata computed at compile time — zero runtime setup cost.
-
-#### RowView ↔ Codec Relationship
-
-`RowView` holds a `RowCodecFlat001<Layout, TrackingPolicy::Disabled>` to
-provide wire-format metadata (section offsets, per-column offsets). RowView
-caches only `offsets_ptr_` (a pointer into the codec's per-column offset
-array) because it is accessed per-iteration in inner loops. All other wire
-metadata (`wireBitsSize()`, `wireFixedSize()`, etc.) is read directly from
-the codec's `noexcept` accessors at call-site preamble — no per-instance
-caching of scalar metadata.
 
 ### Packet Size Strategy
 

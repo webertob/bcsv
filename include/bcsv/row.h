@@ -29,7 +29,7 @@ namespace bcsv {
  * 
  * The BCSV flat wire format uses a four-section layout that mirrors the Row's
  * in-memory storage (bits_, data_, strg_). Sections are written sequentially,
- * enabling near-memcpy serialization and simple zero-copy RowView access.
+ * enabling near-memcpy serialization and efficient codec access.
  * 
  * =============================================================================
  * FLAT ROW WIRE FORMAT LAYOUT
@@ -94,7 +94,7 @@ namespace bcsv {
  * └──────────────────┴──────────────────┴──────────────────┘
  * 
  * String offsets into strg_data are derived by cumulative sum of lengths;
- * no explicit offsets are stored. RowView pre-computes these at construction.
+ * no explicit offsets are stored. Codec pre-computes these during setup.
  * 
  * =============================================================================
  * SECTION 4: STRG_DATA (String payloads)
@@ -175,11 +175,11 @@ namespace bcsv {
  * - No StringAddr computation — lengths stored directly, offsets derived
  * - Scalar section is contiguous — good LZ4 compression, cache-friendly
  * - String lengths section enables O(1) skip of all strings if not needed
- * - Zero-copy RowView: bit-level bool access (>>3 for byte, &7 for bit)
+ * - Bit-level bool access (>>3 for byte, &7 for bit)
  * 
  * Trade-offs:
- * - RowView bool access requires bit-level addressing (trivial shift+mask)
- * - String access in RowView requires pre-computed cumulative offsets
+ * - Bool access requires bit-level addressing (trivial shift+mask)
+ * - String access requires cumulative offset computation
  * - In-memory data_ is aligned but wire data_ is packed — per-column copy
  * 
  * =============================================================================
@@ -189,7 +189,7 @@ namespace bcsv {
  * - No alignment padding in wire format (minimizes file size)
  * - All access uses memcpy for alignment safety
  * - In-memory Row data_ has natural alignment (via Layout::Data offsets_)
- * - RowView stores section start offsets + per-column section-relative offsets
+ * - Codec stores section start offsets + per-column section-relative offsets
  * 
  * =============================================================================
  * ZERO ORDER HOLD (ZoH) COMPRESSION FORMAT
@@ -571,73 +571,6 @@ namespace bcsv {
 
     using Row = RowImpl<TrackingPolicy::Disabled>;
 
-    /* RowView provides a direct view into a serilized buffer, partially supporting the row interface. Intended for sparse data access, avoiding costly full deserialization.
-       Currently we only support the basic get/set interface for individual columns, into a flat serilized buffer. We do not support ZoH format or more complex encoding schemes.
-    */
-    class RowView {
-        // Immutable after construction
-        Layout                  layout_;        // Shared layout data (no callbacks needed for views)
-        RowCodecFlat001<Layout, TrackingPolicy::Disabled> codec_; // Wire-format metadata + per-column offsets (Item 11)
-
-    public:
-        RowView() = delete;
-        RowView(const Layout& layout, std::span<std::byte> buffer = {});
-        RowView(const RowView& other);
-        RowView(RowView&& other) noexcept;
-        ~RowView() = default;
-
-        [[nodiscard]] const std::span<std::byte>& buffer() const noexcept                   { return codec_.buffer(); }
-        const Layout&               layout() const noexcept                                 { return layout_; }
-        void                        setBuffer(const std::span<std::byte> &buffer) noexcept  { codec_.setBuffer(buffer); }
-        [[nodiscard]] Row           toRow() const;
-        [[nodiscard]] bool          validate(bool deepValidation = true) const;
-
-        [[nodiscard]] std::span<const std::byte>  get(size_t index) const;
-                                    template<typename T>
-        [[nodiscard]] T             get(size_t index) const;
-                                    template<typename T>
-        [[nodiscard]] bool          get(size_t index, std::span<T> &dst) const;
-                                    template<typename T>
-        [[nodiscard]] bool          get(size_t index, T &dst) const;                        // Flexible: allows type conversions, returns false on failure
-                
-                                    template<typename T>
-        [[nodiscard]] bool          set(size_t index, const T& value);
-                                    template<typename T>
-        [[nodiscard]] bool          set(size_t index, std::span<const T> src);
-        
-        /** @brief Visit columns with read-only access (zero-copy). @see row.hpp */
-                                    template<RowVisitorConst Visitor>
-        void                        visitConst(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
-
-        /** @brief Visit all columns with read-only access (zero-copy). @see row.hpp */
-                                    template<RowVisitorConst Visitor>
-        void                        visitConst(Visitor&& visitor) const;
-        
-        /** @brief Visit columns with mutable access (primitives only). @see row.hpp */
-                                    template<RowVisitor Visitor>
-        void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1);
-
-        /** @brief Visit all columns with mutable access (primitives only). @see row.hpp */
-                                    template<RowVisitor Visitor>
-        void                        visit(Visitor&& visitor);
-
-        /** @brief Type-safe visit: iterate columns of known type T with compile-time dispatch (no runtime switch).
-         *  For string columns use T=std::string_view (read-only). @see row.hpp */
-                                    template<typename T, typename Visitor>
-                                        requires TypedRowVisitor<Visitor, T>
-        void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1);
-
-        /** @brief Type-safe const visit: iterate columns of known type T with compile-time dispatch (no runtime switch).
-         *  For string columns use T=std::string_view. @see row.hpp */
-                                    template<typename T, typename Visitor>
-                                        requires TypedRowVisitorConst<Visitor, T>
-        void                        visitConst(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
-
-        RowView& operator=(const RowView& other);
-        RowView& operator=(RowView&& other) noexcept;
-    };
-
-
 
     /* Dynamic row with static layout (compile-time defined) */
     template<TrackingPolicy Policy = TrackingPolicy::Disabled, typename... ColumnTypes>
@@ -738,122 +671,5 @@ namespace bcsv {
 
     template<TrackingPolicy Policy, typename... ColumnTypes>
     using RowStaticTracked = RowStaticImpl<Policy, ColumnTypes...>;
-
-
-    /* Provides a zero-copy view into a buffer with compile-time layout. 
-       Intended for sparse data access, avoiding costly full deserialization.
-       Currently we only support the basic get/set interface into a flat serilized buffer. We do not support ZoH format or more complex encoding schemes. Change tracking is not supported.
-    */
-    template<typename... ColumnTypes>
-    class RowViewStatic {
-    public:
-        using LayoutType = LayoutStatic<ColumnTypes...>;
-        using Codec = RowCodecFlat001<LayoutType, TrackingPolicy::Disabled>;  // Wire-format metadata source (Item 11)
-        static constexpr size_t COLUMN_COUNT = LayoutType::columnCount();
-
-        template<size_t Index>
-        using column_type = std::tuple_element_t<Index, typename LayoutType::ColTypes>;
-
-        // ── Flat wire-format constants (sourced from codec — single source of truth) ──
-        static constexpr size_t BOOL_COUNT      = Codec::BOOL_COUNT;
-        static constexpr size_t STRING_COUNT    = Codec::STRING_COUNT;
-        static constexpr size_t WIRE_BITS_SIZE  = Codec::WIRE_BITS_SIZE;
-        static constexpr size_t WIRE_DATA_SIZE  = Codec::WIRE_DATA_SIZE;
-        static constexpr size_t WIRE_STRG_COUNT = Codec::WIRE_STRG_COUNT;
-        static constexpr size_t WIRE_FIXED_SIZE = Codec::WIRE_FIXED_SIZE;
-        static constexpr auto   WIRE_OFFSETS    = Codec::WIRE_OFFSETS;
-
-
-    private:
-        // Immutable after construction --> We need to protect these members from modification (const wont' work due to assignment & move operators)
-        LayoutType              layout_;
-        Codec                   codec_;
-
-    public:
-
-        RowViewStatic() = delete;
-        RowViewStatic(const LayoutType& layout, std::span<std::byte> buffer = {})
-            : layout_(layout), codec_() {
-            codec_.setup(layout_);
-            codec_.setBuffer(buffer);
-        }
-        RowViewStatic(const RowViewStatic& other);
-        RowViewStatic(RowViewStatic&& other) noexcept;
-        ~RowViewStatic() = default;
-
-        const std::span<std::byte>& buffer() const noexcept                                     { return codec_.buffer(); }
-        const LayoutType&           layout() const noexcept                                     { return layout_; }
-        void                        setBuffer(const std::span<std::byte> &buffer) noexcept      { codec_.setBuffer(buffer); }
-
-        // =========================================================================
-        // 1. Static Access (Compile-Time) - Zero Copy where possible
-        // =========================================================================
-        /** Get value by Static Index.
-         *  for Primitives: Returns T by value (via memcpy, handles misalignment).
-         *  for Strings:    Returns std::string_view pointing into buffer (Zero Copy).
-         */
-                                    template<size_t Index>
-        [[nodiscard]] auto          get() const;                                                    // scalar static access (const)
-
-                                    template<size_t StartIndex, typename T, size_t Extent>
-        void                        get(std::span<T, Extent> &dst) const;                            // Vectorized: exact match fast path, conversions if needed
-
-
-        /** Set primitive value by Static Index.
-         *  As we cannot resize the underlying buffer, strings are only able to be set to same length as existing string.
-         *  for Primitives: Copies value into buffer (via memcpy, handles misalignment).
-         */
-                                    template<size_t Index, typename T>
-        void                        set(const T& value) noexcept;                                   // scalar static access
-
-                                    template<size_t StartIndex, typename T, size_t Extent>
-        void                        set(std::span<const T, Extent> values) noexcept;                // vectorized static access
-
-        // =========================================================================
-        // 2. Dynamic Access (Runtime Index)
-        // =========================================================================
-        [[nodiscard]] std::span<const std::byte>  get(size_t index) const noexcept;                 // returns empty if index invalid
-
-                                    template<typename T, size_t Extent>
-        [[nodiscard]] bool          get(size_t index, std::span<T, Extent>& dst) const noexcept;    // Strict: vectorized runtime access
-
-                                    template<typename T>
-        [[nodiscard]] bool          get(size_t index, T& dst) const noexcept;                       // Flexible: allows type conversions
-
-                                    template<typename T>
-        void                        set(size_t index, const T& value) noexcept;                     // scalar runtime access
-
-                                    template<typename T, size_t Extent>
-        void                        set(size_t index, std::span<const T, Extent> values) noexcept;  // vectorized runtime access
-
-        // =========================================================================
-        // 3. Conversion / Validation
-        // =========================================================================
-        [[nodiscard]] RowStatic<ColumnTypes...>   toRow() const;
-        [[nodiscard]] bool          validate() const noexcept;
-
-        /** @brief Visit columns with read-only access (compile-time, zero-copy). @see row.hpp */
-                                    template<RowVisitorConst Visitor>
-        void                        visitConst(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
-
-        /** @brief Visit all columns with read-only access (compile-time, zero-copy). @see row.hpp */
-                                    template<RowVisitorConst Visitor>
-        void                        visitConst(Visitor&& visitor) const;
-        
-        /** @brief Visit columns with mutable access (compile-time, primitives only). @see row.hpp */
-                                    template<RowVisitor Visitor>
-        void                        visit(size_t startIndex, Visitor&& visitor, size_t count = 1);
-
-        /** @brief Visit all columns with mutable access (compile-time, primitives only). @see row.hpp */
-                                    template<RowVisitor Visitor>
-        void                        visit(Visitor&& visitor);
-
-        RowViewStatic& operator=(const RowViewStatic& other) noexcept;
-        RowViewStatic& operator=(RowViewStatic&& other) noexcept;
-
-    private:
-        template<size_t Index = 0>
-        bool validateStringPayloads() const;
-    };
 
 } // namespace bcsv

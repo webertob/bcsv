@@ -124,13 +124,11 @@ Users interact with these types (declared in `include/bcsv/`):
 | `LayoutStatic<Types...>` | layout.h | Compile-time fixed schema, variadic template. |
 | `Row` | row.h | In-memory row for read/write. Alias for `RowImpl<TrackingPolicy::Disabled>`. |
 | `RowTracked<Policy>` | row.h | Policy-based row alias for advanced use (e.g., `TrackingPolicy::Enabled` with ZoH codec). |
-| `RowView` | row.h | Zero-copy read-only view into serialized row buffer (dynamic layout). |
 | `RowStatic<Types...>` | row.h | Compile-time typed row (tracking disabled). |
 | `RowStaticTracked<Policy, Types...>` | row.h | Policy-based static row alias for advanced use. |
-| `RowViewStatic<Types...>` | row.h | Zero-copy view for static layouts. |
 | `Reader<LayoutType, Policy>` | reader.h | Stream-based BCSV file reader with LZ4 decompression. |
 | `Writer<LayoutType, Policy>` | writer.h | Stream-based BCSV file writer with LZ4 compression, optional ZoH. |
-| `RowCodecFlat001<Layout, Policy>` | row_codec_flat001.h | Dense flat row codec — serialize, deserialize, zero-copy column access. |
+| `RowCodecFlat001<Layout, Policy>` | row_codec_flat001.h | Dense flat row codec — serialize, deserialize. |
 | `RowCodecZoH001<Layout, Policy>` | row_codec_zoh001.h | Zero-Order-Hold codec — delta-encodes unchanged columns. |
 
 > **Note:** public row change-tracking methods were removed. Tracking is internal-only and consumed by codecs (especially ZoH).
@@ -169,13 +167,12 @@ reader.close();
 | `bcsv.h` | Main include — aggregates all headers into single include |
 | `definitions.h` | Core types: `ColumnType` enum, `FileFlags`, `ValueType`, magic bytes, limits |
 | `layout.h` | `Layout`, `LayoutStatic<>`, `ColumnDefinition`, observer pattern |
-| `row.h` | `RowImpl<>`, `RowView`, `RowStaticImpl<>`, `RowViewStatic<>` — binary format docs |
+| `row.h` | `RowImpl<>`, `RowStaticImpl<>` — binary format docs |
 | `row_visitors.h` | C++20 concepts for visitor pattern: `ConstRowVisitor`, `MutableRowVisitor` |
 | `reader.h` | `Reader<>` — streaming file reader with LZ4 decompression |
 | `writer.h` | `Writer<>` — streaming file writer with LZ4 compression |
 | `row_codec_flat001.h` | `RowCodecFlat001<>` — dense flat row codec (serialize, deserialize, column access) |
 | `row_codec_zoh001.h` | `RowCodecZoH001<>` — ZoH delta codec (composes Flat001 for first row) |
-| `row_codec_detail.h` | Shared codec helpers: `computeWireMetadata()`, `readColumnFromWire()` |
 | `row_codec_variant.h` | `RowCodecType<>` — compile-time codec selection for Writer |
 | `row_codec_dispatch.h` | `CodecDispatch<>` — runtime codec selection for Reader (union + function pointers) |
 | `file_header.h` | `FileHeader` — 12-byte fixed header + variable schema section |
@@ -193,10 +190,10 @@ reader.close();
 |------|---------|
 | `bcsv.hpp` | Stream type traits (`is_fstream`, `has_open_method`, etc.) |
 | `layout.hpp` | Offset computation, observer callbacks, bool/tracked mask management |
-| `row.hpp` | `get<T>()`/`set<T>()`/`visit()`, RowView access — ~3300 lines |
+| `row.hpp` | `get<T>()`/`set<T>()`/`visit()` — ~1750 lines |
 | `reader.hpp` | `open()`, `close()`, `readNext()`, packet handling, codec dispatch |
 | `writer.hpp` | `open()`, `close()`, `writeRow()`, packet management, codec dispatch |
-| `row_codec_flat001.hpp` | Flat001 codec implementation: serialize, deserialize, column access |
+| `row_codec_flat001.hpp` | Flat001 codec implementation: serialize, deserialize |
 | `row_codec_zoh001.hpp` | ZoH001 codec implementation: delta serialize/deserialize |
 | `file_header.hpp` | Header read/write/validation |
 | `bitset.hpp` | Full bitset implementation (~1800 lines), SOO, shift, slice views |
@@ -297,7 +294,7 @@ Read these files to onboard:
 Key source entry points by area:
 - Types & constants: include/bcsv/definitions.h
 - Column schema: include/bcsv/layout.h
-- Row data model: include/bcsv/row.h (RowImpl is internal — users see Row, RowView, RowStatic, RowViewStatic)
+- Row data model: include/bcsv/row.h (RowImpl is internal — users see Row, RowStatic)
 - Row codecs: include/bcsv/row_codec_flat001.h, include/bcsv/row_codec_zoh001.h
 - File I/O: include/bcsv/reader.h, include/bcsv/writer.h
 - Visitor pattern: include/bcsv/row_visitors.h

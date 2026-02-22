@@ -302,7 +302,9 @@ Lean checklist gate (for every non-trivial item):
                 }
         - Create Serilizer/Deserializer for Flat and ZoH encoding --> dense columns (Row, RowStatic)
         - Create Serilizer/Deserializer for Flat and ZoH encoding --> sparse columns (RowView, RowViewStatic)
-        - Transfer Row, RowView, RowStatic, RowViewStatic serializer and deserializer functions to the new Classes
+            NOTE: RowView/RowViewStatic removed from active API (archived to row_view.h/row_view.hpp).
+                  Sparse codec path (readColumn, visitSparse*) also removed. See commit 8575319.
+        - Transfer Row, RowStatic serializer and deserializer functions to the new Classes
         - Modify Reader/Writer to use the new serializer
         - Check that we have maintained current bcsv API
             - run&pass tests

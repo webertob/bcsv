@@ -17,7 +17,6 @@
  *
  * Provides:
  *   - Bulk serialize / deserialize (Row throughput path)
- *   - Per-column readColumn / writeColumn (RowView sparse path)
  *   - Wire metadata accessors
  *
  * Template parameters:
@@ -59,43 +58,6 @@ public:
     void deserialize(
         std::span<const std::byte> buffer, RowType& row) const;
 
-    // ── Per-column access (RowView — sparse/lazy path) ──────────────────
-    [[nodiscard]] std::span<const std::byte> readColumn(
-        std::span<const std::byte> buffer, size_t col,
-        bool& boolScratch) const;
-
-    [[nodiscard]] std::span<const std::byte> readColumn(size_t col) const {
-        return readColumn(buffer_, col, bool_scratch_);
-    }
-
-    template<typename Visitor>
-    void visitConstSparse(
-        size_t startIndex,
-        size_t count,
-        Visitor&& visitor,
-        const char* fnName) const;
-
-    template<typename Visitor>
-    void visitSparse(
-        size_t startIndex,
-        size_t count,
-        Visitor&& visitor,
-        const char* fnName);
-
-    template<typename T, typename Visitor>
-    void visitSparseTyped(
-        size_t startIndex,
-        size_t count,
-        Visitor&& visitor,
-        const char* fnName);
-
-    template<typename T, typename Visitor>
-    void visitConstSparseTyped(
-        size_t startIndex,
-        size_t count,
-        Visitor&& visitor,
-        const char* fnName) const;
-
     // ── Wire metadata ───────────────────────────────────────────────────
     uint32_t wireBitsSize()  const noexcept {
         return layout_ ? static_cast<uint32_t>((layout_->columnCount(ColumnType::BOOL) + 7u) / 8u) : 0u;
@@ -109,37 +71,12 @@ public:
     }
     uint32_t columnOffset(size_t col) const noexcept { return offsets_ptr_[col]; }
     const uint32_t* columnOffsetsPtr() const noexcept { return offsets_ptr_; }
-    const std::span<std::byte>& buffer() const noexcept { return buffer_; }
-    void setBuffer(const std::span<std::byte>& buffer) noexcept { buffer_ = buffer; }
 
 private:
-    // ── Internal sparse helpers (used by visit* APIs) ─────────────
-    void validateSparseRange(
-        std::span<const std::byte> buffer,
-        size_t startIndex,
-        size_t count,
-        const char* fnName) const;
-
-    template<typename T>
-    void validateSparseTypedRange(
-        std::span<const std::byte> buffer,
-        size_t startIndex,
-        size_t count,
-        const char* fnName) const;
-
-    void initializeSparseStringCursors(
-        std::span<const std::byte> buffer,
-        size_t startIndex,
-        size_t& strLensCursor,
-        size_t& strPayCursor,
-        const char* fnName) const;
-
     const LayoutType* layout_{nullptr};
     uint32_t wire_data_size_{0};
     const std::vector<uint32_t>* packed_offsets_{nullptr};
     const uint32_t* offsets_ptr_{nullptr};
-    mutable bool bool_scratch_{false};
-    std::span<std::byte> buffer_{};
 };
 
 
@@ -179,29 +116,6 @@ public:
     void deserialize(
         std::span<const std::byte> buffer, RowType& row) const;
 
-    // ── Per-column access (RowView — sparse/lazy path) ──────────────────
-    [[nodiscard]] std::span<const std::byte> readColumn(
-        std::span<const std::byte> buffer, size_t col,
-        bool& boolScratch) const;
-
-    [[nodiscard]] std::span<const std::byte> readColumn(size_t col) const {
-        return readColumn(buffer_, col, bool_scratch_);
-    }
-
-    template<typename Visitor>
-    void visitConstSparse(
-        size_t startIndex,
-        size_t count,
-        Visitor&& visitor,
-        const char* fnName) const;
-
-    template<typename Visitor>
-    void visitSparse(
-        size_t startIndex,
-        size_t count,
-        Visitor&& visitor,
-        const char* fnName);
-
     // ── Wire metadata ───────────────────────────────────────────────────
     static constexpr uint32_t wireBitsSize()  noexcept { return WIRE_BITS_SIZE; }
     static constexpr uint32_t wireDataSize()  noexcept { return WIRE_DATA_SIZE; }
@@ -209,35 +123,10 @@ public:
     static constexpr uint32_t wireFixedSize() noexcept { return WIRE_FIXED_SIZE; }
     static constexpr size_t   columnOffset(size_t col) noexcept { return WIRE_OFFSETS[col]; }
     const uint32_t* columnOffsetsPtr() const noexcept { return offsets_ptr_; }
-    const std::span<std::byte>& buffer() const noexcept { return buffer_; }
-    void setBuffer(const std::span<std::byte>& buffer) noexcept { buffer_ = buffer; }
 
 private:
-    // ── Internal sparse helpers (used by visit* APIs) ─────────────
-    void validateSparseRange(
-        std::span<const std::byte> buffer,
-        size_t startIndex,
-        size_t count,
-        const char* fnName) const;
-
-    template<typename T>
-    void validateSparseTypedRange(
-        std::span<const std::byte> buffer,
-        size_t startIndex,
-        size_t count,
-        const char* fnName) const;
-
-    void initializeSparseStringCursors(
-        std::span<const std::byte> buffer,
-        size_t startIndex,
-        size_t& strLensCursor,
-        size_t& strPayCursor,
-        const char* fnName) const;
-
     const LayoutType* layout_{nullptr};
     const uint32_t* offsets_ptr_{WIRE_OFFSETS.data()};
-    mutable bool bool_scratch_{false};
-    std::span<std::byte> buffer_{};
 
     // ── Compile-time recursive helpers ───────────────────────────────────
     template<size_t Index>

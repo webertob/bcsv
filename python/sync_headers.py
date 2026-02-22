@@ -20,6 +20,14 @@ import argparse
 from pathlib import Path
 
 
+def _copy_bcsv_headers(src_dir, dst_dir, exclude):
+    """Copy BCSV headers, skipping archived files in the exclude set."""
+    dst_dir.mkdir(exist_ok=True)
+    for item in src_dir.iterdir():
+        if item.is_file() and item.name not in exclude:
+            shutil.copy2(item, dst_dir / item.name)
+
+
 def sync_headers(project_root=None, force=False, verbose=False):
     """
     Synchronize BCSV headers from the main project to the Python package.
@@ -52,6 +60,9 @@ def sync_headers(project_root=None, force=False, verbose=False):
     # Create target directory if it doesn't exist
     target_include_dir.mkdir(exist_ok=True)
     
+    # Archived headers excluded from Python sync (not part of active API)
+    EXCLUDE_PATTERNS = {"row_view.h", "row_view.hpp"}
+
     # Sync BCSV headers
     source_bcsv_dir = source_include_dir / "bcsv"
     target_bcsv_dir = target_include_dir / "bcsv"
@@ -66,7 +77,7 @@ def sync_headers(project_root=None, force=False, verbose=False):
                 not (target_bcsv_dir / f.name).exists() or 
                 f.stat().st_mtime > (target_bcsv_dir / f.name).stat().st_mtime
                 for f in source_bcsv_dir.glob("*")
-                if f.is_file()
+                if f.is_file() and f.name not in EXCLUDE_PATTERNS
             )
             
             if not source_newer:
@@ -75,11 +86,11 @@ def sync_headers(project_root=None, force=False, verbose=False):
             else:
                 if verbose:
                     print("Updating BCSV headers...")
-                shutil.copytree(source_bcsv_dir, target_bcsv_dir, dirs_exist_ok=True)
+                _copy_bcsv_headers(source_bcsv_dir, target_bcsv_dir, EXCLUDE_PATTERNS)
         else:
             if verbose:
                 print("Copying BCSV headers...")
-            shutil.copytree(source_bcsv_dir, target_bcsv_dir, dirs_exist_ok=True)
+            _copy_bcsv_headers(source_bcsv_dir, target_bcsv_dir, EXCLUDE_PATTERNS)
     
     # Sync LZ4 headers AND sources (needed for compilation)
     source_lz4_dir = source_include_dir / "lz4-1.10.0"

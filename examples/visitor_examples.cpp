@@ -419,59 +419,6 @@ void example_typed_visit_2param() {
 }
 
 // ============================================================================
-// Example 11: RowView visit<T>() — Zero-Copy Buffer Access
-// ============================================================================
-
-void example_rowview_typed_visit() {
-    std::cout << "\n=== Example 11: RowView visit<T>() — Zero-Copy Buffer Access ===\n";
-
-    Layout layout({
-        {"ch0", ColumnType::DOUBLE},
-        {"ch1", ColumnType::DOUBLE},
-        {"ch2", ColumnType::DOUBLE},
-        {"name", ColumnType::STRING}
-    });
-
-    // Create and populate a Row, then serialize
-    Row row(layout);
-    row.set(0, 100.0);
-    row.set(1, 200.0);
-    row.set(2, 300.0);
-    row.set(3, std::string("sensor_A"));
-
-    ByteBuffer buf;
-    RowCodecFlat001<Layout> codec;
-    codec.setup(layout);
-    auto serialized = codec.serialize(row, buf);
-
-    // Create a zero-copy RowView into the serialized buffer
-    RowView rv(layout, std::span<std::byte>(serialized));
-
-    // Read doubles with visitConst<T>() — no runtime switch, zero-copy
-    double sum = 0;
-    rv.visitConst<double>(0, [&](size_t col, const double& val) {
-        std::cout << "  " << layout.columnName(col) << " = " << val << "\n";
-        sum += val;
-    }, 3);
-    std::cout << "  Sum: " << sum << "\n";
-
-    // Read string with visitConst<string_view>() — zero-copy into buffer
-    rv.visitConst<std::string_view>(3, [&](size_t col, const std::string_view& sv) {
-        std::cout << "  " << layout.columnName(col) << " = \"" << sv << "\"\n";
-    }, 1);
-
-    // Modify doubles in-place (directly in the serialized buffer)
-    rv.visit<double>(0, [](size_t, double& val) {
-        val *= 2.0;
-    }, 3);
-
-    std::cout << "  After 2x scaling:\n";
-    rv.visitConst<double>(0, [&](size_t col, const double& val) {
-        std::cout << "    " << layout.columnName(col) << " = " << val << "\n";
-    }, 3);
-}
-
-// ============================================================================
 // Main
 // ============================================================================
 
@@ -490,7 +437,6 @@ int main() {
         example_json_output();
         example_typed_visit();
         example_typed_visit_2param();
-        example_rowview_typed_visit();
         
         std::cout << "\n✓ All examples completed successfully!\n";
         return 0;

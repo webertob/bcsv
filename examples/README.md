@@ -106,9 +106,9 @@ writer.writeRow(*row);
 
 // Read data
 bcsv::Reader<bcsv::Layout> reader(layout, filename);
-bcsv::RowView rowView(layout);
-while (reader.readRow(rowView)) {
-    auto value = rowView.get<Type>(index);
+bcsv::Row readRow(layout);
+while (reader.readRow(readRow)) {
+    auto value = readRow.get<Type>(index);
 }
 ```
 
@@ -126,9 +126,9 @@ writer.writeRow(*row);
 
 // Read data
 bcsv::Reader<MyLayout> reader(layout, filename);
-typename MyLayout::RowViewType rowView(layout);
-while (reader.readRow(rowView)) {
-    auto value = rowView.get<0>();  // Template index
+typename MyLayout::template RowType<> readRow(layout);
+while (reader.readRow(readRow)) {
+    auto value = readRow.get<0>();  // Template index
 }
 ```
 

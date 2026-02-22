@@ -80,15 +80,7 @@
  * }, 50);
  * @endcode
  *
- * visit<T>() and visitConst<T>() are available on both RowImpl and RowView.
- * On RowView, scalars are accessed directly in the serialized buffer
- * and strings are returned as zero-copy std::string_view references:
- * @code
- * bcsv::RowView view(buffer.data(), buffer.size(), layout);
- * view.visitConst<std::string_view>(stringCol, [](size_t, std::string_view sv) {
- *     std::cout << sv << "\n";  // zero-copy into buffer
- * });
- * @endcode
+ * visit<T>() and visitConst<T>() are available on RowImpl and RowStaticImpl.
  * 
  * @subsection helper_visitors Using Helper Types
  * 

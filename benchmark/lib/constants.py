@@ -52,13 +52,10 @@ MICRO_GROUPS: dict[str, str] = {
     "BM_Get_":          "Get",
     "BM_Set_":          "Set",
     "BM_Visit":         "Visit",
-    "BM_RowViewVisit":  "Visit",
     "BM_Serialize":     "Serialize",
     "BM_Deserialize":   "Serialize",
     "BM_RowClear":      "Lifecycle",
     "BM_RowConstruct":  "Lifecycle",
-    "BM_RowViewCopy":   "Lifecycle",
-    "BM_RowViewMove":   "Lifecycle",
     "BM_CsvWrite":      "Other",
 }
 

@@ -13,8 +13,8 @@
  *        compared to the existing RowImpl::serializeTo/deserializeFrom.
  *
  * Tests cover:
- *   - Dynamic Layout: serialize, deserialize, readColumn per type
- *   - Static Layout: serialize, deserialize, readColumn per type
+ *   - Dynamic Layout: serialize, deserialize per type
+ *   - Static Layout: serialize, deserialize per type
  *   - Tracking enabled/disabled
  *   - Edge cases: empty layout, all-bool, all-string, mixed, null strings
  */
@@ -28,18 +28,6 @@
 #include <vector>
 
 using namespace bcsv;
-
-// ════════════════════════════════════════════════════════════════════════════
-// Helper: compare two spans byte-by-byte
-// ════════════════════════════════════════════════════════════════════════════
-static void expectBytesEqual(std::span<const std::byte> a, std::span<const std::byte> b,
-                             const std::string& context = "")
-{
-    ASSERT_EQ(a.size(), b.size()) << context << " — size mismatch";
-    for (size_t i = 0; i < a.size(); ++i) {
-        EXPECT_EQ(a[i], b[i]) << context << " — byte " << i << " differs";
-    }
-}
 
 // ════════════════════════════════════════════════════════════════════════════
 // Dynamic Layout — Serialize Parity
@@ -197,63 +185,6 @@ TEST_F(CodecFlat001DynamicTest, RoundtripParity) {
     EXPECT_EQ(row.get<bool>(5), rowBack.get<bool>(5));
     EXPECT_EQ(row.get<std::string>(6), rowBack.get<std::string>(6));
 }
-
-// ════════════════════════════════════════════════════════════════════════════
-// Dynamic Layout — readColumn Parity (vs RowView::get)
-// ════════════════════════════════════════════════════════════════════════════
-
-TEST_F(CodecFlat001DynamicTest, ReadColumnParity_Scalar) {
-    Row row(layout_);
-    row.set<bool>(0, true);
-    row.set<int32_t>(1, 777);
-    row.set<double>(2, -99.5);
-    row.set<std::string_view>(3, "abc");
-    row.set<uint16_t>(4, 1234);
-    row.set<bool>(5, false);
-    row.set<std::string_view>(6, "def");
-
-    RowCodecFlat001<Layout> codec;
-    codec.setup(layout_);
-    ByteBuffer buf;
-    auto wire = codec.serialize(row, buf);
-
-    // RowView (old path)
-    RowView rv(layout_, wire);
-
-    for (size_t col = 0; col < layout_.columnCount(); ++col) {
-        auto spanOld = rv.get(col);
-        bool scratch = false;
-        auto spanNew = codec.readColumn(wire, col, scratch);
-        expectBytesEqual(spanOld, spanNew, "readColumn parity col=" + std::to_string(col));
-    }
-}
-
-TEST_F(CodecFlat001DynamicTest, ReadColumnParity_EmptyStrings) {
-    Row row(layout_);
-    row.set<bool>(0, false);
-    row.set<int32_t>(1, 0);
-    row.set<double>(2, 0.0);
-    row.set<std::string_view>(3, "");
-    row.set<uint16_t>(4, 0);
-    row.set<bool>(5, false);
-    row.set<std::string_view>(6, "");
-
-    RowCodecFlat001<Layout> codec;
-    codec.setup(layout_);
-    ByteBuffer buf;
-    auto wire = codec.serialize(row, buf);
-
-    RowView rv(layout_, wire);
-
-    for (size_t col = 0; col < layout_.columnCount(); ++col) {
-        auto spanOld = rv.get(col);
-        bool scratch = false;
-        auto spanNew = codec.readColumn(wire, col, scratch);
-        expectBytesEqual(spanOld, spanNew, "readColumn empty strings col=" + std::to_string(col));
-    }
-}
-
-// ════════════════════════════════════════════════════════════════════════════
 // Dynamic Layout — Edge Cases
 // ════════════════════════════════════════════════════════════════════════════
 
@@ -276,14 +207,6 @@ TEST(CodecFlat001EdgeTest, AllBoolLayout) {
     auto spanNew = codec.serialize(row, bufNew);
     ASSERT_FALSE(spanNew.empty()) << "all-bool serialize must produce output";
 
-    // readColumn parity
-    RowView rv(layout, spanNew);
-    for (size_t col = 0; col < 9; ++col) {
-        auto rvSpan = rv.get(col);
-        bool scratch = false;
-        auto codecSpan = codec.readColumn(spanNew, col, scratch);
-        expectBytesEqual(rvSpan, codecSpan, "all-bool readColumn col=" + std::to_string(col));
-    }
 }
 
 TEST(CodecFlat001EdgeTest, AllStringLayout) {
@@ -302,14 +225,6 @@ TEST(CodecFlat001EdgeTest, AllStringLayout) {
     ByteBuffer bufNew;
     auto spanNew = codec.serialize(row, bufNew);
     ASSERT_FALSE(spanNew.empty()) << "all-string serialize must produce output";
-
-    RowView rv(layout, spanNew);
-    for (size_t col = 0; col < 3; ++col) {
-        auto rvSpan = rv.get(col);
-        bool scratch = false;
-        auto codecSpan = codec.readColumn(spanNew, col, scratch);
-        expectBytesEqual(rvSpan, codecSpan, "all-string readColumn col=" + std::to_string(col));
-    }
 }
 
 TEST(CodecFlat001EdgeTest, AllNumericTypes) {
@@ -352,15 +267,6 @@ TEST(CodecFlat001EdgeTest, AllNumericTypes) {
     EXPECT_EQ(row.get<uint64_t>(7), rowNew.get<uint64_t>(7));
     EXPECT_FLOAT_EQ(row.get<float>(8), rowNew.get<float>(8));
     EXPECT_DOUBLE_EQ(row.get<double>(9), rowNew.get<double>(9));
-
-    // readColumn parity
-    RowView rv(layout, spanNew);
-    for (size_t col = 0; col < 10; ++col) {
-        auto rvSpan = rv.get(col);
-        bool scratch = false;
-        auto codecSpan = codec.readColumn(spanNew, col, scratch);
-        expectBytesEqual(rvSpan, codecSpan, "all-numeric readColumn col=" + std::to_string(col));
-    }
 }
 
 TEST(CodecFlat001EdgeTest, WireMetadata_Dynamic) {
@@ -533,31 +439,6 @@ TEST(CodecFlat001StaticTest, RoundtripParity) {
     EXPECT_EQ(row.get<6>(), rowBack.get<6>());
 }
 
-TEST(CodecFlat001StaticTest, ReadColumnParity) {
-    using SLayout = LayoutStatic<bool, int32_t, std::string, double>;
-    SLayout layout;
-    RowStatic<bool, int32_t, std::string, double> row(layout);
-    row.set<0>(true);
-    row.set<1>(123);
-    row.set<2>(std::string("test_str"));
-    row.set<3>(9.99);
-
-    RowCodecFlat001<SLayout> codec;
-    codec.setup(layout);
-    ByteBuffer buf;
-    auto wire = codec.serialize(row, buf);
-
-    // RowViewStatic
-    RowViewStatic<bool, int32_t, std::string, double> rv(layout, wire);
-
-    for (size_t col = 0; col < 4; ++col) {
-        auto rvSpan = rv.get(col);
-        bool scratch = false;
-        auto codecSpan = codec.readColumn(wire, col, scratch);
-        expectBytesEqual(rvSpan, codecSpan, "static readColumn col=" + std::to_string(col));
-    }
-}
-
 TEST(CodecFlat001StaticTest, WireMetadata_Static) {
     using SLayout = LayoutStatic<bool, int32_t, std::string, double, bool>;
     using Codec = RowCodecFlat001<SLayout>;
@@ -592,30 +473,6 @@ TEST(CodecFlat001StaticTest, MultipleRowsSequential) {
         EXPECT_EQ(row.get<1>(), rowBack.get<1>());
     }
 }
-
-// ════════════════════════════════════════════════════════════════════════════
-// Dynamic Layout — Codec offsets match RowView offsets
-// ════════════════════════════════════════════════════════════════════════════
-
-TEST_F(CodecFlat001DynamicTest, OffsetsMatchRowView) {
-    RowCodecFlat001<Layout> codec;
-    codec.setup(layout_);
-
-    // Build the same offsets RowView computes
-    std::vector<uint32_t> expected(layout_.columnCount());
-    size_t bool_idx = 0, data_off = 0, strg_idx = 0;
-    for (size_t i = 0; i < layout_.columnCount(); ++i) {
-        ColumnType type = layout_.columnType(i);
-        if (type == ColumnType::BOOL) expected[i] = static_cast<uint32_t>(bool_idx++);
-        else if (type == ColumnType::STRING) expected[i] = static_cast<uint32_t>(strg_idx++);
-        else { expected[i] = static_cast<uint32_t>(data_off); data_off += sizeOf(type); }
-    }
-
-    for (size_t i = 0; i < layout_.columnCount(); ++i) {
-        EXPECT_EQ(codec.columnOffset(i), expected[i]) << "offset mismatch at col " << i;
-    }
-}
-
 // ════════════════════════════════════════════════════════════════════════════
 // Large string and boundary tests
 // ════════════════════════════════════════════════════════════════════════════

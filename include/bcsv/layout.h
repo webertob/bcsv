@@ -28,9 +28,7 @@
 // Forward declarations to avoid circular dependencies
 namespace bcsv {
     template<TrackingPolicy Policy> class RowImpl;
-    class RowView;
     template<TrackingPolicy Policy, typename... ColumnTypes> class RowStaticImpl;
-    template<typename... ColumnTypes> class RowViewStatic;
 }
 
 namespace bcsv {
@@ -61,7 +59,6 @@ namespace bcsv {
 
         // Type information (for static layouts)
         typename T::template RowType<TrackingPolicy::Disabled>;  // Each layout must define its row type
-        typename T::RowViewType;  // Each layout must define its row view type
     };
 
     /**
@@ -169,7 +166,6 @@ namespace bcsv {
     public:
         template<TrackingPolicy Policy = TrackingPolicy::Disabled>
         using RowType     = RowImpl<Policy>;
-        using RowViewType = RowView;
 
         // ============================================================
         // Constructors
@@ -346,7 +342,6 @@ namespace bcsv {
     public:
         template<TrackingPolicy Policy = TrackingPolicy::Disabled>
         using RowType           = RowStaticImpl<Policy, ColumnTypes...>;
-        using RowViewType       = RowViewStatic<ColumnTypes...>;
         using ColTypes          = std::tuple<ColumnTypes...>;
                                   template<size_t Index>
         using ColType           = std::tuple_element_t<Index, ColTypes>;

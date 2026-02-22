@@ -280,63 +280,6 @@ protected:
         writer.row().set<23>(data.string2);
     }
     
-    // Validate flexible row data  
-    void validateFlexibleRowData(const TestData& expected, const bcsv::RowView& actual, size_t row_index) {
-        EXPECT_EQ(expected.bool1, actual.get<bool>(0)) << "Row " << row_index << " bool1 mismatch";
-        EXPECT_EQ(expected.bool2, actual.get<bool>(1)) << "Row " << row_index << " bool2 mismatch";
-        EXPECT_EQ(expected.int8_1, actual.get<int8_t>(2)) << "Row " << row_index << " int8_1 mismatch";
-        EXPECT_EQ(expected.int8_2, actual.get<int8_t>(3)) << "Row " << row_index << " int8_2 mismatch";
-        EXPECT_EQ(expected.int16_1, actual.get<int16_t>(4)) << "Row " << row_index << " int16_1 mismatch";
-        EXPECT_EQ(expected.int16_2, actual.get<int16_t>(5)) << "Row " << row_index << " int16_2 mismatch";
-        EXPECT_EQ(expected.int32_1, actual.get<int32_t>(6)) << "Row " << row_index << " int32_1 mismatch";
-        EXPECT_EQ(expected.int32_2, actual.get<int32_t>(7)) << "Row " << row_index << " int32_2 mismatch";
-        EXPECT_EQ(expected.int64_1, actual.get<int64_t>(8)) << "Row " << row_index << " int64_1 mismatch";
-        EXPECT_EQ(expected.int64_2, actual.get<int64_t>(9)) << "Row " << row_index << " int64_2 mismatch";
-        EXPECT_EQ(expected.uint8_1, actual.get<uint8_t>(10)) << "Row " << row_index << " uint8_1 mismatch";
-        EXPECT_EQ(expected.uint8_2, actual.get<uint8_t>(11)) << "Row " << row_index << " uint8_2 mismatch";
-        EXPECT_EQ(expected.uint16_1, actual.get<uint16_t>(12)) << "Row " << row_index << " uint16_1 mismatch";
-        EXPECT_EQ(expected.uint16_2, actual.get<uint16_t>(13)) << "Row " << row_index << " uint16_2 mismatch";
-        EXPECT_EQ(expected.uint32_1, actual.get<uint32_t>(14)) << "Row " << row_index << " uint32_1 mismatch";
-        EXPECT_EQ(expected.uint32_2, actual.get<uint32_t>(15)) << "Row " << row_index << " uint32_2 mismatch";
-        EXPECT_EQ(expected.uint64_1, actual.get<uint64_t>(16)) << "Row " << row_index << " uint64_1 mismatch";
-        EXPECT_EQ(expected.uint64_2, actual.get<uint64_t>(17)) << "Row " << row_index << " uint64_2 mismatch";
-        EXPECT_FLOAT_EQ(expected.float1, actual.get<float>(18)) << "Row " << row_index << " float1 mismatch";
-        EXPECT_FLOAT_EQ(expected.float2, actual.get<float>(19)) << "Row " << row_index << " float2 mismatch";
-        EXPECT_DOUBLE_EQ(expected.double1, actual.get<double>(20)) << "Row " << row_index << " double1 mismatch";
-        EXPECT_DOUBLE_EQ(expected.double2, actual.get<double>(21)) << "Row " << row_index << " double2 mismatch";
-        EXPECT_EQ(expected.string1, actual.get<std::string>(22)) << "Row " << row_index << " string1 mismatch";
-        EXPECT_EQ(expected.string2, actual.get<std::string>(23)) << "Row " << row_index << " string2 mismatch";
-    }
-    
-    // Validate static row data
-    void validateStaticRowData(const TestData& expected, const typename FullTestLayoutStatic::RowViewType& actual, size_t row_index) {
-        EXPECT_EQ(expected.bool1, actual.template get<0>()) << "Row " << row_index << " bool1 mismatch";
-        EXPECT_EQ(expected.bool2, actual.template get<1>()) << "Row " << row_index << " bool2 mismatch";
-        EXPECT_EQ(expected.int8_1, actual.template get<2>()) << "Row " << row_index << " int8_1 mismatch";
-        EXPECT_EQ(expected.int8_2, actual.template get<3>()) << "Row " << row_index << " int8_2 mismatch";
-        EXPECT_EQ(expected.int16_1, actual.template get<4>()) << "Row " << row_index << " int16_1 mismatch";
-        EXPECT_EQ(expected.int16_2, actual.template get<5>()) << "Row " << row_index << " int16_2 mismatch";
-        EXPECT_EQ(expected.int32_1, actual.template get<6>()) << "Row " << row_index << " int32_1 mismatch";
-        EXPECT_EQ(expected.int32_2, actual.template get<7>()) << "Row " << row_index << " int32_2 mismatch";
-        EXPECT_EQ(expected.int64_1, actual.template get<8>()) << "Row " << row_index << " int64_1 mismatch";
-        EXPECT_EQ(expected.int64_2, actual.template get<9>()) << "Row " << row_index << " int64_2 mismatch";
-        EXPECT_EQ(expected.uint8_1, actual.template get<10>()) << "Row " << row_index << " uint8_1 mismatch";
-        EXPECT_EQ(expected.uint8_2, actual.template get<11>()) << "Row " << row_index << " uint8_2 mismatch";
-        EXPECT_EQ(expected.uint16_1, actual.template get<12>()) << "Row " << row_index << " uint16_1 mismatch";
-        EXPECT_EQ(expected.uint16_2, actual.template get<13>()) << "Row " << row_index << " uint16_2 mismatch";
-        EXPECT_EQ(expected.uint32_1, actual.template get<14>()) << "Row " << row_index << " uint32_1 mismatch";
-        EXPECT_EQ(expected.uint32_2, actual.template get<15>()) << "Row " << row_index << " uint32_2 mismatch";
-        EXPECT_EQ(expected.uint64_1, actual.template get<16>()) << "Row " << row_index << " uint64_1 mismatch";
-        EXPECT_EQ(expected.uint64_2, actual.template get<17>()) << "Row " << row_index << " uint64_2 mismatch";
-        EXPECT_FLOAT_EQ(expected.float1, actual.template get<18>()) << "Row " << row_index << " float1 mismatch";
-        EXPECT_FLOAT_EQ(expected.float2, actual.template get<19>()) << "Row " << row_index << " float2 mismatch";
-        EXPECT_DOUBLE_EQ(expected.double1, actual.template get<20>()) << "Row " << row_index << " double1 mismatch";
-        EXPECT_DOUBLE_EQ(expected.double2, actual.template get<21>()) << "Row " << row_index << " double2 mismatch";
-        EXPECT_EQ(expected.string1, actual.template get<22>()) << "Row " << row_index << " string1 mismatch";
-        EXPECT_EQ(expected.string2, actual.template get<23>()) << "Row " << row_index << " string2 mismatch";
-    }
-    
-    // Overloaded validation for Row (owning) types
     void validateFlexibleRowData(const TestData& expected, const bcsv::Row& actual, size_t row_index) {
         EXPECT_EQ(expected.bool1, actual.get<bool>(0)) << "Row " << row_index << " bool1 mismatch";
         EXPECT_EQ(expected.bool2, actual.get<bool>(1)) << "Row " << row_index << " bool2 mismatch";
