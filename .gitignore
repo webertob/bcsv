@@ -6,6 +6,7 @@ build-debug/
 build/
 bin/
 /lib/
+obj/
 
 # Ignore IDE files
 .vscode/
