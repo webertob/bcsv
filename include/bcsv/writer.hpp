@@ -264,21 +264,15 @@ namespace bcsv {
         std::span<std::byte> actRow = codec_.serialize(row_, row_buffer_raw_);
 
         // 2. write row data to file
-        if  (
-                file_header_.hasFlag(FileFlags::ZERO_ORDER_HOLD) 
-            &&  (
-                    actRow.size() == 0
-                ||  (
-                        actRow.size() == row_buffer_prev_.size() 
-                    &&  std::equal(actRow.begin(), actRow.end(), row_buffer_prev_.begin())
-                    )
-                )
-            )
+        // TODO: This ZoH repeat check should be codec-agnostic. Currently we gate on
+        //       ZERO_ORDER_HOLD flag, but ideally actRow.size() == 0 should be the
+        //       universal "no change" signal from any codec (Flat always returns non-empty,
+        //       ZoH returns empty when row is unchanged). Rework to unify once Flat codec
+        //       adopts the same convention.
+        if (actRow.size() == 0)
         {
-            //identical to previous row -> ZoH repeat
+            // No change detected by codec → ZoH repeat
             writeRowLength(0);
-            row_buffer_raw_.resize(row_buffer_raw_.size()-actRow.size()); // clear actRow from buffer
-            //std::swap(row_buffer_prev_, row_buffer_raw_); --> ZoH repeat, keep previous row inplace
         }
         else if(lz4_stream_.has_value()) 
         {
