@@ -66,6 +66,13 @@ if(BCSV_BUILD_BENCHMARKS)
         set_target_properties(bench_micro_types PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
         )
+
+        add_executable(bench_micro_bitset src/bench_micro_bitset.cpp)
+        target_link_libraries(bench_micro_bitset PRIVATE bcsv benchmark::benchmark)
+        target_compile_features(bench_micro_bitset PRIVATE cxx_std_20)
+        set_target_properties(bench_micro_bitset PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+        )
     endif()
 
     # --- External CSV library comparison (optional) ---

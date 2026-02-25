@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -19,6 +19,7 @@
 #include <ostream>
 #include <istream>
 #include <cassert>
+#include <type_traits>
 
 namespace bcsv {
 
@@ -73,6 +74,14 @@ class Bitset {
         // Friend declarations
         template<size_t M> friend class Bitset;
         template<size_t M> friend bool operator==(const Bitset<M>&, const Bitset<M>&) noexcept;
+
+        // Free-function block operations need access to wordData()/wordCount()
+        template<size_t N2, size_t M2>
+        friend constexpr bool equalRange(const Bitset<N2>&, size_t,
+                                         const Bitset<M2>&, size_t, size_t) noexcept;
+        template<size_t N2, size_t M2>
+        friend constexpr void assignRange(Bitset<N2>&, size_t,
+                                          const Bitset<M2>&, size_t, size_t) noexcept;
 
         // =====================================================================
         // Helpers (static)
@@ -295,7 +304,38 @@ class Bitset {
     // Mask is truncated to this Bitset's size; extra mask bits are ignored.
     bool all(const Bitset& mask) const noexcept;
     bool any(const Bitset& mask) const noexcept;
-    
+
+    // ===== Block Operations =====
+    // Word-granularity subrange comparison and assignment.
+    // Positions (offset, len) are in bits; internally uses word-size operations
+    // with masked first/last words for partial-word boundaries.
+    // Marked constexpr for fixed-size bitsets where the compiler can
+    // constant-fold; dynamic bitsets require runtime evaluation due to
+    // heap allocation in the destructor (not a literal type).
+    //
+    // Self-overlap note: a.assignRange(a, offset, len) where this == &src
+    // is safe when offset == 0 (trivial self-copy) or offset >= len
+    // (non-overlapping ranges).  When 0 < offset < len the source and
+    // destination ranges overlap and the result is undefined.
+
+    static constexpr size_t npos = ~size_t{0};
+
+    /// Compare this[offset..offset+len) against other[0..len).
+    /// Returns true if the bit ranges are equal.
+    /// If len == npos, uses other.size() as length.
+    template<size_t M>
+    constexpr bool equalRange(const Bitset<M>& other,
+                              size_t offset = 0,
+                              size_t len = npos) const noexcept;
+
+    /// Copy src[0..len) into this[offset..offset+len).
+    /// Bits outside the range are preserved.
+    /// If len == npos, uses src.size() as length.
+    template<size_t M>
+    constexpr Bitset& assignRange(const Bitset<M>& src,
+                                  size_t offset = 0,
+                                  size_t len = npos) noexcept;
+
     // ===== Conversions =====
     
     unsigned long toUlong() const;
@@ -356,6 +396,27 @@ template<class CharT, class Traits, size_t N>
 std::basic_istream<CharT, Traits>& operator>>(
     std::basic_istream<CharT, Traits>& is, 
     Bitset<N>& x);
+
+// ===== Free-function Block Operations (dual-offset) =====
+
+/// Compare a[offset_a..offset_a+len) against b[offset_b..offset_b+len).
+/// Both sides may be at arbitrary bit offsets; word-level operations are used.
+template<size_t N, size_t M>
+constexpr bool equalRange(const Bitset<N>& a, size_t offset_a,
+                          const Bitset<M>& b, size_t offset_b,
+                          size_t len) noexcept;
+
+/// Copy src[offset_src..offset_src+len) into dst[offset_dst..offset_dst+len).
+/// Bits outside the destination range are preserved.
+/// No temporary allocation — uses direct word-level scatter.
+/// Self-overlap (&dst == &src): safe when ranges do not overlap
+/// (offset_dst >= offset_src + len or offset_src >= offset_dst + len).
+/// Overlapping ranges produce undefined results.
+/// No default for `len` — with dual offsets neither .size() is unambiguous.
+template<size_t N, size_t M>
+constexpr void assignRange(Bitset<N>& dst, size_t offset_dst,
+                           const Bitset<M>& src, size_t offset_src,
+                           size_t len) noexcept;
 
 } // namespace bcsv
 

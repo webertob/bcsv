@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -1746,6 +1746,183 @@ Bitset<N>& Bitset<N>::operator>>=(size_t shift_amount) noexcept {
     return *this;
 }
 
+// ===== Block Operation Implementations =====
+
+// ---------------------------------------------------------------------------
+// Helper: extract one logical word from a raw word_t array at an arbitrary
+// bit offset.  Handles cross-word-boundary extraction via shift-and-combine.
+// This is a static free helper — no indirection, fully constexpr.
+// ---------------------------------------------------------------------------
+namespace detail {
+
+template<typename WordT>
+constexpr WordT extractWord(const WordT* data, size_t word_count,
+                            size_t bit_offset, size_t word_index) noexcept {
+    constexpr size_t WBITS = sizeof(WordT) * 8;
+    const size_t base_word = bit_offset / WBITS + word_index;
+    const size_t shift = bit_offset % WBITS;
+
+    if (shift == 0) {
+        return (base_word < word_count) ? data[base_word] : WordT{0};
+    }
+
+    WordT lo = (base_word < word_count)     ? data[base_word]     : WordT{0};
+    WordT hi = (base_word + 1 < word_count) ? data[base_word + 1] : WordT{0};
+    return (lo >> shift) | (hi << (WBITS - shift));
+}
+
+} // namespace detail
+
+template<size_t N>
+template<size_t M>
+constexpr bool Bitset<N>::equalRange(const Bitset<M>& other,
+                                     size_t offset,
+                                     size_t len) const noexcept {
+    // Resolve default length
+    if (len == npos) {
+        len = other.size();
+    }
+    if (len == 0) {
+        return true;
+    }
+
+    // Precondition assertions (UB otherwise, but no crash in release)
+    // Use overflow-safe form: len <= size() - offset
+    assert(offset <= size() && "equalRange: offset exceeds this->size()");
+    assert(len <= size() - offset && "equalRange: offset+len exceeds this->size()");
+    assert(len <= other.size() && "equalRange: len exceeds other.size()");
+
+    const word_t* this_data  = wordData();
+    const size_t  this_wc    = wordCount();
+    const auto*   other_data = other.wordData();
+    const size_t  other_wc   = other.wordCount();
+
+    const size_t full_words = len / WORD_BITS;
+    const size_t tail_bits  = len % WORD_BITS;
+    const word_t tail_mask  = tail_bits == 0 ? ~word_t{0}
+                              : (word_t{1} << tail_bits) - 1;
+
+    const size_t this_shift = offset % WORD_BITS;
+
+    // Fast path: this-side is word-aligned — no shift/combine needed
+    if (this_shift == 0) {
+        const size_t base = offset / WORD_BITS;
+        for (size_t i = 0; i < full_words; ++i) {
+            word_t a = this_data[base + i];
+            word_t b = (i < other_wc) ? other_data[i] : word_t{0};
+            if (a != b) return false;
+        }
+        if (tail_bits != 0) {
+            word_t a = (base + full_words < this_wc)
+                       ? this_data[base + full_words] : word_t{0};
+            word_t b = (full_words < other_wc)
+                       ? other_data[full_words] : word_t{0};
+            if ((a & tail_mask) != (b & tail_mask)) return false;
+        }
+        return true;
+    }
+
+    // General path: this-side at arbitrary bit offset
+    for (size_t i = 0; i < full_words; ++i) {
+        word_t a = detail::extractWord(this_data, this_wc, offset, i);
+        word_t b = (i < other_wc) ? other_data[i] : word_t{0};
+        if (a != b) return false;
+    }
+    if (tail_bits != 0) {
+        word_t a = detail::extractWord(this_data, this_wc, offset, full_words);
+        word_t b = (full_words < other_wc) ? other_data[full_words] : word_t{0};
+        if ((a & tail_mask) != (b & tail_mask)) return false;
+    }
+    return true;
+}
+
+template<size_t N>
+template<size_t M>
+constexpr Bitset<N>& Bitset<N>::assignRange(const Bitset<M>& src,
+                                            size_t offset,
+                                            size_t len) noexcept {
+    // Resolve default length
+    if (len == npos) {
+        len = src.size();
+    }
+    if (len == 0) {
+        return *this;
+    }
+
+    assert(offset <= size() && "assignRange: offset exceeds this->size()");
+    assert(len <= size() - offset && "assignRange: offset+len exceeds this->size()");
+    assert(len <= src.size() && "assignRange: len exceeds src.size()");
+
+    word_t*       dst_data = wordData();
+    const size_t  dst_wc   = wordCount();
+    const auto*   src_data = src.wordData();
+    const size_t  src_wc   = src.wordCount();
+
+    const size_t full_words = len / WORD_BITS;
+    const size_t tail_bits  = len % WORD_BITS;
+    const word_t tail_mask  = tail_bits == 0 ? ~word_t{0}
+                              : (word_t{1} << tail_bits) - 1;
+
+    const size_t dst_shift = offset % WORD_BITS;
+
+    // Fast path: destination is word-aligned
+    if (dst_shift == 0) {
+        const size_t base = offset / WORD_BITS;
+        for (size_t i = 0; i < full_words; ++i) {
+            word_t s = (i < src_wc) ? src_data[i] : word_t{0};
+            dst_data[base + i] = s;
+        }
+        if (tail_bits != 0) {
+            word_t s = (full_words < src_wc) ? src_data[full_words] : word_t{0};
+            word_t& d = dst_data[base + full_words];
+            d = (d & ~tail_mask) | (s & tail_mask);
+        }
+        clearUnusedBits();
+        return *this;
+    }
+
+    // General path: destination at arbitrary bit offset — scatter src words
+    // into dst using shift-split-mask approach.
+    //
+    // Each logical source word i maps to dst words at:
+    //   base_word = offset/WORD_BITS + i
+    // Split: low part shifted left by dst_shift, high part shifted right.
+    const size_t base_word = offset / WORD_BITS;
+    const size_t inv_shift = WORD_BITS - dst_shift;
+
+    auto scatterWord = [&](size_t i, word_t src_val, word_t mask) {
+        // mask defines which bits of src_val are meaningful (e.g. tail_mask)
+        const word_t val = src_val & mask;
+        const size_t lo_idx = base_word + i;
+
+        // Low portion
+        const word_t lo_mask = mask << dst_shift;
+        const word_t lo_bits = val << dst_shift;
+        if (lo_idx < dst_wc) {
+            dst_data[lo_idx] = (dst_data[lo_idx] & ~lo_mask) | lo_bits;
+        }
+
+        // High portion (spills into next word)
+        const word_t hi_mask = mask >> inv_shift;
+        if (hi_mask != 0 && lo_idx + 1 < dst_wc) {
+            const word_t hi_bits = val >> inv_shift;
+            dst_data[lo_idx + 1] = (dst_data[lo_idx + 1] & ~hi_mask) | hi_bits;
+        }
+    };
+
+    for (size_t i = 0; i < full_words; ++i) {
+        word_t s = (i < src_wc) ? src_data[i] : word_t{0};
+        scatterWord(i, s, ~word_t{0});
+    }
+    if (tail_bits != 0) {
+        word_t s = (full_words < src_wc) ? src_data[full_words] : word_t{0};
+        scatterWord(full_words, s, tail_mask);
+    }
+
+    clearUnusedBits();
+    return *this;
+}
+
 // ===== Non-member Operator Implementations =====
 
 template<size_t N>
@@ -1821,6 +1998,162 @@ std::basic_istream<CharT, Traits>& operator>>(
     }
     
     return is;
+}
+
+// ===== Free-function Block Operations (dual-offset) =====
+
+template<size_t N, size_t M>
+constexpr bool equalRange(const Bitset<N>& a, size_t offset_a,
+                          const Bitset<M>& b, size_t offset_b,
+                          size_t len) noexcept {
+    using word_t = typename Bitset<N>::word_t;
+    static_assert(std::is_same_v<word_t, typename Bitset<M>::word_t>,
+                  "equalRange requires identical word types");
+    constexpr size_t WBITS = sizeof(word_t) * 8;
+
+    if (len == 0) return true;
+
+    assert(offset_a <= a.size() && "equalRange: offset_a exceeds a.size()");
+    assert(len <= a.size() - offset_a && "equalRange: offset_a+len exceeds a.size()");
+    assert(offset_b <= b.size() && "equalRange: offset_b exceeds b.size()");
+    assert(len <= b.size() - offset_b && "equalRange: offset_b+len exceeds b.size()");
+
+    const word_t* a_data = a.wordData();
+    const size_t  a_wc   = a.wordCount();
+    const word_t* b_data = b.wordData();
+    const size_t  b_wc   = b.wordCount();
+
+    const size_t full_words = len / WBITS;
+    const size_t tail_bits  = len % WBITS;
+    const word_t tail_mask  = tail_bits == 0 ? ~word_t{0}
+                              : (word_t{1} << tail_bits) - 1;
+
+    // Fast path: both sides word-aligned — direct word comparison
+    if (offset_a % WBITS == 0 && offset_b % WBITS == 0) {
+        const size_t base_a = offset_a / WBITS;
+        const size_t base_b = offset_b / WBITS;
+        for (size_t i = 0; i < full_words; ++i) {
+            word_t wa = (base_a + i < a_wc) ? a_data[base_a + i] : word_t{0};
+            word_t wb = (base_b + i < b_wc) ? b_data[base_b + i] : word_t{0};
+            if (wa != wb) return false;
+        }
+        if (tail_bits != 0) {
+            word_t wa = (base_a + full_words < a_wc)
+                        ? a_data[base_a + full_words] : word_t{0};
+            word_t wb = (base_b + full_words < b_wc)
+                        ? b_data[base_b + full_words] : word_t{0};
+            if ((wa & tail_mask) != (wb & tail_mask)) return false;
+        }
+        return true;
+    }
+
+    // General path: arbitrary bit offsets — use extractWord on both sides
+    for (size_t i = 0; i < full_words; ++i) {
+        word_t wa = detail::extractWord(a_data, a_wc, offset_a, i);
+        word_t wb = detail::extractWord(b_data, b_wc, offset_b, i);
+        if (wa != wb) return false;
+    }
+    if (tail_bits != 0) {
+        word_t wa = detail::extractWord(a_data, a_wc, offset_a, full_words);
+        word_t wb = detail::extractWord(b_data, b_wc, offset_b, full_words);
+        if ((wa & tail_mask) != (wb & tail_mask)) return false;
+    }
+    return true;
+}
+
+template<size_t N, size_t M>
+constexpr void assignRange(Bitset<N>& dst, size_t offset_dst,
+                           const Bitset<M>& src, size_t offset_src,
+                           size_t len) noexcept {
+    using word_t = typename Bitset<N>::word_t;
+    static_assert(std::is_same_v<word_t, typename Bitset<M>::word_t>,
+                  "assignRange requires identical word types");
+    constexpr size_t WBITS = sizeof(word_t) * 8;
+
+    if (len == 0) return;
+
+    assert(offset_dst <= dst.size() && "assignRange: offset_dst exceeds dst.size()");
+    assert(len <= dst.size() - offset_dst && "assignRange: offset_dst+len exceeds dst.size()");
+    assert(offset_src <= src.size() && "assignRange: offset_src exceeds src.size()");
+    assert(len <= src.size() - offset_src && "assignRange: offset_src+len exceeds src.size()");
+
+    // Direct scatter: extract each source word and scatter into destination.
+    // No temporary allocation — works with arbitrary offsets on both sides.
+
+    const word_t* src_data = src.wordData();
+    const size_t  src_wc   = src.wordCount();
+    word_t*       dst_data = dst.wordData();
+    const size_t  dst_wc   = dst.wordCount();
+
+    const size_t full_words = len / WBITS;
+    const size_t tail_bits  = len % WBITS;
+    const word_t tail_mask  = tail_bits == 0 ? ~word_t{0}
+                              : (word_t{1} << tail_bits) - 1;
+
+    const size_t dst_shift = offset_dst % WBITS;
+    const size_t dst_base  = offset_dst / WBITS;
+
+    // Fast path: both sides word-aligned — direct word copy with tail mask
+    if (dst_shift == 0 && offset_src % WBITS == 0) {
+        const size_t src_base = offset_src / WBITS;
+        for (size_t i = 0; i < full_words; ++i) {
+            word_t s = (src_base + i < src_wc) ? src_data[src_base + i] : word_t{0};
+            dst_data[dst_base + i] = s;
+        }
+        if (tail_bits != 0) {
+            word_t s = (src_base + full_words < src_wc)
+                       ? src_data[src_base + full_words] : word_t{0};
+            word_t& d = dst_data[dst_base + full_words];
+            d = (d & ~tail_mask) | (s & tail_mask);
+        }
+        dst.clearUnusedBits();
+        return;
+    }
+
+    // General path: extract source words at arbitrary offset, scatter into dst.
+    const size_t inv_shift = WBITS - dst_shift;
+
+    auto scatterWord = [&](size_t i, word_t src_val, word_t mask) {
+        const word_t val = src_val & mask;
+        const size_t lo_idx = dst_base + i;
+
+        if (dst_shift == 0) {
+            // Destination word-aligned — direct masked write
+            if (lo_idx < dst_wc) {
+                if (mask == ~word_t{0}) {
+                    dst_data[lo_idx] = val;
+                } else {
+                    dst_data[lo_idx] = (dst_data[lo_idx] & ~mask) | val;
+                }
+            }
+            return;
+        }
+
+        // Low portion
+        const word_t lo_mask = mask << dst_shift;
+        const word_t lo_bits = val << dst_shift;
+        if (lo_idx < dst_wc) {
+            dst_data[lo_idx] = (dst_data[lo_idx] & ~lo_mask) | lo_bits;
+        }
+
+        // High portion (spills into next word)
+        const word_t hi_mask = mask >> inv_shift;
+        if (hi_mask != 0 && lo_idx + 1 < dst_wc) {
+            const word_t hi_bits = val >> inv_shift;
+            dst_data[lo_idx + 1] = (dst_data[lo_idx + 1] & ~hi_mask) | hi_bits;
+        }
+    };
+
+    for (size_t i = 0; i < full_words; ++i) {
+        word_t s = detail::extractWord(src_data, src_wc, offset_src, i);
+        scatterWord(i, s, ~word_t{0});
+    }
+    if (tail_bits != 0) {
+        word_t s = detail::extractWord(src_data, src_wc, offset_src, full_words);
+        scatterWord(full_words, s, tail_mask);
+    }
+
+    dst.clearUnusedBits();
 }
 
 } // namespace bcsv

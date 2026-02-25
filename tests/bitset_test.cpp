@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -1526,6 +1526,624 @@ TEST(BitsetInteropTest, BinaryCompatibility) {
 }
 
 // ============================================================================
+// Block Operations: equalRange / assignRange
+// ============================================================================
+
+// Helper: model-based comparison using vector<bool>
+namespace {
+
+bool modelEqualRange(const std::vector<bool>& a, size_t off_a,
+                     const std::vector<bool>& b, size_t off_b,
+                     size_t len) {
+    for (size_t i = 0; i < len; ++i) {
+        if (a[off_a + i] != b[off_b + i]) return false;
+    }
+    return true;
+}
+
+void modelAssignRange(std::vector<bool>& dst, size_t off_dst,
+                      const std::vector<bool>& src, size_t off_src,
+                      size_t len) {
+    for (size_t i = 0; i < len; ++i) {
+        dst[off_dst + i] = src[off_src + i];
+    }
+}
+
+Bitset<> bitsetFromModel(const std::vector<bool>& model) {
+    Bitset<> bs(model.size());
+    for (size_t i = 0; i < model.size(); ++i) {
+        if (model[i]) bs.set(i);
+    }
+    return bs;
+}
+
+std::vector<bool> modelFromBitset(const Bitset<>& bs) {
+    std::vector<bool> model(bs.size());
+    for (size_t i = 0; i < bs.size(); ++i) {
+        model[i] = bs[i];
+    }
+    return model;
+}
+
+} // namespace
+
+// --- Member function: equalRange ---
+
+TEST_F(FixedBitsetTest, BlockOps_EqualRange_Aligned) {
+    // Word-aligned offset (offset=0), various lengths
+    Bitset<128> a(0xDEADBEEF'CAFEBABE);
+    a.set(70); a.set(100); a.set(127);
+    Bitset<64> b(0xDEADBEEF'CAFEBABE);
+
+    EXPECT_TRUE(a.equalRange(b, 0, 64));
+    EXPECT_TRUE(a.equalRange(b, 0, 32));
+    EXPECT_TRUE(a.equalRange(b, 0, 1));
+
+    // Mismatch
+    Bitset<64> c(0xDEADBEEF'CAFEBABF);
+    EXPECT_FALSE(a.equalRange(c, 0, 64));
+    EXPECT_FALSE(a.equalRange(c, 0, 1));  // LSB differs
+
+    // Zero-length always true
+    EXPECT_TRUE(a.equalRange(c, 0, 0));
+}
+
+TEST_F(FixedBitsetTest, BlockOps_EqualRange_Misaligned) {
+    // Offset not on word boundary
+    Bitset<128> a;
+    // Set bits 3..7 = 0b11111 at positions 3,4,5,6,7
+    for (size_t i = 3; i < 8; ++i) a.set(i);
+
+    Bitset<8> b;
+    for (size_t i = 0; i < 5; ++i) b.set(i); // bits 0..4
+
+    EXPECT_TRUE(a.equalRange(b, 3, 5));
+
+    // Cross-word boundary: bits 60..68
+    Bitset<128> big;
+    for (size_t i = 60; i < 68; ++i) big.set(i);
+    Bitset<8> pattern;
+    pattern.set(); // all 8 bits set
+
+    EXPECT_TRUE(big.equalRange(pattern, 60, 8));
+
+    // Mismatch across word boundary
+    big.reset(64);
+    EXPECT_FALSE(big.equalRange(pattern, 60, 8));
+}
+
+TEST_F(DynamicBitsetTest, BlockOps_EqualRange_Aligned) {
+    Bitset<> a(200);
+    Bitset<> b(5);
+    // Set identical pattern at offset 0 in a and in b
+    a.set(0); a.set(2); a.set(4);
+    b.set(0); b.set(2); b.set(4);
+
+    EXPECT_TRUE(a.equalRange(b, 0, 5));
+
+    // Offset 64 (word-aligned)
+    Bitset<> c(200);
+    c.set(64); c.set(66); c.set(68);
+    Bitset<> d(5);
+    d.set(0); d.set(2); d.set(4);
+
+    EXPECT_TRUE(c.equalRange(d, 64, 5));
+}
+
+TEST_F(DynamicBitsetTest, BlockOps_EqualRange_Misaligned) {
+    Bitset<> a(200);
+    Bitset<> b(10);
+
+    // Set pattern at offset 7 in a, at offset 0 in b
+    for (size_t i = 0; i < 10; ++i) {
+        if (i % 3 == 0) {
+            a.set(7 + i);
+            b.set(i);
+        }
+    }
+    EXPECT_TRUE(a.equalRange(b, 7, 10));
+
+    // Flip one bit
+    a.flip(10); // position 10 = offset 7 + 3
+    EXPECT_FALSE(a.equalRange(b, 7, 10));
+}
+
+TEST_F(DynamicBitsetTest, BlockOps_EqualRange_DefaultLen) {
+    // len=npos should default to other.size()
+    Bitset<> a(100);
+    Bitset<> b(20);
+    for (size_t i = 0; i < 20; ++i) {
+        if (i & 1) { a.set(i); b.set(i); }
+    }
+    EXPECT_TRUE(a.equalRange(b, 0));  // len defaults to b.size()=20
+    EXPECT_TRUE(a.equalRange(b));     // offset defaults to 0
+}
+
+// --- Member function: assignRange ---
+
+TEST_F(FixedBitsetTest, BlockOps_AssignRange_Aligned) {
+    Bitset<128> a;
+    Bitset<64> b(0xCAFEBABE'12345678);
+
+    a.assignRange(b, 0, 64);
+    EXPECT_TRUE(a.equalRange(b, 0, 64));
+
+    // Verify bits above 64 are still zero
+    for (size_t i = 64; i < 128; ++i) {
+        EXPECT_FALSE(a[i]) << "bit " << i << " should be 0";
+    }
+
+    // Assign at word-aligned offset 64
+    Bitset<128> c;
+    c.assignRange(b, 64, 64);
+    for (size_t i = 0; i < 64; ++i) {
+        EXPECT_FALSE(c[i]) << "bit " << i << " should be 0";
+    }
+    EXPECT_TRUE(c.equalRange(b, 64, 64));
+}
+
+TEST_F(FixedBitsetTest, BlockOps_AssignRange_Misaligned) {
+    Bitset<128> a;
+    a.set(); // all ones
+
+    Bitset<8> zeros; // all zeros
+
+    // Assign 8 zero bits at offset 3 → should clear bits 3..10
+    a.assignRange(zeros, 3, 8);
+    for (size_t i = 0; i < 128; ++i) {
+        if (i >= 3 && i < 11) {
+            EXPECT_FALSE(a[i]) << "bit " << i << " should be 0";
+        } else {
+            EXPECT_TRUE(a[i]) << "bit " << i << " should be 1";
+        }
+    }
+}
+
+TEST_F(FixedBitsetTest, BlockOps_AssignRange_CrossWord) {
+    Bitset<256> a;
+    Bitset<16> pattern(0xA5A5);
+
+    // Assign across a word boundary at offset 56 (bits 56..71)
+    a.assignRange(pattern, 56, 16);
+    EXPECT_TRUE(a.equalRange(pattern, 56, 16));
+
+    // Verify surrounding bits unchanged
+    for (size_t i = 0; i < 56; ++i) {
+        EXPECT_FALSE(a[i]) << "bit " << i << " should be 0 (before range)";
+    }
+    for (size_t i = 72; i < 256; ++i) {
+        EXPECT_FALSE(a[i]) << "bit " << i << " should be 0 (after range)";
+    }
+}
+
+TEST_F(DynamicBitsetTest, BlockOps_AssignRange_Aligned) {
+    Bitset<> dst(200);
+    Bitset<> src(20, 0xFFFFFull); // 20 bits all set
+
+    dst.assignRange(src, 0, 20);
+    EXPECT_TRUE(dst.equalRange(src, 0, 20));
+    for (size_t i = 20; i < 200; ++i) {
+        EXPECT_FALSE(dst[i]) << "bit " << i << " should be 0";
+    }
+}
+
+TEST_F(DynamicBitsetTest, BlockOps_AssignRange_Misaligned) {
+    Bitset<> dst(200, true); // all ones
+    Bitset<> src(10);        // all zeros
+
+    dst.assignRange(src, 13, 10);
+    for (size_t i = 0; i < 200; ++i) {
+        if (i >= 13 && i < 23) {
+            EXPECT_FALSE(dst[i]) << "bit " << i << " should be 0";
+        } else {
+            EXPECT_TRUE(dst[i]) << "bit " << i << " should be 1";
+        }
+    }
+}
+
+TEST_F(DynamicBitsetTest, BlockOps_AssignRange_DefaultLen) {
+    Bitset<> dst(100);
+    Bitset<> src(20);
+    src.set(5); src.set(10); src.set(15);
+
+    dst.assignRange(src, 30);  // len defaults to src.size()=20
+    EXPECT_TRUE(dst.equalRange(src, 30, 20));
+}
+
+// --- Cross-N tests ---
+
+TEST(BitsetBlockOpsTest, CrossN_FixedVsDynamic) {
+    Bitset<128> fixed;
+    fixed.set(0); fixed.set(3); fixed.set(7); fixed.set(64); fixed.set(100);
+
+    Bitset<> dynamic_other(20);
+    dynamic_other.set(0); dynamic_other.set(3); dynamic_other.set(7);
+
+    EXPECT_TRUE(fixed.equalRange(dynamic_other, 0, 20));
+
+    // Assign dynamic into fixed
+    Bitset<128> target;
+    target.assignRange(dynamic_other, 10, 20);
+    EXPECT_TRUE(target.equalRange(dynamic_other, 10, 20));
+}
+
+TEST(BitsetBlockOpsTest, CrossN_DynamicVsFixed) {
+    Bitset<> dyn(200);
+    dyn.set(100); dyn.set(103); dyn.set(107);
+
+    Bitset<8> small;
+    small.set(0); small.set(3); small.set(7);
+
+    EXPECT_TRUE(dyn.equalRange(small, 100, 8));
+    EXPECT_FALSE(dyn.equalRange(small, 99, 8));
+}
+
+// --- Free function dual-offset tests ---
+
+TEST(BitsetBlockOpsTest, FreeFunction_EqualRange) {
+    Bitset<> a(100);
+    Bitset<> b(100);
+
+    // Set same pattern at different offsets
+    for (size_t i = 0; i < 20; ++i) {
+        if (i % 2 == 0) {
+            a.set(10 + i);
+            b.set(50 + i);
+        }
+    }
+
+    EXPECT_TRUE(bcsv::equalRange(a, 10, b, 50, 20));
+    EXPECT_FALSE(bcsv::equalRange(a, 10, b, 49, 20));
+}
+
+TEST(BitsetBlockOpsTest, FreeFunction_AssignRange) {
+    Bitset<> src(100);
+    Bitset<> dst(100);
+
+    // Put a pattern in src at offset 30
+    for (size_t i = 0; i < 15; ++i) {
+        if (i % 3 == 0) src.set(30 + i);
+    }
+
+    bcsv::assignRange(dst, 50, src, 30, 15);
+    EXPECT_TRUE(bcsv::equalRange(dst, 50, src, 30, 15));
+
+    // Verify no collateral damage outside range
+    for (size_t i = 0; i < 50; ++i) {
+        EXPECT_FALSE(dst[i]) << "bit " << i;
+    }
+    for (size_t i = 65; i < 100; ++i) {
+        EXPECT_FALSE(dst[i]) << "bit " << i;
+    }
+}
+
+TEST(BitsetBlockOpsTest, FreeFunction_CrossN) {
+    Bitset<256> a;
+    Bitset<> b(100);
+
+    a.set(130); a.set(135); a.set(140);
+    b.set(30);  b.set(35);  b.set(40);
+
+    EXPECT_TRUE(bcsv::equalRange(a, 130, b, 30, 11));
+}
+
+// --- ZoH use-case simulation ---
+
+TEST(BitsetBlockOpsTest, ZoH_Scenario) {
+    // Simulate the ZoH codec hot path:
+    //   prev_bits(boolCount), row_bits(boolCount)
+    //   compare → if equal, skip; else assign
+    const size_t boolCount = 130;  // Realistic: more than 2 words
+
+    Bitset<> prev_bits(boolCount);
+    Bitset<> row_bits(boolCount);
+
+    // First row: copy all bools
+    for (size_t i = 0; i < boolCount; i += 3) {
+        row_bits.set(i);
+    }
+    prev_bits.assignRange(row_bits, 0, boolCount);
+    EXPECT_TRUE(prev_bits.equalRange(row_bits, 0, boolCount));
+
+    // Second row: identical → should compare equal
+    EXPECT_TRUE(prev_bits.equalRange(row_bits, 0, boolCount));
+
+    // Third row: one bool changes
+    row_bits.flip(42);
+    EXPECT_FALSE(prev_bits.equalRange(row_bits, 0, boolCount));
+
+    // Update prev
+    prev_bits.assignRange(row_bits, 0, boolCount);
+    EXPECT_TRUE(prev_bits.equalRange(row_bits, 0, boolCount));
+}
+
+// --- Model-based validation ---
+
+TEST(BitsetBlockOpsTest, ModelBased_EqualRange) {
+    // Sweep over various sizes and offsets, validate against vector<bool> model
+    const std::vector<size_t> sizes = {0, 1, 7, 8, 15, 16, 31, 32, 63, 64, 65, 127, 128, 129, 200};
+
+    for (size_t total_a : sizes) {
+        if (total_a < 2) continue;
+        for (size_t offset : {size_t{0}, size_t{1}, size_t{3}, total_a / 2}) {
+            size_t max_len = total_a - offset;
+            if (max_len == 0) continue;
+            for (size_t len : {size_t{1}, std::min(size_t{8}, max_len),
+                               std::min(size_t{64}, max_len), max_len}) {
+
+                // Build model + bitset with alternating pattern
+                std::vector<bool> model_a(total_a, false);
+                for (size_t i = 0; i < total_a; ++i) {
+                    model_a[i] = (i * 7 + 3) % 5 < 2;  // pseudo-random
+                }
+                auto bs_a = bitsetFromModel(model_a);
+
+                std::vector<bool> model_b(len, false);
+                for (size_t i = 0; i < len; ++i) {
+                    model_b[i] = model_a[offset + i];
+                }
+                auto bs_b = bitsetFromModel(model_b);
+
+                bool expected = modelEqualRange(model_a, offset, model_b, 0, len);
+                bool actual   = bs_a.equalRange(bs_b, offset, len);
+                EXPECT_EQ(expected, actual)
+                    << "size=" << total_a << " offset=" << offset << " len=" << len;
+
+                // Also test with one bit flipped
+                if (len > 0) {
+                    model_b[len / 2] = !model_b[len / 2];
+                    auto bs_b2 = bitsetFromModel(model_b);
+                    expected = modelEqualRange(model_a, offset, model_b, 0, len);
+                    actual = bs_a.equalRange(bs_b2, offset, len);
+                    EXPECT_EQ(expected, actual)
+                        << "flipped: size=" << total_a << " offset=" << offset << " len=" << len;
+                }
+            }
+        }
+    }
+}
+
+TEST(BitsetBlockOpsTest, ModelBased_AssignRange) {
+    const std::vector<size_t> sizes = {1, 7, 8, 15, 16, 63, 64, 65, 128, 129, 200};
+
+    for (size_t total : sizes) {
+        if (total < 2) continue;
+        for (size_t offset : {size_t{0}, size_t{1}, size_t{3}, total / 2}) {
+            size_t max_len = total - offset;
+            if (max_len == 0) continue;
+            for (size_t len : {size_t{1}, std::min(size_t{8}, max_len),
+                               std::min(size_t{64}, max_len), max_len}) {
+
+                // Model: destination all ones, source alternating
+                std::vector<bool> model_dst(total, true);
+                Bitset<> bs_dst(total, true);
+
+                std::vector<bool> model_src(len, false);
+                for (size_t i = 0; i < len; ++i) {
+                    model_src[i] = (i * 3 + 1) % 4 < 2;
+                }
+                auto bs_src = bitsetFromModel(model_src);
+
+                modelAssignRange(model_dst, offset, model_src, 0, len);
+                bs_dst.assignRange(bs_src, offset, len);
+
+                auto actual = modelFromBitset(bs_dst);
+                EXPECT_EQ(model_dst, actual)
+                    << "size=" << total << " offset=" << offset << " len=" << len;
+            }
+        }
+    }
+}
+
+TEST(BitsetBlockOpsTest, ModelBased_FreeFunction_DualOffset) {
+    // Dual-offset free function test with model verification
+    const size_t N = 200;
+    std::vector<bool> model_a(N, false);
+    std::vector<bool> model_b(N, false);
+
+    for (size_t i = 0; i < N; ++i) {
+        model_a[i] = (i * 11 + 5) % 7 < 3;
+        model_b[i] = (i * 13 + 7) % 7 < 3;
+    }
+    auto bs_a = bitsetFromModel(model_a);
+    auto bs_b = bitsetFromModel(model_b);
+
+    // Test equalRange with various dual offsets
+    struct TestCase { size_t off_a, off_b, len; };
+    std::vector<TestCase> cases = {
+        {0, 0, 64}, {0, 0, 65}, {3, 7, 20}, {60, 120, 30},
+        {0, 100, 50}, {64, 64, 64}, {1, 1, 1}, {63, 65, 10},
+        {3, 7, 130}, {5, 11, 150},  // both misaligned, multi-word
+        {0, 0, 0}                    // zero-length edge case
+    };
+    for (auto& tc : cases) {
+        if (tc.off_a + tc.len > N || tc.off_b + tc.len > N) continue;
+        bool expected = modelEqualRange(model_a, tc.off_a, model_b, tc.off_b, tc.len);
+        bool actual   = bcsv::equalRange(bs_a, tc.off_a, bs_b, tc.off_b, tc.len);
+        EXPECT_EQ(expected, actual)
+            << "off_a=" << tc.off_a << " off_b=" << tc.off_b << " len=" << tc.len;
+    }
+
+    // Test assignRange with dual offsets
+    for (auto& tc : cases) {
+        if (tc.off_a + tc.len > N || tc.off_b + tc.len > N) continue;
+        auto model_dst = model_a;
+        Bitset<> bs_dst = bs_a;
+        modelAssignRange(model_dst, tc.off_a, model_b, tc.off_b, tc.len);
+        bcsv::assignRange(bs_dst, tc.off_a, bs_b, tc.off_b, tc.len);
+
+        auto actual = modelFromBitset(bs_dst);
+        EXPECT_EQ(model_dst, actual)
+            << "assign: off_a=" << tc.off_a << " off_b=" << tc.off_b << " len=" << tc.len;
+    }
+}
+
+// --- Edge cases ---
+
+TEST(BitsetBlockOpsTest, EdgeCases) {
+    // Zero-length operations
+    Bitset<64> a(0xFFFFFFFF'FFFFFFFF);
+    Bitset<8> b;
+    EXPECT_TRUE(a.equalRange(b, 0, 0));
+    a.assignRange(b, 0, 0);
+    // a should be unchanged
+    EXPECT_EQ(a.toUllong(), 0xFFFFFFFF'FFFFFFFF);
+
+    // Single bit
+    Bitset<64> c(0b1010);
+    Bitset<1> one_bit(1);
+    EXPECT_FALSE(c.equalRange(one_bit, 0, 1));  // bit 0 of c is 0
+    EXPECT_TRUE(c.equalRange(one_bit, 1, 1));   // bit 1 of c is 1
+
+    // Exactly one word
+    Bitset<128> d(0xDEADBEEF);
+    Bitset<64> e(0xDEADBEEF);
+    EXPECT_TRUE(d.equalRange(e, 0, 32));  // lower 32 bits match
+    EXPECT_TRUE(d.equalRange(e, 0, 64));  // full word match
+
+    // Extra source bits beyond len should be ignored
+    Bitset<128> h;
+    Bitset<16> wide(0xFFFF);  // all 16 bits set
+    h.set(0); h.set(1); h.set(2); h.set(3);  // low nibble set
+    EXPECT_TRUE(h.equalRange(wide, 0, 4));    // only compare bits 0..3
+
+    // Free-function zero-length
+    EXPECT_TRUE(bcsv::equalRange(h, 50, wide, 10, 0));
+    Bitset<128> h2 = h;
+    bcsv::assignRange(h2, 50, wide, 5, 0);  // should be a no-op
+    EXPECT_TRUE(h == h2);
+
+    // Full bitset comparison via equalRange
+    Bitset<> f(128);
+    Bitset<> g(128);
+    f.set(0); f.set(63); f.set(64); f.set(127);
+    g.set(0); g.set(63); g.set(64); g.set(127);
+    EXPECT_TRUE(f.equalRange(g, 0, 128));
+    g.flip(64);
+    EXPECT_FALSE(f.equalRange(g, 0, 128));
+}
+
+// --- Constexpr verification ---
+
+TEST(BitsetBlockOpsTest, Constexpr_EqualRange) {
+    // Verify that equalRange works with compile-time-known values
+    // Note: Bitset<N> is not a literal type (non-trivial dtor), so
+    // full constexpr/static_assert is not possible. We verify the
+    // function is callable and correct with fixed-size bitsets.
+    Bitset<64> ca(0b10101010);
+    Bitset<4> cb(0b1010);
+    EXPECT_TRUE(ca.equalRange(cb, 0, 4));
+    EXPECT_FALSE(ca.equalRange(cb, 1, 4));
+}
+
+// --- Self-overlap tests ---
+
+TEST(BitsetBlockOpsTest, SelfOverlap_AssignRange_OffsetZero) {
+    // a.assignRange(a, 0, len) — full self-overlap at offset 0 is safe
+    Bitset<> a(130);
+    for (size_t i = 0; i < 130; i += 3) a.set(i);
+    Bitset<> copy = a;
+
+    a.assignRange(a, 0, 130);
+    EXPECT_TRUE(a.equalRange(copy, 0, 130));
+}
+
+TEST(BitsetBlockOpsTest, SelfOverlap_EqualRange_OffsetZero) {
+    // a.equalRange(a, 0, len) — always true
+    Bitset<> a(200);
+    for (size_t i = 0; i < 200; i += 5) a.set(i);
+    EXPECT_TRUE(a.equalRange(a, 0, 200));
+}
+
+TEST(BitsetBlockOpsTest, SelfOverlap_AssignRange_PartialSafe) {
+    // Safe because the ranges do not overlap: src=[0,64), dst=[64,128).
+    // offset(64) >= len(64), so no word is written before it is read.
+    Bitset<> a(256);
+    for (size_t i = 0; i < 64; ++i) {
+        if (i % 2 == 0) a.set(i);
+    }
+    Bitset<> expected(256);
+    for (size_t i = 0; i < 64; ++i) {
+        if (i % 2 == 0) {
+            expected.set(i);
+            expected.set(64 + i);  // copy of pattern at offset 64
+        }
+    }
+
+    a.assignRange(a, 64, 64);
+    EXPECT_TRUE(a.equalRange(expected, 0, 128));
+}
+
+// --- SOO boundary tests (64-bit transition for dynamic bitsets) ---
+
+TEST(BitsetBlockOpsTest, SOO_Boundary_EqualRange) {
+    // Exactly 64 bits — SOO (inline storage)
+    Bitset<> a(64);
+    Bitset<> b(64);
+    a.set(0); a.set(31); a.set(63);
+    b.set(0); b.set(31); b.set(63);
+    EXPECT_TRUE(a.equalRange(b, 0, 64));
+    b.flip(63);
+    EXPECT_FALSE(a.equalRange(b, 0, 64));
+
+    // 65 bits — transitions to heap storage
+    Bitset<> c(65);
+    Bitset<> d(65);
+    c.set(0); c.set(31); c.set(63); c.set(64);
+    d.set(0); d.set(31); d.set(63); d.set(64);
+    EXPECT_TRUE(c.equalRange(d, 0, 65));
+    d.flip(64);
+    EXPECT_FALSE(c.equalRange(d, 0, 65));
+
+    // Cross SOO/heap: 64-bit (SOO) compared against subrange of 65-bit (heap)
+    Bitset<> soo(64);
+    Bitset<> heap(65);
+    soo.set(0); soo.set(31); soo.set(63);
+    heap.set(0); heap.set(31); heap.set(63);
+    EXPECT_TRUE(heap.equalRange(soo, 0, 64));
+}
+
+TEST(BitsetBlockOpsTest, SOO_Boundary_AssignRange) {
+    // Assign into 64-bit SOO bitset
+    Bitset<> dst_soo(64);
+    Bitset<> src(32);
+    src.set(0); src.set(15); src.set(31);
+    dst_soo.assignRange(src, 0, 32);
+    EXPECT_TRUE(dst_soo.equalRange(src, 0, 32));
+    for (size_t i = 32; i < 64; ++i) {
+        EXPECT_FALSE(dst_soo[i]) << "bit " << i;
+    }
+
+    // Assign into 65-bit heap bitset at the SOO/heap boundary word
+    Bitset<> dst_heap(65);
+    Bitset<> pattern(8);
+    pattern.set(); // all 8 bits set
+    dst_heap.assignRange(pattern, 60, 5);  // bits 60..64 (crosses word boundary)
+    for (size_t i = 60; i < 65; ++i) {
+        EXPECT_TRUE(dst_heap[i]) << "bit " << i << " should be 1";
+    }
+    for (size_t i = 0; i < 60; ++i) {
+        EXPECT_FALSE(dst_heap[i]) << "bit " << i << " should be 0";
+    }
+}
+
+TEST(BitsetBlockOpsTest, SOO_Boundary_FreeFunction) {
+    // Free-function dual-offset across SOO/heap bitsets
+    Bitset<> soo(64);
+    Bitset<> heap(128);
+    for (size_t i = 0; i < 30; ++i) {
+        if (i % 3 == 0) {
+            soo.set(10 + i);
+            heap.set(70 + i);
+        }
+    }
+    EXPECT_TRUE(bcsv::equalRange(soo, 10, heap, 70, 30));
+
+    bcsv::assignRange(heap, 0, soo, 10, 30);
+    EXPECT_TRUE(bcsv::equalRange(heap, 0, soo, 10, 30));
+}
+
+// ============================================================================
 // Summary Test Output
 // ============================================================================
 
@@ -1541,7 +2159,9 @@ TEST(BitsetSummaryTest, AllSizesWork) {
     std::cout << "✓ Edge cases: word boundaries, partial words, out of range\n";
     std::cout << "✓ Std::Bitset parity: sizes 0-130, shifts, bitwise ops\n";
     std::cout << "✓ Interoperability: fixed ↔ dynamic conversions\n";
+    std::cout << "✓ Block operations: equalRange, assignRange, free-function dual-offset\n";
     std::cout << "============================\n\n";
     
     SUCCEED();
 }
+
