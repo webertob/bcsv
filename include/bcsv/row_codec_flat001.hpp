@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -38,6 +38,7 @@ template<typename LayoutType>
 inline void RowCodecFlat001<LayoutType>::setup(const LayoutType& layout)
 {
     layout_ = &layout;
+    guard_ = LayoutGuard(layout.data());  // Lock layout against structural mutations
     wire_data_size_ = 0;
     packed_offsets_ = &layout.columnOffsetsPacked();
     

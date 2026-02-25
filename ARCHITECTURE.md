@@ -293,6 +293,13 @@ Each codec provides:
 - `deserialize(span, row)` — decode wire format into a row
 - `reset()` — clear per-packet state (ZoH change tracking)
 
+`setup()` also acquires a `LayoutGuard` (RAII, defined in `layout_guard.h`)
+that increments a reference counter on `Layout::Data`.  While any guard is
+held, the six structural mutation methods (`addColumn`, `removeColumn`,
+`setColumnType`, `setColumns`, `clear`) throw `std::logic_error`.
+`setColumnName` is excluded — it does not affect wire metadata.  The guard is
+released automatically when the codec is destroyed or move-assigned.
+
 Wire-format metadata (`wireBitsSize`, `wireDataSize`, `wireStrgCount`,
 `wireFixedSize`, per-column `offsets_[]`) is owned exclusively by the codec.
 `Layout` and `Row` classes contain no wire-format knowledge.

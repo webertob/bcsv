@@ -152,6 +152,13 @@ try {
 - Follow C++ standard library patterns (vector::at(), etc.)
 - Allow clean separation of I/O vs logic error handling
 
+**Layout mutation while codec is active:**
+
+Structural mutations (`addColumn`, `removeColumn`, `setColumnType`,
+`setColumns`, `clear`) on a `Layout` that is currently referenced by a codec
+(via `LayoutGuard`) throw `std::logic_error`.  Close the Writer/Reader first,
+or destroy the codec, before modifying the layout.
+
 ---
 
 ## Test Coverage

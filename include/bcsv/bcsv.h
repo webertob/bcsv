@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -34,6 +34,7 @@
 // Core component declarations
 #include "file_header.h"
 #include "layout.h"
+#include "layout_guard.h"
 #include "packet_header.h"
 #include "reader.h"
 #include "row.h"

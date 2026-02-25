@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -19,6 +19,12 @@
  *
  * To use: include this file directly (it is NOT included from bcsv.h).
  * Dependencies: row.h, layout.h, row_codec_flat001.h
+ *
+ * Note: RowView's internal RowCodecFlat001 acquires a LayoutGuard on setup(),
+ * so constructing a RowView will structurally lock the layout.  This is
+ * intentional — RowView holds a raw pointer into layout metadata and must
+ * not observe structural changes.  The lock is released when the RowView
+ * is destroyed or move-assigned.
  *
  * Last commit containing the active codec sparse-path: 8575319 (git log -1 8575319)
  */

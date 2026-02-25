@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -47,8 +47,29 @@ namespace bcsv {
         , offsets_packed_(other.offsets_packed_)
         , column_count_bool_(other.column_count_bool_)
         , column_count_strings_(other.column_count_strings_)
+        , structural_lock_count_(0)  // New copy has no guards
     {
         callbacks_.reserve(64);
+    }
+
+    inline Layout::Data::Data(Data&& other) noexcept
+        : callbacks_()          // Don't move callbacks - new Data has no observers
+        , column_names_(std::move(other.column_names_))
+        , column_index_(std::move(other.column_index_))
+        , column_types_(std::move(other.column_types_))
+        , offsets_(std::move(other.offsets_))
+        , offsets_packed_(std::move(other.offsets_packed_))
+        , column_count_bool_(other.column_count_bool_)
+        , column_count_strings_(other.column_count_strings_)
+        , structural_lock_count_(0)  // New instance has no guards
+    {
+        callbacks_.reserve(4);
+    }
+
+    inline void Layout::Data::throwIfLocked(const char* method) const {
+        if (structural_lock_count_.load(std::memory_order_relaxed) > 0) [[unlikely]] {
+            throw std::logic_error(std::string("Layout::Data::") + method + ": layout is structurally locked by an active codec");
+        }
     }
 
     inline void Layout::Data::rebuildColumnIndex() {
@@ -171,6 +192,7 @@ namespace bcsv {
     }
 
     inline void Layout::Data::addColumn(ColumnDefinition column, size_t position) {
+        throwIfLocked("addColumn");
         if (column_types_.size() >= MAX_COLUMN_COUNT) [[unlikely]] {
             throw std::runtime_error("Cannot exceed maximum column count");
         }
@@ -260,6 +282,7 @@ namespace bcsv {
     }
 
     inline void Layout::Data::removeColumn(size_t index) {
+        throwIfLocked("removeColumn");
         if (index >= column_names_.size()) {
             throw std::out_of_range("Layout::Data::removeColumn: index " + std::to_string(index) + " out of range");
         }
@@ -322,6 +345,7 @@ namespace bcsv {
     }
 
     inline void Layout::Data::setColumnType(size_t index, ColumnType type) {
+        throwIfLocked("setColumnType");
         checkRange(index);
         ColumnType oldType = column_types_[index];
         if (oldType == type) {
@@ -340,6 +364,7 @@ namespace bcsv {
     }
 
     inline void Layout::Data::setColumns(const std::vector<ColumnDefinition>& columns) {
+        throwIfLocked("setColumns");
         // Build full replacement change list (compare old vs new at each index)
         const size_t oldSize = column_types_.size();
         const size_t newSize = columns.size();
@@ -379,6 +404,7 @@ namespace bcsv {
 
     inline void Layout::Data::setColumns(const std::vector<std::string>& columnNames, 
                                          const std::vector<ColumnType>& columnTypes) {
+        throwIfLocked("setColumns");
         if (columnNames.size() != columnTypes.size()) {
             throw std::invalid_argument("Column names and types size mismatch");
         }
@@ -413,6 +439,7 @@ namespace bcsv {
     
 
     inline void Layout::Data::clear() {
+        throwIfLocked("clear");
         column_names_.clear();
         column_index_.clear();
         column_types_.clear();

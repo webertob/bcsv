@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -70,6 +70,7 @@ namespace bcsv {
 
         file_path_.clear();
         stream_.close();
+        codec_.destroy();  // Deletes inner codec; inner codec's destructor releases the structural lock
         lz4_stream_.reset();
         packet_hash_.reset();
         packet_pos_ = 0;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -10,6 +10,7 @@
 #pragma once
 
 #include <array>
+#include <atomic>
 #include <cassert>
 #include <cstddef>
 #include <functional>
@@ -27,6 +28,7 @@
 // Forward declarations to avoid circular dependencies
 namespace bcsv {
     class Row;
+    class LayoutGuard;
     template<typename... ColumnTypes> class RowStatic;
 }
 
@@ -96,6 +98,7 @@ namespace bcsv {
             std::vector<uint32_t>                    offsets_packed_;// Per-column offsets in packed wire layout (BOOL→bit index, STRING→string index, scalar→byte offset without alignment)
             uint32_t                                 column_count_bool_{0};
             uint32_t                                 column_count_strings_{0};
+            std::atomic<uint32_t>                    structural_lock_count_{0};  // Guard count: >0 ⇒ structural mutations throw
 
             // Internal helpers
             void rebuildColumnIndex();
@@ -106,7 +109,7 @@ namespace bcsv {
         public:
             Data();
             Data(const Data& other);  // Copy layout data, not observers
-            Data(Data&&) = default;
+            Data(Data&& other) noexcept;  // Move layout data, not observers; new lock count is 0
             Data& operator=(const Data&) = delete;
             Data& operator=(Data&&) = delete;
             ~Data() = default;
@@ -142,6 +145,26 @@ namespace bcsv {
             void setColumnType(size_t index, ColumnType type);
             void setColumns(const std::vector<ColumnDefinition>& columns);
             void setColumns(const std::vector<std::string>& columnNames, const std::vector<ColumnType>& columnTypes);
+
+        private:
+            /// Throws std::logic_error if any codec guard is held.  Called at
+            /// the top of every structural mutation method.
+            void throwIfLocked(const char* method) const;
+
+        public:
+            // ============================================================
+            // Structural lock (codec guard)
+            // Relaxed ordering: library is single-threaded; atomic is used
+            // only to avoid tearing on the counter, not for cross-thread
+            // synchronization.
+            // ============================================================
+            void acquireStructuralLock() noexcept  { structural_lock_count_.fetch_add(1, std::memory_order_relaxed); }
+            void releaseStructuralLock() noexcept  {
+                auto prev = structural_lock_count_.fetch_sub(1, std::memory_order_relaxed);
+                assert(prev > 0 && "releaseStructuralLock: underflow — more releases than acquires");
+                (void)prev;
+            }
+            bool isStructurallyLocked() const noexcept { return structural_lock_count_.load(std::memory_order_relaxed) > 0; }
 
             // ============================================================
             // Observer management
@@ -188,6 +211,9 @@ namespace bcsv {
         void unregisterCallback(void* owner) const {
             data_->unregisterCallback(owner);
         }
+
+        /// @brief Check whether any codec guard is currently locking this layout.
+        bool isStructurallyLocked() const noexcept { return data_->isStructurallyLocked(); }
 
         // ============================================================
         // Layout information (facade - delegates to Data)

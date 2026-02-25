@@ -175,6 +175,7 @@ reader.close();
 | `row_codec_zoh001.h` | `RowCodecZoH001<>` — ZoH delta codec (composes Flat001 for first row) |
 | `row_codec_variant.h` | `RowCodecType<>` — compile-time codec selection for Writer |
 | `row_codec_dispatch.h` | `CodecDispatch<>` — runtime codec selection for Reader (union + function pointers) |
+| `layout_guard.h` | `LayoutGuard` — RAII structural lock, prevents layout mutation while a codec is active |
 | `file_header.h` | `FileHeader` — 12-byte fixed header + variable schema section |
 | `packet_header.h` | `PacketHeader` — 16-byte per-packet header (magic, row index, checksum) |
 | `file_footer.h` | `FileFooter`, `PacketIndexEntry` — EOF index for random access |
@@ -237,6 +238,7 @@ reader.close();
 - **CRTP + static dispatch**: `LayoutStatic<Types...>` for zero-overhead compile-time schemas
 - **Three-container Row storage**: `bits_` (Bitset<>), `data_` (vector<byte>), `strg_` (vector<string>) — booleans as bits, scalars packed, strings separate
 - **Codec extraction**: Wire-format serialization/deserialization lives in `RowCodecFlat001`/`RowCodecZoH001`, not in Row classes. Writer uses compile-time `RowCodecType` (`std::conditional_t`); Reader uses runtime `CodecDispatch` (union + function pointers, resolved at file open). TrackingPolicy and file codec are orthogonal axes — all 4 combinations work. Codecs access Row internals via `friend`.
+- **LayoutGuard (RAII structural lock)**: Codecs acquire a `LayoutGuard` during `setup()`. While held, structural layout mutations throw `std::logic_error`. Automatically released on codec destruction or move-assignment.
 
 ## Current Status
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -36,6 +36,7 @@
 #include "definitions.h"
 #include "bitset.h"
 #include "layout.h"
+#include "layout_guard.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -56,6 +57,42 @@ class RowCodecZoH001 {
 public:
     RowCodecZoH001() = default;
 
+    /// Copy constructor: acquires a new guard on the same layout data.
+    RowCodecZoH001(const RowCodecZoH001& other)
+        : guard_(other.layout_ ? LayoutGuard(other.layout_->data()) : LayoutGuard())
+        , layout_(other.layout_)
+        , wire_data_size_(other.wire_data_size_)
+        , packed_offsets_(other.packed_offsets_)
+        , wire_bits_(other.wire_bits_)
+        , non_bool_mask_(other.non_bool_mask_)
+        , prev_bits_(other.prev_bits_)
+        , prev_data_(other.prev_data_)
+        , prev_strg_(other.prev_strg_)
+        , first_row_in_packet_(other.first_row_in_packet_)
+    {}
+
+    RowCodecZoH001& operator=(const RowCodecZoH001& other) {
+        if (this != &other) {
+            // Acquire new guard before releasing old — strong exception safety.
+            LayoutGuard newGuard = other.layout_ ? LayoutGuard(other.layout_->data()) : LayoutGuard();
+            guard_.release();
+            layout_ = other.layout_;
+            wire_data_size_ = other.wire_data_size_;
+            packed_offsets_ = other.packed_offsets_;
+            wire_bits_ = other.wire_bits_;
+            non_bool_mask_ = other.non_bool_mask_;
+            prev_bits_ = other.prev_bits_;
+            prev_data_ = other.prev_data_;
+            prev_strg_ = other.prev_strg_;
+            first_row_in_packet_ = other.first_row_in_packet_;
+            guard_ = std::move(newGuard);
+        }
+        return *this;
+    }
+
+    RowCodecZoH001(RowCodecZoH001&&) = default;
+    RowCodecZoH001& operator=(RowCodecZoH001&&) = default;
+
     // ── Lifecycle ────────────────────────────────────────────────────────
     void setup(const LayoutType& layout);
     void reset() noexcept; // Clears inter-row state for new packet.
@@ -75,6 +112,7 @@ public:
         std::span<const std::byte> buffer, RowType& row) const;
 
 private:
+    LayoutGuard guard_;  // Prevents layout mutation while codec is active
     const LayoutType* layout_{nullptr};
     uint32_t wire_data_size_{0};
     const std::vector<uint32_t>* packed_offsets_{nullptr};

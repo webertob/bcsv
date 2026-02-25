@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -28,6 +28,7 @@
 #include "definitions.h"
 #include "byte_buffer.h"
 #include "layout.h"
+#include "layout_guard.h"
 
 #include <cstdint>
 #include <span>
@@ -45,6 +46,32 @@ class RowCodecFlat001 {
 
 public:
     RowCodecFlat001() = default;
+
+    /// Copy constructor: acquires a new guard on the same layout data.
+    RowCodecFlat001(const RowCodecFlat001& other)
+        : guard_(other.layout_ ? LayoutGuard(other.layout_->data()) : LayoutGuard())
+        , layout_(other.layout_)
+        , wire_data_size_(other.wire_data_size_)
+        , packed_offsets_(other.packed_offsets_)
+        , offsets_ptr_(other.offsets_ptr_)
+    {}
+
+    RowCodecFlat001& operator=(const RowCodecFlat001& other) {
+        if (this != &other) {
+            // Acquire new guard before releasing old — strong exception safety.
+            LayoutGuard newGuard = other.layout_ ? LayoutGuard(other.layout_->data()) : LayoutGuard();
+            guard_.release();
+            layout_ = other.layout_;
+            wire_data_size_ = other.wire_data_size_;
+            packed_offsets_ = other.packed_offsets_;
+            offsets_ptr_ = other.offsets_ptr_;
+            guard_ = std::move(newGuard);
+        }
+        return *this;
+    }
+
+    RowCodecFlat001(RowCodecFlat001&&) = default;
+    RowCodecFlat001& operator=(RowCodecFlat001&&) = default;
 
     // ── Lifecycle ────────────────────────────────────────────────────────
     void setup(const LayoutType& layout);
@@ -71,7 +98,11 @@ public:
     uint32_t columnOffset(size_t col) const noexcept { return offsets_ptr_[col]; }
     const uint32_t* columnOffsetsPtr() const noexcept { return offsets_ptr_; }
 
+    // ── Codec state ──────────────────────────────────────────────────────
+    bool isSetup() const noexcept { return layout_ != nullptr; }
+
 private:
+    LayoutGuard guard_;  // Prevents layout mutation while codec is active
     const LayoutType* layout_{nullptr};
     uint32_t wire_data_size_{0};
     const std::vector<uint32_t>* packed_offsets_{nullptr};

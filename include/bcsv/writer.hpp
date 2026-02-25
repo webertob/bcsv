@@ -1,7 +1,7 @@
 #pragma once
 
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -67,6 +67,7 @@ namespace bcsv {
         footer.write(stream_);
         
         stream_.close();
+        codec_ = CodecType();  // Move-assign default; old codec's destructor releases the structural lock
         file_path_.clear();
         lz4_stream_.reset();
         row_buffer_raw_.clear();
