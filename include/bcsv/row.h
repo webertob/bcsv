@@ -199,7 +199,7 @@ namespace bcsv {
  * where values remain constant for extended periods.
  * 
  * IMPORTANT: Boolean columns have special encoding in ZoH format:
- * - Boolean values are encoded directly in the change Bitset bits
+ * - Boolean values are encoded directly in the head_ Bitset
  * - Bit value 0 = false, Bit value 1 = true
  * - Boolean columns never contribute data to the data section
  * - Boolean encoding is independent of whether the value changed
@@ -208,33 +208,44 @@ namespace bcsv {
  * ZoH BINARY FORMAT LAYOUT
  * =============================================================================
  * 
- * [Change Bitset] [Changed Data 1] [Changed Data 2] ... [Changed Data N]
- * |              | |              | |              |   |              |
- * | Column Flags | | Value 1      | | Value 2      |   | Value N      |
- * | + Bool Values| | (if changed) | | (if changed) |   | (if changed) |
+ * [Head Bitset] [Changed Data 1] [Changed Data 2] ... [Changed Data N]
+ * |            | |              | |              |   |              |
+ * |Bool Values | | Value 1      | | Value 2      |   | Value N      |
+ * |+Change Flags| (if changed) | | (if changed) |   | (if changed) |
  * 
  * =============================================================================
- * CHANGE BITSET FORMAT
+ * HEAD BITSET FORMAT (type-grouped layout)
  * =============================================================================
  * 
- * The change Bitset is a compact bitfield with different semantics per column type:
- * 
- * Bit Layout (for N columns):
- * ┌─────────────────────────────────────────────────────────────────┐
- * │Padding (if needed)       │ N-1│ N-2 │ ... │  2  │  1  │  0  │   │
- * ├─────────────────────────┼─────┼─────┼─────┼─────┼─────┼─────┤   │
- * │      Zero-filled        │ColN-1│Col-2│ ... │Col2 │Col1 │Col0 │   │
- * │                         │     │     │     │     │     │     │   │
- * └─────────────────────────┴─────┴─────┴─────┴─────┴─────┴─────┘   │
+ * The head Bitset has columnCount bits with a type-grouped layout:
+ *
+ *   Bits [0 .. boolCount):           Boolean VALUES (same layout as row.bits_)
+ *   Bits [boolCount .. columnCount): Change flags, grouped by ColumnType enum:
+ *       UINT8 flags | UINT16 flags | UINT32 flags | UINT64 flags |
+ *       INT8 flags  | INT16 flags  | INT32 flags  | INT64 flags  |
+ *       FLOAT flags | DOUBLE flags | STRING flags
+ *
+ * Within each type group, columns appear in their original layout order.
+ *
+ * This type-grouped layout enables:
+ * - Bulk assignRange/equalRange for bool values (word-level operations)
+ * - Tight per-type inner loops for scalar change detection (no type dispatch)
+ * - head_[0..boolCount) also serves as previous-bool-value storage
+ *
+ * Bit Layout Example (for 6 columns: [BOOL, INT32, BOOL, FLOAT, STRING, UINT8]):
+ * ┌──────┬──────┬──────┬──────┬──────┬──────┬─────┬─────┐
+ * │ PAD  │ PAD  │ STR  │FLOAT │INT32 │UINT8 │BOOL1│BOOL0│
+ * │  7   │  6   │  5   │  4   │  3   │  2   │  1  │  0  │
+ * └──────┴──────┴──────┴──────┴──────┴──────┴─────┴─────┘
+ *  ↑ padding     ↑ STRING flag  ↑ FLOAT flag ↑ bool values
+ *                ↑ change flags (type-grouped: UINT8, INT32, FLOAT, STRING)
  * 
  * Bit Meanings:
- * - For NON-BOOL columns: Bit = 1 means changed, 0 means unchanged
- * - For BOOL columns: Bit directly encodes the boolean value (0=false, 1=true)
- *   IMPORTANT: Boolean values are ALWAYS encoded in the Bitset, regardless of
- *   whether they changed from the previous row. The bit represents the actual
- *   boolean value, not a change indicator.
+ * - Bits [0..boolCount): Boolean VALUES (0=false, 1=true), always present
+ * - Bits [boolCount..columnCount): Change FLAGS (1=changed, 0=unchanged)
+ *   grouped by ColumnType enum order (UINT8, UINT16, ..., DOUBLE, STRING)
  * 
- * Bit Ordering: Bit 0 (column 0) is the least significant bit (rightmost),
+ * Bit Ordering: Bit 0 is the least significant bit (rightmost),
  * padding bits are added to the left (most significant bits) to reach byte boundary.
  * 
  * Bitset Size: Rounded up to nearest byte boundary for efficient storage
@@ -243,11 +254,12 @@ namespace bcsv {
  * ZoH DATA SECTION FORMAT
  * =============================================================================
  * 
- * Only columns marked as changed (bit = 1) have data in the data section.
- * Data appears in layout order (column 0, column 1, ..., column N).
+ * Only non-BOOL columns with their change flag set have data in the section.
+ * Data appears in the same type-grouped order as the change flags in the
+ * head Bitset (ColumnType enum order: UINT8, UINT16, ..., DOUBLE, STRING).
  * 
  * For BOOLEAN columns:
- * - No data in data section (value stored directly in change Bitset)
+ * - No data in data section (value stored directly in head Bitset)
  * - Bit 0 = false, Bit 1 = true
  * - Boolean bits represent the actual value, not change status
  * - Booleans are always included in serialization regardless of changes
@@ -276,23 +288,30 @@ namespace bcsv {
  * Layout: [STRING, INT32, STRING, DOUBLE, BOOL]
  * Scenario: Only INT32 and BOOL columns changed from previous row
  * 
- * Change Bitset (1 byte for 5 columns):
+ * Head Bitset (1 byte for 5 columns):
+ * Type-grouped bit assignment:
+ *   Bit 0: BOOL (col 4) = true  → value bit
+ *   Bit 1: INT32 (col 1)        → change flag
+ *   Bit 2: DOUBLE (col 3)       → change flag
+ *   Bit 3: STRING (col 0)       → change flag
+ *   Bit 4: STRING (col 2)       → change flag
+ *
  * ┌─────┬─────┬─────┬─────┬─────┬─────┬─────┬─────┐
  * │  7  │  6  │  5  │  4  │  3  │  2  │  1  │  0  │
  * ├─────┼─────┼─────┼─────┼─────┼─────┼─────┼─────┤
- * │ PAD │ PAD │ PAD │BOOL │DOUB │STR2 │INT32│STR1 │
- * │  0  │  0  │  0  │  1  │  0  │  0  │  1  │  0  │
+ * │ PAD │ PAD │ PAD │STR2 │STR1 │DOUB │INT32│BOOL │
+ * │  0  │  0  │  0  │  0  │  0  │  0  │  1  │  1  │
  * └─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────┘
  * 
- * Bitset Value: 0b00010010 = 0x12
- * - Bit 0 (STR1): 0 = unchanged (no data in section)
- * - Bit 1 (INT32): 1 = changed (4 bytes in data section)  
- * - Bit 2 (STR2): 0 = unchanged (no data in section)
- * - Bit 3 (DOUBLE): 0 = unchanged (no data in section)
- * - Bit 4 (BOOL): 1 = boolean value is true (no data in section)
+ * Bitset Value: 0b00000011 = 0x03
+ * - Bit 0 (BOOL col 4): 1 = boolean value is true (no data in section)
+ * - Bit 1 (INT32 col 1): 1 = changed (4 bytes in data section)
+ * - Bit 2 (DOUBLE col 3): 0 = unchanged (no data in section)
+ * - Bit 3 (STRING col 0): 0 = unchanged (no data in section)
+ * - Bit 4 (STRING col 2): 0 = unchanged (no data in section)
  * - Bits 5-7: Padding bits (always 0)
  * 
- * Data Section (4 bytes):
+ * Data Section (4 bytes, type-grouped order: INT32 data):
  * ┌────────────────────┐
  * │       INT32        │
  * │     (4 bytes)      │
@@ -303,59 +322,55 @@ namespace bcsv {
  * vs. Standard Row Size: 45 bytes (33 fixed + 12 variable)
  * Compression Ratio: 89% space savings!
  * 
- * Note: The Bitset shows correct bit ordering with column 0 at bit position 0
- * (least significant bit) and padding at the most significant bits (left side).
- * 
  * =============================================================================
  * ZoH SERIALIZATION ALGORITHM
  * =============================================================================
  * 
- * 1. Check if any non-BOOL changes exist (compare with codec's previous row state):
- *    if (no columns changed) return; // Skip serialization entirely
+ * 1. Bool bulk compare and assign:
+ *    any_change = !head_.equalRange(row.bits_, 0, boolCount)
+ *    head_.assignRange(row.bits_, 0, boolCount)
  * 
- * 2. Reserve space for change Bitset:
- *    bitset_size = (COLUMN_COUNT + 7) / 8; // Round up to bytes
- *    reserve_space(buffer, bitset_size);
+ * 2. Reserve space for head Bitset in buffer
  * 
- * 3. Process each column in layout order:
- *    for each column i:
- *        if column_type == BOOL:
- *            Bitset[i] = boolean_value; // Store value directly in Bitset
- *        else if changed[i]:
- *            Bitset[i] = 1; // Mark as changed
- *            if column_type == STRING:
- *                append(buffer, string_length_uint16);
- *                append(buffer, string_data);
- *            else:
- *                append(buffer, primitive_value);
+ * 3. For each scalar ColumnType (UINT8..DOUBLE), iterate per-type offset vector:
+ *    for each offset in off_<type>:
+ *        if data_[offset] != row.data_[offset]:  // memcmp of TypeSize bytes
+ *            head_[head_idx] = 1     // mark changed
+ *            copy to data_[offset]   // update prev
+ *            append value to buffer
+ *        else:
+ *            head_[head_idx] = 0     // mark unchanged
+ *        head_idx++
  * 
- * 4. Write Bitset to reserved location:
- *    write_bitset_to_buffer(reserved_location);
+ * 4. For each string column, compare and emit similarly
+ * 
+ * 5. If any_change:
+ *        Write head_ to reserved buffer location
+ *        Return span of serialized data
+ *    Else:
+ *        Undo buffer growth, return empty span (ZoH repeat)
  * 
  * =============================================================================
  * ZoH DESERIALIZATION ALGORITHM
  * =============================================================================
  * 
- * 1. Read change Bitset:
- *    bitset_size = (COLUMN_COUNT + 7) / 8;
- *    read_bitset(buffer, bitset_size);
- *    data_start = buffer + bitset_size;
+ * 1. Read head Bitset from buffer:
+ *    head_.readFrom(buffer, head_.sizeBytes())
  * 
- * 2. Process each column in layout order:
- *    current_pos = data_start;
- *    for each column i:
- *        if column_type == BOOL:
- *            column_value[i] = Bitset[i]; // Read boolean value directly from Bitset
- *        else if Bitset[i] == 1: // Column changed
- *            if column_type == STRING:
- *                length = read_uint16(current_pos);
- *                current_pos += 2;
- *                column_value[i] = read_string(current_pos, length);
- *                current_pos += length;
- *            else:
- *                column_value[i] = read_primitive(current_pos, column_type);
- *                current_pos += sizeof(column_type);
- *        // else: keep previous value (Zero Order Hold principle)
+ * 2. Bool bulk extract:
+ *    row.bits_.assignRange(head_, 0, boolCount)
+ * 
+ * 3. For each scalar ColumnType (UINT8..DOUBLE), iterate per-type offset vector:
+ *    for each offset in off_<type>:
+ *        if head_[head_idx]:
+ *            memcpy from buffer into row.data_[offset]
+ *        head_idx++
+ *    // else: keep previous value (Zero Order Hold principle)
+ * 
+ * 4. For each string column:
+ *    if head_[head_idx]:
+ *        read uint16_t length, then string payload
+ *    head_idx++
  * 
  * =============================================================================
  * ZoH PERFORMANCE CHARACTERISTICS

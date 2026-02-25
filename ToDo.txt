@@ -573,3 +573,13 @@ Deferred items from critical review (2025 review, Phases 1-5):
     [ ] #25 Add operator<< for Row (dynamic) similar to the existing Layout operator<<.
             Print column values in a human-readable format for debugging.
     [ ] P6  Future: consider size_t vs int for column indices in Row API (currently int).
+
+Deferred items from ZoH wire format rewrite (2026-02-25):
+    [ ] Static RowCodecZoH001::deserialize() bool extraction uses && short-circuit fold:
+            ((std::is_same_v<T, bool> && (std::get<I>(row.data_) = head_.test(...), true)), ...);
+        This is fragile — it compiles for all T only because implicit bool→T conversion
+        happens to be valid (bool→int, bool→double, bool→char→string). If a type without
+        implicit bool conversion is ever added, the fold will fail to compile even though
+        the assignment is short-circuited at runtime.
+        Replace with if constexpr in a lambda, matching the pattern used in serialize().
+        Tracked inline: row_codec_zoh001.hpp, static deserialize() TODO comment.
