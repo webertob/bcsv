@@ -583,3 +583,10 @@ Deferred items from ZoH wire format rewrite (2026-02-25):
         the assignment is short-circuited at runtime.
         Replace with if constexpr in a lambda, matching the pattern used in serialize().
         Tracked inline: row_codec_zoh001.hpp, static deserialize() TODO comment.
+
+Deferred items from library review (2026-02-27):
+    [ ] Future opportunity: Reintroduce a RowView class for accelerating sparse reads.
+            row_view.h/hpp removed (was archived, contained compile errors referencing deleted methods).
+            A future RowView should provide zero-copy column access into a serialized buffer without
+            full deserialization, supporting sparse-row/sparse-column read patterns.
+            See Item 20 (Direct Access Reader / Sparse Reader) for related design notes.

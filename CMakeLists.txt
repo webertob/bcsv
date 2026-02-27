@@ -162,7 +162,7 @@ install(EXPORT bcsvConfig DESTINATION lib/cmake/bcsv)
 # C API Shared Library
 # ============================================================================
 add_library(bcsv_c_api SHARED
-    include/bcsv/bcsv_c_api.cpp
+    src/bcsv_c_api.cpp
 )
 
 target_include_directories(bcsv_c_api

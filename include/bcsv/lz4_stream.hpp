@@ -55,24 +55,14 @@ namespace bcsv {
             LZ4CompressionStream(const LZ4CompressionStream&) = delete;
             LZ4CompressionStream& operator=(const LZ4CompressionStream&) = delete;
             
-            LZ4CompressionStream(LZ4CompressionStream&& other) noexcept
-                : buffer_(std::move(other.buffer_))
-                , acceleration_(other.acceleration_)
-                , pos_(other.pos_)
-            {
-                LZ4_initStream(&stream_, sizeof(stream_));
-                pos_ = 0; // Reset history on move.
-            }
-            
-            LZ4CompressionStream& operator=(LZ4CompressionStream&& other) noexcept {
-                if (this != &other) {
-                    buffer_ = std::move(other.buffer_);
-                    acceleration_ = other.acceleration_;
-                    pos_ = 0; // Reset history
-                    LZ4_initStream(&stream_, sizeof(stream_));
-                }
-                return *this;
-            }
+            // Move operations deleted: LZ4_stream_t contains internal pointers into
+            // the ring buffer. After std::move(buffer_), those pointers dangle.
+            // LZ4_initStream would reset all dictionary context, corrupting any
+            // subsequent LZ4_compress_fast_continue calls within the same packet.
+            // std::optional::emplace() constructs in-place and does not require
+            // movability. Writer/Reader never move mid-stream.
+            LZ4CompressionStream(LZ4CompressionStream&&) = delete;
+            LZ4CompressionStream& operator=(LZ4CompressionStream&&) = delete;
             
             void reset() {
                 LZ4_resetStream_fast(&stream_);
@@ -229,22 +219,11 @@ namespace bcsv {
             LZ4DecompressionStream(const LZ4DecompressionStream&) = delete;
             LZ4DecompressionStream& operator=(const LZ4DecompressionStream&) = delete;
 
-            LZ4DecompressionStream(LZ4DecompressionStream&& other) noexcept
-                : buffer_(std::move(other.buffer_))
-                , pos_(other.pos_)
-            {
-                LZ4_setStreamDecode(&stream_, nullptr, 0);
-                pos_ = 0;
-            }
-
-            LZ4DecompressionStream& operator=(LZ4DecompressionStream&& other) noexcept {
-                if (this != &other) {
-                    buffer_ = std::move(other.buffer_);
-                    pos_ = 0;
-                    LZ4_setStreamDecode(&stream_, nullptr, 0);
-                }
-                return *this;
-            }
+            // Move operations deleted: LZ4_streamDecode_t contains internal pointers
+            // (externalDict, prefixEnd) into the ring buffer. After std::move(buffer_),
+            // those pointers dangle. See LZ4CompressionStream rationale.
+            LZ4DecompressionStream(LZ4DecompressionStream&&) = delete;
+            LZ4DecompressionStream& operator=(LZ4DecompressionStream&&) = delete;
 
             void reset() {
                 LZ4_setStreamDecode(&stream_, nullptr, 0);

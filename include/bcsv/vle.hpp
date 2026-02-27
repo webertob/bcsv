@@ -14,7 +14,8 @@
 #include <cstring>
 #include <stdexcept>
 #include <span>
-#include <iostream>
+#include <ostream>
+#include <istream>
 #include <type_traits>
 #include <concepts>
 #include <bit> // For std::bit_width

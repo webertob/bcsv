@@ -49,10 +49,12 @@ def _run_parallel_pair(
 
 
 def _require_output_or_success(code: int, output_file: Path, label: str) -> None:
-    if code != 0:
-        raise RuntimeError(f"{label} failed with code {code}")
-    if not output_file.exists() or output_file.stat().st_size == 0:
-        raise RuntimeError(f"{label} did not produce usable output file: {output_file}")
+    if output_file.exists() and output_file.stat().st_size > 0:
+        if code != 0:
+            print(f"  WARNING: {label} exited with code {code} but produced output; continuing.",
+                  file=sys.stderr)
+        return
+    raise RuntimeError(f"{label} failed with code {code} and no usable output file: {output_file}")
 
 
 def main() -> int:
@@ -65,6 +67,10 @@ def main() -> int:
     parser.add_argument("--repetitions", type=int, default=5, help="Interleaved pair count")
     parser.add_argument("--results-root", default=None, help="Base result root (default: benchmark/results/<host>/interleaved_h2h)")
     parser.add_argument("--build-type", default="Release", help="Build type for macro benchmark arg")
+    parser.add_argument("--baseline-compression", type=int, default=None,
+                        help="LZ4 compression level 1-9 for baseline (omit to use binary default)")
+    parser.add_argument("--candidate-compression", type=int, default=None,
+                        help="LZ4 compression level 1-9 for candidate (omit to use binary default)")
     args = parser.parse_args()
 
     if args.repetitions < 1:
@@ -139,12 +145,16 @@ def main() -> int:
                 f"--build-type={args.build_type}",
                 f"--rows={rows}",
             ]
+            if args.baseline_compression is not None:
+                base_cmd.append(f"--compression={args.baseline_compression}")
             cand_cmd = [
                 str(candidate_macro),
                 f"--output={cand_out}",
                 f"--build-type={args.build_type}",
                 f"--rows={rows}",
             ]
+            if args.candidate_compression is not None:
+                cand_cmd.append(f"--compression={args.candidate_compression}")
             base_rc, cand_rc = _run_parallel_pair(
                 base_cmd,
                 cand_cmd,

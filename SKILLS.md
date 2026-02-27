@@ -201,7 +201,7 @@ reader.close();
 | `column_name_index.hpp` | Name parsing, sorted insert, binary search |
 | `vle.hpp` | Variable-Length Encoding — zigzag for signed ints, VLE encode/decode |
 | `lz4_stream.hpp` | Streaming LZ4 compressor/decompressor with ring-buffer dictionary |
-| `bcsv_c_api.cpp` | C API implementation wrapping C++ classes |
+| `bcsv_c_api.cpp` | C API implementation wrapping C++ classes (in `src/`) |
 
 ## Naming Conventions (Enforced)
 

@@ -120,6 +120,7 @@ def run_macro(
     storage: str = "both",
     codec: str = "both",
     timeout: int = 3600,
+    compression: int | None = None,
 ) -> dict:
     """Run the macro benchmark binary and return the JSON payload."""
     stem = MACRO_FILE_STEMS[run_type]
@@ -140,6 +141,8 @@ def run_macro(
         cmd.append(f"--profile={profile}")
     if scenario:
         cmd.append(f"--scenario={scenario}")
+    if compression is not None:
+        cmd.append(f"--compression={compression}")
     cmd = pin_cmd(cmd, pin_enabled, pin_cpu)
 
     result = subprocess.run(cmd, timeout=timeout, capture_output=True, text=True)

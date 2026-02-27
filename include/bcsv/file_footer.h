@@ -64,10 +64,14 @@ namespace bcsv {
      * +20+N×16          | 8 bytes   | checksum (xxHash64 of entire index)
      * ```
      * 
-     * Footer is always at fixed offset from EOF: `-28 bytes`
+     * Footer is always at fixed offset from EOF: `-24 bytes`
      * 
-     * Total size = 36 + N×16 bytes (where N = number of packets)
-     * Example: 1000 packets = 16,036 bytes (16 KB)
+     * Total size = 28 + N×16 bytes (where N = number of packets)
+     * Example: 1000 packets = 16,028 bytes (~16 KB)
+     * 
+     * Note: start_offset is uint32_t (max ~4GB footer = ~268M packets).
+     * This does NOT limit overall file size — PacketIndexEntry::byte_offset
+     * uses uint64_t for file-level addressing.
      */
 
     class FileFooter {
@@ -75,7 +79,7 @@ namespace bcsv {
         #pragma pack(push, 1)
         struct ConstSection {
             uint32_t start_magic;      ///< "EIDX" magic number
-            uint32_t start_offset;     ///< Bytes from EOF to "BIDX"
+            uint32_t start_offset;     ///< Bytes from EOF to "BIDX" (footer size)
             uint64_t row_count;        ///< Total number of rows in file
             uint64_t checksum;         ///< xxHash64 of entire index (from "BIDX" to totalRowCount)
             
@@ -142,7 +146,7 @@ namespace bcsv {
          */
         void clear() {
             packet_index_.clear();
-            const_section_.start_offset = encodedSize();
+            const_section_.start_offset = static_cast<uint32_t>(encodedSize());
             const_section_.row_count = 0;
             const_section_.checksum = 0;
         }
@@ -151,7 +155,7 @@ namespace bcsv {
          * @brief Calculate total size of serialized index
          * @return Size in bytes
          */
-        size_t encodedSize() {
+        size_t encodedSize() const {
             return  4                                                   // "BIDX" magic
                     + packet_index_.size() * sizeof(PacketIndexEntry)    // Packet entries
                     + sizeof(ConstSection);                             // Footer
@@ -165,7 +169,7 @@ namespace bcsv {
          * 1. "BIDX" magic (4 bytes)
          * 2. Packet entries (N × 16 bytes)
          * 3. "EIDX" magic (4 bytes)
-         * 4. startOffset (4 bytes) - bytes from EOF to "BIDX"
+         * 4. startOffset (4 bytes) - bytes from EOF to "BIDX" (footer size)
          * 5. rowCount (8 bytes) - total number of rows in file
          * 6. checksum (8 bytes) - xxHash64 of bytes 0 to rowCount
          * 

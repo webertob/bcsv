@@ -401,9 +401,7 @@ namespace bcsv {
         static constexpr const ColTypesArray& 
                                         columnTypes() noexcept                          { return COLUMN_TYPES; }
         static constexpr size_t         columnCount(ColumnType type) noexcept {
-            if (type == ColumnType::BOOL) return COLUMN_COUNT_BOOL;
-            if (type == ColumnType::STRING) return COLUMN_COUNT_STRINGS;
-            return sizeof...(ColumnTypes) - COLUMN_COUNT_BOOL - COLUMN_COUNT_STRINGS;
+            return (0 + ... + (toColumnType<ColumnTypes>() == type ? 1 : 0));
         }
         static constexpr uint32_t       columnOffsetPacked(size_t index)                { return COLUMN_OFFSETS_PACKED[index]; }
         static constexpr const std::array<uint32_t, sizeof...(ColumnTypes)>&

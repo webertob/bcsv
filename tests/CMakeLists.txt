@@ -39,6 +39,7 @@ set(TEST_SOURCES
     codec_dispatch_test.cpp
     layout_guard_test.cpp
     review_fixes_test.cpp
+    writer_reader_test.cpp
     bench_dataset_profiles_test.cpp
 )
 

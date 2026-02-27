@@ -107,6 +107,21 @@ def sync_headers(project_root=None, force=False, verbose=False):
                     if verbose: print(f"  Copying {item.name}")
                     shutil.copy2(item, target_file)
     
+    # Sync xxHash headers AND sources (needed for compilation)
+    source_xxhash_dir = source_include_dir / "xxHash-0.8.3"
+    target_xxhash_dir = target_include_dir / "xxHash-0.8.3"
+    if source_xxhash_dir.exists():
+        if verbose:
+            print("Syncing xxHash headers and sources...")
+        target_xxhash_dir.mkdir(exist_ok=True)
+        # Copy all .h and .c files
+        for item in source_xxhash_dir.glob("*"):
+            if item.is_file() and item.suffix in (".h", ".c"):
+                target_file = target_xxhash_dir / item.name
+                if not target_file.exists() or force or item.stat().st_mtime > target_file.stat().st_mtime:
+                    if verbose: print(f"  Copying {item.name}")
+                    shutil.copy2(item, target_file)
+
     # Sync boost headers if they exist
     source_boost_dir = source_include_dir / "boost-1.89.0"
     target_boost_dir = target_include_dir / "boost-1.89.0"

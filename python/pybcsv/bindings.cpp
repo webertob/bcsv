@@ -13,6 +13,7 @@
 #include <pybind11/iostream.h>
 #include <algorithm>
 #include <cctype>
+#include <optional>
 #include <vector>
 #include <string>
 #include <bcsv/bcsv.h>
@@ -209,6 +210,26 @@ namespace {
             }
         }
     };
+
+    /// Thin wrapper around bcsv::Writer that caches an OptimizedRowWriter
+    /// so that write_row() doesn't recreate it on every call.
+    struct PyWriter {
+        bcsv::Writer<bcsv::Layout> writer;
+        std::optional<OptimizedRowWriter> cached_row_writer;
+
+        explicit PyWriter(const bcsv::Layout& layout) : writer(layout) {}
+
+        /// (Re-)initialise the cached row writer from the current layout.
+        OptimizedRowWriter& ensureCachedWriter() {
+            if (!cached_row_writer.has_value()) {
+                cached_row_writer.emplace(writer.layout());
+            }
+            return *cached_row_writer;
+        }
+
+        /// Invalidate the cache (e.g. after open() changes the layout).
+        void invalidateCache() { cached_row_writer.reset(); }
+    };
 }
 
 PYBIND11_MODULE(_bcsv, m) {
@@ -251,8 +272,8 @@ PYBIND11_MODULE(_bcsv, m) {
         .def("add_column", [](bcsv::Layout& layout, const std::string& name, bcsv::ColumnType type) {
             return layout.addColumn({name, type});
         }, py::arg("name"), py::arg("type"))
-        .def("column_count", &bcsv::Layout::columnCount)
-        .def("get_column_count", &bcsv::Layout::columnCount)  // Alias for consistency
+        .def("column_count", [](const bcsv::Layout& l) { return l.columnCount(); })
+        .def("get_column_count", [](const bcsv::Layout& l) { return l.columnCount(); })  // Alias for consistency
         .def("column_name", &bcsv::Layout::columnName, py::arg("index"))
         .def("column_type", &bcsv::Layout::columnType, py::arg("index"))
         .def("has_column", &bcsv::Layout::hasColumn, py::arg("name"))
@@ -274,7 +295,7 @@ PYBIND11_MODULE(_bcsv, m) {
         .def("get_column", [](const bcsv::Layout& layout, size_t index) {
             return bcsv::ColumnDefinition{layout.columnName(index), layout.columnType(index)};
         }, py::arg("index"))
-        .def("__len__", &bcsv::Layout::columnCount)
+        .def("__len__", [](const bcsv::Layout& l) { return l.columnCount(); })
         .def("__getitem__", [](const bcsv::Layout& layout, size_t index) {
             if (index >= layout.columnCount()) {
                 throw py::index_error("Column index out of range");
@@ -287,25 +308,26 @@ PYBIND11_MODULE(_bcsv, m) {
             return ss.str();
         });
 
-    // FileFlags enum
+    // FileFlags enum — ZoH is a dedicated flag; compression is controlled by compression_level
     py::enum_<bcsv::FileFlags>(m, "FileFlags")
         .value("NONE", bcsv::FileFlags::NONE)
-        .value("COMPRESSED", bcsv::FileFlags::ZERO_ORDER_HOLD)  // Map to available flag
+        .value("ZERO_ORDER_HOLD", bcsv::FileFlags::ZERO_ORDER_HOLD)
         .export_values();
 
-    // Writer class - template specialization for Layout
-    py::class_<bcsv::Writer<bcsv::Layout>>(m, "Writer")
+    // Writer class - wraps bcsv::Writer with cached OptimizedRowWriter
+    py::class_<PyWriter>(m, "Writer")
         .def(py::init<const bcsv::Layout&>(), py::arg("layout"))
-        .def("open", [](bcsv::Writer<bcsv::Layout>& writer, const std::string& filename, 
+        .def("open", [](PyWriter& pw, const std::string& filename, 
                        bool overwrite = true, size_t compression_level = 1, size_t block_size_kb = 64, bcsv::FileFlags flags = bcsv::FileFlags::NONE) {
-            bool success = writer.open(filename, overwrite, compression_level, block_size_kb, flags);
+            pw.invalidateCache();
+            bool success = pw.writer.open(filename, overwrite, compression_level, block_size_kb, flags);
             if (!success) {
                 throw std::runtime_error("Failed to open file for writing: " + filename);
             }
             return success;
         }, py::arg("filename"), py::arg("overwrite") = true, py::arg("compression_level") = 1, py::arg("block_size_kb") = 64, py::arg("flags") = bcsv::FileFlags::NONE)
-        .def("write_row", [](bcsv::Writer<bcsv::Layout>& writer, const py::list& values) {
-            auto& row = writer.row();
+        .def("write_row", [](PyWriter& pw, const py::list& values) {
+            auto& row = pw.writer.row();
             const auto& layout = row.layout();
             
             if (values.size() != layout.columnCount()) {
@@ -353,20 +375,23 @@ PYBIND11_MODULE(_bcsv, m) {
                                         " bytes (BCSV format limit: 65535 bytes per row)");
             }
             
-            // Create local optimized writer - no static/thread_local caching
-            OptimizedRowWriter cached_writer(layout);
+            // Reuse cached OptimizedRowWriter across write_row() calls
+            auto& cached_writer = pw.ensureCachedWriter();
             cached_writer.write_row_fast(row, values);
-            return writer.writeRow();
+            {
+                py::gil_scoped_release release;
+                return pw.writer.writeRow();
+            }
         })
-        .def("write_rows", [](bcsv::Writer<bcsv::Layout>& writer, const py::list& rows) {
+        .def("write_rows", [](PyWriter& pw, const py::list& rows) {
             if (rows.size() == 0) return;
             
             // Get layout from writer
-            const auto& layout = writer.layout();
+            const auto& layout = pw.writer.layout();
             const size_t expected_cols = layout.columnCount();
             
-            // Create one optimized writer for this batch
-            OptimizedRowWriter cached_writer(layout);
+            // Reuse cached optimized writer
+            auto& cached_writer = pw.ensureCachedWriter();
             
             // Batch process all rows
             for (size_t i = 0; i < rows.size(); ++i) {
@@ -377,27 +402,41 @@ PYBIND11_MODULE(_bcsv, m) {
                         std::to_string(expected_cols) + ", got " + std::to_string(row_values.size()));
                 }
                 
-                auto& row = writer.row();
+                auto& row = pw.writer.row();
                 cached_writer.write_row_fast(row, row_values);
-                writer.writeRow();
+                {
+                    py::gil_scoped_release release;
+                    pw.writer.writeRow();
+                }
             }
         }, "Write multiple rows efficiently with batching")
-        .def("close", &bcsv::Writer<bcsv::Layout>::close)
-        .def("flush", &bcsv::Writer<bcsv::Layout>::flush)
-        .def("is_open", &bcsv::Writer<bcsv::Layout>::isOpen)
-        .def("layout", &bcsv::Writer<bcsv::Layout>::layout, py::return_value_policy::reference_internal)
-        .def("__enter__", [](bcsv::Writer<bcsv::Layout>& writer) -> bcsv::Writer<bcsv::Layout>& {
-            return writer;
+        .def("close", [](PyWriter& pw) {
+            py::gil_scoped_release release;
+            pw.writer.close();
         })
-        .def("__exit__", [](bcsv::Writer<bcsv::Layout>& writer, py::object, py::object, py::object) {
-            writer.close();
+        .def("flush", [](PyWriter& pw) {
+            py::gil_scoped_release release;
+            pw.writer.flush();
+        })
+        .def("is_open", [](PyWriter& pw) { return pw.writer.isOpen(); })
+        .def("layout", [](PyWriter& pw) -> const bcsv::Layout& { return pw.writer.layout(); },
+             py::return_value_policy::reference_internal)
+        .def("__enter__", [](PyWriter& pw) -> PyWriter& {
+            return pw;
+        })
+        .def("__exit__", [](PyWriter& pw, py::object, py::object, py::object) {
+            pw.writer.close();
         });
 
     // Reader class - template specialization for Layout
     py::class_<bcsv::Reader<bcsv::Layout>>(m, "Reader")
         .def(py::init<>())
         .def("open", [](bcsv::Reader<bcsv::Layout>& reader, const std::string& filename) {
-            bool success = reader.open(filename);
+            bool success;
+            {
+                py::gil_scoped_release release;
+                success = reader.open(filename);
+            }
             if (!success) {
                 std::string error = reader.getErrorMsg();
                 if (error.empty()) {
@@ -421,15 +460,21 @@ PYBIND11_MODULE(_bcsv, m) {
             py::list all_rows;
             const auto& layout = reader.layout();
             
-            // Pre-allocate if we can estimate size (reader might have row count)
-            // For now, we'll let Python list grow dynamically but avoid repeated layout lookups
-            
-            while (reader.readNext()) {
+            while (true) {
+                bool has_next;
+                {
+                    py::gil_scoped_release release;
+                    has_next = reader.readNext();
+                }
+                if (!has_next) break;
                 all_rows.append(row_to_python_list_optimized(reader.row(), layout));
             }
             return all_rows;
         })
-        .def("close", &bcsv::Reader<bcsv::Layout>::close)
+        .def("close", [](bcsv::Reader<bcsv::Layout>& reader) {
+            py::gil_scoped_release release;
+            reader.close();
+        })
         .def("is_open", &bcsv::Reader<bcsv::Layout>::isOpen)
         .def("count_rows", [](const bcsv::Reader<bcsv::Layout>&) {
              // For standard Reader, row count isn't available without scanning.
@@ -448,7 +493,12 @@ PYBIND11_MODULE(_bcsv, m) {
             return reader;
         })
         .def("__next__", [](bcsv::Reader<bcsv::Layout>& reader) -> py::object {
-            if (!reader.readNext()) {
+            bool has_next;
+            {
+                py::gil_scoped_release release;
+                has_next = reader.readNext();
+            }
+            if (!has_next) {
                 throw py::stop_iteration();
             }
             

@@ -32,6 +32,7 @@
  *     --list           List available profiles and exit
  *     --list-scenarios List available sparse scenarios and exit
  *     --help           Show CLI help and examples
+ *     --compression=N  LZ4 compression level 1-9 (default: 1; 1=fast, 9=best ratio)
  *     --quiet          Suppress progress output
  *     --no-cleanup     Keep temporary benchmark files
  *     --build-type=X   Tag results with build type (Debug/Release)
@@ -183,7 +184,12 @@ struct ModeSelection {
     TrackingSelection tracking = TrackingSelection::Both;
     StorageSelection storage = StorageSelection::Both;
     CodecSelection codec = CodecSelection::Both;
+    size_t compressionLevel = 1;
 };
+
+// Global compression level for benchmark functions.
+// Avoids threading through every template-dispatched call chain.
+static size_t g_compression_level = 1;
 
 struct ProfileCapabilities {
     bool hasStaticLayoutDispatch = false;
@@ -791,7 +797,7 @@ bench::BenchmarkResult benchmarkBCSVFlexible(const bench::DatasetProfile& profil
     bench::Timer timer;
     {
         bcsv::Writer<bcsv::Layout> writer(profile.layout);
-        if (!writer.open(filename, true, 1)) {
+        if (!writer.open(filename, true, g_compression_level)) {
             result.validation_error = "Cannot open BCSV file: " + writer.getErrorMsg();
             return result;
         }
@@ -892,7 +898,7 @@ bench::BenchmarkResult benchmarkBCSVFlexibleZoH(const bench::DatasetProfile& pro
     bench::Timer timer;
     {
         bcsv::WriterZoH<bcsv::Layout> writer(profile.layout);
-        if (!writer.open(filename, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
+        if (!writer.open(filename, true, g_compression_level, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)) {
             result.validation_error = "Cannot open BCSV ZoH file: " + writer.getErrorMsg();
             return result;
         }
@@ -990,7 +996,7 @@ bench::BenchmarkResult benchmarkBCSVFlexibleTracked(const bench::DatasetProfile&
     bench::Timer timer;
     {
         bcsv::WriterZoH<bcsv::Layout> writer(profile.layout);
-        if (!writer.open(filename, true, 1)) {
+        if (!writer.open(filename, true, g_compression_level)) {
             result.validation_error = "Cannot open BCSV file: " + writer.getErrorMsg();
             return result;
         }
@@ -1091,8 +1097,8 @@ bench::BenchmarkResult runStaticLayoutVariant(const bench::DatasetProfile& profi
         layoutStatic = profile.layout;
         WriterType writer(layoutStatic);
         const bool opened = UseZoH
-            ? writer.open(filename, true, 1, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)
-            : writer.open(filename, true, 1);
+            ? writer.open(filename, true, g_compression_level, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)
+            : writer.open(filename, true, g_compression_level);
         if (!opened) {
             result.validation_error = "Cannot open BCSV Static file: " + writer.getErrorMsg();
             return result;
@@ -1441,6 +1447,7 @@ int main(int argc, char* argv[]) {
             << "  --tracking=both|enabled|disabled   (default: both)\n"
             << "  --storage=both|flexible|static     (default: both)\n"
             << "  --codec=both|dense|zoh            (default: both)\n"
+            << "  --compression=N                   LZ4 compression level 1-9 (default: 1; 1=fast, 9=best ratio)\n"
             << "  --list\n"
             << "  --list-scenarios\n"
             << "  --quiet\n"
@@ -1505,6 +1512,14 @@ int main(int argc, char* argv[]) {
     bool noCleanup = bench::hasArg(args, "no-cleanup");
     std::string buildType = bench::getArgString(args, "build-type", "Release");
 
+    // Parse --compression=N (1-9, default 1)
+    size_t compressionLevelArg = bench::getArgSizeT(args, "compression", 1);
+    if (compressionLevelArg < 1 || compressionLevelArg > 9) {
+        std::cerr << "ERROR: --compression must be 1-9 (got " << compressionLevelArg << ")\n";
+        return 1;
+    }
+    g_compression_level = compressionLevelArg;
+
     ModeSelection modeSelection;
     std::string modeError;
     modeSelection.tracking = parseTrackingSelection(trackingFilter, modeError);
@@ -1562,6 +1577,7 @@ int main(int argc, char* argv[]) {
                   << "Tracking: " << trackingFilter << "\n"
                   << "Storage: " << storageFilter << "\n"
                   << "Codec: " << codecFilter << "\n"
+                  << "Compression: " << g_compression_level << "\n"
                   << "Rows: " << (rowOverride > 0 ? std::to_string(rowOverride) : "profile defaults") << "\n"
                   << "Build: " << buildType << "\n\n";
     }

@@ -275,7 +275,7 @@ TEST_F(FileFooterTest, LargeIndex) {
     std::stringstream stream;
     EXPECT_TRUE(original.write(stream));
     
-    // Expected size: 36 + 1000*16 = 16036 bytes -> 28 + 1000*16 = 16028 bytes
+    // Expected size: 4 (BIDX) + 1000*16 + 24 (ConstSection) = 16028 bytes
     EXPECT_EQ(original.encodedSize(), 16028);
     
     // Read back
@@ -322,7 +322,7 @@ TEST_F(FileFooterTest, GetPacketsVector) {
 
 // Test: Footer size constant
 TEST_F(FileFooterTest, FooterSizeConstant) {
-    EXPECT_EQ(sizeof(FileFooter), 48);
+    EXPECT_EQ(sizeof(FileFooter::ConstSection), 24);
 }
 
 // Test: Edge case - maximum values

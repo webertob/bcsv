@@ -50,12 +50,12 @@ namespace bcsv {
         PacketIndex             packet_index_;               // Builds index in memory (if NO_FILE_INDEX not set)
         Checksum::Streaming     packet_hash_;                // Streaming payload checksum for current packet
         bool                    packet_open_ = false;        // Whether a packet has been started
-        size_t                  packet_size_;                // Bytes written in current packet payload
+        size_t                  packet_size_ = 0;           // Bytes written in current packet payload
 
         // Buffers for streaming compression (pre-allocated, reused)
         ByteBuffer              row_buffer_raw_;             // Serialized raw row
         ByteBuffer              row_buffer_prev_;            // Previous row for ZoH comparison
-        uint64_t                row_cnt_;                    // Total rows written across all packets
+        uint64_t                row_cnt_ = 0;                // Total rows written across all packets
         RowType                 row_;
         CodecType               codec_;                      // Compile-time selected codec
 
@@ -65,6 +65,13 @@ namespace bcsv {
         ~Writer();
 
         void                    close();
+
+        /// @brief Flush the underlying OS stream buffer to disk.
+        /// @note This flushes the OS/stdio buffer only. It does NOT finalize the
+        ///       current packet (no packet header, no checksum, no footer update).
+        ///       Rows in an incomplete packet are not recoverable after a crash.
+        ///       For crash-safe persistence, use close() which finalizes all packets
+        ///       and writes the file footer / packet index.
         void                    flush();
         uint8_t                 compressionLevel() const        { return file_header_.getCompressionLevel(); }
         const std::string&      getErrorMsg() const             { return err_msg_; }

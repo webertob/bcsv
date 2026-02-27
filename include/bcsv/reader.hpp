@@ -165,15 +165,15 @@ namespace bcsv {
             LayoutType layout;
             file_header_.readFromBinary(stream_, layout);
             
-            // Check version compatibility (v1.3.0 only)
+            // Check version compatibility: same major, minor <= ours
             if (file_header_.versionMajor() != BCSV_FORMAT_VERSION_MAJOR || 
-                file_header_.versionMinor() != BCSV_FORMAT_VERSION_MINOR) {
+                file_header_.versionMinor() > BCSV_FORMAT_VERSION_MINOR) {
                 std::ostringstream oss;
                 oss << "Error: Incompatible file version: "
                     << static_cast<int>(file_header_.versionMajor()) << "."
                     << static_cast<int>(file_header_.versionMinor())
                     << " (Expected: " << static_cast<int>(BCSV_FORMAT_VERSION_MAJOR) << "." 
-                    << static_cast<int>(BCSV_FORMAT_VERSION_MINOR) << ")";
+                    << static_cast<int>(BCSV_FORMAT_VERSION_MINOR) << " or earlier)";
                 err_msg_ = oss.str();
                 if constexpr (DEBUG_OUTPUTS) {
                     std::cerr << err_msg_ << "\n";

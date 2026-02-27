@@ -82,6 +82,9 @@ python/pybcsv.egg-info/not-zip-safe
 venv/lib64
 venv/pyvenv.cfg
 
+# Ignore review notes
+bcsv_review.md
+
 # Ignore experimental scratch directory
 .cache/
 scratch/

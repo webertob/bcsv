@@ -156,7 +156,7 @@ namespace bcsv {
             // Initialize LZ4 streaming compression if enabled
             if (compressionLevel > 0) {
                 int acceleration = 10 - compressionLevel;  // Maps 1-9 to 9-1
-                lz4_stream_.emplace(acceleration);
+                lz4_stream_.emplace(64 * 1024, acceleration);
             }
             
             // Initialize payload hasher for checksum chaining
@@ -189,8 +189,6 @@ namespace bcsv {
             }
             return false;
         }
-
-        return true;
     }
 
     template<LayoutConcept LayoutType, typename CodecType>
@@ -278,7 +276,10 @@ namespace bcsv {
         else if(lz4_stream_.has_value()) 
         {
             // compress data using LZ4 before writing
-            const auto compressedData= lz4_stream_->compressUseInternalBuffer(row_buffer_raw_);
+            // Note: actRow is a span into row_buffer_raw_. LZ4CompressionStream copies
+            // source data into its own ring buffer (or uses LZ4_saveDict for large inputs),
+            // so the source pointer is not retained after compress() returns.
+            const auto compressedData= lz4_stream_->compressUseInternalBuffer(actRow);
             writeRowLength(compressedData.size());
             stream_.write(reinterpret_cast<const char*>(compressedData.data()), compressedData.size());
             packet_hash_.update(compressedData);
@@ -287,11 +288,11 @@ namespace bcsv {
         } 
         else 
         {
-            // Non-ZoH row, no compression, simply write raw data to stream
-            writeRowLength(row_buffer_raw_.size());
-            stream_.write(reinterpret_cast<const char*>(row_buffer_raw_.data()), row_buffer_raw_.size());
-            packet_hash_.update(row_buffer_raw_);
-            packet_size_ += row_buffer_raw_.size();
+            // No compression, write raw data to stream
+            writeRowLength(actRow.size());
+            stream_.write(reinterpret_cast<const char*>(actRow.data()), actRow.size());
+            packet_hash_.update(actRow);
+            packet_size_ += actRow.size();
             std::swap(row_buffer_prev_, row_buffer_raw_);
         }
 

@@ -73,7 +73,7 @@ Technical design, requirements, and implementation roadmap
 | **STM32F4 throughput** | 1000 ch @ 1 KHz | ✅ Achievable | 32-bit float per channel |
 | **STM32F7 throughput** | 1000 ch @ 10 KHz | ✅ Achievable | With streaming compression |
 | **Zynq/RPi throughput** | 1000 ch @ 10 KHz | ✅ Achievable | Dual-core ARM |
-| **Write latency (P99)** | <1 ms | 🔄 v1.3.0 | Streaming LZ4 required |
+| **Write latency (P99)** | <1 ms | ✅ v1.3.0 | Streaming LZ4 |
 | **Write latency (mean)** | <100 μs | ✅ Current | Batch compression |
 
 #### File Size Efficiency
@@ -83,14 +83,14 @@ Technical design, requirements, and implementation roadmap
 | **Idle file growth** | <1 KB/s (1000ch@10KHz) | ✅ With ZoH | Counter-only recording |
 | **Compression ratio** | <30% of CSV | ✅ 15-25% typical | LZ4 + type optimization |
 | **ZoH compression** | <5% of CSV | ✅ 3-4% typical | Sparse/constant data |
-| **Packet overhead** | <2% | ✅ 0.3-1% | 20-byte header per 8MB |
+| **Packet overhead** | <2% | ✅ 0.3-1% | 16-byte header per 8MB |
 
 #### Read Performance
 
 | Metric | Target | Status | Platform |
 |--------|--------|--------|----------|
 | **Desktop sequential** | ≥1M rows/sec | ✅ 127K-220K | Zen3 CPU |
-| **Random access latency** | <10 ms | 🔄 v1.4.0 | Requires file index |
+| **Random access latency** | <10 ms | ✅ v1.3.0 | FileFooter + ReaderDirectAccess |
 | **Decompression speed** | ≥500 MB/s | ✅ ~650 MB/s | LZ4 decompression |
 | **Checksum validation** | ≥10 GB/s | ✅ ~13 GB/s | xxHash64 |
 
@@ -121,7 +121,7 @@ Technical design, requirements, and implementation roadmap
 #### FR2: Data I/O
 - ✅ Sequential row-by-row read/write
 - ✅ Files larger than available RAM
-- 🔄 Random access by row index (v1.4.0)
+- ✅ Random access by row index (`ReaderDirectAccess`)
 - ✅ Crash recovery (read last complete packet)
 - ✅ Append to existing files
 
@@ -134,9 +134,9 @@ Technical design, requirements, and implementation roadmap
 #### FR4: Compression
 - ✅ Automatic LZ4 compression
 - ✅ Zero-Order Hold (ZoH) for constant values
-- 🔄 Streaming compression (v1.3.0)
+- ✅ Streaming compression (v1.3.0)
 - 🔄 Variable-Length Encoding (v1.5.0)
-- 🔄 Dictionary encoding for strings (v1.5.0)
+- 🔄 Dictionary encoding for strings (v1.6.0)
 
 #### FR5: Multi-Language Support
 - ✅ C++ (header-only library)
@@ -178,53 +178,74 @@ Technical design, requirements, and implementation roadmap
 
 ## File Format Specification
 
-### Version 1.2.0 (Current Development)
+### Version 1.3.0 (Current)
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                     File Header                         │
+│                   File Header (16 + variable bytes)     │
 │ ┌─────────────────────────────────────────────────────┐ │
-│ │ Magic: "BCSV" (0x56534342)                          │ │
-│ │ Version: 1.2.0                                      │ │
-│ │ Compression: LZ4 level (1-9)                        │ │
-│ │ Flags: (ZoH, wide rows, etc.)                       │ │
-│ │ Column count: N                                     │ │
-│ │ Column types: [UINT16] × N                          │ │
+│ │ Magic: "BCSV" (0x56534342)           4 bytes        │ │
+│ │ Version: major.minor.patch           3 bytes        │ │
+│ │ Compression level: 0-9               1 byte         │ │
+│ │ Flags: FileFlags bitfield            2 bytes        │ │
+│ │ Column count: N                      2 bytes        │ │
+│ │ Packet size (bytes)                  4 bytes        │ │
+│ │ ─── ConstSection (16 bytes) ───────────────────── │ │
+│ │ Column types: [UINT8] × N                          │ │
 │ │ Column name lengths: [UINT16] × N                   │ │
 │ │ Column names: concatenated UTF-8 strings            │ │
 │ └─────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────┘
 ┌─────────────────────────────────────────────────────────┐
-│                    Packet Header                        │
+│                 Packet 1                                │
 │ ┌─────────────────────────────────────────────────────┐ │
-│ │ Magic: "PCKT" (0x54)                                │ │
-│ │ First row index: UINT64                             │ │
-│ │ Row count: UINT32                                   │ │
-│ │ Payload size: UINT32                                │ │
-│ │ Checksum: UINT64 (xxHash64)                         │ │
+│ │ Packet Header (16 bytes)                            │ │
+│ │  Magic: "PCKT" (0x54434B50)          4 bytes        │ │
+│ │  First row index: UINT64             8 bytes        │ │
+│ │  Checksum: xxHash32                  4 bytes        │ │
 │ └─────────────────────────────────────────────────────┘ │
 │                                                         │
 │ ┌─────────────────────────────────────────────────────┐ │
-│ │           Row Lengths (UINT16 × N-1)                │ │
-│ │  (last row length implicit from payload size)       │ │
-│ └─────────────────────────────────────────────────────┘ │
-│                                                         │
-│ ┌─────────────────────────────────────────────────────┐ │
-│ │            Compressed Payload (LZ4)                 │ │
+│ │       Streaming LZ4 Compressed Payload              │ │
 │ │  ┌───────────────────────────────────────────────┐  │ │
-│ │  │ Row 1: [bits_][data_][strg_lengths][strg_data]│  │ │
-│ │  │ Row 2: [bits_][data_][strg_lengths][strg_data]│  │ │
+│ │  │  BLE(row_length) + Row 1 data                 │  │ │
+│ │  │  BLE(row_length) + Row 2 data                 │  │ │
 │ │  │  ...                                          │  │ │
-│ │  │ Row N: [bits_][data_][strg_lengths][strg_data]│  │ │
+│ │  │  BLE(row_length) + Row N data                 │  │ │
+│ │  │  PCKT_TERMINATOR (0x3FFFFFFF)                 │  │ │
 │ │  └───────────────────────────────────────────────┘  │ │
+│ │  Each row: [bits_][data_][strg_lengths][strg_data]  │ │
+│ │  ZoH rows: length = 0 (repeat previous)            │ │
 │ └─────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────┘
-[Packet Header]
-[Row Lengths]
-[Compressed Payload]
-...
-[Repeat for all data]
+[Packet 2 ... N — same structure]
+┌─────────────────────────────────────────────────────────┐
+│               File Footer (optional, 28 + N×16 bytes)   │
+│ ┌─────────────────────────────────────────────────────┐ │
+│ │ "BIDX" magic                         4 bytes        │ │
+│ │ PacketIndexEntry × N:                               │ │
+│ │   byte_offset (UINT64)              8 bytes each    │ │
+│ │   first_row_index (UINT64)          8 bytes each    │ │
+│ │ ─── ConstSection (24 bytes) ───────────────────── │ │
+│ │ "EIDX" magic                         4 bytes        │ │
+│ │ start_offset (UINT32)                4 bytes        │ │
+│ │ row_count (UINT64)                   8 bytes        │ │
+│ │ checksum (xxHash64)                  8 bytes        │ │
+│ └─────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────┘
 ```
+
+**Key format changes in v1.3.0:**
+- **Streaming LZ4**: Rows are individually length-prefixed (BLE encoding) within a
+  continuous LZ4 stream. No separate row-length array. `PCKT_TERMINATOR` marks end of packet.
+- **PacketHeader slim-down**: 16 bytes (was 20). Removed `rowCount` (derived from next
+  packet or terminator) and `payloadSize` (streaming format). Checksum is xxHash32.
+- **FileHeader**: 16-byte ConstSection includes `packet_size` field.
+- **FileFooter**: Appended at EOF on `Writer::close()`. Optional (flag `NO_FILE_INDEX`
+  suppresses it for embedded use). The 24-byte ConstSection is always at `EOF - 24`.
+- **start_offset** is `uint32_t` — it measures the footer size (EOF to BIDX), not a
+  file position. This allows ~4 GB footers (~268 M packets), well beyond practical limits.
+  File-level addressing uses `PacketIndexEntry::byte_offset` (`uint64_t`).
 
 ### Data Alignment
 
@@ -275,7 +296,7 @@ The file codec determines how rows are encoded on disk:
 Writer ──── RowCodecType ──▶ RowCodecFlat001  or  RowCodecZoH001
             (compile-time)   (Writer knows what it writes)
 
-Reader ──── CodecDispatch ──▶ RowCodecFlat001  or  RowCodecZoH001
+Reader ──── RowCodecDispatch ──▶ RowCodecFlat001  or  RowCodecZoH001
             (runtime)         (file flags determine codec)
 ```
 
@@ -285,13 +306,13 @@ Reader ──── CodecDispatch ──▶ RowCodecFlat001  or  RowCodecZoH001
 |-------|------|----------|-------|
 | `RowCodecFlat001<Layout>` | `row_codec_flat001.h/hpp` | Dense flat encoding | Wire metadata + per-column offsets |
 | `RowCodecZoH001<Layout>` | `row_codec_zoh001.h/hpp` | Zero-Order-Hold delta | Composes `RowCodecFlat001` for first-row; internal `wire_bits_` for change header |
-| `CodecDispatch<Layout>` | `row_codec_dispatch.h` | Runtime dispatch | Union storage + function pointers |
+| `RowCodecDispatch<Layout>` | `row_codec_dispatch.h` | Runtime dispatch | Heap allocation + function pointers |
 
 Each codec provides:
 - `setup(layout)` — compute wire-format metadata from the layout
 - `serialize(row, buffer) → span<byte>` — encode a row to wire format
 - `deserialize(span, row)` — decode wire format into a row
-- `reset()` — clear per-packet state (ZoH change tracking)
+- `reset()` — clear per-packet state (ZoH previous-row buffer)
 
 `setup()` also acquires a `LayoutGuard` (RAII, defined in `layout_guard.h`)
 that increments a reference counter on `Layout::Data`.  While any guard is
@@ -310,12 +331,26 @@ Wire-format metadata (`wireBitsSize`, `wireDataSize`, `wireStrgCount`,
 The Writer knows what format it writes. All serialize calls are direct member
 function calls, fully inlined.
 
-**Reader** holds `CodecDispatch<Layout>` — runtime codec selection via
-function pointers. At `open()` time, `CodecDispatch::selectCodec(flags, layout)`
-reads the file's `ZERO_ORDER_HOLD` flag, constructs the correct codec in union
-storage via placement new, and wires function pointers. Subsequent `deserialize()`
-calls go through a single indirect call — branch predictor learns the target
-after the first row.
+**Reader** holds `RowCodecDispatch<Layout>` — runtime codec selection via
+function pointers. At `open()` time, `selectCodec(flags, layout)` checks the
+file header's `ZERO_ORDER_HOLD` flag, constructs the correct codec on the heap
+via `new`, and wires function pointers (`serialize_fn_`, `deserialize_fn_`,
+`reset_fn_`, `destroy_fn_`, `clone_fn_`). Subsequent `deserialize()` calls go
+through a single indirect call — branch predictor learns the target after the
+first row.
+
+#### Codec Selection Flow
+
+**Writer** — compile-time selection via type alias:
+- `Writer<Layout>` → `Writer<Layout, RowCodecFlat001<Layout>>` (flat encoding)
+- `WriterZoH<Layout>` → `Writer<Layout, RowCodecZoH001<Layout>>` (ZoH encoding)
+- The caller passes `FileFlags::ZERO_ORDER_HOLD` to `Writer::open()` which
+  records the flag in the file header for readers to detect.
+
+**Reader** — runtime selection from file header flags:
+- `Reader::open()` reads the file header, then calls
+  `RowCodecDispatch::selectCodec(flags, layout)` which maps
+  `ZERO_ORDER_HOLD` → `RowCodecId::ZOH001`, otherwise → `RowCodecId::FLAT001`.
 
 #### Naming Convention
 
@@ -334,6 +369,40 @@ with Row's three-container storage layout.
 Static-layout codecs (`RowCodecFlat001<LayoutStatic<Ts...>, P>`) use
 `constexpr` wire metadata computed at compile time — zero runtime setup cost.
 
+### Source Layout
+
+```
+include/bcsv/           C++ header-only library (all core types)
+  bcsv.h                 Umbrella include
+  definitions.h          Constants, enums (ColumnType, FileFlags, format version)
+  layout.h / layout.hpp  Layout, LayoutStatic — column schema
+  layout_guard.h         LayoutGuard — RAII structural lock
+  row.h / row.hpp        Row, RowStatic — in-memory storage
+  row_codec_flat001.h/hpp  RowCodecFlat001 — dense flat encoding
+  row_codec_zoh001.h/hpp   RowCodecZoH001 — ZoH delta encoding
+  row_codec_dispatch.h     RowCodecDispatch — runtime codec selection
+  writer.h / writer.hpp   Writer, WriterFlat, WriterZoH
+  reader.h / reader.hpp   Reader, ReaderDirectAccess
+  file_header.h/hpp      FileHeader (16-byte ConstSection)
+  packet_header.h        PacketHeader (16-byte struct)
+  file_footer.h/hpp      FileFooter (24-byte ConstSection + PacketIndex)
+  lz4_stream.hpp         LZ4CompressionStream, LZ4DecompressionStream (non-movable)
+  vle.hpp                Variable-Length / Block-Length Encoding
+  bitset.h / bitset.hpp  Dynamic & static bitset with SOO
+  byte_buffer.h          ByteBuffer utility
+  checksum.h             Streaming xxHash64/xxHash32 wrapper
+  bcsv_c_api.h           C API header (stable ABI)
+
+src/
+  bcsv_c_api.cpp         C API shared library implementation
+
+examples/               CLI tools (bcsv2csv, csv2bcsv, bcsvHead, bcsvTail, bcsvHeader)
+tests/                  GTest suite, C API tests, Row API tests
+benchmark/              Macro/micro benchmarks, Python orchestrator
+python/pybcsv/          pybind11 Python bindings
+csharp/                 C# / Unity integration
+```
+
 ### Packet Size Strategy
 
 | Size | Sequential | Random | Compression | Decision |
@@ -344,14 +413,14 @@ Static-layout codecs (`RowCodecFlat001<LayoutStatic<Ts...>, P>`) use
 | 4 MB | ✅ Excellent | ✅ Good | ✅ Excellent | v1.2.0+ default |
 | 8 MB | ✅ Excellent | ✅ Excellent | ✅ Excellent | **v1.3.0+ default** |
 
-**Current implementation** (v1.2.0): 256 KB default, configurable  
-**Planned** (v1.3.0+): 8 MB default for optimal compression and random access
+**Current implementation** (v1.3.0): 8 MB default (`FileHeader` ConstSection), configurable via `Writer::open(blockSizeKB)`.
+Clamped to `MIN_PACKET_SIZE` (64 KB) – `MAX_PACKET_SIZE` (1 GB).
 
 ---
 
 ## Implementation Roadmap
 
-### Phase 1: Foundation (v1.2.0) ✅ **Current**
+### Phase 1: Foundation (v1.2.0) ✅ **Complete**
 
 **Status**: Complete (Nov 2025)
 
@@ -366,91 +435,59 @@ Static-layout codecs (`RowCodecFlat001<LayoutStatic<Ts...>, P>`) use
 
 ---
 
-### Phase 2: Streaming Compression (v1.3.0) 🔄 **Dec 2025**
+### Phase 2: Streaming Compression (v1.3.0) ✅ **Complete**
 
-**Goal**: Constant write latency for real-time recording
+**Status**: Complete (Feb 2026)
 
-**Current problem**:
-- Batch compression causes write spikes (10-30 ms)
-- P99 latency unacceptable for real-time systems
-- Buffering delays data persistence
+**Delivered**:
+- ✅ Stream-based LZ4 compression (`LZ4CompressionStream`, `LZ4DecompressionStream`)
+- ✅ Constant-time `writeRow()` — no batch compression spikes
+- ✅ Per-row BLE length prefix within continuous LZ4 stream
+- ✅ `PCKT_TERMINATOR` (0x3FFFFFFF) marks end of packet
+- ✅ ZoH rows encoded as length = 0 (repeat previous)
+- ✅ Slim PacketHeader (16 bytes): magic + firstRowIndex + xxHash32 checksum
+- ✅ Row codec extraction: `RowCodecFlat001`, `RowCodecZoH001`, `RowCodecDispatch`
+- ✅ `LayoutGuard` — RAII structural lock for Layout during Writer/Reader lifetime
+- ✅ LZ4 stream classes are non-movable (internal pointers into ring buffer)
 
-**Solution**: Stream-based LZ4 compression
-
-```cpp
-// New PacketHeader structure (20 bytes)
-struct PacketHeaderV2 {
-    char magic[4];           // "PCKT"
-    uint64_t firstRowIndex;  // Absolute row index
-    uint32_t prevChecksum;   // Chain validation
-    uint32_t headerChecksum; // xxHash64 (lower 32 bits)
-};
-
-// Row encoding (per-row overhead: 2-4 bytes)
-struct EncodedRow {
-    uint16_t length;         // Compressed row size
-                            // 0 = ZoH repeat
-                            // 0xFFFF = packet end
-    char data[length];       // LZ4 stream compressed data
-};
-```
-
-**Benefits**:
-- ✅ Constant-time writeRow() (no spikes)
-- ✅ Better compression (LZ4 stream preserves context)
-- ✅ Robust (read partial packets)
-- ⚠️ Trade-off: 2-4 bytes overhead per row
-
-**Implementation tasks**:
-1. Design stream-based packet format
-2. Implement LZ4 streaming encoder/decoder
-3. Add length-prefix encoding for rows
-4. Performance testing vs batch compression
-5. Update Writer/Reader classes
-6. Comprehensive testing (edge cases, corruption)
+**Breaking changes**: File format incompatible with v1.2.x (streaming wire format, new PacketHeader)
 
 ---
 
-### Phase 3: File Indexing (v1.4.0) 🔄 **Jan 2026**
+### Phase 3: File Indexing (v1.3.0) ✅ **Complete**
 
-**Goal**: Fast random access (<10 ms for any row)
+**Status**: Complete (Feb 2026) — delivered together with Phase 2 in v1.3.0
 
-**Index structure** (appended at EOF):
-
-```cpp
-struct FileFooter {
-    char startMagic[4];              // "BIDX"
-    
-    struct PacketIndexEntry {
-        uint64_t headerOffset;        // File offset to PacketHeader
-        uint64_t firstRowIndex;       // First row in packet
-    };
-    PacketIndexEntry packets[N];     // One entry per packet
-    
-    char endMagic[4];                // "EIDX"
-    uint32_t indexStartOffset;       // Bytes from EOF to startMagic
-    uint64_t lastRowIndex;           // Total rows in file
-    uint32_t indexChecksum;          // xxHash64 of index
-};
-```
-
-**Benefits**:
-- ✅ O(log N) random access via binary search
+**Delivered**:
+- ✅ `FileFooter` with `PacketIndex` appended at EOF on `Writer::close()`
+- ✅ 24-byte `ConstSection`: EIDX magic + start_offset (uint32) + row_count (uint64) + checksum (xxHash64)
+- ✅ `PacketIndexEntry`: byte_offset (uint64) + first_row_index (uint64) = 16 bytes per packet
+- ✅ Total footer size = 28 + N×16 bytes
+- ✅ O(log N) random access via binary search (`ReaderDirectAccess`)
 - ✅ Instant row count (no file scan)
-- ✅ Optional (backward compatible)
-- ✅ Small overhead (~24 bytes per packet = ~24KB for 1000 packets)
-
-**Implementation tasks**:
-1. Design index structure
-2. Writer: maintain packet offset list, append on close()
-3. Reader: detect and load index on open()
-4. Implement seek(rowIndex) and readAt(rowIndex)
-5. Binary search for row lookup
-6. ZoH handling (scan backward for actual data)
+- ✅ Optional (`FileFlags::NO_FILE_INDEX` suppresses footer for embedded use)
+- ✅ Backward compatible (Reader detects presence via EIDX magic at EOF - 24)
 
 ---
 
-### Phase 4: Variable-Length Encoding (v1.5.0) 🔄 **Feb 2026**
+### Phase 4: File Codecs & Backward Compatibility (v1.4.0) 🔄
+
+**Goal**: Support multiple compression/packaging strategies and read older file formats
+
+**Planned file codecs**:
+- `Stream-LZ4` — current v1.3.0 format (streaming LZ4 within packets)
+- `Stream-Uncompressed` — streaming without compression (embedded/debug)
+- `Packet-LZ4` — batch-compress entire packet payload (legacy v1.2.x format)
+- `Packet-Uncompressed` — raw packet payload (lowest CPU overhead)
+
+**Benefits**:
+- Application selects codec to match environment (embedded vs desktop, real-time vs archival)
+- Reader auto-detects codec from file header flags
+- Enables reading files created by older library versions
+
+---
+
+### Phase 5: Variable-Length Encoding (v1.5.0) 🔄 **Feb 2026**
 
 **Goal**: 20%+ compression improvement on time-series data
 
@@ -504,7 +541,7 @@ enum class ColumnHint : uint8_t {
 
 ---
 
-### Phase 5: Advanced Compression (v1.6.0) 🔄 **Mar 2026**
+### Phase 6: Advanced Compression (v1.6.0) 🔄 **Mar 2026**
 
 **Goal**: State-of-the-art compression for specific data patterns
 
@@ -526,7 +563,7 @@ enum class ColumnHint : uint8_t {
 
 ---
 
-### Phase 6: Stable Release (v2.0.0) 🎯 **Q2 2026**
+### Phase 7: Stable Release (v2.0.0) 🎯 **Q2 2026**
 
 **Goal**: Production-ready with compatibility guarantees
 
@@ -607,10 +644,10 @@ enum class ColumnHint : uint8_t {
 - ✅ Crash recovery (last complete packet readable)
 
 **Disadvantages**:
-- ⚠️ Packet header overhead (~20 bytes per packet)
+- ⚠️ Packet header overhead (~16 bytes per packet)
 - ⚠️ Compression boundary (reset LZ4 context)
 
-**Trade-off**: 8 MB packets = 20 bytes / 8 MB = 0.00024% overhead
+**Trade-off**: 8 MB packets = 16 bytes / 8 MB = 0.00019% overhead
 
 ---
 
@@ -620,10 +657,13 @@ enum class ColumnHint : uint8_t {
 
 **Use case**: Constant or sparse data
 
-**Implementation**:
-- Flag row as "repeat previous value"
-- Store flag in row length array (length = 0)
-- Skip compression for repeated rows
+**Implementation** (`RowCodecZoH001`):
+- Change detection via per-column bitset (`wire_bits_`)
+- First row in packet: full-row emit semantics
+- Subsequent rows: only changed columns serialized
+- Byte-identical serialized rows emit BLE length = 0 (repeat previous)
+- Bool values stored directly in `wire_bits_` (not as change flags)
+- Writer selects ZoH at compile time: `WriterZoH<Layout>`
 
 **Results**:
 - ✅ 96% compression for constant data
@@ -684,17 +724,24 @@ enum class ColumnHint : uint8_t {
 
 ### Benchmark Suite
 
-**Included benchmarks**:
-1. `performance_benchmark.cpp` - Write/read speed
-2. `large_scale_benchmark.cpp` - Scaling behavior
-3. `csv2bcsv` tool - Real-world conversion
-4. Google Test suite - Correctness validation
+**Macro benchmarks** (`benchmark/src/bench_macro_datasets.cpp`):
+- 9 dataset profiles: mixed_generic, sparse_events, sensor_noisy, string_heavy,
+  bool_heavy, arithmetic_wide, simulation_smooth, weather_timeseries, high_cardinality_string
+- CSV / BCSV Flexible / BCSV ZoH round-trip validation
+- Configurable row count: `--size=S|M|L|XL` (10K/100K/500K/2M)
+
+**Micro benchmarks** (`benchmark/src/bench_micro_types.cpp`):
+- Google Benchmark per-type Get/Set/Visit/Serialize
+- Codec-level serialize/deserialize throughput
+
+**Orchestrator**: `benchmark/run.py` — builds, runs, generates reports
+- CPU pinning (`taskset -c 0`), warm-up runs, JSON output
+- Result persistence under `benchmark/results/<hostname>/<timestamp>/`
 
 **Key metrics**:
 - Rows per second (read/write)
 - Compression ratio
-- Memory usage
-- Latency distribution (P50, P99, P99.9)
+- Speedup vs CSV baseline (fair `std::to_chars` implementation)
 
 ### Platform-Specific Testing
 
@@ -750,6 +797,6 @@ enum class ColumnHint : uint8_t {
 
 ---
 
-**Last Updated**: 2025-11-08  
-**Version**: 1.2.0-dev  
+**Last Updated**: 2026-02-28  
+**Version**: 1.3.0  
 **Status**: Active Development

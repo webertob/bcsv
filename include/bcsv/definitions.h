@@ -137,7 +137,7 @@ namespace bcsv {
 
     // Convert C++ type to ColumnType enum
     template<typename T>
-    static constexpr ColumnType toColumnType() {
+    constexpr ColumnType toColumnType() {
         if      constexpr (std::is_same_v<T, bool>)     return ColumnType::BOOL;
         else if constexpr (std::is_same_v<T, int8_t>)   return ColumnType::INT8;
         else if constexpr (std::is_same_v<T, int16_t>)  return ColumnType::INT16;
@@ -197,7 +197,6 @@ namespace bcsv {
         if (typeString == "string") return ColumnType::STRING;
         if (typeString == "void" || typeString.empty())  return ColumnType::VOID;
         throw std::invalid_argument("Unknown type: " + typeString);  // Fail loud
-        return ColumnType::VOID; // default
     }
 
     inline constexpr size_t alignOf(ColumnType type) {
@@ -390,61 +389,73 @@ namespace bcsv {
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, bool>) 
                     return static_cast<bool>(v);
+                break;
             case ColumnType::UINT8:
                 if constexpr (std::is_same_v<SrcType, uint8_t>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, uint8_t>) 
                     return static_cast<uint8_t>(v);
+                break;
             case ColumnType::UINT16:
                 if constexpr (std::is_same_v<SrcType, uint16_t>) 
-                return v;
+                    return v;
                 else if constexpr (std::is_convertible_v<SrcType, uint16_t>) 
                     return static_cast<uint16_t>(v);
+                break;
             case ColumnType::UINT32:
                 if constexpr (std::is_same_v<SrcType, uint32_t>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, uint32_t>) 
                     return static_cast<uint32_t>(v);
+                break;
             case ColumnType::UINT64:
                 if constexpr (std::is_same_v<SrcType, uint64_t>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, uint64_t>) 
                     return static_cast<uint64_t>(v);
+                break;
             case ColumnType::INT8:
                 if constexpr (std::is_same_v<SrcType, int8_t>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, int8_t>) 
                     return static_cast<int8_t>(v);
+                break;
             case ColumnType::INT16:
                 if constexpr (std::is_same_v<SrcType, int16_t>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, int16_t>) 
                     return static_cast<int16_t>(v);
+                break;
             case ColumnType::INT32:
                 if constexpr (std::is_same_v<SrcType, int32_t>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, int32_t>) 
                     return static_cast<int32_t>(v);
+                break;
             case ColumnType::INT64:
                 if constexpr (std::is_same_v<SrcType, int64_t>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, int64_t>) 
                     return static_cast<int64_t>(v);
+                break;
             case ColumnType::FLOAT:
                 if constexpr (std::is_same_v<SrcType, float>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, float>) 
                     return static_cast<float>(v);
+                break;
             case ColumnType::DOUBLE:
                 if constexpr (std::is_same_v<SrcType, double>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, double>) 
                     return static_cast<double>(v);
+                break;
             case ColumnType::STRING:
                 if constexpr (std::is_same_v<SrcType, std::string>) 
                     return v;
                 else if constexpr (std::is_convertible_v<SrcType, std::string>) 
                     return static_cast<std::string>(v);
+                break;
             default:
                 break;
             }

@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 #include <vector>
 #include <string>
+#include <type_traits>
 #include <bcsv/lz4_stream.hpp>
 
 using namespace bcsv;
@@ -213,51 +214,17 @@ TEST_F(LZ4StreamTest, AccelerationLevelChanges) {
     EXPECT_GT(compressed.size(), 0);
 }
 
-// Test: Move construction for compression stream
-TEST_F(LZ4StreamTest, MoveConstructionCompression) {
-    LZ4CompressionStream stream1(64 * 1024, 5);
-    
-    // Move construct
-    LZ4CompressionStream stream2(std::move(stream1));
-    EXPECT_EQ(stream2.getAcceleration(), 5);
-    
-    // stream2 should be functional
-    auto input = createTestData("Test");
-    const auto& compressed = stream2.compress(input);
-    EXPECT_GT(compressed.size(), 0);
-}
-
-// Test: Move assignment for compression stream
-TEST_F(LZ4StreamTest, MoveAssignmentCompression) {
-    LZ4CompressionStream stream1(64 * 1024, 7);
-    LZ4CompressionStream stream2(1);
-    
-    // Move assign
-    stream2 = std::move(stream1);
-    EXPECT_EQ(stream2.getAcceleration(), 7);
-    
-    // stream2 should be functional
-    auto input = createTestData("Test");
-    const auto& compressed = stream2.compress(input);
-    EXPECT_GT(compressed.size(), 0);
-}
-
-// Test: Move construction for decompression stream
-TEST_F(LZ4StreamTest, MoveConstructionDecompression) {
-    LZ4DecompressionStream stream1;
-    
-    // Move construct
-    LZ4DecompressionStream stream2(std::move(stream1));
-    
-    // stream2 should be functional - compress and decompress test data
-    LZ4CompressionStream compressor(1);
-    auto input = createTestData("Test data");
-    
-    const auto& compressed = compressor.compress(input);
-    ASSERT_GT(compressed.size(), 0);
-    
-    auto decompressed = stream2.decompress(compressed);
-    EXPECT_EQ(decompressed.size(), input.size());
+// Test: Move operations are explicitly deleted because LZ4_stream_t contains
+// internal pointers into the ring buffer that would dangle after a move.
+TEST_F(LZ4StreamTest, MoveOperationsDeleted) {
+    static_assert(!std::is_move_constructible_v<LZ4CompressionStream<>>,
+                  "LZ4CompressionStream must not be move-constructible");
+    static_assert(!std::is_move_assignable_v<LZ4CompressionStream<>>,
+                  "LZ4CompressionStream must not be move-assignable");
+    static_assert(!std::is_move_constructible_v<LZ4DecompressionStream<>>,
+                  "LZ4DecompressionStream must not be move-constructible");
+    static_assert(!std::is_move_assignable_v<LZ4DecompressionStream<>>,
+                  "LZ4DecompressionStream must not be move-assignable");
 }
 
 // Test: Decompression with auto-growing buffer

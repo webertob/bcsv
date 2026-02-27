@@ -15,6 +15,7 @@
 #include <limits>
 #include <new>
 #include <cstdlib>
+#include <type_traits>
 
 namespace bcsv {
 
@@ -52,7 +53,9 @@ namespace bcsv {
             if (n > std::numeric_limits<size_type>::max() / sizeof(T)) {
                 throw std::bad_alloc();
             }
-            return static_cast<pointer>(std::malloc(n * sizeof(T)));
+            auto p = static_cast<pointer>(std::malloc(n * sizeof(T)));
+            if (!p) throw std::bad_alloc();
+            return p;
         }
         
         // Deallocate memory
@@ -66,9 +69,13 @@ namespace bcsv {
             new(p) U(std::forward<Args>(args)...);
         }
         
-        // Don't destroy elements  
+        // Don't destroy elements (only safe for trivially destructible types)
         template<typename U>
-        void destroy(U*) noexcept {}
+        void destroy(U*) noexcept {
+            static_assert(std::is_trivially_destructible_v<U>,
+                          "LazyAllocator::destroy() skips destruction; "
+                          "type must be trivially destructible");
+        }
         
         // Comparison operators (all instances are equal)
         bool operator==(const LazyAllocator&) const noexcept { return true; }
