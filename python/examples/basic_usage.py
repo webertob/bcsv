@@ -47,7 +47,8 @@ def main():
             [5, "Eve", 91.7, False]
         ]
         
-        with pybcsv.Writer(filename, layout, pybcsv.FileFlags.COMPRESSED) as writer:
+        with pybcsv.Writer(layout) as writer:
+            writer.open(filename)
             for row in sample_data:
                 writer.write_row(row)
         
@@ -55,7 +56,8 @@ def main():
         
         # Step 3: Read data back
         print("\n3. Reading data back...")
-        with pybcsv.Reader(filename) as reader:
+        with pybcsv.Reader() as reader:
+            reader.open(filename)
             read_layout = reader.get_layout()
             print(f"File layout: {read_layout}")
             
@@ -69,7 +71,8 @@ def main():
         
         # Step 4: Alternative reading method - read all at once
         print("\n4. Reading all data at once...")
-        with pybcsv.Reader(filename) as reader:
+        with pybcsv.Reader() as reader:
+            reader.open(filename)
             all_rows = reader.read_all()
             print(f"Read {len(all_rows)} rows in one call:")
             for i, row in enumerate(all_rows):

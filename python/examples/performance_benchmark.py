@@ -77,7 +77,8 @@ def benchmark_write_performance(layout, num_rows):
     start_time = time.time()
     start_memory = get_memory_usage()
     
-    with pybcsv.Writer("benchmark_compressed.bcsv", layout, pybcsv.FileFlags.COMPRESSED) as writer:
+    with pybcsv.Writer(layout) as writer:
+        writer.open("benchmark_compressed.bcsv")
         for batch_start in range(0, num_rows, batch_size):
             batch_end = min(batch_start + batch_size, num_rows)
             current_batch_size = batch_end - batch_start
@@ -119,7 +120,8 @@ def benchmark_write_performance(layout, num_rows):
     print("Writing uncompressed BCSV...")
     start_time = time.time()
     
-    with pybcsv.Writer("benchmark_uncompressed.bcsv", layout, pybcsv.FileFlags.NONE) as writer:
+    with pybcsv.Writer(layout) as writer:
+        writer.open("benchmark_uncompressed.bcsv", compression_level=0)
         for batch_start in range(0, num_rows, batch_size):
             batch_end = min(batch_start + batch_size, num_rows)
             current_batch_size = batch_end - batch_start
@@ -168,7 +170,8 @@ def benchmark_read_performance(num_rows):
     start_memory = get_memory_usage()
     
     row_count = 0
-    with pybcsv.Reader("benchmark_compressed.bcsv") as reader:
+    with pybcsv.Reader() as reader:
+        reader.open("benchmark_compressed.bcsv")
         for row in reader:
             row_count += 1
             # Process every 10000th row to avoid too much overhead
@@ -188,7 +191,8 @@ def benchmark_read_performance(num_rows):
     start_time = time.time()
     
     row_count = 0
-    with pybcsv.Reader("benchmark_uncompressed.bcsv") as reader:
+    with pybcsv.Reader() as reader:
+        reader.open("benchmark_uncompressed.bcsv")
         for row in reader:
             row_count += 1
     
@@ -211,7 +215,8 @@ def demonstrate_streaming():
     valid_readings = 0
     error_count = 0
     
-    with pybcsv.Reader("benchmark_compressed.bcsv") as reader:
+    with pybcsv.Reader() as reader:
+        reader.open("benchmark_compressed.bcsv")
         layout = reader.get_layout()
         print(f"File layout: {layout}")
         

@@ -108,13 +108,10 @@ def write_dataframe_optimized(df,
         layout.add_column(str(col_name), col_type)
         column_types.append(col_type)
     
-    # Set flags based on compression level
-    flags = FileFlags.COMPRESSED if compression_level > 0 else FileFlags.NONE
-    
     # Write data
     writer = Writer(layout)
     try:
-        if not writer.open(filename, True, compression_level, flags):
+        if not writer.open(filename, True, compression_level):
             raise RuntimeError(f"Failed to open file for writing: {filename}")
         
         # Process data in batches for memory efficiency
@@ -252,8 +249,7 @@ def write_dataframe_ultra_optimized(df,
     # Write data using C++ optimized batch writer
     writer = Writer(layout)
     try:
-        flags = FileFlags.COMPRESSED if compression_level > 0 else FileFlags.NONE
-        if not writer.open(filename, True, compression_level, flags):
+        if not writer.open(filename, True, compression_level):
             raise RuntimeError(f"Failed to open file for writing: {filename}")
         
         # Convert to list of lists for batch writing (eliminates row-by-row overhead)

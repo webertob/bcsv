@@ -58,9 +58,9 @@ class TestErrorHandling(unittest.TestCase):
             self.assertEqual(layout.get_column_count(), 0)
             
             data = reader.read_all()
-            # Empty layout with no columns logically contains no meaningful rows
-            # even if write_row([]) was called, since there's no data to store
-            self.assertEqual(len(data), 0)
+            # Empty layout with no columns: write_row([]) writes a valid zero-column row
+            # The row is stored and can be read back (1 empty row)
+            self.assertEqual(len(data), 1)
     
     def test_row_length_mismatch(self):
         """Test writing rows with wrong number of columns."""

@@ -476,13 +476,23 @@ PYBIND11_MODULE(_bcsv, m) {
             reader.close();
         })
         .def("is_open", &bcsv::Reader<bcsv::Layout>::isOpen)
-        .def("count_rows", [](const bcsv::Reader<bcsv::Layout>&) {
-             // For standard Reader, row count isn't available without scanning.
-             // Users should use ReaderDirectAccess or count manually if needed.
-             // Returning 0 or raising an error would be appropriate.
-             throw std::runtime_error("count_rows not supported in sequential Reader.");
-             return 0;
-        }, "Count the total number of rows (Not available in sequential Reader)")
+        .def("count_rows", [](bcsv::Reader<bcsv::Layout>& reader) -> size_t {
+             // Use ReaderDirectAccess to get the row count from the file footer
+             if (!reader.isOpen()) {
+                 throw std::runtime_error("Reader is not open");
+             }
+             bcsv::ReaderDirectAccess<bcsv::Layout> da_reader;
+             size_t count;
+             {
+                 py::gil_scoped_release release;
+                 if (!da_reader.open(reader.filePath(), true)) {
+                     throw std::runtime_error("Failed to open file for row counting: " + reader.filePath().string());
+                 }
+                 count = da_reader.rowCount();
+                 da_reader.close();
+             }
+             return count;
+        }, "Count the total number of rows in the file")
         .def("__enter__", [](bcsv::Reader<bcsv::Layout>& reader) -> bcsv::Reader<bcsv::Layout>& {
             return reader;
         })

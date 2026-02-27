@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import time
 from pathlib import Path
+import pybcsv
 
 def test_optimized_operations():
     """Test optimized read/write operations."""

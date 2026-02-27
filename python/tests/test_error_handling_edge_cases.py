@@ -207,15 +207,16 @@ class TestErrorHandling(unittest.TestCase):
 
     def test_invalid_layout(self):
         """Test operations with invalid layouts."""
-        # Test empty layout
+        # Test empty layout — C++ allows zero-column layouts (valid edge case)
         empty_layout = pybcsv.Layout()
         
         filepath = self._create_temp_file()
         writer = pybcsv.Writer(empty_layout)
         
-        # Should raise RuntimeError for empty layout
-        with self.assertRaises(RuntimeError):
-            writer.open(filepath)
+        # Empty layout open() succeeds in C++ (zero-column rows are valid)
+        writer.open(filepath)
+        writer.write_row([])
+        writer.close()
 
     def test_batch_operation_errors(self):
         """Test error handling in batch operations."""
