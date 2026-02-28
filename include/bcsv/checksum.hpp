@@ -9,19 +9,20 @@
 namespace bcsv {
 
 /**
- * @brief Checksum utility using xxHash64 algorithm
+ * @brief Checksum utility using xxHash (64-bit and 32-bit)
  * 
- * Provides both one-shot and streaming hash computation.
- * xxHash64 is ~3-5x faster than CRC32 and works efficiently
- * on both 32-bit and 64-bit platforms.
+ * Provides one-shot hashing (XXH64, XXH32) and streaming XXH64
+ * computation.  xxHash is ~3-5x faster than CRC32 and works
+ * efficiently on both 32-bit and 64-bit platforms.
  */
 class Checksum {
 public:
     using hash64_t = uint64_t;
+    using hash32_t = uint32_t;
     static constexpr hash64_t DEFAULT_SEED = 0;
 
     /**
-     * @brief Compute hash for a memory block (one-shot)
+     * @brief Compute 64-bit hash for a memory block (one-shot)
      * @param data Pointer to data
      * @param length Size of data in bytes
      * @param seed Optional seed value (default: 0)
@@ -29,6 +30,19 @@ public:
      */
     static hash64_t compute(const void* data, size_t length, hash64_t seed = DEFAULT_SEED) {
         return XXH64(data, length, seed);
+    }
+
+    /**
+     * @brief Compute 32-bit hash for a memory block (one-shot)
+     * @param data Pointer to data
+     * @param length Size of data in bytes
+     * @param seed Optional seed value (default: 0)
+     * @return 32-bit hash value
+     *
+     * Lean per-row checksum for stream codecs: 4 bytes overhead per row.
+     */
+    static hash32_t compute32(const void* data, size_t length, hash32_t seed = 0) {
+        return XXH32(data, length, seed);
     }
 
     /**

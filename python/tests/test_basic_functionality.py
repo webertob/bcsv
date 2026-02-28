@@ -288,8 +288,7 @@ class TestBasicFunctionality(unittest.TestCase):
         try:
             data = reader.read_all()
         except RuntimeError:
-            # If C++ side logic is to fail on reading row data from empty file 
-            # (which happens because openPacket failed but we forced open() to true)
+            # If C++ side logic fails on reading row data from empty file,
             # we should just accept empty list or handle it gracefully.
             data = []
             

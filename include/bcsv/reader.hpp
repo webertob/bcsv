@@ -20,6 +20,7 @@
 #include "bcsv/file_footer.h"
 #include "reader.h"
 #include "file_header.h"
+#include "file_codec_concept.h"
 #include "layout.h"
 #include "packet_header.h"
 #include "definitions.h"
@@ -42,10 +43,7 @@ namespace bcsv {
     , file_header_()
     , file_path_()
     , stream_()
-    , lz4_stream_()
-    , packet_hash_()
-    , packet_open_(false)
-    , packet_pos_()
+    , file_codec_()
     , row_pos_(0)
     , row_(LayoutType())
 
@@ -71,14 +69,9 @@ namespace bcsv {
         file_path_.clear();
         stream_.close();
         codec_.destroy();  // Deletes inner codec; inner codec's destructor releases the structural lock
-        lz4_stream_.reset();
-        packet_hash_.reset();
-        packet_pos_ = 0;
+        file_codec_.destroy();
         row_pos_ = 0;
-        row_buffer_.clear();
-        row_buffer_.shrink_to_fit();
         row_.clear();
-        packet_open_ = false;
     }
 
     /**
@@ -131,17 +124,17 @@ namespace bcsv {
                 throw std::runtime_error("Failed to read file header");
             }
 
-            // create LZ4 decompression stream if needed
-            if (compressionLevel() > 0) {
-                lz4_stream_.emplace();
-            }
+            // Initialize file-level codec (framing, decompression, checksums)
+            // setupRead also opens the first packet for packet-based codecs.
+            file_codec_.select(compressionLevel(), file_header_.getFlags());
+            file_codec_.setupRead(stream_, file_header_);
 
-            // Open the first packet to prepare for reading rows
-            packet_open_ = openPacket();
             row_pos_ = 0;
 
         } catch (const std::exception& ex) {
             err_msg_ = ex.what();
+            file_codec_.destroy();
+            codec_.destroy();
             if (stream_.is_open()) {
                 stream_.close();
             }
@@ -198,67 +191,12 @@ namespace bcsv {
         }
     }
 
-    template<LayoutConcept LayoutType>
-    void Reader<LayoutType>::closePacket() {
-        assert(stream_);
-         
-        // Finalize and validate packet checksum
-        uint64_t expectedHash = 0;
-        stream_.read(reinterpret_cast<char*>(&expectedHash), sizeof(expectedHash));
-        if (!stream_ || stream_.gcount() != sizeof(expectedHash)) {
-            throw std::runtime_error("Error: Failed to read packet checksum");
-        }
-        
-        uint64_t calculatedHash = packet_hash_.finalize();
-        if (calculatedHash != expectedHash) {
-            throw std::runtime_error("Error: Packet checksum mismatch");
-        }
-    }
-
     /**
-     * @brief Open next packet for sequential reading
-     */
-    template<LayoutConcept LayoutType>
-    bool Reader<LayoutType>::openPacket() {
-        assert(stream_);
-
-        packet_pos_ = stream_.tellg();
-        PacketHeader header;
-        bool success = header.read(stream_, true);
-
-        // Initialize LZ4 decompression if needed
-        if (lz4_stream_.has_value()) {
-            lz4_stream_->reset();
-        }
-        
-        // Reset payload hasher for checksum validation
-        packet_hash_.reset();
-
-        // Reset codec state at packet boundary (Item 11)
-        codec_.reset();
-
-        if (!success) {
-            if(header.magic == FOOTER_BIDX_MAGIC) {
-                stream_.clear();           // clear fail state
-                stream_.seekg(packet_pos_); // reset to previous position
-                return false;   // end of file reached, normal exit condition
-            } else if(stream_.eof()) {
-                return false;   // end of file reached, normal exit condition
-            } else {
-                stream_.clear();           // clear fail state
-                stream_.seekg(packet_pos_); // reset to previous position
-                throw std::runtime_error("Error: Failed to read packet header");
-            }
-        }
-        return true;
-    }
-
-    /**
-     * @brief Read next row from current packet
+     * @brief Read next row from file via file codec
      */
     template<LayoutConcept LayoutType>
     bool Reader<LayoutType>::readNext() {
-        if (!isOpen() || !packet_open_) {
+        if (!isOpen()) {
             return false;
         }
 
@@ -266,54 +204,32 @@ namespace bcsv {
             return false;
         }
 
-        //reade row length
-        size_t rowLen;
-        vleDecode<uint64_t, true>(stream_, rowLen, &packet_hash_);
+        // Read row via file codec (handles VLE, decompression, checksums, packet transitions)
+        auto rowRawData = file_codec_.readRow(stream_);
 
-        // check for terminator
-        while (rowLen == PCKT_TERMINATOR) {
-            // End of packet reached
-            closePacket();
-            packet_open_ = openPacket();
-            if(!packet_open_) {
-                return false;
-            }
-            vleDecode<uint64_t, true>(stream_, rowLen, &packet_hash_);
+        // Check for EOF sentinel
+        if (rowRawData.data() == EOF_SENTINEL.data()) {
+            return false;
         }
 
-        if (rowLen == 0) {
-            // repeat previous row
-            if(!file_header_.hasFlag(FileFlags::ZERO_ORDER_HOLD) && row_.layout().columnCount() > 0) 
-            {
+        // Reset RowCodec state if a packet boundary was crossed
+        if (file_codec_.packetBoundaryCrossed()) {
+            codec_.reset();
+        }
+
+        // Check for ZoH repeat sentinel — reuse previous row
+        if (rowRawData.data() == ZOH_REPEAT_SENTINEL.data()) {
+            if (!file_header_.hasFlag(FileFlags::ZERO_ORDER_HOLD) && row_.layout().columnCount() > 0) {
                 throw std::runtime_error("Error: ZERO_ORDER_HOLD flag not set, but repeat row encountered");
             }
-
-            if( row_buffer_.empty() && row_.layout().columnCount() > 0 ) 
-            {
+            if (row_pos_ == 0 && row_.layout().columnCount() > 0) {
                 throw std::runtime_error("Error: Cannot repeat previous row, no previous row data available");
             }
             row_pos_++;
             return true;
         }
 
-        // read row data
-        if (rowLen > MAX_ROW_LENGTH) [[unlikely]] {
-            throw std::runtime_error("Error: Row length exceeds MAX_ROW_LENGTH (" + std::to_string(rowLen) + " > " + std::to_string(MAX_ROW_LENGTH) + ")");
-        }
-        row_buffer_.resize(rowLen);
-        stream_.read(reinterpret_cast<char*>(row_buffer_.data()), rowLen);
-        if (!stream_ || stream_.gcount() != static_cast<std::streamsize>(rowLen)) {
-            throw std::runtime_error("Error: Failed to read row data");
-        }
-        packet_hash_.update(row_buffer_);
-        std::span<const std::byte> rowRawData(row_buffer_);
-
-        // decompress if needed
-        if(lz4_stream_.has_value()) {
-            rowRawData = lz4_stream_->decompress(row_buffer_);
-        }
-
-        // deserialize row via codec (Item 11)
+        // Deserialize row via row codec (Item 11)
         codec_.deserialize(rowRawData, row_);
         row_pos_++;
         return true;        

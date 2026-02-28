@@ -40,6 +40,7 @@ set(TEST_SOURCES
     layout_guard_test.cpp
     review_fixes_test.cpp
     writer_reader_test.cpp
+    file_codec_test.cpp
     bench_dataset_profiles_test.cpp
 )
 

@@ -21,8 +21,6 @@
 #include "definitions.h"
 #include "file_header.h"
 #include "layout.h"
-#include "packet_header.h"
-#include "vle.hpp"
 #include <cassert>
 #include <cstddef>
 #include <fstream>
@@ -59,23 +57,15 @@ namespace bcsv {
             return;
         }
         
-        if (packet_open_) {
-            closePacket();
+        // Finalize file codec: close last packet, write footer (if packet-based)
+        if (file_codec_.isSetup()) {
+            file_codec_.finalize(stream_, row_cnt_);
         }
-        
-        FileFooter footer(packet_index_, row_cnt_);
-        footer.write(stream_);
         
         stream_.close();
         codec_ = CodecType();  // Move-assign default; old codec's destructor releases the structural lock
+        file_codec_.destroy();
         file_path_.clear();
-        lz4_stream_.reset();
-        row_buffer_raw_.clear();
-        row_buffer_raw_.shrink_to_fit();
-        row_buffer_prev_.clear();
-        row_buffer_prev_.shrink_to_fit();
-        packet_index_.clear();
-        packet_index_.shrink_to_fit();
         row_cnt_ = 0;       
     }
 
@@ -152,21 +142,14 @@ namespace bcsv {
             file_header_.setPacketSize(std::clamp(blockSizeKB*1024, size_t(MIN_PACKET_SIZE), size_t(MAX_PACKET_SIZE)));  // limit packet size to 64KB-1GB
             file_header_.writeToBinary(stream_, layout());
             row_cnt_ = 0;
-                        
-            // Initialize LZ4 streaming compression if enabled
-            if (compressionLevel > 0) {
-                int acceleration = 10 - compressionLevel;  // Maps 1-9 to 9-1
-                lz4_stream_.emplace(64 * 1024, acceleration);
-            }
-            
-            // Initialize payload hasher for checksum chaining
-            packet_hash_.reset();
-            packet_index_.clear();            
-            row_.clear();
-            row_buffer_raw_.clear();
-            row_buffer_prev_.clear(); // Start with empty previous row
 
-            // Initialize codec (Item 11)
+            // Initialize file-level codec (framing, compression, checksums)
+            file_codec_.select(static_cast<uint8_t>(compressionLevel), flags);
+            file_codec_.setupWrite(stream_, file_header_);
+
+            row_.clear();
+
+            // Initialize row codec (Item 11)
             codec_.setup(layout());
             codec_.reset();
 
@@ -192,57 +175,6 @@ namespace bcsv {
     }
 
     template<LayoutConcept LayoutType, typename CodecType>
-    void Writer<LayoutType, CodecType>::closePacket() {
-        if (!stream_.is_open()) {
-            throw std::runtime_error("Error: File is not open");
-        }
-        
-        if(!packet_open_) {
-            throw std::runtime_error("Error: No open packet to close");
-        }
-
-        // 1. Write packet terminator (this effectivly limits the maximum length of a row)
-        // We use writeRowLength to ensure consistent VLE encoding and checksum updates
-        writeRowLength(PCKT_TERMINATOR);
-
-        // 2. Finalize packet: write checksum
-        uint64_t hash = packet_hash_.finalize();
-        stream_.write(reinterpret_cast<const char*>(&hash), sizeof(hash));
-        packet_open_ = false;
-    }
-
-    template<LayoutConcept LayoutType, typename CodecType>
-    void Writer<LayoutType, CodecType>::openPacket() {
-        if (!stream_.is_open()) {
-            throw std::runtime_error("Error: File is not open");
-        }
-
-        if(packet_open_) {
-            throw std::runtime_error("Error: Packet is already open");
-        }
-        
-        // Record packet start position in index if needed
-        if(file_header_.hasFlag(FileFlags::NO_FILE_INDEX) == false) {
-            size_t packetOffset = stream_.tellp();
-            packet_index_.emplace_back(packetOffset, row_cnt_);
-        }
-        
-        // Write packet header
-        PacketHeader::write(stream_, row_cnt_);
-
-        // Reset packet to initial state
-        packet_size_ = 0;
-        packet_hash_.reset();
-        if (lz4_stream_.has_value()) {
-            lz4_stream_->reset();
-        }
-        row_buffer_prev_.clear();
-        row_buffer_raw_.clear();
-        codec_.reset();  // Item 11: reset codec state at packet boundary
-        packet_open_ = true;
-    }
-
-    template<LayoutConcept LayoutType, typename CodecType>
     void Writer<LayoutType, CodecType>::write(const RowType& row) {
         row_ = row;
         writeRow();
@@ -254,70 +186,21 @@ namespace bcsv {
             throw std::runtime_error("Error: File is not open");
         }
 
-        if(!packet_open_) {
-            openPacket();
+        // Packet lifecycle: beginWrite handles close-if-full → open-if-needed.
+        // Returns true when a packet boundary was crossed → reset RowCodec.
+        if (file_codec_.beginWrite(stream_, row_cnt_)) {
+            codec_.reset();
         }
 
-        // 1. Serialize row to buffer via codec (Item 11)
-        row_buffer_raw_.clear();
-        std::span<std::byte> actRow = codec_.serialize(row_, row_buffer_raw_);
+        // 1. Serialize row to codec's internal buffer via row codec
+        auto& buf = file_codec_.writeBuffer();
+        buf.clear();
+        std::span<std::byte> actRow = codec_.serialize(row_, buf);
 
-        // 2. write row data to file
-        // TODO: This ZoH repeat check should be codec-agnostic. Currently we gate on
-        //       ZERO_ORDER_HOLD flag, but ideally actRow.size() == 0 should be the
-        //       universal "no change" signal from any codec (Flat always returns non-empty,
-        //       ZoH returns empty when row is unchanged). Rework to unify once Flat codec
-        //       adopts the same convention.
-        if (actRow.size() == 0)
-        {
-            // No change detected by codec → ZoH repeat
-            writeRowLength(0);
-        }
-        else if(lz4_stream_.has_value()) 
-        {
-            // compress data using LZ4 before writing
-            // Note: actRow is a span into row_buffer_raw_. LZ4CompressionStream copies
-            // source data into its own ring buffer (or uses LZ4_saveDict for large inputs),
-            // so the source pointer is not retained after compress() returns.
-            const auto compressedData= lz4_stream_->compressUseInternalBuffer(actRow);
-            writeRowLength(compressedData.size());
-            stream_.write(reinterpret_cast<const char*>(compressedData.data()), compressedData.size());
-            packet_hash_.update(compressedData);
-            packet_size_ += compressedData.size();
-            std::swap(row_buffer_prev_, row_buffer_raw_);
-        } 
-        else 
-        {
-            // No compression, write raw data to stream
-            writeRowLength(actRow.size());
-            stream_.write(reinterpret_cast<const char*>(actRow.data()), actRow.size());
-            packet_hash_.update(actRow);
-            packet_size_ += actRow.size();
-            std::swap(row_buffer_prev_, row_buffer_raw_);
-        }
+        // 2. Write row via file codec (handles VLE, compression, checksum, I/O)
+        file_codec_.writeRow(stream_, actRow);
 
         row_cnt_++;
-        if(packet_size_ >= file_header_.getPacketSize()) {
-            closePacket();
-        }
-    }
-
-    template<LayoutConcept LayoutType, typename CodecType>
-    void Writer<LayoutType, CodecType>::writeRowLength(size_t length)
-    {
-        assert(stream_.is_open());
-        assert(packet_open_);
-
-        // Use unified VLE encoding (Block Length Encoding)
-        uint64_t tempBuf;
-        size_t numBytes = vleEncode<uint64_t, true>(length, &tempBuf, sizeof(tempBuf));
-        
-        // Write encoded bytes directly to stream
-        stream_.write(reinterpret_cast<const char*>(&tempBuf), numBytes);
-        
-        // Update packet checksum and size
-        packet_hash_.update(reinterpret_cast<const char*>(&tempBuf), numBytes);
-        packet_size_ += numBytes;
     }
 
 } // namespace bcsv

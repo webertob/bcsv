@@ -75,7 +75,8 @@ namespace bcsv {
         NONE                = 0x0000,                  ///< No special features enabled
         ZERO_ORDER_HOLD     = 0x0001,                  ///< Bit 0: Indicates this file uses zero-order hold compression (v1.2.0, will be always-on in v1.3.0)
         NO_FILE_INDEX       = 0x0002,                  ///< Bit 1: File has no index (sequential scan only, minimal footer) - for embedded platforms
-        // Bits 2-15 reserved for future use
+        STREAM_MODE         = 0x0004,                  ///< Bit 2: File uses stream mode (no packets/checksums/footer). Default (0) = packet mode.
+        // Bits 3-15 reserved for future use
     };
 
     // Enable bitwise operations for FileFlags
@@ -89,6 +90,39 @@ namespace bcsv {
 
     constexpr FileFlags operator~(FileFlags flag) {
         return static_cast<FileFlags>(~static_cast<uint16_t>(flag));
+    }
+
+    /**
+     * @brief Identifies the file-level codec used for framing, compression and I/O.
+     *
+     * Each ID maps to a concrete FileCodec class.  The ID is derived from
+     * FileHeader fields (compression_level, FileFlags::STREAM_MODE) — it is
+     * NOT stored explicitly in the file.
+     *
+     * Naming: FileCodec + Structure + [Compression] + Version
+     */
+    enum class FileCodecId : uint8_t {
+        STREAM_001,             ///< Stream-Raw: no packets, no compression, per-row XXH32 checksums
+        STREAM_LZ4_001,         ///< Stream-LZ4: no packets, streaming LZ4 compression, per-row XXH32 checksums
+        PACKET_001,             ///< Packet-Raw: packet framing + checksums, no compression
+        PACKET_LZ4_001,         ///< Packet-LZ4-Streaming: packet framing + streaming LZ4 (v1.3.0 default)
+        PACKET_LZ4_BATCH_001,   ///< Packet-LZ4-Batch: packet framing + batch LZ4 (async, future)
+    };
+
+    /**
+     * @brief Derive the FileCodecId from file header fields.
+     *
+     * Uses compression_level and the STREAM_MODE flag to select the codec.
+     * Batch-LZ4 is not auto-selected from header (it is writer-only, opt-in).
+     */
+    inline constexpr FileCodecId resolveFileCodecId(uint8_t compressionLevel, FileFlags flags) noexcept {
+        const bool stream = (flags & FileFlags::STREAM_MODE) != FileFlags::NONE;
+        const bool compressed = compressionLevel > 0;
+        if (stream) {
+            return compressed ? FileCodecId::STREAM_LZ4_001 : FileCodecId::STREAM_001;
+        } else {
+            return compressed ? FileCodecId::PACKET_LZ4_001 : FileCodecId::PACKET_001;
+        }
     }
 
     /** Column data type enumeration (stored as uint8_t in file) 

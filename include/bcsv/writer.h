@@ -12,7 +12,6 @@
 #include <cstdint>
 #include <fstream>
 #include <filesystem>
-#include <optional>
 #include <string>
 
 #include "definitions.h"
@@ -23,8 +22,7 @@
 #include "row_codec_zoh001.h"
 #include "file_header.h"
 #include "file_footer.h"
-#include "lz4_stream.hpp"
-#include "checksum.hpp"
+#include "file_codec_dispatch.h"
 
 namespace bcsv {
 
@@ -43,21 +41,13 @@ namespace bcsv {
         FileHeader              file_header_;                // File header for accessing flags and metadata
         FilePath                file_path_;                  // Always present
         std::ofstream           stream_;                     // Always binary file stream
-        std::optional<LZ4CompressionStreamInternalBuffer<MAX_ROW_LENGTH>>
-                                lz4_stream_;                // std::nullopt if compressionLevel == 0
 
-        // Packet management
-        PacketIndex             packet_index_;               // Builds index in memory (if NO_FILE_INDEX not set)
-        Checksum::Streaming     packet_hash_;                // Streaming payload checksum for current packet
-        bool                    packet_open_ = false;        // Whether a packet has been started
-        size_t                  packet_size_ = 0;           // Bytes written in current packet payload
+        // File-level codec (framing, compression, checksums, packet lifecycle)
+        FileCodecDispatch       file_codec_;                 // Runtime-selected file codec
 
-        // Buffers for streaming compression (pre-allocated, reused)
-        ByteBuffer              row_buffer_raw_;             // Serialized raw row
-        ByteBuffer              row_buffer_prev_;            // Previous row for ZoH comparison
         uint64_t                row_cnt_ = 0;                // Total rows written across all packets
         RowType                 row_;
-        CodecType               codec_;                      // Compile-time selected codec
+        CodecType               codec_;                      // Compile-time selected row codec
 
     public:
         Writer() = delete;
@@ -85,11 +75,6 @@ namespace bcsv {
         void                    write(const RowType& row);
         void                    writeRow();
 
-    private:
-        void                    closePacket();
-        void                    openPacket();
-        bool                    isZoHRepeat();
-        void                    writeRowLength(size_t length);
     };
 
     template<LayoutConcept LayoutType>

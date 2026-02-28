@@ -13,7 +13,6 @@
 #include <cstdint>
 #include <fstream>
 #include <filesystem>
-#include <optional>
 #include <string>
 #include "definitions.h"
 #include "layout.h"
@@ -21,9 +20,8 @@
 #include "row_codec_dispatch.h"
 #include "file_header.h"
 #include "byte_buffer.h"
-#include "lz4_stream.hpp"
+#include "file_codec_dispatch.h"
 #include "file_footer.h"
-#include "checksum.hpp"
 
 namespace bcsv {
 
@@ -41,16 +39,11 @@ namespace bcsv {
         FileHeader              file_header_;            // file header for accessing flags and metadata
         FilePath                file_path_;              // points to the input file
         std::ifstream           stream_;                // input file binary stream
-        std::optional< LZ4DecompressionStream< MAX_ROW_LENGTH> >
-                                lz4_stream_;             // packet level (de)-compression facility (nullopt if compressionLevel == 0)
 
-        // Current packet state
-        Checksum::Streaming     packet_hash_;            // stream to validate payload using a checksum chain
-        bool                    packet_open_{false};     // indicates if a packet is currently open for reading
-        std::streampos          packet_pos_;             // position of the first byte of the current packet header in the file (PacketHeader MAGIC)
+        // File-level codec (framing, decompression, checksums, packet lifecycle)
+        FileCodecDispatch       file_codec_;             // Runtime-selected file codec
 
         // Global row tracking
-        ByteBuffer              row_buffer_;             // current row, encoded data (decompressed)
         size_t                  row_pos_;                // postion of current row in file (0-based row counter)
         RowType                 row_;                   // current row, decoded data
         CodecDispatch<LayoutType> codec_;      // Runtime codec dispatch (Item 11 Phase 7)
@@ -76,8 +69,6 @@ namespace bcsv {
         size_t                  rowPos() const              { return row_pos_; } // 0-based row index in file
         
     protected:
-        void                    closePacket();
-        bool                    openPacket();
         bool                    readFileHeader();
     };
 
