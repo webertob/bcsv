@@ -58,23 +58,19 @@ int main(int argc, char* argv[]) {
 
     if (numRows == 0) numRows = profile.default_rows;
 
-    // Write CSV using the same fair CsvWriter as the benchmarks
+    // Write CSV using the library CsvWriter
     {
-        std::ofstream ofs(outputPath);
-        if (!ofs.is_open()) {
+        bcsv::CsvWriter<bcsv::Layout> writer(profile.layout);
+        if (!writer.open(outputPath, true)) {
             std::cerr << "ERROR: Cannot open output file: " << outputPath << "\n";
             return 1;
         }
 
-        bench::CsvWriter writer(ofs);
-        writer.writeHeader(profile.layout);
-
-        bcsv::Row row(profile.layout);
         for (size_t i = 0; i < numRows; ++i) {
-            profile.generate(row, i);
-            writer.writeRow(row);
+            profile.generate(writer.row(), i);
+            writer.writeRow();
         }
-        ofs.flush();
+        writer.close();
     }
 
     std::cerr << "Generated " << numRows << " rows (" << profile.layout.columnCount()

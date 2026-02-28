@@ -19,8 +19,8 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <map>
 #include <filesystem>
-#include <regex>
 #include <chrono>
 #include <iomanip>
 #include <bcsv/bcsv.h>
@@ -29,7 +29,6 @@ struct Config {
     std::string input_file;
     std::string output_file;
     char delimiter = '\0';  // '\0' means auto-detect
-    char quote_char = '"';
     char decimal_separator = '.';  // Default to point, can be changed to comma
     bool has_header = true;
     bool verbose = false;
@@ -296,41 +295,6 @@ char detectDelimiter(const std::string& sample_line) {
     return best_delimiter;
 }
 
-// Legacy simple type detection (kept for compatibility)
-bcsv::ColumnType detectDataType(const std::string& value) {
-    if (value.empty()) {
-        return bcsv::ColumnType::STRING; // Default to string for empty values
-    }
-    
-    // Check for boolean
-    std::string lower_val = value;
-    std::transform(lower_val.begin(), lower_val.end(), lower_val.begin(), 
-        [](char c) { return static_cast<char>(::tolower(c)); });
-    if (lower_val == "true" || lower_val == "false" || lower_val == "1" || lower_val == "0") {
-        return bcsv::ColumnType::BOOL;
-    }
-    
-    // Check for integer
-    std::regex int_pattern(R"(^[-+]?\d+$)");
-    if (std::regex_match(value, int_pattern)) {
-        long long num = std::stoll(value);
-        if (num >= INT32_MIN && num <= INT32_MAX) {
-            return bcsv::ColumnType::INT32;
-        } else {
-            return bcsv::ColumnType::INT64;
-        }
-    }
-    
-    // Check for float/double
-    std::regex float_pattern(R"(^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$)");
-    if (std::regex_match(value, float_pattern)) {
-        return bcsv::ColumnType::DOUBLE;
-    }
-    
-    // Default to string
-    return bcsv::ColumnType::STRING;
-}
-
 // Parse CSV line with proper quote handling
 std::vector<std::string> parseCSVLine(const std::string& line, char delimiter, char quote_char) {
     std::vector<std::string> fields;
@@ -374,112 +338,6 @@ std::vector<std::string> parseCSVLine(const std::string& line, char delimiter, c
     return fields;
 }
 
-// Convert string value to appropriate type and set in row
-template<typename WriterType>
-void setRowValue(WriterType& writer, size_t column_index,
-                 const std::string& value, bcsv::ColumnType type, char decimal_separator = '.') {
-    if (value.empty()) {
-        // Handle empty values - set default values
-        switch (type) {
-            case bcsv::ColumnType::BOOL:
-                writer.row().set(column_index, false);
-                break;
-            case bcsv::ColumnType::INT8:
-                writer.row().set(column_index, static_cast<int8_t>(0));
-                break;
-            case bcsv::ColumnType::UINT8:
-                writer.row().set(column_index, static_cast<uint8_t>(0));
-                break;
-            case bcsv::ColumnType::INT16:
-                writer.row().set(column_index, static_cast<int16_t>(0));
-                break;
-            case bcsv::ColumnType::UINT16:
-                writer.row().set(column_index, static_cast<uint16_t>(0));
-                break;
-            case bcsv::ColumnType::INT32:
-                writer.row().set(column_index, static_cast<int32_t>(0));
-                break;
-            case bcsv::ColumnType::UINT32:
-                writer.row().set(column_index, static_cast<uint32_t>(0));
-                break;
-            case bcsv::ColumnType::INT64:
-                writer.row().set(column_index, static_cast<int64_t>(0));
-                break;
-            case bcsv::ColumnType::UINT64:
-                writer.row().set(column_index, static_cast<uint64_t>(0));
-                break;
-            case bcsv::ColumnType::FLOAT:
-                writer.row().set(column_index, 0.0f);
-                break;
-            case bcsv::ColumnType::DOUBLE:
-                writer.row().set(column_index, 0.0);
-                break;
-            case bcsv::ColumnType::STRING:
-                writer.row().set(column_index, std::string(""));
-                break;
-            default:
-                writer.row().set(column_index, std::string(""));
-        }
-        return;
-    }
-    
-    // Normalize decimal separator for parsing
-    std::string normalized_value = value;
-    if (decimal_separator != '.' && (type == bcsv::ColumnType::FLOAT || type == bcsv::ColumnType::DOUBLE)) {
-        std::replace(normalized_value.begin(), normalized_value.end(), decimal_separator, '.');
-    }
-    
-    try {
-        switch (type) {
-            case bcsv::ColumnType::BOOL: {
-                std::string lower_val = value;
-                std::transform(lower_val.begin(), lower_val.end(), lower_val.begin(), 
-                    [](char c) { return static_cast<char>(::tolower(c)); });
-                bool bool_val = (lower_val == "true" || lower_val == "1");
-                writer.row().set(column_index, bool_val);
-                break;
-            }
-            case bcsv::ColumnType::INT8:
-                writer.row().set(column_index, static_cast<int8_t>(std::stoll(value)));
-                break;
-            case bcsv::ColumnType::UINT8:
-                writer.row().set(column_index, static_cast<uint8_t>(std::stoull(value)));
-                break;
-            case bcsv::ColumnType::INT16:
-                writer.row().set(column_index, static_cast<int16_t>(std::stoll(value)));
-                break;
-            case bcsv::ColumnType::UINT16:
-                writer.row().set(column_index, static_cast<uint16_t>(std::stoull(value)));
-                break;
-            case bcsv::ColumnType::INT32:
-                writer.row().set(column_index, static_cast<int32_t>(std::stoll(value)));
-                break;
-            case bcsv::ColumnType::UINT32:
-                writer.row().set(column_index, static_cast<uint32_t>(std::stoull(value)));
-                break;
-            case bcsv::ColumnType::INT64:
-                writer.row().set(column_index, static_cast<int64_t>(std::stoll(value)));
-                break;
-            case bcsv::ColumnType::UINT64:
-                writer.row().set(column_index, static_cast<uint64_t>(std::stoull(value)));
-                break;
-            case bcsv::ColumnType::FLOAT:
-                writer.row().set(column_index, std::stof(normalized_value));
-                break;
-            case bcsv::ColumnType::DOUBLE:
-                writer.row().set(column_index, std::stod(normalized_value));
-                break;
-            case bcsv::ColumnType::STRING:
-            default:
-                writer.row().set(column_index, value);
-                break;
-        }
-    } catch (const std::exception&) {
-        // If conversion fails, store as string
-        writer.row().set(column_index, value);
-    }
-}
-
 void printUsage(const char* program_name) {
     std::cout << "Usage: " << program_name << " [OPTIONS] INPUT_FILE [OUTPUT_FILE]\n\n";
     std::cout << "Convert CSV file to BCSV format.\n\n";
@@ -488,7 +346,6 @@ void printUsage(const char* program_name) {
     std::cout << "  OUTPUT_FILE    Output BCSV file path (default: INPUT_FILE.bcsv)\n\n";
     std::cout << "Options:\n";
     std::cout << "  -d, --delimiter CHAR    Field delimiter (default: auto-detect)\n";
-    std::cout << "  -q, --quote CHAR        Quote character (default: '\"')\n";
     std::cout << "  --no-header             CSV file has no header row\n";
     std::cout << "  --decimal-separator CHAR  Decimal separator: '.' or ',' (default: '.')\n";
     std::cout << "  --no-zoh               Disable Zero-Order Hold compression (default: enabled)\n";
@@ -517,12 +374,6 @@ Config parseArgs(int argc, char* argv[]) {
             if (i + 1 < argc) {
                 config.delimiter = argv[++i][0];
                 config.force_delimiter = true;
-            } else {
-                throw std::runtime_error("Option " + arg + " requires an argument");
-            }
-        } else if (arg == "-q" || arg == "--quote") {
-            if (i + 1 < argc) {
-                config.quote_char = argv[++i][0];
             } else {
                 throw std::runtime_error("Option " + arg + " requires an argument");
             }
@@ -573,17 +424,9 @@ Config parseArgs(int argc, char* argv[]) {
     
     // Validate character conflicts
     if (!config.help) {
-        if (config.delimiter == config.quote_char) {
-            throw std::runtime_error("Delimiter and quote character cannot be the same ('" + 
-                                   std::string(1, config.delimiter) + "')");
-        }
-        if (config.delimiter == config.decimal_separator) {
+        if (config.delimiter == config.decimal_separator && config.delimiter != '\0') {
             throw std::runtime_error("Delimiter and decimal separator cannot be the same ('" + 
                                    std::string(1, config.delimiter) + "')");
-        }
-        if (config.quote_char == config.decimal_separator) {
-            throw std::runtime_error("Quote character and decimal separator cannot be the same ('" + 
-                                   std::string(1, config.quote_char) + "')");
         }
     }
     
@@ -601,7 +444,7 @@ int main(int argc, char* argv[]) {
         
         if (config.verbose) {
             std::cout << "Converting: " << config.input_file << " -> " << config.output_file << std::endl;
-            std::cout << "Delimiter: '" << config.delimiter << "', Quote: '" << config.quote_char << "'" << std::endl;
+            std::cout << "Delimiter: '" << config.delimiter << "'" << std::endl;
             std::cout << "Header: " << (config.has_header ? "yes" : "no") << std::endl;
             std::cout << "Decimal separator: '" << config.decimal_separator << "'" << std::endl;
             std::cout << "ZoH compression: " << (config.use_zoh ? "enabled" : "disabled") << std::endl;
@@ -648,11 +491,11 @@ int main(int argc, char* argv[]) {
         
         if (config.verbose) {
             std::cout << "Converting: " << config.input_file << " -> " << config.output_file << std::endl;
-            std::cout << "Delimiter: '" << config.delimiter << "', Quote: '" << config.quote_char << "'" << std::endl;
+            std::cout << "Delimiter: '" << config.delimiter << "'" << std::endl;
             std::cout << "Header: " << (config.has_header ? "yes" : "no") << std::endl;
         }
         
-        std::vector<std::string> first_row = parseCSVLine(line, config.delimiter, config.quote_char);
+        std::vector<std::string> first_row = parseCSVLine(line, config.delimiter, '"');
         
         if (config.has_header) {
             headers = first_row;
@@ -680,7 +523,7 @@ int main(int argc, char* argv[]) {
                 line.pop_back();
             }
             
-            auto row_data = parseCSVLine(line, config.delimiter, config.quote_char);
+            auto row_data = parseCSVLine(line, config.delimiter, '"');
             
             // Trim trailing empty fields to match header count
             while (row_data.size() > headers.size() && !row_data.empty() && row_data.back().empty()) {
@@ -741,70 +584,37 @@ int main(int argc, char* argv[]) {
             layout.addColumn(col);
         }
         
-        // Reset file and skip header if present
-        input.clear();
-        input.seekg(0, std::ios::beg);
-        if (config.has_header) {
-            std::getline(input, line); // Skip header
-            // Trim carriage return (Windows line endings)
-            if (!line.empty() && line.back() == '\r') {
-                line.pop_back();
-            }
-        }
+        // Close the first-pass input stream (CsvReader will open its own)
+        input.close();
         
-        // Create BCSV writer and convert data
+        // Create BCSV writer and convert data using CsvReader for the second pass
         bcsv::FileFlags flags = config.use_zoh ? bcsv::FileFlags::ZERO_ORDER_HOLD : bcsv::FileFlags::NONE;
         size_t row_count = 0;
         auto write_rows = [&](auto& writer) {
             // Use compression level 1 for better performance vs file size
             writer.open(config.output_file, true, 1, 64, flags);
 
-            // Pre-calculate frequently used values outside the loop
-            const size_t num_columns = headers.size();
+            // Use CsvReader with the detected layout for type-safe CSV parsing
+            bcsv::CsvReader<bcsv::Layout> csv_reader(layout, config.delimiter, config.decimal_separator);
+            if (!csv_reader.open(config.input_file, config.has_header)) {
+                throw std::runtime_error("Cannot open CSV file with CsvReader: " + csv_reader.getErrorMsg());
+            }
 
-            while (std::getline(input, line)) {
-                // Trim carriage return (Windows line endings)
-                if (!line.empty() && line.back() == '\r') {
-                    line.pop_back();
-                }
-                
-                auto row_data = parseCSVLine(line, config.delimiter, config.quote_char);
-                
-                // Apply same flexible row handling as during sampling
-                while (row_data.size() > num_columns && !row_data.empty() && row_data.back().empty()) {
-                    row_data.pop_back();
-                }
-                
-                bool process_row = false;
-                if (row_data.size() == num_columns) {
-                    process_row = true;
-                } else if (row_data.size() < num_columns) {
-                    // Pad with empty strings if row is shorter
-                    row_data.resize(num_columns, "");
-                    process_row = true;
-                } else if (row_data.size() <= num_columns + 3) {
-                    // If only a few extra fields, truncate
-                    row_data.resize(num_columns);
-                    process_row = true;
-                } else if (config.verbose) {
-                    std::cerr << "Warning: Row " << (row_count + 1) << " has " << row_data.size() 
-                              << " fields, expected " << num_columns << ". Skipping." << std::endl;
-                }
-                
-                if (process_row) {
-                    for (size_t col = 0; col < num_columns; ++col) {
-                        setRowValue(writer, col, row_data[col], column_types[col], config.decimal_separator);
-                    }
-                    
-                    writer.writeRow();
-                    ++row_count;  // Pre-increment is slightly faster
-                    
-                    if (config.verbose && (row_count & 0x3FFF) == 0) {  // Every 16384 rows for better performance
-                        std::cout << "Processed " << row_count << " rows..." << std::endl;
-                    }
+            while (csv_reader.readNext()) {
+                // Copy parsed row data from CsvReader to BCSV writer via visitConst
+                csv_reader.row().visitConst([&](size_t col, const auto& val) {
+                    writer.row().set(col, val);
+                });
+
+                writer.writeRow();
+                ++row_count;
+
+                if (config.verbose && (row_count & 0x3FFF) == 0) {
+                    std::cout << "Processed " << row_count << " rows..." << std::endl;
                 }
             }
 
+            csv_reader.close();
             writer.close();
         };
 

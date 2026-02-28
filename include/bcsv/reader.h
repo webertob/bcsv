@@ -30,9 +30,12 @@ namespace bcsv {
      */
     template<LayoutConcept LayoutType>
     class Reader {
-    protected:
+    public:
         using RowType           = typename LayoutType::RowType;
+
+    protected:
         using FilePath          = std::filesystem::path;
+        using RowCodeDisptch    = RowCodecDispatch<LayoutType>;
 
         std::string             err_msg_;                // last error message description
 
@@ -43,9 +46,8 @@ namespace bcsv {
         // File-level codec (framing, decompression, checksums, packet lifecycle)
         FileCodecDispatch       file_codec_;             // Runtime-selected file codec
 
-
         // Global row tracking
-        RowCodec<LayoutType> row_codec_;      // Runtime codec dispatch (Item 11 Phase 7)
+        RowCodeDisptch          row_codec_;      // Runtime codec dispatch (Item 11 Phase 7)
         size_t                  row_pos_;                // postion of current row in file (0-based row counter)
         RowType                 row_;                   // current row, decoded data
 

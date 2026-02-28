@@ -248,7 +248,4 @@ private:
     }
 };
 
-template<typename LayoutType>
-using RowCodec = RowCodecDispatch<LayoutType>;
-
 } // namespace bcsv

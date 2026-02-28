@@ -66,25 +66,21 @@ bench::BenchmarkResult benchmarkBcsvCsvRead(const std::string& csvFile,
         return result;
     }
 
-    bench::CsvReader csvReader;
-    bcsv::Row readRow(profile.layout);
+    bcsv::CsvReader<bcsv::Layout> csvReader(profile.layout);
+    if (!csvReader.open(csvFile)) {
+        result.validation_error = "Cannot open CSV file: " + csvFile;
+        return result;
+    }
 
     bench::Timer timer;
-    std::ifstream ifs(csvFile);
-    std::string line;
-    std::getline(ifs, line); // skip header
-
     size_t rowsRead = 0;
     timer.start();
-    while (std::getline(ifs, line)) {
-        if (!csvReader.parseLine(line, profile.layout, readRow)) {
-            result.validation_error = "Parse error at row " + std::to_string(rowsRead);
-            break;
-        }
-        bench::doNotOptimize(readRow);
+    while (csvReader.readNext()) {
+        bench::doNotOptimize(csvReader.row());
         ++rowsRead;
     }
     timer.stop();
+    csvReader.close();
 
     result.read_time_ms = timer.elapsedMs();
     result.num_rows = rowsRead;
@@ -267,8 +263,8 @@ std::vector<bench::BenchmarkResult> benchmarkProfile(const bench::DatasetProfile
     // Generate the CSV file once
     const std::string csvFile = bench::tempFilePath("ext_" + profile.name, ".csv");
     {
-        std::ofstream ofs(csvFile);
-        if (!ofs.is_open()) {
+        bcsv::CsvWriter<bcsv::Layout> csvWriter(profile.layout);
+        if (!csvWriter.open(csvFile, true)) {
             bench::BenchmarkResult err;
             err.dataset_name = profile.name;
             err.mode = "ERROR";
@@ -277,15 +273,11 @@ std::vector<bench::BenchmarkResult> benchmarkProfile(const bench::DatasetProfile
             return results;
         }
 
-        bench::CsvWriter csvWriter(ofs);
-        csvWriter.writeHeader(profile.layout);
-
-        bcsv::Row row(profile.layout);
         for (size_t i = 0; i < numRows; ++i) {
-            profile.generate(row, i);
-            csvWriter.writeRow(row);
+            profile.generate(csvWriter.row(), i);
+            csvWriter.writeRow();
         }
-        ofs.flush();
+        csvWriter.close();
     }
 
     if (!quiet) {

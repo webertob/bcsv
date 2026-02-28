@@ -52,6 +52,10 @@
 #include "file_codec_dispatch.h"     // FileCodec runtime dispatch (Item 12)
 #include "row_visitors.h"  // Row visitor pattern concepts and helpers
 #include "writer.h"
+#include "reader_concept.h"          // ReaderConcept (Item 12)
+#include "writer_concept.h"          // WriterConcept (Item 12)
+#include "csv_writer.h"              // CsvWriter (Item 12)
+#include "csv_reader.h"              // CsvReader (Item 12)
 
 // Include implementations
 #include "bcsv.hpp"
@@ -63,3 +67,5 @@
 #include "row_codec_flat001.hpp"  // Flat001 codec implementation (Item 11)
 #include "row_codec_zoh001.hpp"  // ZoH001 codec implementation (Item 11)
 #include "writer.hpp"
+#include "csv_writer.hpp"         // CsvWriter implementation (Item 12)
+#include "csv_reader.hpp"         // CsvReader implementation (Item 12)

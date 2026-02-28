@@ -30,12 +30,14 @@ namespace bcsv {
      */
     template<
         LayoutConcept LayoutType,
-        typename CodecType = RowCodecFlat001<LayoutType>
+        typename RowCodec = RowCodecFlat001<LayoutType>
     >
     class Writer {
+    public:
         using RowType           = typename LayoutType::RowType;
+
+    private:
         using FilePath          = std::filesystem::path;
-        using RowCodecDispatch  = RowCodecDispatch<LayoutType>;
 
         std::string             err_msg_;                    // last error message description
         FileHeader              file_header_;                // File header for accessing flags and metadata
@@ -45,7 +47,7 @@ namespace bcsv {
         // File-level codec (framing, compression, checksums, packet lifecycle)
         FileCodecDispatch       file_codec_;                 // Runtime-selected file codec
 
-        CodecType               row_codec_;                      // Compile-time selected row codec
+        RowCodec                row_codec_;                  // Compile-time selected row codec
         uint64_t                row_cnt_ = 0;                // Total rows written across all packets
         RowType                 row_;
         

@@ -294,7 +294,7 @@ TEST(LayoutGuard, ZoH001SetupLocksLayout) {
 
 TEST(LayoutGuard, DispatchSetupLocksLayout) {
     Layout layout = makeTestLayout();
-    RowCodec<Layout> dispatch;
+    RowCodecDispatch<Layout> dispatch;
     dispatch.setLayout(layout);
     EXPECT_FALSE(layout.isStructurallyLocked());
 
@@ -307,7 +307,7 @@ TEST(LayoutGuard, DispatchSetupLocksLayout) {
 
 TEST(LayoutGuard, DispatchSelectCodecLocksLayout) {
     Layout layout = makeTestLayout();
-    RowCodec<Layout> dispatch;
+    RowCodecDispatch<Layout> dispatch;
     dispatch.selectCodec(FileFlags::ZERO_ORDER_HOLD, layout);
     EXPECT_TRUE(layout.isStructurallyLocked());
 
@@ -317,7 +317,7 @@ TEST(LayoutGuard, DispatchSelectCodecLocksLayout) {
 
 TEST(LayoutGuard, DispatchDestroyReleasesLock) {
     Layout layout = makeTestLayout();
-    RowCodec<Layout> dispatch;
+    RowCodecDispatch<Layout> dispatch;
     dispatch.selectCodec(FileFlags::NONE, layout);
     EXPECT_TRUE(layout.isStructurallyLocked());
 

@@ -41,6 +41,7 @@ set(TEST_SOURCES
     review_fixes_test.cpp
     writer_reader_test.cpp
     file_codec_test.cpp
+    csv_reader_writer_test.cpp
     bench_dataset_profiles_test.cpp
 )
 

@@ -682,25 +682,21 @@ bench::BenchmarkResult benchmarkCSV(const bench::DatasetProfile& profile,
 
     const std::string filename = bench::tempFilePath(profile.name + scenarioFileTag(scenario), ".csv");
 
-    // ----- Write CSV -----
+    // ----- Write CSV using library CsvWriter -----
     bench::Timer timer;
     {
-        std::ofstream ofs(filename);
-        if (!ofs.is_open()) {
+        bcsv::CsvWriter<bcsv::Layout> csvWriter(profile.layout);
+        if (!csvWriter.open(filename, true)) {
             result.validation_error = "Cannot open CSV file for writing: " + filename;
             return result;
         }
 
-        bench::CsvWriter csvWriter(ofs);
-        csvWriter.writeHeader(profile.layout);
-
-        bcsv::Row row(profile.layout);
         timer.start();
         for (size_t i = 0; i < numRows; ++i) {
-            profile.generate(row, i);
-            csvWriter.writeRow(row);
+            profile.generate(csvWriter.row(), i);
+            csvWriter.writeRow();
         }
-        ofs.flush();
+        csvWriter.close();
         timer.stop();
     }
     result.write_time_ms = timer.elapsedMs();
@@ -717,39 +713,32 @@ bench::BenchmarkResult benchmarkCSV(const bench::DatasetProfile& profile,
                   << std::fixed << std::setprecision(1) << result.write_time_ms << " ms\n";
     }
 
-    // ----- Read CSV and validate -----
+    // ----- Read CSV using library CsvReader and validate -----
     bench::RoundTripValidator validator;
     bcsv::Row expectedRow(profile.layout);
-    bcsv::Row readRow(profile.layout);
-    bench::CsvReader csvReader;
     const auto selectedColumns = buildSelectedColumns(profile.layout, scenario.columns_k);
     const auto predicateColumn = findFirstNumericColumn(profile.layout);
     size_t processedRows = 0;
 
     {
-        std::ifstream ifs(filename);
-        std::string line;
-        std::getline(ifs, line); // skip header
+        bcsv::CsvReader<bcsv::Layout> csvReader(profile.layout);
+        if (!csvReader.open(filename)) {
+            result.validation_error = "Cannot open CSV file for reading: " + filename;
+            return result;
+        }
 
         size_t rowsRead = 0;
         timer.start();
-        while (std::getline(ifs, line)) {
-            if (!csvReader.parseLine(line, profile.layout, readRow)) {
-                result.validation_error = "CSV parse error at row " + std::to_string(rowsRead);
-                timer.stop();
-                result.read_time_ms = timer.elapsedMs();
-                return result;
-            }
-
+        while (csvReader.readNext()) {
             profile.generate(expectedRow, rowsRead);
             if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
-                validateRowByScenario(scenario, rowsRead, expectedRow, readRow, profile.layout,
+                validateRowByScenario(scenario, rowsRead, expectedRow, csvReader.row(), profile.layout,
                                       selectedColumns, validator);
                 ++processedRows;
             }
 
             ++rowsRead;
-            bench::doNotOptimize(readRow);
+            bench::doNotOptimize(csvReader.row());
         }
         timer.stop();
 

@@ -448,21 +448,31 @@ Lean checklist gate (for every non-trivial item):
               add function bitset::decode(firstBitPos, bitCnt). To return a value of any uint type. Actual type should be the smallest required for the given bit range. i.e. uint8_t for bitCnt <=8, uint16_t for 8 to 16 bits etc.
               add function bitset::encodeTruncat(firstBitPos, bitCnt, value). Same as encode(...), but does not throw, simply truncats to match the available space. Truncats by applying a bit mask, thus an overflow by one, leads to storing a zero. 
 
-12. Implement CSV write and read functionality using the BCSV interface
-    Status: NOT STARTED — bench_common.hpp has internal CsvWriter/CsvReader (benchmark-only, not public API).
-    CLI tools csv2bcsv/bcsv2csv do inline CSV parsing. This item would unify CSV handling under
-    the BCSV Reader/Writer API, enabling seamless CSV↔BCSV pipelines.
-    Priority: MEDIUM — current CLI tools work, but a public CsvReader/CsvWriter would improve
-    the ecosystem (piping, round-trip tests, benchmark fairness).
-    12.a: Restructure BCSV Reader/Writer API
-        - Create a ReaderAPI and WriterAPI base class defining common functionality
-        - Consider whether RowView-based sparse reads belong here or in Item 20
-    12.b: Develop ReaderCSV and WriterCSV
-        - add tests csv-to-csv, csv-to-bcsv, bcsv-to-csv
-        - add tests, different delimiters, different comma/decimal characters
-    12.c: Update CLI tools csv2bcsv and bcsv2csv to use new CSV Reader/Writer
-    12.d: Update Benchmarks to use new CSV Reader/Writer
-        
+12. Implement CSV write and read functionality using the BCSV API and infrastructure 
+    Status: COMPLETED
+    Approach C (C++20 Concepts + Standalone CSV classes) — no base classes, purely concept-based API.
+    [x] 12.a: ReaderConcept + WriterConcept (C++20 concepts, open() excluded — format-specific params)
+        - reader_concept.h, writer_concept.h — static_assert verified for Reader, Writer, CsvReader, CsvWriter
+    [x] 12.b: CsvWriter<LayoutType> + CsvReader<LayoutType> — 22 tests
+        - csv_writer.h/.hpp: RFC 4180, to_chars, configurable delimiter/decimalSep, includeHeader param
+        - csv_reader.h/.hpp: state-machine parser, from_chars (with error checking), BOM handling,
+          hasHeader param, iterative readNext (no recursion), fileLine counter for error messages
+        - Tests: round-trip, all integer types, 10K rows, cross-format CSV↔BCSV, delimiters (;, tab),
+          German decimal sep, string whitespace protection, embedded delimiters/quotes/newlines,
+          empty strings, external CSV ingestion, column mismatch, bool columns, generic concept usage,
+          header-less CSV, Windows \r\n line endings, from_chars error detection, fileLine counter
+    [x] 12.c: CLI tools refactored — bcsv2csv (630→465 lines, -26%), csv2bcsv (890→699 lines, -21%)
+        - bcsv2csv: CsvWriter-based output, removed hand-rolled escapeCSVField/valueToString/getRowValueAsString
+        - csv2bcsv: CsvReader for second pass, removed setRowValue/detectDataType
+        - Removed deprecated CLI options: -q/--quote, --quote-all, -p/--precision
+    [x] 12.d: Benchmarks updated — 4 files use bcsv::CsvWriter/CsvReader (bench_macro_datasets,
+        bench_codec_compare, bench_generate_csv, bench_external_csv). All CSV round-trip validations PASS.
+    [x] 12.e: 3rd-party comparison — BCSV CsvReader vs vincentlaucsb/csv-parser (100K rows, 14 profiles)
+        BCSV faster: bool_heavy 1.38x, weather 1.40x, iot_fleet 1.36x, realistic 1.11x, rtl_waveform 1.38x
+        Competitive: sensor_noisy 0.95x, event_log 0.99x
+        External faster: string_heavy 0.70x, high_cardinality_string 0.40x, others 0.78-0.86x
+    [x] 12.f: LEAN review — all criteria PASS/PARTIAL. Fixed: from_chars error checking, recursive
+        readNext→iterative loop, file-line counter for error messages, added 4 missing test cases.
 
 13. Update Tools and Libraries to use new API
     [x] CLI tools: ZoH auto-detection is RESOLVED — Reader uses RowCodecDispatch + FileCodecDispatch,
@@ -478,26 +488,42 @@ Lean checklist gate (for every non-trivial item):
         but C_API path would enable cross-language CLI tool builds)
 
 
-14. Implement new row encoding schema, using variable length encoding for float and integer values
-    Main usage of bcsv is the handling of time-series data. Thus we expect many rcurring or constantly falling or raising values and values that are similar to previouse values. In many cases the full extend of a variable type is not required to encode the actual value.
+14. Implement new row encoding schema (Delta Encoding), which uses variable length encoding for float and integer values
+    Main usage of bcsv is the handling of time-series data. Thus we expect many recurring, monotonic falling or raising values (First-Order-Constant) or values that are similar (close) to previouse values. In many cases the full extend of a variable type is not required to encode the actual value.
     This feature is working on a per row level, not only a single cell/value as the current vle_encode / vle_decode functions do. It tries to provide a better balance between computational effort and compression and takes advantange on previouse data (time-series).
     
-    Design goals:
-    1. shortest possible encoding for: 
-        - const values (Zero-Order-Hold), row(n).col(i) = row(n-1).col(i)
-        - monoton raising/falling values (first-order), row(n).col(i) = row(n-1).col(i) + (row(n-1).col(i) - row(n-2).col(i))
-        - bool to be stored directly as single bit
-    2. small overhead in worst case scenarios
-    3. exploit variable length to shorten storage for large types
-    4. exploit delta encoding to shorten storage for large types
-    5. allow easy comparision between two rows to identify equality in typical scenarios (no change, linear change)
+    Design goals, improve throughput and further reduction of file sizes:
+    Concept:
+    1. exploit delta encoding to shorten storage for large types 
+    2. exploit variable length to shorten storage for large types (VLE/ZigZag, Gorilla)
+    3. Special handling of constant values ( row(n).col(i) = row(n-1).col(i)), we refere to it as Zero-order-Hold (ZoH)
+    4. Special handling of constant faling/raising values (row(n).col(i) = row(n-1).col(i) + (row(n-1).col(i) - row(n-2).col(i)), we refere t it as First-order-Constant (FoC)
+    5. Use block encoding (jump tables) to avoid complex conditional trees.
+    6. small overhead in worst case scenariouse excepted
+    7. exploit ZoH short cut to skip row if row_header of the current row equals row_header of the previouse row exactly. (row_length = 0) 
 
-    Not finaly decided yet:
-        - store column encoding data in a dedictate area (row header) or close to data? Current pitch: lets implement a row header that does not require to follow byte alignment rules 
-            - Bit-0 x N
-            - Bis 1:2 x N (-bools, -rep)
-            
-        - 8bit aligned / byte aligned data?
+    Implementation:
+    Based on RowCodec-ZoH (copy code, no reference)
+    Additionaly to storing previouse row values (data_), we need to store gradiant information grad_data_ use 
+    
+    
+    
+    Codec Architecture.
+        ZoH codec do be used as the base line for the row format.
+        row_header to be extended to hold information about number of bytes required to encode a specific column value.
+            length information only present for numerical columns 
+            length information only present if value for this column has changed -> conditional on row_header has changed bit status
+            value range for length to be considered i.e. 
+                uint8_t/int8_t   value range is 0 to 1: 
+                    0: means current row is linear interpolation from previouse 2 rows, no value stored.
+                    1: means value is neiter constant (ZoH), nor linear interpolation (First Order Hold) thus it is encoded directly using one byte.
+                uint16_t/int16_t value range is 0 to 2:
+                    0: means current row is linear interpolation from previouse 2 rows, no value stored.
+                    1-2: means value is neiter contstant (ZoH), nor linear interpolation (First Order Hold) thus it is encoded directly using 1 or 2 bytes. The actual value stored is the difference between current and previouse value, stored in VLE/zigzag encoding.
+
+
+
+
         
     Bit-0 Repetion (Rep)
         0: check bits 1:5 for additional information on column encoding

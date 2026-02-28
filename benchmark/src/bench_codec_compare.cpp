@@ -184,39 +184,35 @@ IterResult runCsv(const bench::DatasetProfile& profile,
     IterResult r;
     bench::Timer timer;
 
+    // ----- Write CSV using library CsvWriter -----
     {
-        std::ofstream ofs(filePath);
-        bench::CsvWriter csvWriter(ofs);
-        csvWriter.writeHeader(profile.layout);
+        bcsv::CsvWriter<bcsv::Layout> csvWriter(profile.layout);
+        csvWriter.open(filePath, true);  // writes header automatically
 
-        bcsv::Row row(profile.layout);
         timer.start();
         for (size_t i = 0; i < numRows; ++i) {
-            profile.generate(row, i);
-            csvWriter.writeRow(row);
+            profile.generate(csvWriter.row(), i);
+            csvWriter.writeRow();
         }
-        ofs.flush();
+        csvWriter.close();
         timer.stop();
     }
     r.write_ms = timer.elapsedMs();
     r.file_size = std::filesystem::file_size(filePath);
 
+    // ----- Read CSV using library CsvReader -----
     {
-        std::ifstream ifs(filePath);
-        std::string line;
-        std::getline(ifs, line); // skip header
-
-        bcsv::Row row(profile.layout);
-        bench::CsvReader csvReader;
+        bcsv::CsvReader<bcsv::Layout> csvReader(profile.layout);
+        csvReader.open(filePath);
         size_t rowsRead = 0;
 
         timer.start();
-        while (std::getline(ifs, line)) {
-            csvReader.parseLine(line, profile.layout, row);
-            bench::doNotOptimize(row);
+        while (csvReader.readNext()) {
+            bench::doNotOptimize(csvReader.row());
             ++rowsRead;
         }
         timer.stop();
+        csvReader.close();
 
         r.read_ms = timer.elapsedMs();
         r.valid = (rowsRead == numRows);
