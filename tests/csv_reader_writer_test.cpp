@@ -1070,3 +1070,413 @@ TEST_F(CsvReaderWriterTest, FileLineCounter) {
     EXPECT_FALSE(reader.readNext());
     reader.close();
 }
+// ============================================================================
+// Phase 1 — Additional coverage tests
+// ============================================================================
+
+// ── Test: NaN/Inf round-trip for float and double ───────────────────
+TEST_F(CsvReaderWriterTest, NanInf_RoundTrip) {
+    bcsv::Layout layout;
+    layout.addColumn({"f", bcsv::ColumnType::FLOAT});
+    layout.addColumn({"d", bcsv::ColumnType::DOUBLE});
+
+    auto path = tmpFile("nan_inf.csv");
+
+    float posInfF = std::numeric_limits<float>::infinity();
+    float negInfF = -std::numeric_limits<float>::infinity();
+    float nanF    = std::numeric_limits<float>::quiet_NaN();
+    double posInfD = std::numeric_limits<double>::infinity();
+    double negInfD = -std::numeric_limits<double>::infinity();
+    double nanD    = std::numeric_limits<double>::quiet_NaN();
+
+    {
+        bcsv::CsvWriter<bcsv::Layout> writer(layout);
+        ASSERT_TRUE(writer.open(path, true));
+
+        writer.row().set(0, posInfF);
+        writer.row().set(1, posInfD);
+        writer.writeRow();
+
+        writer.row().set(0, negInfF);
+        writer.row().set(1, negInfD);
+        writer.writeRow();
+
+        writer.row().set(0, nanF);
+        writer.row().set(1, nanD);
+        writer.writeRow();
+
+        writer.close();
+    }
+    {
+        bcsv::CsvReader<bcsv::Layout> reader(layout);
+        ASSERT_TRUE(reader.open(path));
+
+        // Row 0: +Inf
+        ASSERT_TRUE(reader.readNext());
+        EXPECT_EQ(reader.row().get<float>(0), posInfF);
+        EXPECT_EQ(reader.row().get<double>(1), posInfD);
+
+        // Row 1: -Inf
+        ASSERT_TRUE(reader.readNext());
+        EXPECT_EQ(reader.row().get<float>(0), negInfF);
+        EXPECT_EQ(reader.row().get<double>(1), negInfD);
+
+        // Row 2: NaN (use isnan — NaN != NaN by IEEE 754)
+        ASSERT_TRUE(reader.readNext());
+        EXPECT_TRUE(std::isnan(reader.row().get<float>(0)));
+        EXPECT_TRUE(std::isnan(reader.row().get<double>(1)));
+
+        EXPECT_FALSE(reader.readNext());
+        reader.close();
+    }
+}
+
+// ── Test: UTF-8 BOM handling ────────────────────────────────────────
+TEST_F(CsvReaderWriterTest, UTF8_BOM) {
+    bcsv::Layout layout;
+    layout.addColumn({"val", bcsv::ColumnType::INT32});
+
+    auto path = tmpFile("bom.csv");
+
+    // Manually write a CSV file starting with UTF-8 BOM (EF BB BF)
+    {
+        std::ofstream f(path, std::ios::binary);
+        f << "\xEF\xBB\xBF";  // UTF-8 BOM
+        f << "val\n";
+        f << "42\n";
+        f << "99\n";
+        f.close();
+    }
+
+    bcsv::CsvReader<bcsv::Layout> reader(layout);
+    ASSERT_TRUE(reader.open(path))
+        << "BOM file should open successfully: " << reader.getErrorMsg();
+
+    ASSERT_TRUE(reader.readNext());
+    EXPECT_EQ(reader.row().get<int32_t>(0), 42);
+
+    ASSERT_TRUE(reader.readNext());
+    EXPECT_EQ(reader.row().get<int32_t>(0), 99);
+
+    EXPECT_FALSE(reader.readNext());
+    reader.close();
+}
+
+// ── Test: Multi-line quoted field (externally written) ──────────────
+TEST_F(CsvReaderWriterTest, MultiLineQuotedField_External) {
+    bcsv::Layout layout;
+    layout.addColumn({"id", bcsv::ColumnType::INT32});
+    layout.addColumn({"text", bcsv::ColumnType::STRING});
+    layout.addColumn({"val", bcsv::ColumnType::INT32});
+
+    auto path = tmpFile("multiline.csv");
+
+    // Write a CSV that has a quoted field spanning multiple physical lines
+    {
+        std::ofstream f(path);
+        f << "id,text,val\n";
+        f << "1,\"line one\nline two\nline three\",100\n";
+        f << "2,\"simple\",200\n";
+        f.close();
+    }
+
+    bcsv::CsvReader<bcsv::Layout> reader(layout);
+    ASSERT_TRUE(reader.open(path));
+
+    ASSERT_TRUE(reader.readNext());
+    EXPECT_EQ(reader.row().get<int32_t>(0), 1);
+    EXPECT_EQ(reader.row().get<std::string>(1), "line one\nline two\nline three");
+    EXPECT_EQ(reader.row().get<int32_t>(2), 100);
+
+    ASSERT_TRUE(reader.readNext());
+    EXPECT_EQ(reader.row().get<int32_t>(0), 2);
+    EXPECT_EQ(reader.row().get<std::string>(1), "simple");
+    EXPECT_EQ(reader.row().get<int32_t>(2), 200);
+
+    EXPECT_FALSE(reader.readNext());
+    reader.close();
+}
+
+// ── Test: Scientific notation with comma decimal separator ──────────
+TEST_F(CsvReaderWriterTest, ScientificNotation_CommaDecimal) {
+    bcsv::Layout layout;
+    layout.addColumn({"f", bcsv::ColumnType::FLOAT});
+    layout.addColumn({"d", bcsv::ColumnType::DOUBLE});
+
+    auto path = tmpFile("sci_comma.csv");
+
+    // Write values that std::to_chars may render in scientific notation
+    float  largeF = 1.5e10f;
+    double largeD = 2.5e20;
+    float  smallF = 1.5e-6f;
+    double smallD = 2.5e-15;
+
+    {
+        bcsv::CsvWriter<bcsv::Layout> writer(layout, ';', ',');
+        ASSERT_TRUE(writer.open(path, true));
+
+        writer.row().set(0, largeF);
+        writer.row().set(1, largeD);
+        writer.writeRow();
+
+        writer.row().set(0, smallF);
+        writer.row().set(1, smallD);
+        writer.writeRow();
+
+        writer.close();
+    }
+    {
+        bcsv::CsvReader<bcsv::Layout> reader(layout, ';', ',');
+        ASSERT_TRUE(reader.open(path));
+
+        ASSERT_TRUE(reader.readNext());
+        EXPECT_FLOAT_EQ(reader.row().get<float>(0), largeF);
+        EXPECT_DOUBLE_EQ(reader.row().get<double>(1), largeD);
+
+        ASSERT_TRUE(reader.readNext());
+        EXPECT_FLOAT_EQ(reader.row().get<float>(0), smallF);
+        EXPECT_DOUBLE_EQ(reader.row().get<double>(1), smallD);
+
+        EXPECT_FALSE(reader.readNext());
+        reader.close();
+    }
+}
+
+// ── Test: write() with external row ─────────────────────────────────
+TEST_F(CsvReaderWriterTest, WriteExternalRow) {
+    bcsv::Layout layout;
+    layout.addColumn({"a", bcsv::ColumnType::INT32});
+    layout.addColumn({"b", bcsv::ColumnType::STRING});
+
+    auto path = tmpFile("ext_row.csv");
+
+    {
+        bcsv::CsvWriter<bcsv::Layout> writer(layout);
+        ASSERT_TRUE(writer.open(path, true));
+
+        // Use write(row) instead of filling writer.row() + writeRow()
+        bcsv::Row externalRow(layout);
+        externalRow.set<int32_t>(0, 42);
+        externalRow.set<std::string_view>(1, "hello");
+        writer.write(externalRow);
+
+        externalRow.set<int32_t>(0, 99);
+        externalRow.set<std::string_view>(1, "world");
+        writer.write(externalRow);
+
+        EXPECT_EQ(writer.rowCount(), 2u);
+        writer.close();
+    }
+    {
+        bcsv::CsvReader<bcsv::Layout> reader(layout);
+        ASSERT_TRUE(reader.open(path));
+
+        ASSERT_TRUE(reader.readNext());
+        EXPECT_EQ(reader.row().get<int32_t>(0), 42);
+        EXPECT_EQ(reader.row().get<std::string>(1), "hello");
+
+        ASSERT_TRUE(reader.readNext());
+        EXPECT_EQ(reader.row().get<int32_t>(0), 99);
+        EXPECT_EQ(reader.row().get<std::string>(1), "world");
+
+        EXPECT_FALSE(reader.readNext());
+        reader.close();
+    }
+}
+
+// ── Test: Large string (near MAX_STRING_LENGTH) ─────────────────────
+TEST_F(CsvReaderWriterTest, LargeString) {
+    bcsv::Layout layout;
+    layout.addColumn({"s", bcsv::ColumnType::STRING});
+    layout.addColumn({"n", bcsv::ColumnType::INT32});
+
+    auto path = tmpFile("large_str.csv");
+
+    // Create a string of 10,000 characters (well above typical but below MAX_STRING_LENGTH)
+    std::string longStr(10000, 'X');
+    // Insert some special chars to test quoting
+    longStr[0] = '"';
+    longStr[100] = ',';
+    longStr[200] = '\n';
+    longStr[9999] = '"';
+
+    {
+        bcsv::CsvWriter<bcsv::Layout> writer(layout);
+        ASSERT_TRUE(writer.open(path, true));
+
+        writer.row().set<std::string_view>(0, longStr);
+        writer.row().set<int32_t>(1, 42);
+        writer.writeRow();
+
+        writer.close();
+    }
+    {
+        bcsv::CsvReader<bcsv::Layout> reader(layout);
+        ASSERT_TRUE(reader.open(path));
+
+        ASSERT_TRUE(reader.readNext());
+        EXPECT_EQ(reader.row().get<std::string>(0), longStr);
+        EXPECT_EQ(reader.row().get<int32_t>(1), 42);
+
+        EXPECT_FALSE(reader.readNext());
+        reader.close();
+    }
+}
+
+// ── Test: Pathological quoting (doubled quotes, adjacent to delimiters) ──
+TEST_F(CsvReaderWriterTest, PathologicalQuoting) {
+    bcsv::Layout layout;
+    layout.addColumn({"s", bcsv::ColumnType::STRING});
+
+    auto path = tmpFile("patho_quote.csv");
+
+    // Test strings with tricky quoting patterns
+    std::vector<std::string> tricky = {
+        "",                     // empty string
+        "\"",                   // single quote
+        "\"\"",                 // two quotes
+        "a\"b",                 // quote in middle
+        "\"hello\"",            // quoted word
+        ",",                    // just a delimiter
+        "\n",                   // just a newline
+        "a,b\"c\nd",            // mix of special chars
+        "   ",                  // whitespace only
+    };
+
+    {
+        bcsv::CsvWriter<bcsv::Layout> writer(layout);
+        ASSERT_TRUE(writer.open(path, true));
+
+        for (const auto& s : tricky) {
+            writer.row().set<std::string_view>(0, s);
+            writer.writeRow();
+        }
+
+        writer.close();
+    }
+    {
+        bcsv::CsvReader<bcsv::Layout> reader(layout);
+        ASSERT_TRUE(reader.open(path));
+
+        for (size_t i = 0; i < tricky.size(); ++i) {
+            ASSERT_TRUE(reader.readNext()) << "Failed at row " << i;
+            EXPECT_EQ(reader.row().get<std::string>(0), tricky[i])
+                << "Mismatch at row " << i << " (expected: [" << tricky[i] << "])";
+        }
+
+        EXPECT_FALSE(reader.readNext());
+        reader.close();
+    }
+}
+
+// ── Test: Denormalized and subnormal float values ───────────────────
+TEST_F(CsvReaderWriterTest, SubnormalFloat_RoundTrip) {
+    bcsv::Layout layout;
+    layout.addColumn({"f", bcsv::ColumnType::FLOAT});
+    layout.addColumn({"d", bcsv::ColumnType::DOUBLE});
+
+    auto path = tmpFile("subnormal.csv");
+
+    float  subF = std::numeric_limits<float>::denorm_min();
+    double subD = std::numeric_limits<double>::denorm_min();
+    float  minF = std::numeric_limits<float>::min();  // smallest normal
+    double minD = std::numeric_limits<double>::min();
+
+    {
+        bcsv::CsvWriter<bcsv::Layout> writer(layout);
+        ASSERT_TRUE(writer.open(path, true));
+
+        writer.row().set(0, subF);
+        writer.row().set(1, subD);
+        writer.writeRow();
+
+        writer.row().set(0, minF);
+        writer.row().set(1, minD);
+        writer.writeRow();
+
+        writer.close();
+    }
+    {
+        bcsv::CsvReader<bcsv::Layout> reader(layout);
+        ASSERT_TRUE(reader.open(path));
+
+        ASSERT_TRUE(reader.readNext());
+        EXPECT_FLOAT_EQ(reader.row().get<float>(0), subF);
+        EXPECT_DOUBLE_EQ(reader.row().get<double>(1), subD);
+
+        ASSERT_TRUE(reader.readNext());
+        EXPECT_FLOAT_EQ(reader.row().get<float>(0), minF);
+        EXPECT_DOUBLE_EQ(reader.row().get<double>(1), minD);
+
+        EXPECT_FALSE(reader.readNext());
+        reader.close();
+    }
+}
+
+// ── Test: Single-column CSV (edge case: no delimiter in data) ───────
+TEST_F(CsvReaderWriterTest, SingleColumnCSV) {
+    bcsv::Layout layout;
+    layout.addColumn({"val", bcsv::ColumnType::INT64});
+
+    auto path = tmpFile("single_col.csv");
+
+    {
+        bcsv::CsvWriter<bcsv::Layout> writer(layout);
+        ASSERT_TRUE(writer.open(path, true));
+
+        for (int64_t i = 0; i < 5; ++i) {
+            writer.row().set<int64_t>(0, i * 1000000000LL);
+            writer.writeRow();
+        }
+        writer.close();
+    }
+    {
+        bcsv::CsvReader<bcsv::Layout> reader(layout);
+        ASSERT_TRUE(reader.open(path));
+
+        for (int64_t i = 0; i < 5; ++i) {
+            ASSERT_TRUE(reader.readNext());
+            EXPECT_EQ(reader.row().get<int64_t>(0), i * 1000000000LL);
+        }
+        EXPECT_FALSE(reader.readNext());
+        reader.close();
+    }
+}
+
+// ── Test: Close then reopen does not corrupt output ─────────────────
+TEST_F(CsvReaderWriterTest, CloseAndVerify) {
+    bcsv::Layout layout;
+    layout.addColumn({"val", bcsv::ColumnType::INT32});
+
+    auto path = tmpFile("close_test.csv");
+
+    {
+        bcsv::CsvWriter<bcsv::Layout> writer(layout);
+        ASSERT_TRUE(writer.open(path, true));
+
+        writer.row().set<int32_t>(0, 1);
+        writer.writeRow();
+
+        writer.row().set<int32_t>(0, 2);
+        writer.writeRow();
+
+        writer.row().set<int32_t>(0, 3);
+        writer.writeRow();
+
+        EXPECT_EQ(writer.rowCount(), 3u);
+        writer.close();
+    }
+    {
+        bcsv::CsvReader<bcsv::Layout> reader(layout);
+        ASSERT_TRUE(reader.open(path));
+
+        ASSERT_TRUE(reader.readNext());
+        EXPECT_EQ(reader.row().get<int32_t>(0), 1);
+        ASSERT_TRUE(reader.readNext());
+        EXPECT_EQ(reader.row().get<int32_t>(0), 2);
+        ASSERT_TRUE(reader.readNext());
+        EXPECT_EQ(reader.row().get<int32_t>(0), 3);
+        EXPECT_FALSE(reader.readNext());
+        reader.close();
+    }
+}

@@ -1382,14 +1382,29 @@ void Bitset<N>::shrinkToFit() requires(!IS_FIXED) {
 }
 
 // ===== Multi-bit Field Packing =====
+// Word-level implementation: 1-2 word operations instead of per-bit loops.
 
 template<size_t N>
 void Bitset<N>::encode(size_t pos, size_t bitCount, uint8_t value) {
     assert(bitCount >= 1 && bitCount <= 8);
     assert(pos + bitCount <= size());
-    // Write bits LSB-first
-    for (size_t i = 0; i < bitCount; ++i) {
-        (*this)[pos + i] = (value >> i) & 1;
+
+    word_t* words = wordData();
+    const size_t wi = bitToWordIndex(pos);
+    const size_t bi = bitToBitIndex(pos);
+    const word_t mask = (word_t{1} << bitCount) - 1;  // e.g. bitCount=3 → 0b111
+    const word_t val  = static_cast<word_t>(value) & mask;
+
+    // Clear old bits, set new bits in the first word
+    words[wi] = (words[wi] & ~(mask << bi)) | (val << bi);
+
+    // If field crosses a word boundary, handle the spill into the next word
+    if (bi + bitCount > WORD_BITS) {
+        const size_t lo_bits = WORD_BITS - bi;          // bits placed in first word
+        const size_t hi_bits = bitCount - lo_bits;       // bits spilling into second word
+        const word_t hi_mask = (word_t{1} << hi_bits) - 1;
+        const word_t hi_val  = val >> lo_bits;
+        words[wi + 1] = (words[wi + 1] & ~hi_mask) | hi_val;
     }
 }
 
@@ -1397,13 +1412,23 @@ template<size_t N>
 uint8_t Bitset<N>::decode(size_t pos, size_t bitCount) const {
     assert(bitCount >= 1 && bitCount <= 8);
     assert(pos + bitCount <= size());
-    uint8_t result = 0;
-    for (size_t i = 0; i < bitCount; ++i) {
-        if ((*this)[pos + i]) {
-            result |= (1u << i);
-        }
+
+    const word_t* words = wordData();
+    const size_t wi = bitToWordIndex(pos);
+    const size_t bi = bitToBitIndex(pos);
+    const word_t mask = (word_t{1} << bitCount) - 1;
+
+    word_t result = (words[wi] >> bi) & mask;
+
+    // If field crosses a word boundary, grab remaining bits from next word
+    if (bi + bitCount > WORD_BITS) {
+        const size_t lo_bits = WORD_BITS - bi;
+        const size_t hi_bits = bitCount - lo_bits;
+        const word_t hi_mask = (word_t{1} << hi_bits) - 1;
+        result |= (words[wi + 1] & hi_mask) << lo_bits;
     }
-    return result;
+
+    return static_cast<uint8_t>(result);
 }
 
 // ===== Operation Implementations =====

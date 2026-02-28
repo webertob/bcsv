@@ -238,4 +238,113 @@ static void BM_Bitset_ZoH_BitLoop_Baseline(benchmark::State& state) {
 BENCHMARK(BM_Bitset_ZoH_BitLoop_Baseline)
     ->Arg(1)->Arg(8)->Arg(32)->Arg(64)->Arg(128)->Arg(130)->Arg(256)->Arg(512);
 
+// ============================================================================
+// Encode/Decode benchmarks (multi-bit field packing for delta codec headers)
+// ============================================================================
+
+// Simulate delta codec header: N columns × (2 mode bits + 3 length bits) = 5 bits each
+static void BM_Bitset_Encode_WordLevel(benchmark::State& state) {
+    const size_t cols = static_cast<size_t>(state.range(0));
+    const size_t headBits = cols * 5 + 8;  // +8 for bools
+    Bitset<> head(headBits);
+    const uint8_t mode = 0x03;
+    const uint8_t len  = 0x05;
+    for (auto _ : state) {
+        size_t pos = 8;  // skip bool section
+        for (size_t c = 0; c < cols; ++c) {
+            head.encode(pos, 2, mode);
+            pos += 2;
+            head.encode(pos, 3, len);
+            pos += 3;
+        }
+        benchmark::DoNotOptimize(head.data());
+    }
+    state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(cols));
+}
+BENCHMARK(BM_Bitset_Encode_WordLevel)
+    ->Arg(10)->Arg(50)->Arg(100)->Arg(500)->Arg(1000);
+
+static void BM_Bitset_Decode_WordLevel(benchmark::State& state) {
+    const size_t cols = static_cast<size_t>(state.range(0));
+    const size_t headBits = cols * 5 + 8;
+    Bitset<> head(headBits);
+    // Pre-fill with data
+    for (size_t c = 0; c < cols; ++c) {
+        head.encode(8 + c * 5, 2, 0x03);
+        head.encode(8 + c * 5 + 2, 3, 0x05);
+    }
+    uint8_t modeSum = 0, lenSum = 0;
+    for (auto _ : state) {
+        size_t pos = 8;
+        for (size_t c = 0; c < cols; ++c) {
+            modeSum += head.decode(pos, 2);
+            pos += 2;
+            lenSum += head.decode(pos, 3);
+            pos += 3;
+        }
+        benchmark::DoNotOptimize(modeSum);
+        benchmark::DoNotOptimize(lenSum);
+    }
+    state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(cols));
+}
+BENCHMARK(BM_Bitset_Decode_WordLevel)
+    ->Arg(10)->Arg(50)->Arg(100)->Arg(500)->Arg(1000);
+
+// Baseline: per-bit loop (the old implementation) for comparison
+static void BM_Bitset_Encode_BitLoop_Baseline(benchmark::State& state) {
+    const size_t cols = static_cast<size_t>(state.range(0));
+    const size_t headBits = cols * 5 + 8;
+    Bitset<> head(headBits);
+    const uint8_t mode = 0x03;
+    const uint8_t len  = 0x05;
+    for (auto _ : state) {
+        size_t pos = 8;
+        for (size_t c = 0; c < cols; ++c) {
+            // Manual bit-by-bit encode (old implementation)
+            for (size_t i = 0; i < 2; ++i)
+                head.set(pos + i, (mode >> i) & 1);
+            pos += 2;
+            for (size_t i = 0; i < 3; ++i)
+                head.set(pos + i, (len >> i) & 1);
+            pos += 3;
+        }
+        benchmark::DoNotOptimize(head.data());
+    }
+    state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(cols));
+}
+BENCHMARK(BM_Bitset_Encode_BitLoop_Baseline)
+    ->Arg(10)->Arg(50)->Arg(100)->Arg(500)->Arg(1000);
+
+static void BM_Bitset_Decode_BitLoop_Baseline(benchmark::State& state) {
+    const size_t cols = static_cast<size_t>(state.range(0));
+    const size_t headBits = cols * 5 + 8;
+    Bitset<> head(headBits);
+    for (size_t c = 0; c < cols; ++c) {
+        head.encode(8 + c * 5, 2, 0x03);
+        head.encode(8 + c * 5 + 2, 3, 0x05);
+    }
+    uint8_t modeSum = 0, lenSum = 0;
+    for (auto _ : state) {
+        size_t pos = 8;
+        for (size_t c = 0; c < cols; ++c) {
+            // Manual bit-by-bit decode (old implementation)
+            uint8_t m = 0;
+            for (size_t i = 0; i < 2; ++i)
+                if (head[pos + i]) m |= (1u << i);
+            pos += 2;
+            modeSum += m;
+            uint8_t l = 0;
+            for (size_t i = 0; i < 3; ++i)
+                if (head[pos + i]) l |= (1u << i);
+            pos += 3;
+            lenSum += l;
+        }
+        benchmark::DoNotOptimize(modeSum);
+        benchmark::DoNotOptimize(lenSum);
+    }
+    state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(cols));
+}
+BENCHMARK(BM_Bitset_Decode_BitLoop_Baseline)
+    ->Arg(10)->Arg(50)->Arg(100)->Arg(500)->Arg(1000);
+
 BENCHMARK_MAIN();

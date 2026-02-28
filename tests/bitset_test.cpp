@@ -2147,6 +2147,183 @@ TEST(BitsetBlockOpsTest, SOO_Boundary_FreeFunction) {
 // Summary Test Output
 // ============================================================================
 
+// ===== Encode/Decode (Multi-bit Field Packing) Tests =====
+
+TEST(BitsetEncodeDecode, SingleBit_FixedSize) {
+    bcsv::Bitset<64> bs;
+    bs.encode(0, 1, 1);
+    EXPECT_EQ(bs.decode(0, 1), 1);
+    bs.encode(0, 1, 0);
+    EXPECT_EQ(bs.decode(0, 1), 0);
+    bs.encode(63, 1, 1);
+    EXPECT_EQ(bs.decode(63, 1), 1);
+}
+
+TEST(BitsetEncodeDecode, TwoBit_AllValues) {
+    bcsv::Bitset<64> bs;
+    for (uint8_t v = 0; v < 4; ++v) {
+        bs.encode(10, 2, v);
+        EXPECT_EQ(bs.decode(10, 2), v) << "value=" << (int)v;
+    }
+}
+
+TEST(BitsetEncodeDecode, ThreeBit_AllValues) {
+    bcsv::Bitset<64> bs;
+    for (uint8_t v = 0; v < 8; ++v) {
+        bs.encode(5, 3, v);
+        EXPECT_EQ(bs.decode(5, 3), v) << "value=" << (int)v;
+    }
+}
+
+TEST(BitsetEncodeDecode, FourBit_AllValues) {
+    bcsv::Bitset<64> bs;
+    for (uint8_t v = 0; v < 16; ++v) {
+        bs.encode(20, 4, v);
+        EXPECT_EQ(bs.decode(20, 4), v) << "value=" << (int)v;
+    }
+}
+
+TEST(BitsetEncodeDecode, EightBit_AllValues) {
+    bcsv::Bitset<256> bs;
+    for (int v = 0; v < 256; ++v) {
+        bs.encode(100, 8, static_cast<uint8_t>(v));
+        EXPECT_EQ(bs.decode(100, 8), static_cast<uint8_t>(v)) << "value=" << v;
+    }
+}
+
+TEST(BitsetEncodeDecode, WordBoundary_Crossing) {
+    // Encode a field that spans two 64-bit words (bits 62..65)
+    bcsv::Bitset<128> bs;
+    bs.encode(62, 4, 0b1010);
+    EXPECT_EQ(bs.decode(62, 4), 0b1010);
+
+    // Another crossing: bits 61..68 (8 bits across word boundary)
+    bs.encode(61, 8, 0xA5);
+    EXPECT_EQ(bs.decode(61, 8), 0xA5);
+}
+
+TEST(BitsetEncodeDecode, AdjacentFields_NoOverlap) {
+    bcsv::Bitset<64> bs;
+    // Pack three adjacent 2-bit fields
+    bs.encode(0, 2, 0b11);
+    bs.encode(2, 2, 0b01);
+    bs.encode(4, 2, 0b10);
+
+    EXPECT_EQ(bs.decode(0, 2), 0b11);
+    EXPECT_EQ(bs.decode(2, 2), 0b01);
+    EXPECT_EQ(bs.decode(4, 2), 0b10);
+}
+
+TEST(BitsetEncodeDecode, Overwrite_PreservesNeighbors) {
+    bcsv::Bitset<64> bs;
+    // Set surrounding bits
+    bs.set(0); bs.set(1); bs.set(6); bs.set(7);
+    // Encode 4-bit field in bits 2..5
+    bs.encode(2, 4, 0b0110);
+
+    EXPECT_TRUE(bs[0]);
+    EXPECT_TRUE(bs[1]);
+    EXPECT_EQ(bs.decode(2, 4), 0b0110);
+    EXPECT_TRUE(bs[6]);
+    EXPECT_TRUE(bs[7]);
+}
+
+TEST(BitsetEncodeDecode, DynamicBitset) {
+    bcsv::Bitset<> bs(128);
+    bs.encode(60, 8, 0xBE);
+    EXPECT_EQ(bs.decode(60, 8), 0xBE);
+
+    bs.encode(0, 3, 5);
+    EXPECT_EQ(bs.decode(0, 3), 5);
+
+    // Field near end
+    bs.encode(120, 8, 0xFF);
+    EXPECT_EQ(bs.decode(120, 8), 0xFF);
+}
+
+TEST(BitsetEncodeDecode, SequentialPacking) {
+    // Simulate how delta codec packs: mode(2) + length(3) fields
+    bcsv::Bitset<256> bs;
+    size_t pos = 0;
+    struct Field { uint8_t mode; uint8_t length; };
+    std::vector<Field> fields = {{0,0},{1,3},{2,7},{3,5},{0,1},{1,0},{2,4},{3,6}};
+
+    for (auto& f : fields) {
+        bs.encode(pos, 2, f.mode);
+        pos += 2;
+        bs.encode(pos, 3, f.length);
+        pos += 3;
+    }
+
+    // Read back
+    pos = 0;
+    for (auto& f : fields) {
+        EXPECT_EQ(bs.decode(pos, 2), f.mode) << "pos=" << pos;
+        pos += 2;
+        EXPECT_EQ(bs.decode(pos, 3), f.length) << "pos=" << pos;
+        pos += 3;
+    }
+}
+
+TEST(BitsetEncodeDecode, ValueTruncation) {
+    // Encode a value larger than fits in bitCount — only low bits kept
+    bcsv::Bitset<64> bs;
+    bs.encode(0, 2, 0xFF);  // Only bottom 2 bits should be stored
+    EXPECT_EQ(bs.decode(0, 2), 0x03);
+
+    bs.encode(10, 3, 0xFF);  // Only bottom 3 bits
+    EXPECT_EQ(bs.decode(10, 3), 0x07);
+}
+
+TEST(BitsetEncodeDecode, ZeroValue) {
+    bcsv::Bitset<64> bs;
+    bs.set();  // All ones
+    bs.encode(10, 4, 0);
+    EXPECT_EQ(bs.decode(10, 4), 0);
+    // Neighbors should still be 1
+    EXPECT_TRUE(bs[9]);
+    EXPECT_TRUE(bs[14]);
+}
+
+TEST(BitsetEncodeDecode, AllBitWidths_AtWordStart) {
+    bcsv::Bitset<64> bs;
+    for (size_t w = 1; w <= 8; ++w) {
+        uint8_t maxVal = static_cast<uint8_t>((1u << w) - 1);
+        bs.encode(0, w, maxVal);
+        EXPECT_EQ(bs.decode(0, w), maxVal) << "width=" << w;
+        bs.encode(0, w, 0);
+        EXPECT_EQ(bs.decode(0, w), 0) << "width=" << w;
+    }
+}
+
+TEST(BitsetEncodeDecode, LargeFixedBitset) {
+    bcsv::Bitset<8192> bs;
+    // Pack at various positions throughout
+    bs.encode(0, 8, 0xAA);
+    bs.encode(64, 8, 0x55);
+    bs.encode(4090, 8, 0xDE);
+    bs.encode(8184, 8, 0xAD);
+
+    EXPECT_EQ(bs.decode(0, 8), 0xAA);
+    EXPECT_EQ(bs.decode(64, 8), 0x55);
+    EXPECT_EQ(bs.decode(4090, 8), 0xDE);
+    EXPECT_EQ(bs.decode(8184, 8), 0xAD);
+}
+
+TEST(BitsetEncodeDecode, MultipleWordBoundaries) {
+    // Test crossing at every possible word boundary
+    bcsv::Bitset<256> bs;
+    // For each word boundary (at bit 64, 128, 192), test an 8-bit field crossing it
+    for (size_t boundary : {64u, 128u, 192u}) {
+        for (size_t start = boundary - 7; start < boundary; ++start) {
+            uint8_t val = static_cast<uint8_t>(start & 0xFF);
+            bs.encode(start, 8, val);
+            EXPECT_EQ(bs.decode(start, 8), val) 
+                << "boundary=" << boundary << " start=" << start;
+        }
+    }
+}
+
 TEST(BitsetSummaryTest, AllSizesWork) {
     std::cout << "\n=== Bitset Test Summary ===\n";
     std::cout << "✓ Fixed-size bitsets: 1, 8, 64, 256, 1024, 8192 bits\n";
