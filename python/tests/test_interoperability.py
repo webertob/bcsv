@@ -89,10 +89,10 @@ class TestInteroperability(unittest.TestCase):
             csv_content = f.read().strip()
         
         expected_lines = [
-            "id,name,value",  # Header
-            "1,Alice,123.45",
-            "2,Bob,678.9",
-            "3,Charlie,111.22"
+            '"id","name","value"',  # Header (RFC 4180: strings quoted)
+            '1,"Alice",123.45',
+            '2,"Bob",678.9',
+            '3,"Charlie",111.22'
         ]
         
         csv_lines = csv_content.split('\n')
@@ -102,9 +102,11 @@ class TestInteroperability(unittest.TestCase):
         self.assertEqual(csv_lines[0], expected_lines[0])
         
         # Check data rows (allowing for floating point precision differences)
+        # CsvWriter quotes string values — strip quotes for comparison
+        import csv as csv_mod
         for i, (expected, actual) in enumerate(zip(expected_lines[1:], csv_lines[1:]), 1):
-            expected_parts = expected.split(',')
-            actual_parts = actual.split(',')
+            expected_parts = list(csv_mod.reader([expected]))[0]
+            actual_parts = list(csv_mod.reader([actual]))[0]
             
             self.assertEqual(len(actual_parts), 3, f"Row {i} has wrong number of columns")
             self.assertEqual(actual_parts[0], expected_parts[0], f"Row {i} ID mismatch")
@@ -285,15 +287,15 @@ class TestInteroperability(unittest.TestCase):
         
         # Verify a few sample rows
         header = csv_lines[0].strip()
-        self.assertEqual(header, "id,data,value")
+        self.assertEqual(header, '"id","data","value"')  # RFC 4180: quoted headers
         
-        # Check first row
+        # Check first row (strings are quoted by CsvWriter)
         first_row = csv_lines[1].strip()
-        self.assertEqual(first_row, "0,data_row_0,0")
+        self.assertEqual(first_row, '0,"data_row_0",0')
         
         # Check last row
         last_row = csv_lines[-1].strip()
-        self.assertEqual(last_row, "999,data_row_999,1498.5")
+        self.assertEqual(last_row, '999,"data_row_999",1498.5')
 
     def test_unicode_compatibility(self):
         """Test Unicode string handling between Python and C++."""

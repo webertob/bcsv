@@ -475,17 +475,19 @@ Lean checklist gate (for every non-trivial item):
         readNext→iterative loop, file-line counter for error messages, added 4 missing test cases.
 
 13. Update Tools and Libraries to use new API
+    Status: COMPLETED (actionable items done; C#/Unity and CLI→C_API deferred as low-priority)
     [x] CLI tools: ZoH auto-detection is RESOLVED — Reader uses RowCodecDispatch + FileCodecDispatch,
         automatically selects correct row/file codec from file header flags. All CLI tools (bcsv2csv,
         bcsvHead, bcsvTail, bcsvHeader) work with any codec combination without manual flags.
     [x] Python benchmarks: python/benchmarks/run_pybcsv_benchmarks.py exists ✓
     [x] C# benchmarks: csharp/benchmarks/Program.cs exists ✓
-    [ ] Python: sync pybcsv with file codec API (currently wraps Writer/Reader but doesn't expose
-        file codec selection or FileFlags at Python level)
-    [ ] C#/Unity: no standalone library/NuGet package — only raw P/Invoke benchmark exists.
-        Needs proper C# wrapper if Unity support is a goal.
-    [ ] Update CLI tools to use C_API (currently they use C++ API directly — acceptable for now,
-        but C_API path would enable cross-language CLI tool builds)
+    [x] Python: pybcsv synced — FileFlags + compression already exposed; CsvWriter/CsvReader bindings
+        added to bindings.cpp, __init__.py updated, headers synced. 77 Python tests pass.
+        Fixed interop test expectations for RFC 4180 quoting.
+    [DEFERRED] C#/Unity: no standalone library/NuGet package — only raw P/Invoke benchmark exists.
+        Large effort, no active customer need. Defer until Unity support becomes a requirement.
+    [DEFERRED] Update CLI tools to use C_API — currently use C++ API directly, which is acceptable.
+        C API lacks CsvReader/CsvWriter. No functional benefit to porting.
 
 
 14. Implement new row encoding schema (Delta Encoding), which uses variable length encoding for float and integer values
@@ -504,7 +506,14 @@ Lean checklist gate (for every non-trivial item):
 
     Implementation:
     Based on RowCodec-ZoH (copy code, no reference)
-    Additionaly to storing previouse row values (data_), we need to store gradiant information grad_data_ use 
+    Additionaly to storing previouse row values (data_), we need to store gradiant information grad_data_ (use similar data structure and access patterns as data_), no change for string and bool columns
+    Consider using vector operations to calculate gradients as they need to be used and stored anyway. A conditional execution might just add cost with little value.
+    row header to change:
+        bits_ / bool section un changed.
+        but for each data column we are going to store a small single digit number, instead of bit.
+            0: Zero Order Hold, the value in this column hasn c
+
+
     
     
     

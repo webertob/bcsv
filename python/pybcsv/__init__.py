@@ -28,6 +28,14 @@ except ImportError:
     class Reader:
         def __init__(self, *args, **kwargs):
             raise ImportError("BCSV bindings are not available. Please compile the extension module.")
+    
+    class CsvWriter:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("BCSV bindings are not available. Please compile the extension module.")
+    
+    class CsvReader:
+        def __init__(self, *args, **kwargs):
+            raise ImportError("BCSV bindings are not available. Please compile the extension module.")
 
 # Try to import pandas utilities if pandas is available
 try:
@@ -55,6 +63,8 @@ __all__ = [
     "Layout",
     "Writer",
     "Reader",
+    "CsvWriter",
+    "CsvReader",
     # Utility functions
     "write_dataframe",
     "read_dataframe", 

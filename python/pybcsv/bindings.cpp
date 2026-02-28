@@ -517,4 +517,114 @@ PYBIND11_MODULE(_bcsv, m) {
 
     // Utility functions
     m.def("type_to_string", &bcsv::toString, "Convert ColumnType to string");
+
+    // ── CsvWriter binding ──────────────────────────────────────────────
+
+    py::class_<bcsv::CsvWriter<bcsv::Layout>>(m, "CsvWriter")
+        .def(py::init<const bcsv::Layout&, char, char>(),
+             py::arg("layout"), py::arg("delimiter") = ',', py::arg("decimal_sep") = '.')
+        .def("open", [](bcsv::CsvWriter<bcsv::Layout>& w, const std::string& filename,
+                        bool overwrite, bool include_header) {
+            bool success = w.open(filename, overwrite, include_header);
+            if (!success) {
+                std::string err = w.getErrorMsg();
+                if (err.empty()) err = "Failed to open CSV file for writing: " + filename;
+                throw std::runtime_error(err);
+            }
+            return success;
+        }, py::arg("filename"), py::arg("overwrite") = true, py::arg("include_header") = true)
+        .def("write_row", [](bcsv::CsvWriter<bcsv::Layout>& w, const py::list& values) {
+            auto& row = w.row();
+            const auto& layout = row.layout();
+            if (values.size() != layout.columnCount()) {
+                throw std::runtime_error("Row length mismatch: expected " +
+                    std::to_string(layout.columnCount()) + ", got " + std::to_string(values.size()));
+            }
+            for (size_t i = 0; i < values.size(); ++i) {
+                set_column_value_unchecked(row, i, layout.columnType(i), values[i]);
+            }
+            return w.writeRow();
+        })
+        .def("write_rows", [](bcsv::CsvWriter<bcsv::Layout>& w, const py::list& rows) {
+            const auto& layout = w.layout();
+            const size_t expected_cols = layout.columnCount();
+            for (size_t i = 0; i < rows.size(); ++i) {
+                py::list row_values = rows[i].cast<py::list>();
+                if (row_values.size() != expected_cols) {
+                    throw std::runtime_error("Row " + std::to_string(i) + " length mismatch: expected " +
+                        std::to_string(expected_cols) + ", got " + std::to_string(row_values.size()));
+                }
+                auto& row = w.row();
+                for (size_t j = 0; j < expected_cols; ++j) {
+                    set_column_value_unchecked(row, j, layout.columnType(j), row_values[j]);
+                }
+                w.writeRow();
+            }
+        }, "Write multiple rows efficiently")
+        .def("close", [](bcsv::CsvWriter<bcsv::Layout>& w) { w.close(); })
+        .def("is_open", &bcsv::CsvWriter<bcsv::Layout>::isOpen)
+        .def("row_count", &bcsv::CsvWriter<bcsv::Layout>::rowCount)
+        .def("layout", &bcsv::CsvWriter<bcsv::Layout>::layout, py::return_value_policy::reference_internal)
+        .def("delimiter", &bcsv::CsvWriter<bcsv::Layout>::delimiter)
+        .def("decimal_separator", &bcsv::CsvWriter<bcsv::Layout>::decimalSeparator)
+        .def("__enter__", [](bcsv::CsvWriter<bcsv::Layout>& w) -> bcsv::CsvWriter<bcsv::Layout>& {
+            return w;
+        })
+        .def("__exit__", [](bcsv::CsvWriter<bcsv::Layout>& w, py::object, py::object, py::object) {
+            w.close();
+        });
+
+    // ── CsvReader binding ──────────────────────────────────────────────
+
+    py::class_<bcsv::CsvReader<bcsv::Layout>>(m, "CsvReader")
+        .def(py::init<const bcsv::Layout&, char, char>(),
+             py::arg("layout"), py::arg("delimiter") = ',', py::arg("decimal_sep") = '.')
+        .def("open", [](bcsv::CsvReader<bcsv::Layout>& r, const std::string& filename,
+                        bool has_header) {
+            bool success = r.open(filename, has_header);
+            if (!success) {
+                std::string err = r.getErrorMsg();
+                if (err.empty()) err = "Failed to open CSV file for reading: " + filename;
+                throw std::runtime_error(err);
+            }
+            return success;
+        }, py::arg("filename"), py::arg("has_header") = true)
+        .def("read_next", &bcsv::CsvReader<bcsv::Layout>::readNext)
+        .def("read_row", [](bcsv::CsvReader<bcsv::Layout>& r) -> py::object {
+            if (!r.readNext()) {
+                return py::none();
+            }
+            return row_to_python_list_optimized(r.row(), r.layout());
+        })
+        .def("read_all", [](bcsv::CsvReader<bcsv::Layout>& r) -> py::list {
+            py::list all_rows;
+            const auto& layout = r.layout();
+            while (r.readNext()) {
+                all_rows.append(row_to_python_list_optimized(r.row(), layout));
+            }
+            return all_rows;
+        })
+        .def("close", [](bcsv::CsvReader<bcsv::Layout>& r) { r.close(); })
+        .def("is_open", &bcsv::CsvReader<bcsv::Layout>::isOpen)
+        .def("row_pos", &bcsv::CsvReader<bcsv::Layout>::rowPos)
+        .def("file_line", &bcsv::CsvReader<bcsv::Layout>::fileLine)
+        .def("layout", &bcsv::CsvReader<bcsv::Layout>::layout, py::return_value_policy::reference_internal)
+        .def("delimiter", &bcsv::CsvReader<bcsv::Layout>::delimiter)
+        .def("decimal_separator", &bcsv::CsvReader<bcsv::Layout>::decimalSeparator)
+        .def("error_msg", &bcsv::CsvReader<bcsv::Layout>::getErrorMsg)
+        .def("__enter__", [](bcsv::CsvReader<bcsv::Layout>& r) -> bcsv::CsvReader<bcsv::Layout>& {
+            return r;
+        })
+        .def("__exit__", [](bcsv::CsvReader<bcsv::Layout>& r, py::object, py::object, py::object) {
+            r.close();
+        })
+        .def("__iter__", [](bcsv::CsvReader<bcsv::Layout>& r) -> bcsv::CsvReader<bcsv::Layout>& {
+            return r;
+        })
+        .def("__next__", [](bcsv::CsvReader<bcsv::Layout>& r) -> py::object {
+            if (!r.readNext()) {
+                throw py::stop_iteration();
+            }
+            return row_to_python_list_optimized(r.row(), r.layout());
+        });
 }
