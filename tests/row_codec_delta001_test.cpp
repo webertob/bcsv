@@ -11,6 +11,9 @@
 #include "bcsv/bcsv.h"
 #include "bcsv/row_codec_delta001.h"
 
+#include <cmath>
+#include <limits>
+
 using namespace bcsv;
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -730,4 +733,401 @@ TEST(CodecDelta001Test, EmptyLayout) {
 
     auto w1 = enc.serialize(row, buf);
     dec.deserialize(w1, out);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Phase 3 additions: edge cases, wire-size assertions, signed overflow, NaN/Inf
+// ────────────────────────────────────────────────────────────────────────────
+
+TEST(CodecDelta001Test, SignedOverflow_INT8_Wrap) {
+    // INT8 wrapping from -128 to 127 (max positive delta)
+    Layout layout({{"val", ColumnType::INT8}});
+    RowCodecDelta001<Layout> enc, dec;
+    enc.setup(layout);
+    dec.setup(layout);
+
+    ByteBuffer buf;
+    Row row(layout), out(layout);
+
+    row.set<int8_t>(0, -128);
+    auto w0 = enc.serialize(row, buf);
+    dec.deserialize(w0, out);
+    EXPECT_EQ(out.get<int8_t>(0), -128);
+
+    row.set<int8_t>(0, 127);
+    auto w1 = enc.serialize(row, buf);
+    dec.deserialize(w1, out);
+    EXPECT_EQ(out.get<int8_t>(0), 127);
+
+    // And back
+    row.set<int8_t>(0, -128);
+    auto w2 = enc.serialize(row, buf);
+    dec.deserialize(w2, out);
+    EXPECT_EQ(out.get<int8_t>(0), -128);
+}
+
+TEST(CodecDelta001Test, SignedOverflow_INT32_MinMax) {
+    Layout layout({{"val", ColumnType::INT32}});
+    RowCodecDelta001<Layout> enc, dec;
+    enc.setup(layout);
+    dec.setup(layout);
+
+    ByteBuffer buf;
+    Row row(layout), out(layout);
+
+    row.set<int32_t>(0, std::numeric_limits<int32_t>::min());
+    enc.serialize(row, buf);
+    dec.deserialize({buf.data(), buf.size()}, out);
+    EXPECT_EQ(out.get<int32_t>(0), std::numeric_limits<int32_t>::min());
+
+    row.set<int32_t>(0, std::numeric_limits<int32_t>::max());
+    auto w1 = enc.serialize(row, buf);
+    dec.deserialize(w1, out);
+    EXPECT_EQ(out.get<int32_t>(0), std::numeric_limits<int32_t>::max());
+
+    // Max back to min (full range delta)
+    row.set<int32_t>(0, std::numeric_limits<int32_t>::min());
+    auto w2 = enc.serialize(row, buf);
+    dec.deserialize(w2, out);
+    EXPECT_EQ(out.get<int32_t>(0), std::numeric_limits<int32_t>::min());
+}
+
+TEST(CodecDelta001Test, SignedOverflow_INT64_MinMax) {
+    Layout layout({{"val", ColumnType::INT64}});
+    RowCodecDelta001<Layout> enc, dec;
+    enc.setup(layout);
+    dec.setup(layout);
+
+    ByteBuffer buf;
+    Row row(layout), out(layout);
+
+    row.set<int64_t>(0, std::numeric_limits<int64_t>::min());
+    enc.serialize(row, buf);
+    dec.deserialize({buf.data(), buf.size()}, out);
+    EXPECT_EQ(out.get<int64_t>(0), std::numeric_limits<int64_t>::min());
+
+    row.set<int64_t>(0, std::numeric_limits<int64_t>::max());
+    auto w1 = enc.serialize(row, buf);
+    dec.deserialize(w1, out);
+    EXPECT_EQ(out.get<int64_t>(0), std::numeric_limits<int64_t>::max());
+}
+
+TEST(CodecDelta001Test, Float_NaN_Inf_RoundTrip) {
+    Layout layout({
+        {"f", ColumnType::FLOAT},
+        {"d", ColumnType::DOUBLE},
+    });
+    RowCodecDelta001<Layout> enc, dec;
+    enc.setup(layout);
+    dec.setup(layout);
+
+    ByteBuffer buf;
+    Row row(layout), out(layout);
+
+    // NaN
+    row.set<float>(0, std::numeric_limits<float>::quiet_NaN());
+    row.set<double>(1, std::numeric_limits<double>::quiet_NaN());
+    auto w0 = enc.serialize(row, buf);
+    dec.deserialize(w0, out);
+    EXPECT_TRUE(std::isnan(out.get<float>(0)));
+    EXPECT_TRUE(std::isnan(out.get<double>(1)));
+
+    // +Inf
+    row.set<float>(0, std::numeric_limits<float>::infinity());
+    row.set<double>(1, std::numeric_limits<double>::infinity());
+    auto w1 = enc.serialize(row, buf);
+    dec.deserialize(w1, out);
+    EXPECT_EQ(out.get<float>(0), std::numeric_limits<float>::infinity());
+    EXPECT_EQ(out.get<double>(1), std::numeric_limits<double>::infinity());
+
+    // -Inf
+    row.set<float>(0, -std::numeric_limits<float>::infinity());
+    row.set<double>(1, -std::numeric_limits<double>::infinity());
+    auto w2 = enc.serialize(row, buf);
+    dec.deserialize(w2, out);
+    EXPECT_EQ(out.get<float>(0), -std::numeric_limits<float>::infinity());
+    EXPECT_EQ(out.get<double>(1), -std::numeric_limits<double>::infinity());
+
+    // NaN → normal (XOR delta should handle this)
+    row.set<float>(0, 1.0f);
+    row.set<double>(1, 2.0);
+    auto w3 = enc.serialize(row, buf);
+    dec.deserialize(w3, out);
+    EXPECT_FLOAT_EQ(out.get<float>(0), 1.0f);
+    EXPECT_DOUBLE_EQ(out.get<double>(1), 2.0);
+}
+
+TEST(CodecDelta001Test, WireSize_DeltaSmallerThanPlain) {
+    // For INT32 column with small delta, wire size should be smaller than plain row
+    Layout layout({{"val", ColumnType::INT32}});
+    RowCodecDelta001<Layout> enc;
+    enc.setup(layout);
+
+    ByteBuffer buf;
+    Row row(layout);
+
+    // Row 0: plain (header + 4 bytes data)
+    row.set<int32_t>(0, 1000000);
+    auto w0 = enc.serialize(row, buf);
+    size_t plainSize = w0.size();
+
+    // Row 1: delta=1 (header + 1 byte delta instead of 4 bytes)
+    row.set<int32_t>(0, 1000001);
+    auto w1 = enc.serialize(row, buf);
+    size_t deltaSize = w1.size();
+
+    EXPECT_LT(deltaSize, plainSize) << "Delta row should be smaller than plain row";
+}
+
+TEST(CodecDelta001Test, WireSize_ZoH_HeaderOnly) {
+    // Unchanged row should only contain the header, no data payload
+    Layout layout({{"val", ColumnType::INT64}});
+    RowCodecDelta001<Layout> enc;
+    enc.setup(layout);
+
+    ByteBuffer buf;
+    Row row(layout);
+
+    row.set<int64_t>(0, 42);
+    auto w0 = enc.serialize(row, buf);
+
+    // Same value → ZoH mode
+    auto w1 = enc.serialize(row, buf);
+    size_t headBytes = 1;  // 2 mode bits + 3 length bits = 5 bits → 1 byte header
+    EXPECT_EQ(w1.size(), headBytes) << "ZoH row should be header-only";
+}
+
+TEST(CodecDelta001Test, FoC_Float_NoAccumulatedError) {
+    // Verify that FoC prediction uses exact bitwise comparison,
+    // preventing floating-point error accumulation over many rows.
+    Layout layout({{"val", ColumnType::DOUBLE}});
+    RowCodecDelta001<Layout> enc, dec;
+    enc.setup(layout);
+    dec.setup(layout);
+
+    ByteBuffer buf;
+    Row row(layout), out(layout);
+
+    // Start with values that have exact FP representation
+    row.set<double>(0, 0.0);
+    enc.serialize(row, buf);
+    dec.deserialize({buf.data(), buf.size()}, out);
+
+    row.set<double>(0, 0.125);  // 1/8, exact in binary
+    auto w1 = enc.serialize(row, buf);
+    dec.deserialize(w1, out);
+
+    // 50 rows of FoC: 0.250, 0.375, 0.500, ...
+    for (int i = 2; i < 52; ++i) {
+        row.set<double>(0, i * 0.125);
+        auto w = enc.serialize(row, buf);
+        dec.deserialize(w, out);
+        EXPECT_DOUBLE_EQ(out.get<double>(0), i * 0.125)
+            << "FoC failed at row " << i;
+    }
+}
+
+TEST(CodecDelta001Test, ManyColumns_WideLayout) {
+    // Stress test with 50 columns of different types
+    std::vector<ColumnDefinition> cols;
+    for (int i = 0; i < 10; ++i) cols.push_back({"u32_" + std::to_string(i), ColumnType::UINT32});
+    for (int i = 0; i < 10; ++i) cols.push_back({"i64_" + std::to_string(i), ColumnType::INT64});
+    for (int i = 0; i < 10; ++i) cols.push_back({"f64_" + std::to_string(i), ColumnType::DOUBLE});
+    for (int i = 0; i < 10; ++i) cols.push_back({"f32_" + std::to_string(i), ColumnType::FLOAT});
+    for (int i = 0; i < 5; ++i)  cols.push_back({"b_" + std::to_string(i), ColumnType::BOOL});
+    for (int i = 0; i < 5; ++i)  cols.push_back({"s_" + std::to_string(i), ColumnType::STRING});
+
+    Layout layout(cols);
+    RowCodecDelta001<Layout> enc, dec;
+    enc.setup(layout);
+    dec.setup(layout);
+
+    ByteBuffer buf;
+    Row row(layout), out(layout);
+
+    // Row 0: set all columns
+    for (int i = 0; i < 10; ++i) row.set<uint32_t>(i, static_cast<uint32_t>(i * 100));
+    for (int i = 0; i < 10; ++i) row.set<int64_t>(10 + i, static_cast<int64_t>(i * -1000));
+    for (int i = 0; i < 10; ++i) row.set<double>(20 + i, i * 1.5);
+    for (int i = 0; i < 10; ++i) row.set<float>(30 + i, static_cast<float>(i * 0.5));
+    for (int i = 0; i < 5; ++i)  row.set<bool>(40 + i, (i % 2) == 0);
+    for (int i = 0; i < 5; ++i)  row.set<std::string_view>(45 + i, "init");
+
+    auto w0 = enc.serialize(row, buf);
+    dec.deserialize(w0, out);
+
+    // Verify row 0
+    for (int i = 0; i < 10; ++i) EXPECT_EQ(out.get<uint32_t>(i), static_cast<uint32_t>(i * 100));
+    for (int i = 0; i < 10; ++i) EXPECT_EQ(out.get<int64_t>(10 + i), static_cast<int64_t>(i * -1000));
+
+    // Row 1: small changes to trigger delta encoding
+    for (int i = 0; i < 10; ++i) row.set<uint32_t>(i, static_cast<uint32_t>(i * 100 + 1));
+    for (int i = 0; i < 10; ++i) row.set<int64_t>(10 + i, static_cast<int64_t>(i * -1000 - 1));
+    for (int i = 0; i < 10; ++i) row.set<double>(20 + i, i * 1.5 + 0.001);
+    // Leave floats, bools, strings unchanged → ZoH
+
+    auto w1 = enc.serialize(row, buf);
+    dec.deserialize(w1, out);
+
+    for (int i = 0; i < 10; ++i) EXPECT_EQ(out.get<uint32_t>(i), static_cast<uint32_t>(i * 100 + 1));
+    for (int i = 0; i < 10; ++i) EXPECT_EQ(out.get<int64_t>(10 + i), static_cast<int64_t>(i * -1000 - 1));
+    for (int i = 0; i < 10; ++i) EXPECT_FLOAT_EQ(out.get<float>(30 + i), static_cast<float>(i * 0.5));  // unchanged
+    for (int i = 0; i < 5; ++i)  EXPECT_EQ(out.get<std::string>(45 + i), "init");  // unchanged
+}
+
+TEST(CodecDelta001Test, DeltaEncoding_UINT64_LargeDelta) {
+    // Verify that large deltas fall back to plain encoding
+    Layout layout({{"val", ColumnType::UINT64}});
+    RowCodecDelta001<Layout> enc, dec;
+    enc.setup(layout);
+    dec.setup(layout);
+
+    ByteBuffer buf;
+    Row row(layout), out(layout);
+
+    row.set<uint64_t>(0, 0);
+    enc.serialize(row, buf);
+    dec.deserialize({buf.data(), buf.size()}, out);
+
+    // Large delta: value requires ~8 bytes delta, so plain should be used
+    row.set<uint64_t>(0, 0xFFFFFFFFFFFFFFFFULL);
+    auto w1 = enc.serialize(row, buf);
+    dec.deserialize(w1, out);
+    EXPECT_EQ(out.get<uint64_t>(0), 0xFFFFFFFFFFFFFFFFULL);
+}
+
+TEST(CodecDelta001Test, FoC_SignedInteger_NegativeGradient) {
+    // FoC with negative gradient: 100, 90, 80, 70, ...
+    Layout layout({{"val", ColumnType::INT32}});
+    RowCodecDelta001<Layout> enc, dec;
+    enc.setup(layout);
+    dec.setup(layout);
+
+    ByteBuffer buf;
+    Row row(layout), out(layout);
+
+    row.set<int32_t>(0, 100);
+    enc.serialize(row, buf);
+    dec.deserialize({buf.data(), buf.size()}, out);
+
+    row.set<int32_t>(0, 90);  // gradient = -10
+    auto w1 = enc.serialize(row, buf);
+    dec.deserialize(w1, out);
+    EXPECT_EQ(out.get<int32_t>(0), 90);
+
+    // Row 2: predicted = 90 + (-10) = 80 → FoC
+    row.set<int32_t>(0, 80);
+    auto w2 = enc.serialize(row, buf);
+    dec.deserialize(w2, out);
+    EXPECT_EQ(out.get<int32_t>(0), 80);
+
+    // Row 3: predicted = 80 + (-10) = 70 → FoC
+    row.set<int32_t>(0, 70);
+    auto w3 = enc.serialize(row, buf);
+    dec.deserialize(w3, out);
+    EXPECT_EQ(out.get<int32_t>(0), 70);
+}
+
+TEST(CodecDelta001Test, MultiPacketReset_GradientState) {
+    // Simulate packet boundary: encode rows, reset, encode more
+    // Ensures gradient doesn't leak across packets
+    Layout layout({{"val", ColumnType::INT32}});
+    RowCodecDelta001<Layout> enc, dec;
+    enc.setup(layout);
+    dec.setup(layout);
+
+    ByteBuffer buf;
+    Row row(layout), out(layout);
+
+    // Packet 1: ramp up 100, 110, 120, 130
+    for (int v = 100; v <= 130; v += 10) {
+        row.set<int32_t>(0, v);
+        auto w = enc.serialize(row, buf);
+        dec.deserialize(w, out);
+        EXPECT_EQ(out.get<int32_t>(0), v);
+    }
+
+    // Reset (new packet)
+    enc.reset();
+    dec.reset();
+
+    // Packet 2: completely different sequence 500, 510, 520
+    for (int v = 500; v <= 520; v += 10) {
+        row.set<int32_t>(0, v);
+        auto w = enc.serialize(row, buf);
+        dec.deserialize(w, out);
+        EXPECT_EQ(out.get<int32_t>(0), v);
+    }
+}
+
+TEST(CodecDelta001Test, EmptyString_RoundTrip) {
+    Layout layout({{"s", ColumnType::STRING}});
+    RowCodecDelta001<Layout> enc, dec;
+    enc.setup(layout);
+    dec.setup(layout);
+
+    ByteBuffer buf;
+    Row row(layout), out(layout);
+
+    // Empty string
+    row.set<std::string_view>(0, "");
+    auto w0 = enc.serialize(row, buf);
+    dec.deserialize(w0, out);
+    EXPECT_EQ(out.get<std::string>(0), "");
+
+    // Non-empty
+    row.set<std::string_view>(0, "hello");
+    auto w1 = enc.serialize(row, buf);
+    dec.deserialize(w1, out);
+    EXPECT_EQ(out.get<std::string>(0), "hello");
+
+    // Back to empty
+    row.set<std::string_view>(0, "");
+    auto w2 = enc.serialize(row, buf);
+    dec.deserialize(w2, out);
+    EXPECT_EQ(out.get<std::string>(0), "");
+}
+
+TEST(CodecDelta001Test, AllColumnTypes_FoC_Sequence) {
+    // Verify FoC prediction triggers for all numeric types with linear sequences
+    Layout layout({
+        {"u8",  ColumnType::UINT8},
+        {"u16", ColumnType::UINT16},
+        {"u32", ColumnType::UINT32},
+        {"u64", ColumnType::UINT64},
+        {"i8",  ColumnType::INT8},
+        {"i16", ColumnType::INT16},
+        {"i32", ColumnType::INT32},
+        {"i64", ColumnType::INT64},
+    });
+
+    RowCodecDelta001<Layout> enc, dec;
+    enc.setup(layout);
+    dec.setup(layout);
+
+    ByteBuffer buf;
+    Row row(layout), out(layout);
+
+    for (int r = 0; r < 10; ++r) {
+        row.set<uint8_t>(0, static_cast<uint8_t>(10 + r));
+        row.set<uint16_t>(1, static_cast<uint16_t>(1000 + r * 5));
+        row.set<uint32_t>(2, 100000 + static_cast<uint32_t>(r * 100));
+        row.set<uint64_t>(3, 1000000000ULL + r * 1000);
+        row.set<int8_t>(4, static_cast<int8_t>(-50 + r));
+        row.set<int16_t>(5, static_cast<int16_t>(-5000 + r * 10));
+        row.set<int32_t>(6, -100000 + r * 200);
+        row.set<int64_t>(7, -1000000000LL + r * 3000);
+
+        auto w = enc.serialize(row, buf);
+        dec.deserialize(w, out);
+
+        EXPECT_EQ(out.get<uint8_t>(0), static_cast<uint8_t>(10 + r)) << "Row " << r;
+        EXPECT_EQ(out.get<uint16_t>(1), static_cast<uint16_t>(1000 + r * 5)) << "Row " << r;
+        EXPECT_EQ(out.get<uint32_t>(2), 100000 + static_cast<uint32_t>(r * 100)) << "Row " << r;
+        EXPECT_EQ(out.get<uint64_t>(3), 1000000000ULL + r * 1000) << "Row " << r;
+        EXPECT_EQ(out.get<int8_t>(4), static_cast<int8_t>(-50 + r)) << "Row " << r;
+        EXPECT_EQ(out.get<int16_t>(5), static_cast<int16_t>(-5000 + r * 10)) << "Row " << r;
+        EXPECT_EQ(out.get<int32_t>(6), -100000 + r * 200) << "Row " << r;
+        EXPECT_EQ(out.get<int64_t>(7), -1000000000LL + r * 3000) << "Row " << r;
+    }
 }

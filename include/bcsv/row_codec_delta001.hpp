@@ -240,6 +240,8 @@ void RowCodecDelta001<LayoutType>::reset() noexcept {
     // Only rows_seen_ needs resetting. The first-row path in serialize/
     // deserialize re-initialises prev_data_, prev_strg_, and grad_data_
     // from scratch, so clearing them here would be redundant work.
+    // INVARIANT: row 0 must always encode all columns as plain (mode=01)
+    // to prime all prev/grad state from the actual row data.
     rows_seen_ = 0;
 }
 
@@ -315,6 +317,9 @@ std::span<std::byte> RowCodecDelta001<LayoutType>::serialize(
         for (size_t s = 0; s < numStrCols; ++s) {
             head_[strHeadBit + s] = true;
             const auto& str = row.strg_[str_offsets_[s]];
+            if (str.size() > 65535)
+                throw std::runtime_error(
+                    "RowCodecDelta001::serialize() failed! String exceeds 65535 bytes.");
             uint16_t len = static_cast<uint16_t>(str.size());
             std::memcpy(&buffer[bufIdx], &len, 2);
             bufIdx += 2;
@@ -422,6 +427,9 @@ std::span<std::byte> RowCodecDelta001<LayoutType>::serialize(
             prev_strg_[strIdx] = row.strg_[strIdx];
 
             const auto& str = row.strg_[strIdx];
+            if (str.size() > 65535)
+                throw std::runtime_error(
+                    "RowCodecDelta001::serialize() failed! String exceeds 65535 bytes.");
             uint16_t len = static_cast<uint16_t>(str.size());
             if (bufIdx + 2 + len > buffer.size()) buffer.resize(bufIdx + 2 + len);
             std::memcpy(&buffer[bufIdx], &len, 2);
@@ -453,7 +461,9 @@ void RowCodecDelta001<LayoutType>::deserialize(
     const size_t numCols = col_data_offsets_.size();
     const size_t numStrCols = str_offsets_.size();
 
-    assert(buffer.size() >= headBytes && "buffer too small for header");
+    if (buffer.size() < headBytes)
+        throw std::runtime_error(
+            "RowCodecDelta001::deserialize() failed! Buffer too small for head Bitset.");
 
     head_.readFrom(buffer.data(), headBytes);
 
@@ -486,6 +496,10 @@ void RowCodecDelta001<LayoutType>::deserialize(
                 break;
 
             case 0x01: {  // plain — full value
+                if (dataOff + sz > buffer.size())
+                    throw std::runtime_error(
+                        "RowCodecDelta001::deserialize() failed! Buffer too small for scalar.");
+
                 // Update gradient before overwriting prev
                 if (rows_seen_ > 0) {
                     auto updateGrad = [&]<typename T>() {
@@ -535,6 +549,10 @@ void RowCodecDelta001<LayoutType>::deserialize(
                 size_t lenBits = lenBitsForSize(sz);
                 size_t deltaBytes = 1;
                 if (lenBits > 0) deltaBytes = head_.decode(headOff + 2, lenBits) + 1;
+
+                if (dataOff + deltaBytes > buffer.size())
+                    throw std::runtime_error(
+                        "RowCodecDelta001::deserialize() failed! Buffer too small for delta.");
                 uint64_t zigzagDelta = decodeDelta(&buffer[dataOff], deltaBytes);
 
                 auto applyDelta = [&]<typename T>() {
@@ -566,9 +584,17 @@ void RowCodecDelta001<LayoutType>::deserialize(
     for (size_t s = 0; s < numStrCols; ++s) {
         if (head_[strHeadBit + s]) {
             const uint32_t strIdx = str_offsets_[s];
+
+            if (dataOff + 2 > buffer.size())
+                throw std::runtime_error(
+                    "RowCodecDelta001::deserialize() failed! Buffer too small for string length.");
             uint16_t len;
             std::memcpy(&len, &buffer[dataOff], 2);
             dataOff += 2;
+
+            if (dataOff + len > buffer.size())
+                throw std::runtime_error(
+                    "RowCodecDelta001::deserialize() failed! Buffer too small for string payload.");
             row.strg_[strIdx].assign(reinterpret_cast<const char*>(&buffer[dataOff]), len);
             prev_strg_[strIdx] = row.strg_[strIdx];
             dataOff += len;

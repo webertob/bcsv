@@ -9,15 +9,15 @@
 
 /**
  * @file bench_codec_compare.cpp
- * @brief Comprehensive codec comparison: all 5 file codecs × {Flat,ZoH} + CSV baseline
+ * @brief Comprehensive codec comparison: all 5 file codecs × {Flat,ZoH,Delta} + CSV baseline
  *
  * Runs write/read round-trips for every codec × row-codec combination on all
  * dataset profiles, with interleaved iterations to neutralize thermal throttling.
  *
- * Candidates (12 total):
+ * Candidates:
  *   File codecs:   CSV, PacketRaw, PacketLZ4, StreamRaw, StreamLZ4, BatchLZ4
- *   Row codecs:    Flat (Writer<Layout>), ZoH (WriterZoH<Layout>)
- *   CSV only runs with Flat (ZoH is a binary-only concept).
+ *   Row codecs:    Flat (Writer<Layout>), ZoH (WriterZoH<Layout>), Delta (WriterDelta<Layout>)
+ *   CSV only runs with Flat (ZoH/Delta are binary-only concepts).
  *
  * Usage:
  *   bench_codec_compare [--rows=N] [--iterations=N] [--profile=NAME|all] [--json=PATH]
@@ -50,26 +50,35 @@ struct Candidate {
     bcsv::FileFlags flags;
     bool            isCsv;
     bool            useZoH;          // true → WriterZoH + generateZoH
+    bool            useDelta;        // true → WriterDelta + generateZoH
 };
 
 std::vector<Candidate> buildCandidates() {
     std::vector<Candidate> c;
     // --- Flat (dense) row codec ---
-    c.push_back({"CSV",              0, bcsv::FileFlags::NONE,        true,  false});
-    c.push_back({"PktRaw",           0, bcsv::FileFlags::NONE,        false, false});
-    c.push_back({"PktLZ4",           1, bcsv::FileFlags::NONE,        false, false});
-    c.push_back({"StrmRaw",          0, bcsv::FileFlags::STREAM_MODE, false, false});
-    c.push_back({"StrmLZ4",          1, bcsv::FileFlags::STREAM_MODE, false, false});
+    c.push_back({"CSV",              0, bcsv::FileFlags::NONE,        true,  false, false});
+    c.push_back({"PktRaw",           0, bcsv::FileFlags::NONE,        false, false, false});
+    c.push_back({"PktLZ4",           1, bcsv::FileFlags::NONE,        false, false, false});
+    c.push_back({"StrmRaw",          0, bcsv::FileFlags::STREAM_MODE, false, false, false});
+    c.push_back({"StrmLZ4",          1, bcsv::FileFlags::STREAM_MODE, false, false, false});
 #ifdef BCSV_HAS_BATCH_CODEC
-    c.push_back({"BatchLZ4",         1, bcsv::FileFlags::BATCH_COMPRESS, false, false});
+    c.push_back({"BatchLZ4",         1, bcsv::FileFlags::BATCH_COMPRESS, false, false, false});
 #endif
     // --- ZoH row codec (ZERO_ORDER_HOLD flag ORed in) ---
-    c.push_back({"PktRaw+ZoH",       0, bcsv::FileFlags::ZERO_ORDER_HOLD,        false, true});
-    c.push_back({"PktLZ4+ZoH",       1, bcsv::FileFlags::ZERO_ORDER_HOLD,        false, true});
-    c.push_back({"StrmRaw+ZoH",      0, bcsv::FileFlags::STREAM_MODE | bcsv::FileFlags::ZERO_ORDER_HOLD, false, true});
-    c.push_back({"StrmLZ4+ZoH",      1, bcsv::FileFlags::STREAM_MODE | bcsv::FileFlags::ZERO_ORDER_HOLD, false, true});
+    c.push_back({"PktRaw+ZoH",       0, bcsv::FileFlags::ZERO_ORDER_HOLD,        false, true, false});
+    c.push_back({"PktLZ4+ZoH",       1, bcsv::FileFlags::ZERO_ORDER_HOLD,        false, true, false});
+    c.push_back({"StrmRaw+ZoH",      0, bcsv::FileFlags::STREAM_MODE | bcsv::FileFlags::ZERO_ORDER_HOLD, false, true, false});
+    c.push_back({"StrmLZ4+ZoH",      1, bcsv::FileFlags::STREAM_MODE | bcsv::FileFlags::ZERO_ORDER_HOLD, false, true, false});
 #ifdef BCSV_HAS_BATCH_CODEC
-    c.push_back({"BatchLZ4+ZoH",     1, bcsv::FileFlags::BATCH_COMPRESS | bcsv::FileFlags::ZERO_ORDER_HOLD, false, true});
+    c.push_back({"BatchLZ4+ZoH",     1, bcsv::FileFlags::BATCH_COMPRESS | bcsv::FileFlags::ZERO_ORDER_HOLD, false, true, false});
+#endif
+    // --- Delta row codec (DELTA_ENCODING flag ORed in, uses ZoH data generator) ---
+    c.push_back({"PktRaw+Delta",     0, bcsv::FileFlags::DELTA_ENCODING,        false, false, true});
+    c.push_back({"PktLZ4+Delta",     1, bcsv::FileFlags::DELTA_ENCODING,        false, false, true});
+    c.push_back({"StrmRaw+Delta",    0, bcsv::FileFlags::STREAM_MODE | bcsv::FileFlags::DELTA_ENCODING, false, false, true});
+    c.push_back({"StrmLZ4+Delta",    1, bcsv::FileFlags::STREAM_MODE | bcsv::FileFlags::DELTA_ENCODING, false, false, true});
+#ifdef BCSV_HAS_BATCH_CODEC
+    c.push_back({"BatchLZ4+Delta",   1, bcsv::FileFlags::BATCH_COMPRESS | bcsv::FileFlags::DELTA_ENCODING, false, false, true});
 #endif
     return c;
 }
@@ -98,7 +107,22 @@ IterResult runBcsv(const bench::DatasetProfile& profile,
     bench::Timer timer;
 
     // ----- Write -----
-    if (cand.useZoH) {
+    if (cand.useDelta) {
+        bcsv::WriterDelta<bcsv::Layout> writer(profile.layout);
+        if (!writer.open(filePath, true, cand.compressionLevel, 64, cand.flags)) {
+            std::cerr << "  ERROR: open failed for " << cand.label << ": "
+                      << writer.getErrorMsg() << "\n";
+            return r;
+        }
+        timer.start();
+        for (size_t i = 0; i < numRows; ++i) {
+            auto& row = writer.row();
+            profile.generateZoH(row, i);  // Delta uses time-series data (same as ZoH)
+            writer.writeRow();
+        }
+        writer.close();
+        timer.stop();
+    } else if (cand.useZoH) {
         bcsv::WriterZoH<bcsv::Layout> writer(profile.layout);
         if (!writer.open(filePath, true, cand.compressionLevel, 64, cand.flags)) {
             std::cerr << "  ERROR: open failed for " << cand.label << ": "
@@ -147,7 +171,7 @@ IterResult runBcsv(const bench::DatasetProfile& profile,
         timer.start();
         while (reader.readNext()) {
             const auto& row = reader.row();
-            if (cand.useZoH)
+            if (cand.useZoH || cand.useDelta)
                 profile.generateZoH(expected, rowsRead);
             else
                 profile.generate(expected, rowsRead);
