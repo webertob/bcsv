@@ -21,8 +21,12 @@
 #include <stdexcept>
 #include <type_traits>
 
-// Include auto-generated version information
-#include "version_generated.h"
+// Include auto-generated version information.
+// Use angle-bracket form so the compiler searches -I paths (including
+// CMAKE_BINARY_DIR/include) with the bcsv/ prefix, which is required
+// when building from a clean clone where the header lives only in the
+// build tree at <build>/include/bcsv/version_generated.h.
+#include <bcsv/version_generated.h>
 
 // Force-inline macro for hot-path accessors (get/set/ref/visit).
 // Without this, GCC's inlining heuristic may arbitrarily chose which

@@ -176,6 +176,28 @@ using RealisticMeasurementLayoutStatic = LayoutFromTypeList_t<ConcatTypeLists<
     RepeatAsTypeList<bool, 4>, TypeList<uint32_t, uint32_t, uint32_t, uint32_t>
 >>;
 
+using BoolHeavyLayoutStatic = LayoutFromTypeList_t<ConcatTypeLists<
+    RepeatAsTypeList<bool, 128>,
+    TypeList<uint32_t, uint32_t, int64_t, int64_t>
+>>;
+
+using ArithmeticWideLayoutStatic = LayoutFromTypeList_t<ConcatTypeLists<
+    RepeatAsTypeList<int32_t, 40>,
+    RepeatAsTypeList<int64_t, 40>,
+    RepeatAsTypeList<uint32_t, 40>,
+    RepeatAsTypeList<float, 40>,
+    RepeatAsTypeList<double, 40>
+>>;
+
+using RtlWaveformLayoutStatic = LayoutFromTypeList_t<ConcatTypeLists<
+    TypeList<uint64_t, uint64_t>,
+    RepeatAsTypeList<bool, 256>,
+    RepeatAsTypeList<uint8_t, 16>,
+    RepeatAsTypeList<uint16_t, 8>,
+    RepeatAsTypeList<uint32_t, 4>,
+    RepeatAsTypeList<uint64_t, 4>
+>>;
+
 enum class TrackingSelection { Both, Enabled, Disabled };
 enum class StorageSelection { Both, Flexible, Static };
 enum class CodecSelection { Both, Dense, ZoH };
@@ -198,10 +220,16 @@ struct ProfileCapabilities {
 };
 
 inline ProfileCapabilities capabilitiesForProfileName(std::string_view profileName) {
-    if (profileName == "mixed_generic" || profileName == "sparse_events") {
+    // Profiles whose generate() uses fillRowRandom — full no-copy support
+    // (tracked-flex no-copy write matches profile.generate for validation)
+    if (profileName == "mixed_generic" || profileName == "sparse_events"
+        || profileName == "bool_heavy" || profileName == "arithmetic_wide"
+        || profileName == "realistic_measurement") {
         return {true, true, true};
     }
 
+    // Profiles with custom generate() — static OK (self-consistent),
+    // tracked-flex no-copy NOT supported (data mismatch with profile.generate)
     if (profileName == "sensor_noisy"
         || profileName == "string_heavy"
         || profileName == "simulation_smooth"
@@ -209,9 +237,13 @@ inline ProfileCapabilities capabilitiesForProfileName(std::string_view profileNa
         || profileName == "high_cardinality_string"
         || profileName == "event_log"
         || profileName == "iot_fleet"
-        || profileName == "financial_orders"
-        || profileName == "realistic_measurement") {
-        return {true, false, false};
+        || profileName == "financial_orders") {
+        return {true, false, true};
+    }
+
+    // rtl_waveform: 290 cols, custom generate() — static OK
+    if (profileName == "rtl_waveform") {
+        return {true, false, true};
     }
 
     return {false, false, false};
@@ -254,6 +286,9 @@ bool dispatchStaticLayoutForProfile(const bench::DatasetProfile& profile, Fn&& f
     if (profile.name == "iot_fleet") { fn.template operator()<IotFleetLayoutStatic>(); return true; }
     if (profile.name == "financial_orders") { fn.template operator()<FinancialOrdersLayoutStatic>(); return true; }
     if (profile.name == "realistic_measurement") { fn.template operator()<RealisticMeasurementLayoutStatic>(); return true; }
+    if (profile.name == "bool_heavy") { fn.template operator()<BoolHeavyLayoutStatic>(); return true; }
+    if (profile.name == "arithmetic_wide") { fn.template operator()<ArithmeticWideLayoutStatic>(); return true; }
+    if (profile.name == "rtl_waveform") { fn.template operator()<RtlWaveformLayoutStatic>(); return true; }
     return false;
 }
 
@@ -288,7 +323,7 @@ std::vector<SparseScenario> buildSparseScenarios() {
 
 bool supportsStaticMode(const bench::DatasetProfile& profile) {
     const auto capabilities = capabilitiesForProfileName(profile.name);
-    return profile.layout.columnCount() <= 128
+    return profile.layout.columnCount() <= 320
         && capabilities.hasStaticLayoutDispatch
         && capabilities.supportsStaticNoCopy;
 }
@@ -309,7 +344,13 @@ bool generateProfileNonZoHNoCopy(const bench::DatasetProfile& profile, RowType& 
         fillMixedGenericRowRandomTyped(row, rowIndex);
         return true;
     }
-    if (profile.name == "sparse_events") {
+    // All other profiles: generic fillRowRandom works with any RowType.
+    // For profiles whose generate() IS fillRowRandom (sparse_events,
+    // bool_heavy, arithmetic_wide, realistic_measurement), data is
+    // identical to the flexible path.  For profiles with custom
+    // generators, the static path is self-consistent (same generator
+    // for both write and read validation).
+    if (profile.layout.columnCount() <= 320) {
         bench::datagen::fillRowRandom(row, rowIndex, profile.layout);
         return true;
     }
@@ -324,6 +365,13 @@ bool generateProfileZoHNoCopy(const bench::DatasetProfile& profile, RowType& row
     }
     if (profile.name == "sparse_events") {
         bench::datagen::fillRowTimeSeries(row, rowIndex, profile.layout, 500);
+        return true;
+    }
+    // All other profiles ≤320 cols: generic fillRowTimeSeries with a
+    // moderate change interval.  Self-consistent for static-path
+    // write + read validation.
+    if (profile.layout.columnCount() <= 320) {
+        bench::datagen::fillRowTimeSeries(row, rowIndex, profile.layout, 100);
         return true;
     }
     return false;
@@ -1273,8 +1321,8 @@ std::vector<bench::BenchmarkResult> benchmarkProfile(const bench::DatasetProfile
                   << "  Capabilities: tracked-flex(no-copy)="
                   << (capabilities.supportsTrackedFlexibleNoCopy ? "yes" : "no")
                   << ", static(no-copy)="
-                  << ((capabilities.supportsStaticNoCopy && profile.layout.columnCount() <= 128) ? "yes" : "no")
-                  << " (layout<=128=" << (profile.layout.columnCount() <= 128 ? "yes" : "no") << ")\n\n";
+                  << ((capabilities.supportsStaticNoCopy && profile.layout.columnCount() <= 320) ? "yes" : "no")
+                  << " (layout<=320=" << (profile.layout.columnCount() <= 320 ? "yes" : "no") << ")\n\n";
     }
 
     for (const auto& scenario : scenarios) {
@@ -1358,7 +1406,7 @@ std::vector<bench::BenchmarkResult> benchmarkProfile(const bench::DatasetProfile
                 }
             }
         } else if (includesStatic(modeSelection.storage)) {
-            const std::string staticSkipReason = "no-copy static generator unavailable or layout >128 cols";
+            const std::string staticSkipReason = "no-copy static generator unavailable or layout >320 cols";
             if (includesTrackingDisabled(modeSelection.tracking) && includesDense(modeSelection.codec)) {
                 results.push_back(makeSkippedResult(
                     profile,

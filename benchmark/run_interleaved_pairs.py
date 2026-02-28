@@ -39,8 +39,13 @@ def _run_parallel_pair(
          candidate_stdout.open("w", encoding="utf-8") as c_out, \
          candidate_stderr.open("w", encoding="utf-8") as c_err:
 
-        p_base = subprocess.Popen(baseline_cmd, stdout=b_out, stderr=b_err)
-        p_cand = subprocess.Popen(candidate_cmd, stdout=c_out, stderr=c_err)
+        # Each subprocess runs in its own pair directory so that
+        # temporary benchmark files (*.csv, *.bcsv) are isolated
+        # and cannot collide during parallel execution.
+        p_base = subprocess.Popen(baseline_cmd, stdout=b_out, stderr=b_err,
+                                  cwd=str(baseline_stdout.parent))
+        p_cand = subprocess.Popen(candidate_cmd, stdout=c_out, stderr=c_err,
+                                  cwd=str(candidate_stdout.parent))
 
         base_rc = p_base.wait()
         cand_rc = p_cand.wait()
