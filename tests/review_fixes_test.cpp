@@ -18,11 +18,15 @@
 
 namespace {
 
-const std::filesystem::path kTmpDir = std::filesystem::temp_directory_path() / "bcsv_review_tests";
+const std::filesystem::path kTmpBase = std::filesystem::temp_directory_path() / "bcsv_review_tests";
 
 class ReviewFixesTest : public ::testing::Test {
 protected:
+    std::filesystem::path kTmpDir;
     void SetUp() override {
+        const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        kTmpDir = kTmpBase / (std::string(info->test_suite_name())
+                  + "_" + info->name());
         std::filesystem::create_directories(kTmpDir);
     }
     void TearDown() override {

@@ -61,7 +61,10 @@ protected:
     fs::path tmpDir_;
 
     void SetUp() override {
-        tmpDir_ = fs::temp_directory_path() / "bcsv_csv_test";
+        // Per-test subdirectory prevents parallel TearDown races.
+        const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        tmpDir_ = fs::temp_directory_path() / "bcsv_csv_test"
+                  / (std::string(info->test_suite_name()) + "_" + info->name());
         fs::create_directories(tmpDir_);
     }
 

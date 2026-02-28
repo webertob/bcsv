@@ -104,13 +104,16 @@ protected:
             "Special!@#$%^&*()Characters", "Unicode: αβγδε", "Numbers: 123456789"
         };
         
-        // Create test directory
-        test_dir_ = "bcsv_test_files";
+        // Create a per-test directory so parallel CTest runs don't
+        // collide (each test's TearDown only removes its own files).
+        const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        test_dir_ = (fs::path("bcsv_test_files") / (std::string(info->test_suite_name())
+                    + "_" + info->name())).string();
         fs::create_directories(test_dir_);
     }
     
     void TearDown() override {
-        // Clean up test files
+        // Clean up this test's private directory
         if (fs::exists(test_dir_)) {
             fs::remove_all(test_dir_);
         }

@@ -33,7 +33,10 @@ namespace fs = std::filesystem;
 class WriterReaderTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        test_dir_ = (fs::temp_directory_path() / "bcsv_writer_reader_test").string();
+        // Per-test subdirectory prevents parallel TearDown races.
+        const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        test_dir_ = (fs::temp_directory_path() / "bcsv_writer_reader_test"
+                     / (std::string(info->test_suite_name()) + "_" + info->name())).string();
         fs::create_directories(test_dir_);
     }
 

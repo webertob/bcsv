@@ -67,12 +67,7 @@ StaticLayout createStaticLayout() {
     return StaticLayout({"b1", "i32", "d", "s"});
 }
 
-const std::string TEST_DIR = "bcsv_test_files";
-
-std::string testPath(const std::string& name) {
-    std::filesystem::create_directories(TEST_DIR);
-    return TEST_DIR + "/" + name;
-}
+const std::string TEST_DIR = "bcsv_test_files/codec_dispatch";
 
 // ── Write helpers ────────────────────────────────────────────────────────────
 
@@ -181,14 +176,24 @@ void verifyDataStatic(ReaderType& reader) {
 
 class CodecDispatchFlexTest : public ::testing::Test {
 protected:
+    std::string test_dir_;
     void SetUp() override {
-        std::filesystem::create_directories(TEST_DIR);
+        const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        test_dir_ = (std::filesystem::path(TEST_DIR) / (std::string(info->test_suite_name())
+                     + "_" + info->name())).string();
+        std::filesystem::create_directories(test_dir_);
+    }
+    void TearDown() override {
+        std::filesystem::remove_all(test_dir_);
+    }
+    std::string testFile(const std::string& name) {
+        return test_dir_ + "/" + name;
     }
 };
 
 // Natural: Flat file, Disabled reader (existing path — sanity check)
 TEST_F(CodecDispatchFlexTest, FlatFile_DisabledReader) {
-    const auto path = testPath("dispatch_flat_disabled.bcsv");
+    const auto path = testFile("dispatch_flat_disabled.bcsv");
     writeFlatFlexible(path);
 
     bcsv::Reader<bcsv::Layout> reader;
@@ -199,7 +204,7 @@ TEST_F(CodecDispatchFlexTest, FlatFile_DisabledReader) {
 
 // Natural: ZoH file, Enabled reader (existing path — sanity check)
 TEST_F(CodecDispatchFlexTest, ZoHFile_EnabledReader) {
-    const auto path = testPath("dispatch_zoh_enabled.bcsv");
+    const auto path = testFile("dispatch_zoh_enabled.bcsv");
     writeZoHFlexible(path);
 
     bcsv::Reader<bcsv::Layout> reader;
@@ -210,7 +215,7 @@ TEST_F(CodecDispatchFlexTest, ZoHFile_EnabledReader) {
 
 // Cross: Flat file, Enabled reader (should work — all columns marked changed)
 TEST_F(CodecDispatchFlexTest, FlatFile_EnabledReader) {
-    const auto path = testPath("dispatch_flat_enabled.bcsv");
+    const auto path = testFile("dispatch_flat_enabled.bcsv");
     writeFlatFlexible(path);
 
     bcsv::Reader<bcsv::Layout> reader;
@@ -222,7 +227,7 @@ TEST_F(CodecDispatchFlexTest, FlatFile_EnabledReader) {
 
 // Cross: ZoH file, Disabled reader (should work — codec uses internal wire_bits_)
 TEST_F(CodecDispatchFlexTest, ZoHFile_DisabledReader) {
-    const auto path = testPath("dispatch_zoh_disabled.bcsv");
+    const auto path = testFile("dispatch_zoh_disabled.bcsv");
     writeZoHFlexible(path);
 
     bcsv::Reader<bcsv::Layout> reader;
@@ -238,14 +243,24 @@ TEST_F(CodecDispatchFlexTest, ZoHFile_DisabledReader) {
 
 class CodecDispatchStaticTest : public ::testing::Test {
 protected:
+    std::string test_dir_;
     void SetUp() override {
-        std::filesystem::create_directories(TEST_DIR);
+        const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        test_dir_ = (std::filesystem::path(TEST_DIR) / (std::string(info->test_suite_name())
+                     + "_" + info->name())).string();
+        std::filesystem::create_directories(test_dir_);
+    }
+    void TearDown() override {
+        std::filesystem::remove_all(test_dir_);
+    }
+    std::string testFile(const std::string& name) {
+        return test_dir_ + "/" + name;
     }
 };
 
 // Natural: Flat file, Disabled reader
 TEST_F(CodecDispatchStaticTest, FlatFile_DisabledReader) {
-    const auto path = testPath("dispatch_static_flat_disabled.bcsv");
+    const auto path = testFile("dispatch_static_flat_disabled.bcsv");
     writeFlatStatic(path);
 
     bcsv::Reader<StaticLayout> reader;
@@ -256,7 +271,7 @@ TEST_F(CodecDispatchStaticTest, FlatFile_DisabledReader) {
 
 // Natural: ZoH file, Enabled reader
 TEST_F(CodecDispatchStaticTest, ZoHFile_EnabledReader) {
-    const auto path = testPath("dispatch_static_zoh_enabled.bcsv");
+    const auto path = testFile("dispatch_static_zoh_enabled.bcsv");
     writeZoHStatic(path);
 
     bcsv::Reader<StaticLayout> reader;
@@ -267,7 +282,7 @@ TEST_F(CodecDispatchStaticTest, ZoHFile_EnabledReader) {
 
 // Cross: Flat file, Enabled reader
 TEST_F(CodecDispatchStaticTest, FlatFile_EnabledReader) {
-    const auto path = testPath("dispatch_static_flat_enabled.bcsv");
+    const auto path = testFile("dispatch_static_flat_enabled.bcsv");
     writeFlatStatic(path);
 
     bcsv::Reader<StaticLayout> reader;
@@ -278,7 +293,7 @@ TEST_F(CodecDispatchStaticTest, FlatFile_EnabledReader) {
 
 // Cross: ZoH file, Disabled reader
 TEST_F(CodecDispatchStaticTest, ZoHFile_DisabledReader) {
-    const auto path = testPath("dispatch_static_zoh_disabled.bcsv");
+    const auto path = testFile("dispatch_static_zoh_disabled.bcsv");
     writeZoHStatic(path);
 
     bcsv::Reader<StaticLayout> reader;

@@ -30,7 +30,10 @@ protected:
     std::string test_dir_;
     
     void SetUp() override {
-        test_dir_ = "test_error_handling_temp";
+        // Per-test subdirectory prevents parallel TearDown races.
+        const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
+        test_dir_ = (fs::path("test_error_handling_temp") / (std::string(info->test_suite_name())
+                     + "_" + info->name())).string();
         fs::create_directories(test_dir_);
     }
     
