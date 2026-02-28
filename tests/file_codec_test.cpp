@@ -12,14 +12,14 @@
  * @brief Tests for FileCodec integration with Writer/Reader (Item 12).
  *
  * Tests cover:
- * - Round-trip write/read for all 4 implemented file codecs
- *     (Stream001, StreamLZ4001, Packet001, PacketLZ4001)
+ * - Round-trip write/read for all 5 implemented file codecs
+ *     (Stream001, StreamLZ4001, Packet001, PacketLZ4001, PacketLZ4Batch001)
  * - Both Flat and ZoH row codecs with each file codec
  * - Multi-packet round-trip (packet codecs with small block size)
  * - Empty file round-trip
  * - ZoH repeat handling (zero-length rows)
  * - Sentinel identity checks (ZOH_REPEAT_SENTINEL, EOF_SENTINEL)
- * - resolveFileCodecId mapping
+ * - resolveFileCodecId mapping (including BATCH_COMPRESS flag)
  * - FileCodecDispatch lifecycle
  */
 
@@ -146,9 +146,16 @@ TEST_F(FileCodecTest, Dispatch_BeginWrite_Finalize) {
     d.destroy();
 }
 
-TEST_F(FileCodecTest, Dispatch_BatchThrows) {
+TEST_F(FileCodecTest, Dispatch_BatchConstructs) {
     FileCodecDispatch d;
+#ifdef BCSV_HAS_BATCH_CODEC
+    EXPECT_NO_THROW(d.setup(FileCodecId::PACKET_LZ4_BATCH_001));
+    EXPECT_TRUE(d.isSetup());
+    EXPECT_EQ(d.codecId(), FileCodecId::PACKET_LZ4_BATCH_001);
+    d.destroy();
+#else
     EXPECT_THROW(d.setup(FileCodecId::PACKET_LZ4_BATCH_001), std::logic_error);
+#endif
 }
 
 // ============================================================================
@@ -365,6 +372,97 @@ TEST_F(FileCodecTest, RoundTrip_StreamLZ4_Empty) {
 }
 
 // ============================================================================
+// PacketLZ4Batch001 (async double-buffered batch LZ4)
+// ============================================================================
+
+TEST_F(FileCodecTest, ResolveFileCodecId_BatchCompress) {
+    // BATCH_COMPRESS + compression > 0 → PACKET_LZ4_BATCH_001
+    EXPECT_EQ(resolveFileCodecId(1, FileFlags::BATCH_COMPRESS), FileCodecId::PACKET_LZ4_BATCH_001);
+    EXPECT_EQ(resolveFileCodecId(9, FileFlags::BATCH_COMPRESS), FileCodecId::PACKET_LZ4_BATCH_001);
+    // With ZoH too
+    EXPECT_EQ(resolveFileCodecId(5, FileFlags::BATCH_COMPRESS | FileFlags::ZERO_ORDER_HOLD),
+              FileCodecId::PACKET_LZ4_BATCH_001);
+    // BATCH_COMPRESS without compression → PACKET_001 (batch requires compression)
+    EXPECT_EQ(resolveFileCodecId(0, FileFlags::BATCH_COMPRESS), FileCodecId::PACKET_001);
+}
+
+#ifdef BCSV_HAS_BATCH_CODEC
+
+TEST_F(FileCodecTest, RoundTrip_PacketLZ4Batch_Flat) {
+    roundTripFlat<WriterFlat<Layout>>(
+        testFile("batch_flat.bcsv"), makeLayout(), 100, 1, FileFlags::BATCH_COMPRESS);
+}
+
+TEST_F(FileCodecTest, RoundTrip_PacketLZ4Batch_ZoH) {
+    roundTripZoH<WriterZoH<Layout>>(
+        testFile("batch_zoh.bcsv"), makeLayout(), 100, 1, FileFlags::BATCH_COMPRESS);
+}
+
+TEST_F(FileCodecTest, RoundTrip_PacketLZ4Batch_MultiPacket) {
+    // Force many packets with tiny block size (1 KB)
+    roundTripFlat<WriterFlat<Layout>>(
+        testFile("batch_multi.bcsv"), makeLayout(), 500, 1, FileFlags::BATCH_COMPRESS, 1);
+}
+
+TEST_F(FileCodecTest, RoundTrip_PacketLZ4Batch_Empty) {
+    auto path = testFile("batch_empty.bcsv");
+    {
+        WriterFlat<Layout> writer(makeLayout());
+        ASSERT_TRUE(writer.open(path, true, 1, 64, FileFlags::BATCH_COMPRESS));
+        writer.close();
+    }
+    {
+        Reader<Layout> reader;
+        ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
+        EXPECT_FALSE(reader.readNext());
+        reader.close();
+    }
+}
+
+TEST_F(FileCodecTest, RoundTrip_PacketLZ4Batch_SingleRow) {
+    auto path = testFile("batch_single.bcsv");
+    auto layout = makeLayout();
+    {
+        WriterFlat<Layout> writer(layout);
+        ASSERT_TRUE(writer.open(path, true, 1, 64, FileFlags::BATCH_COMPRESS));
+        writer.row().set(0, int32_t{42});
+        writer.row().set(1, 3.14f);
+        writer.row().set(2, std::string("only"));
+        writer.writeRow();
+        writer.close();
+    }
+    {
+        Reader<Layout> reader;
+        ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
+        ASSERT_TRUE(reader.readNext());
+        EXPECT_EQ(reader.row().get<int32_t>(0), 42);
+        EXPECT_FLOAT_EQ(reader.row().get<float>(1), 3.14f);
+        EXPECT_EQ(reader.row().get<std::string>(2), "only");
+        EXPECT_FALSE(reader.readNext());
+        reader.close();
+    }
+}
+
+TEST_F(FileCodecTest, RoundTrip_PacketLZ4Batch_LargerDataset) {
+    roundTripFlat<WriterFlat<Layout>>(
+        testFile("batch_large.bcsv"), makeLayout(), 1000, 1, FileFlags::BATCH_COMPRESS, 1);
+}
+
+TEST_F(FileCodecTest, RoundTrip_PacketLZ4Batch_HC_Compression) {
+    // Test with HC mode (level 6-9)
+    roundTripFlat<WriterFlat<Layout>>(
+        testFile("batch_hc.bcsv"), makeLayout(), 200, 7, FileFlags::BATCH_COMPRESS);
+}
+
+TEST_F(FileCodecTest, RoundTrip_PacketLZ4Batch_MultiPacket_ZoH) {
+    // ZoH + multi-packet to test boundary crossing with ZoH repeats
+    roundTripZoH<WriterZoH<Layout>>(
+        testFile("batch_zoh_multi.bcsv"), makeLayout(), 500, 1, FileFlags::BATCH_COMPRESS, 1);
+}
+
+#endif // BCSV_HAS_BATCH_CODEC
+
+// ============================================================================
 // Cross-codec: ensure all codecs produce readable files with many rows
 // ============================================================================
 
@@ -382,6 +480,9 @@ TEST_F(FileCodecTest, RoundTrip_AllCodecs_LargerDataset) {
         {"pkt_raw_1k", 0, FileFlags::NONE,         1},
         {"str_lz4_1k", 1, FileFlags::STREAM_MODE,  64},
         {"str_raw_1k", 0, FileFlags::STREAM_MODE,  64},
+#ifdef BCSV_HAS_BATCH_CODEC
+        {"batch_1k",   1, FileFlags::BATCH_COMPRESS, 1},
+#endif
     };
 
     for (const auto& cfg : configs) {

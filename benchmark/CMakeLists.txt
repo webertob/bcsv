@@ -75,6 +75,14 @@ if(BCSV_BUILD_BENCHMARKS)
         )
     endif()
 
+    # --- Codec comparison benchmark ---
+    add_executable(bench_codec_compare src/bench_codec_compare.cpp)
+    target_link_libraries(bench_codec_compare PRIVATE bcsv)
+    target_compile_features(bench_codec_compare PRIVATE cxx_std_20)
+    set_target_properties(bench_codec_compare PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+    )
+
     # --- External CSV library comparison (optional) ---
     option(BCSV_ENABLE_EXTERNAL_CSV_BENCH "Build external CSV library comparison benchmark" OFF)
 

@@ -46,6 +46,9 @@
 #include "file_codec_stream_lz4_001.h" // Stream-LZ4 file codec (Item 12)
 #include "file_codec_packet001.h"    // Packet-raw file codec (Item 12)
 #include "file_codec_packet_lz4_001.h" // Packet-LZ4 file codec (Item 12)
+#ifdef BCSV_HAS_BATCH_CODEC
+#include "file_codec_packet_lz4_batch001.h" // Batch-LZ4 async file codec
+#endif
 #include "file_codec_dispatch.h"     // FileCodec runtime dispatch (Item 12)
 #include "row_visitors.h"  // Row visitor pattern concepts and helpers
 #include "writer.h"

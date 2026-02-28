@@ -33,6 +33,9 @@
 #include "file_codec_stream_lz4_001.h"
 #include "file_codec_packet001.h"
 #include "file_codec_packet_lz4_001.h"
+#ifdef BCSV_HAS_BATCH_CODEC
+#include "file_codec_packet_lz4_batch001.h"
+#endif
 #include "definitions.h"
 #include "byte_buffer.h"
 
@@ -103,8 +106,14 @@ public:
                 constructCodec<FileCodecPacketLZ4001>();
                 break;
             case FileCodecId::PACKET_LZ4_BATCH_001:
+#ifdef BCSV_HAS_BATCH_CODEC
+                constructCodec<FileCodecPacketLZ4Batch001>();
+#else
                 throw std::logic_error(
-                    "FileCodecDispatch::setup: PACKET_LZ4_BATCH_001 is not yet implemented");
+                    "FileCodecDispatch::setup: PACKET_LZ4_BATCH_001 requires "
+                    "BCSV_HAS_BATCH_CODEC (CMake: BCSV_ENABLE_BATCH_CODEC=ON)");
+#endif
+                break;
             default:
                 throw std::logic_error(
                     "FileCodecDispatch::setup: unsupported FileCodecId");

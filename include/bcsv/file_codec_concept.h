@@ -32,7 +32,7 @@
  *   FileCodecStreamLZ4001     — no packets, streaming LZ4, per-row XXH32 checksums
  *   FileCodecPacket001        — packet framing + checksums, no compression
  *   FileCodecPacketLZ4001     — packet framing + streaming LZ4 (v1.3.0 default)
- *   FileCodecPacketLZ4Batch001— packet framing + batch LZ4 + async (future)
+ *   FileCodecPacketLZ4Batch001— packet framing + batch LZ4 + async double-buffered I/O
  */
 
 #include <concepts>

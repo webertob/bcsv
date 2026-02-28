@@ -115,6 +115,14 @@ else()
     target_link_libraries(bcsv INTERFACE lz4_local)
 endif()
 
+# Threading (required by FileCodecPacketLZ4Batch001)
+option(BCSV_ENABLE_BATCH_CODEC "Enable the batch-LZ4 file codec (requires threading)" ON)
+if(BCSV_ENABLE_BATCH_CODEC)
+    find_package(Threads REQUIRED)
+    target_link_libraries(bcsv INTERFACE Threads::Threads)
+    target_compile_definitions(bcsv INTERFACE BCSV_HAS_BATCH_CODEC=1)
+endif()
+
 # Compiler requirements
 target_compile_features(bcsv INTERFACE cxx_std_20)
 

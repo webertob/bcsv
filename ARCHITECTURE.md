@@ -474,15 +474,24 @@ Clamped to `MIN_PACKET_SIZE` (64 KB) – `MAX_PACKET_SIZE` (1 GB).
 
 **Goal**: Support multiple compression/packaging strategies and read older file formats
 
-**Planned file codecs**:
-- `Stream-LZ4` — current v1.3.0 format (streaming LZ4 within packets)
-- `Stream-Uncompressed` — streaming without compression (embedded/debug)
-- `Packet-LZ4` — batch-compress entire packet payload (legacy v1.2.x format)
-- `Packet-Uncompressed` — raw packet payload (lowest CPU overhead)
+**Implemented file codecs** (v1.2.0):
+- `Stream-Raw` — no packets, no compression, per-row XXH32 checksums (embedded hard-RT)
+- `Stream-LZ4` — no packets, streaming LZ4, per-row XXH32 checksums
+- `Packet-Raw` — packet framing + checksums, no compression
+- `Packet-LZ4-Streaming` — packet framing + streaming LZ4 (v1.3.0 default)
+- `Packet-LZ4-Batch` — packet framing + batch LZ4, async double-buffered I/O (opt-in via `BATCH_COMPRESS` flag)
+
+**Batch codec wire format** (per packet):
+```
+PacketHeader (16 B) | uint32_t uncompressed_size | uint32_t compressed_size
+                    | LZ4_block (compressed_size B)
+                    | uint64_t payload_checksum (xxHash64 of uncompressed payload)
+```
 
 **Benefits**:
 - Application selects codec to match environment (embedded vs desktop, real-time vs archival)
 - Reader auto-detects codec from file header flags
+- Batch codec: writeRow() = O(memcpy), readRow() = O(VLE decode) — flat call-time profile
 - Enables reading files created by older library versions
 
 ---
