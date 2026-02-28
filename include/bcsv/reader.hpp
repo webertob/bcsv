@@ -316,7 +316,7 @@ namespace bcsv {
         std::streampos pktPos = Base::stream_.tellg();
         std::streamoff stepSize = static_cast<std::streamoff>(Base::file_header_.getPacketSize() + sizeof(PacketHeader));
         while (header.readNext(Base::stream_, pktPos)) {
-            file_footer_.packetIndex().emplace_back(
+            file_footer_.addPacketEntry(
                 static_cast<uint64_t>(pktPos),
                 header.first_row_index
             );

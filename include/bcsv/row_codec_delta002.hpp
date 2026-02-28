@@ -362,10 +362,7 @@ std::span<std::byte> RowCodecDelta002<LayoutType>::serialize(
             prev_strg_[strIdx] = row.strg_[strIdx];
 
             const auto& str = row.strg_[strIdx];
-            if (str.size() > 65535)
-                throw std::runtime_error(
-                    "RowCodecDelta002::serialize() failed! String exceeds 65535 bytes.");
-            uint16_t len = static_cast<uint16_t>(str.size());
+            uint16_t len = static_cast<uint16_t>(std::min(str.size(), MAX_STRING_LENGTH));
             if (bufIdx + 2 + len > buffer.size()) buffer.resize(bufIdx + 2 + len);
             std::memcpy(&buffer[bufIdx], &len, 2);
             bufIdx += 2;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -65,7 +65,7 @@ TEST_F(ErrorHandlingTest, Reader_NonExistentFile) {
     EXPECT_NE(errMsg.find("does not exist"), std::string::npos) 
         << "Error message should mention 'does not exist'. Got: " << errMsg;
     
-    std::cout << "✓ Non-existent file error message: " << errMsg << "\n";
+    // std::cout << "✓ Non-existent file error message: " << errMsg << "\n";
 }
 
 // Test 2: Reader with incompatible layout (wrong column count)
@@ -102,7 +102,7 @@ TEST_F(ErrorHandlingTest, Reader_IncompatibleLayout_ColumnCount) {
     bool compatible = reader.layout().isCompatible(read_layout);
     EXPECT_FALSE(compatible) << "Layout with different column count should be incompatible";
     
-    std::cout << "✓ Layout incompatibility detected: column count mismatch\n";
+    // std::cout << "✓ Layout incompatibility detected: column count mismatch\n";
 }
 
 // Test 3: Reader with incompatible layout (wrong column type)
@@ -138,7 +138,7 @@ TEST_F(ErrorHandlingTest, Reader_IncompatibleLayout_ColumnType) {
     bool compatible = reader.layout().isCompatible(read_layout);
     EXPECT_FALSE(compatible) << "Layout with different column type should be incompatible";
     
-    std::cout << "✓ Layout incompatibility detected: column type mismatch\n";
+    // std::cout << "✓ Layout incompatibility detected: column type mismatch\n";
 }
 
 // Test 4: Writer with existing file (no overwrite flag)
@@ -159,7 +159,7 @@ TEST_F(ErrorHandlingTest, Writer_FileExists_NoOverwrite) {
     // EXPECTED: open() returns false
     EXPECT_FALSE(open_result) << "Writer should return false when file exists and overwrite=false";
     
-    std::cout << "✓ File exists without overwrite flag: correctly rejected\n";
+    // std::cout << "✓ File exists without overwrite flag: correctly rejected\n";
 }
 
 // Test 5: Writer with non-writable directory
@@ -195,7 +195,7 @@ TEST_F(ErrorHandlingTest, Writer_NoWritePermission) {
                     fs::perms::owner_all,
                     fs::perm_options::replace);
     
-    std::cout << "✓ Write permission error: correctly detected\n";
+    // std::cout << "✓ Write permission error: correctly detected\n";
 }
 
 // Test 6: Reading corrupted file (not a valid BCSV file)
@@ -219,7 +219,7 @@ TEST_F(ErrorHandlingTest, Reader_CorruptedFile) {
     std::string errMsg = reader.getErrorMsg();
     EXPECT_FALSE(errMsg.empty()) << "Error message should be provided for corrupted file";
     
-    std::cout << "✓ Corrupted file error message: " << errMsg << "\n";
+    // std::cout << "✓ Corrupted file error message: " << errMsg << "\n";
 }
 
 // Test 7: Static interface with wrong layout
@@ -257,7 +257,7 @@ TEST_F(ErrorHandlingTest, StaticReader_IncompatibleLayout) {
                 errMsg.find("header") != std::string::npos) 
         << "Error message should mention type mismatch or header error. Got: " << errMsg;
     
-    std::cout << "✓ Static layout incompatibility detected at open(): " << errMsg << "\n";
+    // std::cout << "✓ Static layout incompatibility detected at open(): " << errMsg << "\n";
 }
 
 // Test 8: Attempting operations on closed reader
@@ -274,7 +274,7 @@ TEST_F(ErrorHandlingTest, Reader_OperationOnClosedFile) {
     bool read_result = reader.readNext();
     EXPECT_FALSE(read_result) << "readNext() should return false on closed reader";
     
-    std::cout << "✓ Operation on closed reader handled gracefully\n";
+    // std::cout << "✓ Operation on closed reader handled gracefully\n";
 }
 
 // Test 9: Multiple open calls on same writer
@@ -299,7 +299,7 @@ TEST_F(ErrorHandlingTest, Writer_DoubleOpen) {
     
     writer.close();
     
-    std::cout << "✓ Double open prevented\n";
+    // std::cout << "✓ Double open prevented\n";
 }
 
 // Test 10: Check error reporting consistency
@@ -309,20 +309,20 @@ TEST_F(ErrorHandlingTest, ErrorReporting_Consistency) {
     // 2. NOT throw exceptions for normal error conditions (file not found, etc.)
     // 3. Provide error messages via getErrorMsg() or similar
     
-    std::cout << "\n=== Error Reporting API Review ===\n";
-    std::cout << "Writer::open()      - Returns: bool ✓\n";
-    std::cout << "Writer::getErrorMsg() - Available: ✓\n";
-    std::cout << "Reader::open()      - Returns: bool ✓\n";
-    std::cout << "Reader::getErrorMsg() - Available: ✓\n";
-    std::cout << "Reader::readNext()  - Returns: bool ✓\n";
-    std::cout << "\n✅ API is now consistent - both Reader and Writer support getErrorMsg()\n";
+    // std::cout << "\n=== Error Reporting API Review ===\n";
+    // std::cout << "Writer::open()      - Returns: bool ✓\n";
+    // std::cout << "Writer::getErrorMsg() - Available: ✓\n";
+    // std::cout << "Reader::open()      - Returns: bool ✓\n";
+    // std::cout << "Reader::getErrorMsg() - Available: ✓\n";
+    // std::cout << "Reader::readNext()  - Returns: bool ✓\n";
+    // std::cout << "\n✅ API is now consistent - both Reader and Writer support getErrorMsg()\n";
     
     SUCCEED();
 }
 
 // Test 11: Comprehensive getErrorMsg() validation
 TEST_F(ErrorHandlingTest, GetErrorMsg_AllCases) {
-    std::cout << "\n=== Verifying getErrorMsg() for all error conditions ===\n";
+    // std::cout << "\n=== Verifying getErrorMsg() for all error conditions ===\n";
     
     // Case 1: File doesn't exist
     {
@@ -334,7 +334,7 @@ TEST_F(ErrorHandlingTest, GetErrorMsg_AllCases) {
         std::string errMsg = reader.getErrorMsg();
         EXPECT_FALSE(errMsg.empty());
         EXPECT_NE(errMsg.find("does not exist"), std::string::npos);
-        std::cout << "  ✓ File not found: " << errMsg << "\n";
+        // std::cout << "  ✓ File not found: " << errMsg << "\n";
     }
     
     // Case 2: File is not a regular file (directory)
@@ -347,7 +347,7 @@ TEST_F(ErrorHandlingTest, GetErrorMsg_AllCases) {
         std::string errMsg = reader.getErrorMsg();
         EXPECT_FALSE(errMsg.empty());
         EXPECT_NE(errMsg.find("not a regular file"), std::string::npos);
-        std::cout << "  ✓ Not a regular file: " << errMsg << "\n";
+        // std::cout << "  ✓ Not a regular file: " << errMsg << "\n";
     }
     
     // Case 3: Invalid BCSV file (wrong magic number)
@@ -364,7 +364,7 @@ TEST_F(ErrorHandlingTest, GetErrorMsg_AllCases) {
         EXPECT_FALSE(errMsg.empty());
         EXPECT_TRUE(errMsg.find("magic") != std::string::npos || 
                     errMsg.find("header") != std::string::npos);
-        std::cout << "  ✓ Invalid BCSV header: " << errMsg << "\n";
+        // std::cout << "  ✓ Invalid BCSV header: " << errMsg << "\n";
     }
     
     // Case 4: Wrong BCSV version
@@ -394,15 +394,15 @@ TEST_F(ErrorHandlingTest, GetErrorMsg_AllCases) {
         EXPECT_FALSE(errMsg.empty());
         EXPECT_TRUE(errMsg.find("type") != std::string::npos || 
                     errMsg.find("header") != std::string::npos);
-        std::cout << "  ✓ Layout type mismatch: " << errMsg << "\n";
+        // std::cout << "  ✓ Layout type mismatch: " << errMsg << "\n";
     }
     
-    std::cout << "\n✅ All error messages properly captured in getErrorMsg()\n";
+    // std::cout << "\n✅ All error messages properly captured in getErrorMsg()\n";
 }
 
 // Test 12: Verify Writer::getErrorMsg() works
 TEST_F(ErrorHandlingTest, Writer_GetErrorMsg_AllCases) {
-    std::cout << "\n=== Verifying Writer::getErrorMsg() for all error conditions ===\n";
+    // std::cout << "\n=== Verifying Writer::getErrorMsg() for all error conditions ===\n";
     
     // Case 1: File exists without overwrite flag
     {
@@ -417,7 +417,7 @@ TEST_F(ErrorHandlingTest, Writer_GetErrorMsg_AllCases) {
         std::string errMsg = writer.getErrorMsg();
         EXPECT_FALSE(errMsg.empty());
         EXPECT_NE(errMsg.find("already exists"), std::string::npos);
-        std::cout << "  ✓ File exists error: " << errMsg << "\n";
+        // std::cout << "  ✓ File exists error: " << errMsg << "\n";
     }
     
     // Case 2: No write permission
@@ -442,11 +442,11 @@ TEST_F(ErrorHandlingTest, Writer_GetErrorMsg_AllCases) {
             EXPECT_FALSE(errMsg.empty());
             EXPECT_TRUE(errMsg.find("permission") != std::string::npos ||
                         errMsg.find("write") != std::string::npos);
-            std::cout << "  ✓ Permission error: " << errMsg << "\n";
+            // std::cout << "  ✓ Permission error: " << errMsg << "\n";
             
             fs::permissions(readonly_dir, fs::perms::owner_all, fs::perm_options::replace);
         } else {
-            std::cout << "  ⊘ Permission test skipped (cannot change permissions)\n";
+            // std::cout << "  ⊘ Permission test skipped (cannot change permissions)\n";
         }
     }
     
@@ -465,12 +465,12 @@ TEST_F(ErrorHandlingTest, Writer_GetErrorMsg_AllCases) {
         std::string errMsg = writer.getErrorMsg();
         EXPECT_FALSE(errMsg.empty());
         EXPECT_NE(errMsg.find("already open"), std::string::npos);
-        std::cout << "  ✓ Double open error: " << errMsg << "\n";
+        // std::cout << "  ✓ Double open error: " << errMsg << "\n";
         
         writer.close();
     }
     
-    std::cout << "\n✅ All Writer error messages properly captured in getErrorMsg()\n";
+    // std::cout << "\n✅ All Writer error messages properly captured in getErrorMsg()\n";
 }
 
 int main(int argc, char** argv) {

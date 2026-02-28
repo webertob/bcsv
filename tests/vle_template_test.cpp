@@ -1,4 +1,4 @@
-// Copyright (c) 2025 Tobias Weber
+// Copyright (c) 2025-2026 Tobias Weber
 // SPDX-License-Identifier: MIT
 
 #include <gtest/gtest.h>

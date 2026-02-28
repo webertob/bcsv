@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -27,12 +27,6 @@ namespace BCSV
         Float  = 9,
         Double = 10,
         String = 11
-    }
-
-    public enum ReadMode
-    {
-        Strict    = 0,
-        Resilient = 1
     }
 
     public enum FileFlags     {
@@ -92,7 +86,7 @@ namespace BCSV
 
         // Reader API
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_reader_create(ReadMode mode);
+        internal static extern IntPtr bcsv_reader_create();
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void bcsv_reader_destroy(IntPtr reader);
@@ -101,7 +95,7 @@ namespace BCSV
         internal static extern void bcsv_reader_close(IntPtr reader);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern ulong bcsv_reader_count_rows(IntPtr reader);
+        internal static extern UIntPtr bcsv_reader_count_rows(IntPtr reader);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern bool bcsv_reader_open(IntPtr reader, string filename);
@@ -133,6 +127,9 @@ namespace BCSV
         // Writer API
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr bcsv_writer_create(IntPtr layout);
+
+        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_writer_create_zoh(IntPtr layout);
 
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void bcsv_writer_destroy(IntPtr writer);

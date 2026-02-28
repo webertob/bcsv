@@ -271,18 +271,18 @@ bool processData(const std::string& filename) {
 
 ### Primary Documents
 
-1. **[ERROR_HANDLING_ANALYSIS.md](ERROR_HANDLING_ANALYSIS.md)**
+1. **[ERROR_HANDLING_ANALYSIS.md](archive/ERROR_HANDLING_ANALYSIS.md)**
    - Complete analysis of error handling implementation
    - All error message formats documented
    - Usage examples for Reader and Writer
    - Production deployment recommendations
 
-2. **[ERROR_MESSAGE_IMPROVEMENTS.md](ERROR_MESSAGE_IMPROVEMENTS.md)**
+2. **[ERROR_MESSAGE_IMPROVEMENTS.md](archive/ERROR_MESSAGE_IMPROVEMENTS.md)**
    - Reader::getErrorMsg() implementation details
    - Before/after comparison
    - Test coverage for error messages
 
-3. **[DEBUG_OUTPUTS_IMPLEMENTATION.md](DEBUG_OUTPUTS_IMPLEMENTATION.md)**
+3. **[DEBUG_OUTPUTS_IMPLEMENTATION.md](archive/DEBUG_OUTPUTS_IMPLEMENTATION.md)**
    - Production build control mechanism
    - All wrapped stderr locations documented
    - Performance impact analysis

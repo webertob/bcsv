@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -10,7 +10,8 @@
 #pragma once
 
 #include <string>
-#include <iostream>
+#include <istream>
+#include <ostream>
 #include <cstdint>
 
 #include "definitions.h"
@@ -32,11 +33,11 @@ namespace bcsv {
      * @section binary_layout Complete Binary File Layout
      * 
      * The file consists of three main sections:
-     * 1. Fixed Header (12 bytes) - Core file metadata
+     * 1. Fixed Header (16 bytes) - Core file metadata
      * 2. Variable Schema (varies) - Column definitions  
      * 3. Data Records (varies) - Actual row data
      * 
-     * @subsection fixed_header Fixed Header Section (12 bytes)
+     * @subsection fixed_header Fixed Header Section (16 bytes)
      * 
      * ```
      * Offset | Size | Type    | Description
@@ -48,6 +49,7 @@ namespace bcsv {
      *   7    |  1   | uint8   | Compression level (0-9, 0=none)
      *   8    |  2   | uint16  | Feature flags (bitfield)
      *  10    |  2   | uint16  | Number of columns (N)
+     *  12    |  4   | uint32  | Packet size in bytes
      * ```
      * 
      * @subsection variable_schema Variable Schema Section
@@ -118,11 +120,11 @@ namespace bcsv {
         /**
          * @brief Fixed-size header structure with controlled memory layout
          * 
-         * This structure represents the first 12 bytes of every BCSV file.
+         * This structure represents the first 16 bytes of every BCSV file.
          * The #pragma pack directive ensures no padding is inserted between
          * fields, guaranteeing consistent binary layout across platforms.
          * 
-         * @note The structure is exactly 12 bytes as verified by static_assert
+         * @note The structure is exactly 16 bytes as verified by static_assert
          * @note All multi-byte fields use little-endian byte ordering
          */
         #pragma pack(push, 1)

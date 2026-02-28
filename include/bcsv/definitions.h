@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -23,6 +23,18 @@
 
 // Include auto-generated version information
 #include "version_generated.h"
+
+// Force-inline macro for hot-path accessors (get/set/ref/visit).
+// Without this, GCC's inlining heuristic may arbitrarily chose which
+// template instantiations to inline, causing inconsistent benchmark
+// results and sub-optimal performance in real workloads.
+#if defined(_MSC_VER)
+    #define BCSV_ALWAYS_INLINE __forceinline
+#elif defined(__GNUC__) || defined(__clang__)
+    #define BCSV_ALWAYS_INLINE __attribute__((always_inline)) inline
+#else
+    #define BCSV_ALWAYS_INLINE inline
+#endif
 
 namespace bcsv {
     
@@ -149,8 +161,6 @@ namespace bcsv {
         STRING,
         VOID = 255
     };
-    using std::string;
-
     /** Variant type representing all possible column value types
      *  Ensure the order matches ColumnType enum! As we rely on index() to match note isType()
      */
@@ -165,7 +175,7 @@ namespace bcsv {
                                     int64_t, 
                                     float, 
                                     double, 
-                                    string>;
+                                    std::string>;
 
     inline bool isType(const ValueType& value, const ColumnType& type) {
         return value.index() == static_cast<size_t>(type);
@@ -189,7 +199,7 @@ namespace bcsv {
         else if constexpr (std::is_same_v<T, uint64_t>) return ColumnType::UINT64;
         else if constexpr (std::is_same_v<T, float>)    return ColumnType::FLOAT;
         else if constexpr (std::is_same_v<T, double>)   return ColumnType::DOUBLE;
-        else if constexpr (std::is_same_v<T, string>)   return ColumnType::STRING;
+        else if constexpr (std::is_same_v<T, std::string>)   return ColumnType::STRING;
         else if constexpr (std::is_same_v<T, std::string_view>) return ColumnType::STRING;
         else static_assert(ALWAYS_FALSE<T>, "Unsupported type");
     };
@@ -212,7 +222,7 @@ namespace bcsv {
     template<> struct GetTypeT< ColumnType::INT64  > { using type = int64_t;  };
     template<> struct GetTypeT< ColumnType::FLOAT  > { using type = float;    };
     template<> struct GetTypeT< ColumnType::DOUBLE > { using type = double;   };
-    template<> struct GetTypeT< ColumnType::STRING > { using type = string;   };  
+    template<> struct GetTypeT< ColumnType::STRING > { using type = std::string; };
 
     inline constexpr ColumnType toColumnType(const ValueType& value) {
         return std::visit([](auto&& arg) -> ColumnType {
@@ -316,7 +326,7 @@ namespace bcsv {
             case ColumnType::INT64:  return ValueType{int64_t{0} };
             case ColumnType::FLOAT:  return ValueType{float{0.0f}};
             case ColumnType::DOUBLE: return ValueType{double{0.0}};
-            case ColumnType::STRING: return ValueType{string{}   };
+            case ColumnType::STRING: return ValueType{std::string{}};
             default: throw std::runtime_error("Unknown column type");
         }
     }
@@ -345,8 +355,8 @@ namespace bcsv {
             return float{0.0f};
         } else if constexpr (std::is_same_v<Type, double>  ) {
             return double{0.0};
-        } else if constexpr (std::is_same_v<Type, string>  ) {
-            return string{};  // Empty string
+        } else if constexpr (std::is_same_v<Type, std::string>) {
+            return std::string{};  // Empty string
         } else {
             static_assert(ALWAYS_FALSE<Type>, "Unsupported type for defaultValueT");
         }
@@ -365,7 +375,7 @@ namespace bcsv {
         else if constexpr (std::is_same_v<T, int64_t> ) return sizeof(int64_t);
         else if constexpr (std::is_same_v<T, float>   ) return sizeof(float);
         else if constexpr (std::is_same_v<T, double>  ) return sizeof(double);
-        else if constexpr (std::is_same_v<T, string>  ) return sizeof(uint16_t);    // wire format: uint16_t length prefix
+        else if constexpr (std::is_same_v<T, std::string>) return sizeof(uint16_t);    // wire format: uint16_t length prefix
         else static_assert(ALWAYS_FALSE<T>, "Unsupported type");
     }
 
@@ -499,7 +509,9 @@ namespace bcsv {
             default:
                 break;
             }
-            return defaultValue(targetType);
+            throw std::runtime_error(
+                std::string("convertValueType: cannot convert to ") +
+                std::string(toString(targetType)));
         }, value);
     }
 

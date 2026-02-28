@@ -6,7 +6,7 @@ if(NOT GTest_FOUND)
     FetchContent_Declare(
         googletest
         GIT_REPOSITORY https://github.com/google/googletest.git
-        GIT_TAG release-1.12.1
+        GIT_TAG v1.15.2
         GIT_SHALLOW TRUE
     )
     FetchContent_MakeAvailable(googletest)
@@ -44,6 +44,7 @@ set(TEST_SOURCES
     file_codec_test.cpp
     csv_reader_writer_test.cpp
     bench_dataset_profiles_test.cpp
+    file_header_byte_buffer_test.cpp
 )
 
 if(BCSV_ENABLE_STRESS_TESTS)

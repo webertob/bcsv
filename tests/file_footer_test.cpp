@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -47,9 +47,9 @@ TEST_F(FileFooterTest, DefaultConstruction) {
 TEST_F(FileFooterTest, AddPackets) {
     FileFooter footer;
     
-    footer.packetIndex().emplace_back(100, 0);
-    footer.packetIndex().emplace_back(5000, 1000);
-    footer.packetIndex().emplace_back(10000, 2000);
+    footer.addPacketEntry(100, 0);
+    footer.addPacketEntry(5000, 1000);
+    footer.addPacketEntry(10000, 2000);
     
     EXPECT_EQ(footer.packetIndex().size(), 3);
     
@@ -79,12 +79,12 @@ TEST_F(FileFooterTest, CalculateSize) {
     EXPECT_EQ(index.encodedSize(), 28);
     
     // Add 1 packet: 28 + 16 = 44 bytes
-    index.packetIndex().emplace_back(100, 0);
+    index.addPacketEntry(100, 0);
     EXPECT_EQ(index.encodedSize(), 44);
     
     // Add 2 more packets: 28 + 48 = 76 bytes
-    index.packetIndex().emplace_back(5000, 1000);
-    index.packetIndex().emplace_back(10000, 2000);
+    index.addPacketEntry(5000, 1000);
+    index.addPacketEntry(10000, 2000);
     EXPECT_EQ(index.encodedSize(), 76);
 }
 
@@ -92,8 +92,8 @@ TEST_F(FileFooterTest, CalculateSize) {
 TEST_F(FileFooterTest, Clear) {
     FileFooter footer;
     
-    footer.packetIndex().emplace_back(100, 0);
-    footer.packetIndex().emplace_back(5000, 1000);
+    footer.addPacketEntry(100, 0);
+    footer.addPacketEntry(5000, 1000);
     footer.rowCount() = 2000;
     
     EXPECT_EQ(footer.packetIndex().size(), 2);
@@ -130,10 +130,10 @@ TEST_F(FileFooterTest, WriteReadEmptyIndex) {
 TEST_F(FileFooterTest, WriteReadWithPackets) {
     FileFooter original;
     
-    original.packetIndex().emplace_back(100, 0);
-    original.packetIndex().emplace_back(5000, 1000);
-    original.packetIndex().emplace_back(10000, 2000);
-    original.packetIndex().emplace_back(15000, 3000);
+    original.addPacketEntry(100, 0);
+    original.addPacketEntry(5000, 1000);
+    original.addPacketEntry(10000, 2000);
+    original.addPacketEntry(15000, 3000);
     original.rowCount() = 4000;
     
     // Write to stream
@@ -169,7 +169,7 @@ TEST_F(FileFooterTest, WriteReadWithPackets) {
 // Test: hasValidIndex with valid index
 TEST_F(FileFooterTest, HasValidIndexTrue) {
     FileFooter index;
-    index.packetIndex().emplace_back(100, 0);
+    index.addPacketEntry(100, 0);
     index.rowCount() = 1000;
 
     std::stringstream stream;
@@ -199,7 +199,7 @@ TEST_F(FileFooterTest, HasValidIndexFalse) {
 // Test: Read with corrupted start magic
 TEST_F(FileFooterTest, ReadCorruptedStartMagic) {
     FileFooter original;
-    original.packetIndex().emplace_back(100, 0);
+    original.addPacketEntry(100, 0);
     original.rowCount() = 1000;
     
     std::stringstream stream;
@@ -220,7 +220,7 @@ TEST_F(FileFooterTest, ReadCorruptedStartMagic) {
 // Test: Read with corrupted end magic
 TEST_F(FileFooterTest, ReadCorruptedEndMagic) {
     FileFooter original;
-    original.packetIndex().emplace_back(100, 0);
+    original.addPacketEntry(100, 0);
     original.rowCount() = 1000;
     
     std::stringstream stream;
@@ -242,7 +242,7 @@ TEST_F(FileFooterTest, ReadCorruptedEndMagic) {
 // Test: Read with corrupted checksum
 TEST_F(FileFooterTest, ReadCorruptedChecksum) {
     FileFooter original;
-    original.packetIndex().emplace_back(100, 0);
+    original.addPacketEntry(100, 0);
     original.rowCount() = 1000;
     
     std::stringstream stream;
@@ -267,7 +267,7 @@ TEST_F(FileFooterTest, LargeIndex) {
     
     // Add 1000 packets
     for (uint64_t i = 0; i < 1000; ++i) {
-        original.packetIndex().emplace_back(i * 10000, i * 100);
+        original.addPacketEntry(i * 10000, i * 100);
     }
     original.rowCount() = 100000;
     
@@ -303,9 +303,9 @@ TEST_F(FileFooterTest, LargeIndex) {
 TEST_F(FileFooterTest, GetPacketsVector) {
     FileFooter footer;
     
-    footer.packetIndex().emplace_back(100, 0);
-    footer.packetIndex().emplace_back(5000, 1000);
-    footer.packetIndex().emplace_back(10000, 2000);
+    footer.addPacketEntry(100, 0);
+    footer.addPacketEntry(5000, 1000);
+    footer.addPacketEntry(10000, 2000);
     
     const auto& packets = footer.packetIndex();
     EXPECT_EQ(packets.size(), 3);
@@ -329,7 +329,7 @@ TEST_F(FileFooterTest, FooterSizeConstant) {
 TEST_F(FileFooterTest, MaximumValues) {
     FileFooter original;
     
-    original.packetIndex().emplace_back(UINT64_MAX, UINT64_MAX);
+    original.addPacketEntry(UINT64_MAX, UINT64_MAX);
     original.rowCount() = UINT64_MAX;
     
     std::stringstream stream;

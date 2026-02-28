@@ -49,7 +49,7 @@ int main() {
     printf("Write complete: 5 rows written\n\n");
     
     // Read back using vectorized API
-    bcsv_reader_t reader = bcsv_reader_create(BCSV_READ_MODE_STRICT);
+    bcsv_reader_t reader = bcsv_reader_create();
     if (!bcsv_reader_open(reader, "vectorized_test.bcsv")) {
         fprintf(stderr, "Failed to open reader\n");
         return 1;

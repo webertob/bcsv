@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Quick test to verify the optimized BCSV Python wrapper works correctly."""
 
-# Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+# Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
 # 
 # This file is part of the BCSV library.
 # 

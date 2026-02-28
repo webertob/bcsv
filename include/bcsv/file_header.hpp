@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -18,6 +18,7 @@
  */
 
 #include <algorithm>
+#include <iostream>
 #include <vector>
 #include "bcsv/definitions.h"
 #include "file_header.h"
@@ -33,9 +34,6 @@ namespace bcsv {
         const_section_.flags = 0;             // All flags reserved for future use
         const_section_.column_count = static_cast<uint16_t>( std::min(columnCount, MAX_COLUMN_COUNT));
         const_section_.packet_size  = 8 * 1024 * 1024;  // Default 8MB packet size
-        if (const_section_.column_count == MAX_COLUMN_COUNT) {
-            std::cerr << "Warning: Maximum column count exceeded. Some columns may be ignored." << std::endl;
-        }
     }          
 
     inline void FileHeader::setFlag(FileFlags flag, bool value) {

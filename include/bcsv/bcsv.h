@@ -25,7 +25,6 @@
  * - Writer: Template-based file writing
  */
 
-#include <iostream>
 #include <string>
 
 // Core definitions first

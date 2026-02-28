@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -23,10 +23,9 @@ namespace BCSV
         /// <summary>
         /// Create a new BCSV reader
         /// </summary>
-        /// <param name="mode">Read mode (strict or resilient)</param>
-        public BcsvReader(ReadMode mode = ReadMode.Strict)
+        public BcsvReader()
         {
-            handle = NativeMethods.bcsv_reader_create(mode);
+            handle = NativeMethods.bcsv_reader_create();
             if (handle == IntPtr.Zero)
                 throw new InvalidOperationException("Failed to create BCSV reader");
         }
@@ -71,7 +70,8 @@ namespace BCSV
             get
             {
                 var layoutHandle = NativeMethods.bcsv_reader_layout(Handle);
-                return layoutHandle == IntPtr.Zero ? null : new BcsvLayout(layoutHandle);
+                // Non-owning wrapper: Reader owns the native layout, we must not destroy it
+                return layoutHandle == IntPtr.Zero ? null : new BcsvLayout(layoutHandle, ownsHandle: false);
             }
         }
 
@@ -122,7 +122,7 @@ namespace BCSV
         /// </summary>
         public ulong CountRows()
         {
-            return NativeMethods.bcsv_reader_count_rows(Handle);
+            return (ulong)NativeMethods.bcsv_reader_count_rows(Handle);
         }
 
         /// <summary>

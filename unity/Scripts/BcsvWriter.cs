@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -25,13 +25,16 @@ namespace BCSV
         /// Create a new BCSV writer with the specified layout
         /// </summary>
         /// <param name="layout">Layout defining the schema</param>
-        public BcsvWriter(BcsvLayout layout)
+        /// <param name="useZoH">If true, use Zero-Order Hold codec for delta compression</param>
+        public BcsvWriter(BcsvLayout layout, bool useZoH = false)
         {
             if (layout == null)
                 throw new ArgumentNullException(nameof(layout));
 
             this.layout = layout;
-            handle = NativeMethods.bcsv_writer_create(layout.Handle);
+            handle = useZoH
+                ? NativeMethods.bcsv_writer_create_zoh(layout.Handle)
+                : NativeMethods.bcsv_writer_create(layout.Handle);
             if (handle == IntPtr.Zero)
                 throw new InvalidOperationException("Failed to create BCSV writer");
         }
@@ -76,7 +79,8 @@ namespace BCSV
             get
             {
                 var layoutHandle = NativeMethods.bcsv_writer_layout(Handle);
-                return layoutHandle == IntPtr.Zero ? null : new BcsvLayout(layoutHandle);
+                // Non-owning wrapper: Writer owns the native layout, we must not destroy it
+                return layoutHandle == IntPtr.Zero ? null : new BcsvLayout(layoutHandle, ownsHandle: false);
             }
         }
 
@@ -308,6 +312,22 @@ namespace BCSV
         {
             // Finalizer safety net for forgotten Dispose() calls
             Dispose(false);
+        }
+    }
+
+    /// <summary>
+    /// Writer for BCSV files using Zero-Order Hold (ZoH) row codec.
+    /// Only writes changed columns on each row, reducing file size for
+    /// slowly-changing time-series data.
+    /// </summary>
+    public class BcsvWriterZoH : BcsvWriter
+    {
+        /// <summary>
+        /// Create a new ZoH BCSV writer with the specified layout
+        /// </summary>
+        /// <param name="layout">Layout defining the schema</param>
+        public BcsvWriterZoH(BcsvLayout layout) : base(layout, useZoH: true)
+        {
         }
     }
 }

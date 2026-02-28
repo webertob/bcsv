@@ -1,6 +1,10 @@
 /*
  * Comprehensive test suite for the BCSV C API
  * Tests all C API functions including layout, reader, writer, and row operations
+ *
+ * NOTE: This file is pure C (.c) to verify header compatibility with C compilers,
+ * so it cannot use GTest (C++ only). It uses lightweight TEST_ASSERT / TEST_PASS
+ * macros and a manual test runner instead. Registered with CTest via add_test().
  */
 
 #include "../include/bcsv/bcsv_c_api.h"
@@ -266,7 +270,7 @@ void test_writer_reader_api() {
     bcsv_writer_destroy(writer);
     
     // Test reader
-    bcsv_reader_t reader = bcsv_reader_create(BCSV_READ_MODE_STRICT);
+    bcsv_reader_t reader = bcsv_reader_create();
     TEST_ASSERT(reader != NULL, "Reader creation");
     
     bool reader_opened = bcsv_reader_open(reader, test_filename);
@@ -365,7 +369,7 @@ void test_zoh_writer_api() {
     bcsv_writer_destroy(writer);
     
     /* Read back */
-    bcsv_reader_t reader = bcsv_reader_create(BCSV_READ_MODE_STRICT);
+    bcsv_reader_t reader = bcsv_reader_create();
     ok = bcsv_reader_open(reader, test_filename);
     TEST_ASSERT(ok, "Reader opened ZoH file");
     

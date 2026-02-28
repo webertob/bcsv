@@ -9,8 +9,8 @@ This directory contains three essential examples demonstrating different aspects
 
 **Key Features**:
 - Runtime-defined column schemas using `bcsv::Layout`
-- Dynamic column addition with `insertColumn()`
-- Row creation and data population using `(*row).set(index, value)`
+- Dynamic column addition with `addColumn()`
+- Row data population using `row.set(index, value)`
 - Sequential read/write operations
 - Ideal for scenarios where data structure is not known at compile time
 
@@ -38,27 +38,19 @@ This directory contains three essential examples demonstrating different aspects
 
 **Output**: Creates `example_static.bcsv` with the same employee data structure as the flexible example.
 
-### 3. `performance_benchmark.cpp` - Performance Comparison
-**Purpose**: Comprehensive performance benchmarking comparing flexible vs static interfaces with large datasets.
+### 3. `example_zoh.cpp` / `example_zoh_static.cpp` - Zero-Order Hold Demos
+**Purpose**: Demonstrates ZoH (Zero-Order Hold) compression, which only stores values that change between rows.
 
 **Key Features**:
-- Benchmarks both flexible and static interfaces
-- Processes 100,000 rows with 8 mixed-type columns
-- Measures write and read performance separately
-- Reports throughput, speedup ratios, and file size comparison
-- Binary format compatibility verification
-- Realistic data generation with random values and strings
+- Flexible and static ZoH writer variants
+- Significant compression for slowly-changing data
+- Binary-compatible output with standard readers
 
 **Usage**:
 ```bash
-.\build\bin\Debug\performance_benchmark.exe
+./build/bin/example_zoh
+./build/bin/example_zoh_static
 ```
-
-**Typical Results**:
-- Static interface is ~4-5x faster overall
-- Write operations show the largest performance difference
-- Files are binary-compatible between interfaces
-- Throughput: Static ~220K rows/sec vs Flexible ~50K rows/sec
 
 ## Building the Examples
 
@@ -70,8 +62,7 @@ cmake -B build -S .
 
 # Build all examples (fast parallel build)
 cmake --build build -j --target example
-cmake --build build -j --target example_static  
-cmake --build build -j --target performance_benchmark
+cmake --build build -j --target example_static
 
 # Or build all at once
 cmake --build build -j
@@ -88,27 +79,27 @@ All examples use the same basic data structure for consistency:
 | score | float | Performance score |
 | active | bool | Active status |
 
-The performance benchmark extends this to 8 columns with additional types (double, int64_t, uint32_t, additional string).
-
 ## API Usage Patterns
 
 ### Flexible Interface Pattern
 ```cpp
 // Create layout
-auto layout = bcsv::Layout::create();
-layout->insertColumn({"name", bcsv::ColumnDataType::TYPE});
+bcsv::Layout layout;
+layout.addColumn({"name", bcsv::ColumnType::TYPE});
 
 // Write data
-bcsv::Writer<bcsv::Layout> writer(layout, filename, true);
-auto row = layout->createRow();
-(*row).set(index, value);  // Note: (*row) not row->
-writer.writeRow(*row);
+bcsv::Writer<bcsv::Layout> writer(layout);
+writer.open(filename, /*overwrite=*/true);
+auto& row = writer.row();
+row.set(index, value);
+writer.writeRow();
 
 // Read data
-bcsv::Reader<bcsv::Layout> reader(layout, filename);
-bcsv::Row readRow(layout);
-while (reader.readRow(readRow)) {
-    auto value = readRow.get<Type>(index);
+bcsv::Reader<bcsv::Layout> reader;
+reader.open(filename);
+while (reader.readNext()) {
+    auto& row = reader.row();
+    auto value = row.get<Type>(index);
 }
 ```
 
@@ -118,17 +109,19 @@ while (reader.readRow(readRow)) {
 using MyLayout = bcsv::LayoutStatic<int32_t, std::string, float>;
 
 // Write data
-auto layout = MyLayout::create(columnNames);
-bcsv::Writer<MyLayout> writer(layout, filename, true);
-auto row = layout->createRow();
-(*row).set<0>(value);  // Template index, type-safe
-writer.writeRow(*row);
+MyLayout layout(columnNames);
+bcsv::Writer<MyLayout> writer(layout);
+writer.open(filename, /*overwrite=*/true);
+auto& row = writer.row();
+row.set<0>(value);  // Template index, type-safe
+writer.writeRow();
 
 // Read data
-bcsv::Reader<MyLayout> reader(layout, filename);
-typename MyLayout::template RowType<> readRow(layout);
-while (reader.readRow(readRow)) {
-    auto value = readRow.get<0>();  // Template index
+bcsv::Reader<MyLayout> reader;
+reader.open(filename);
+while (reader.readNext()) {
+    auto& row = reader.row();
+    auto value = row.get<0>();  // Template index
 }
 ```
 
@@ -150,9 +143,8 @@ while (reader.readRow(readRow)) {
 
 ## Troubleshooting
 
-- **Heap Exceptions**: Ensure you use `(*row).set()` syntax, not `row->set()`
 - **Compilation Errors**: Verify template parameters match data types exactly
-- **Reading Issues**: Ensure read layout exactly matches write layout
+- **Reading Issues**: Ensure read layout is compatible with write layout (use `isCompatible()`)
 - **Performance**: Use static interface for large datasets (>10K rows)
 
 ## Next Steps
@@ -160,5 +152,6 @@ while (reader.readRow(readRow)) {
 After running these examples:
 1. Try modifying the data structures to match your use case
 2. Experiment with different column types (int8_t, uint64_t, double, etc.)
-3. Test with your actual data volumes using the performance benchmark as a template
-4. Consider compression options if file size is a concern
+3. Test with your actual data volumes
+4. Consider ZoH compression for slowly-changing time-series data
+5. Consider LZ4 compression options if file size is a concern

@@ -10,7 +10,6 @@
 #pragma once
 
 #include <array>
-#include <atomic>
 #include <cassert>
 #include <cstddef>
 #include <functional>
@@ -39,7 +38,7 @@ namespace bcsv {
         ColumnType  type;
 
         ColumnDefinition() 
-            : name(""), type(ColumnType::STRING) {}
+            : name(""), type(ColumnType::BOOL) {}
         ColumnDefinition(std::string_view n, ColumnType t)
             : name(n), type(t) {}
     };
@@ -98,7 +97,8 @@ namespace bcsv {
             std::vector<uint32_t>                    offsets_packed_;// Per-column offsets in packed wire layout (BOOL→bit index, STRING→string index, scalar→byte offset without alignment)
             uint32_t                                 column_count_bool_{0};
             uint32_t                                 column_count_strings_{0};
-            std::atomic<uint32_t>                    structural_lock_count_{0};  // Guard count: >0 ⇒ structural mutations throw
+            uint32_t                                 structural_lock_count_{0};  // Guard count: >0 => structural mutations throw
+                                                                                // Plain counter — library is single-threaded.
 
             // Internal helpers
             void rebuildColumnIndex();
@@ -154,23 +154,24 @@ namespace bcsv {
         public:
             // ============================================================
             // Structural lock (codec guard)
-            // Relaxed ordering: library is single-threaded; atomic is used
-            // only to avoid tearing on the counter, not for cross-thread
-            // synchronization.
+            // Plain counter — the library is single-threaded.
             // ============================================================
-            void acquireStructuralLock() noexcept  { structural_lock_count_.fetch_add(1, std::memory_order_relaxed); }
+        private:
+            friend class LayoutGuard;
+            void acquireStructuralLock() noexcept  { ++structural_lock_count_; }
             void releaseStructuralLock() noexcept  {
-                auto prev = structural_lock_count_.fetch_sub(1, std::memory_order_relaxed);
-                assert(prev > 0 && "releaseStructuralLock: underflow — more releases than acquires");
-                (void)prev;
+                assert(structural_lock_count_ > 0 && "releaseStructuralLock: underflow — more releases than acquires");
+                --structural_lock_count_;
             }
-            bool isStructurallyLocked() const noexcept { return structural_lock_count_.load(std::memory_order_relaxed) > 0; }
+        public:
+            bool isStructurallyLocked() const noexcept { return structural_lock_count_ > 0; }
 
             // ============================================================
             // Observer management
             // ============================================================
             void registerCallback(void* owner, Callbacks callbacks);
             void unregisterCallback(void* owner);
+            void replaceCallbackOwner(void* old_owner, void* new_owner, Callbacks new_callbacks) noexcept;
 
         private:
             // Notification method (called internally before modifications)
@@ -210,6 +211,10 @@ namespace bcsv {
 
         void unregisterCallback(void* owner) const {
             data_->unregisterCallback(owner);
+        }
+
+        void replaceCallbackOwner(void* old_owner, void* new_owner, Data::Callbacks new_callbacks) const noexcept {
+            data_->replaceCallbackOwner(old_owner, new_owner, std::move(new_callbacks));
         }
 
         /// @brief Check whether any codec guard is currently locking this layout.

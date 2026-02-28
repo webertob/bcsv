@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -14,7 +14,8 @@
 #include <bit>
 #include <cstring>
 #include <iosfwd>
-#include <iostream>
+#include <istream>
+#include <ostream>
 #include <vector>
 #include "bcsv/definitions.h"
 #include "xxHash-0.8.3/xxhash.h"
@@ -30,7 +31,7 @@ namespace bcsv {
      * - Row indexing for random access
      * - Compact header checksum for header-only validation
      * 
-     * Memory Layout (24 bytes):
+     * Memory Layout (16 bytes):
      * ```
      * Offset | Size | Field                  | Description
      * -------|------|------------------------|----------------------------------------
@@ -111,7 +112,7 @@ namespace bcsv {
          * @param stream Input stream to read from
          * @return true if read successful and header is valid
          */
-        bool read(std::istream& stream, bool silent = false) {
+        bool read(std::istream& stream, [[maybe_unused]] bool silent = false) {
             std::array<std::byte, sizeof(PacketHeader)> raw{};
             stream.read(reinterpret_cast<char*>(raw.data()), raw.size());
             if (stream.gcount() != static_cast<std::streamsize>(raw.size())) {
@@ -121,16 +122,10 @@ namespace bcsv {
             *this = std::bit_cast<PacketHeader>(raw);
             
             if (!isValidMagic()) {
-                if (!silent) {
-                    std::cerr << "Error: Invalid packet header magic" << std::endl;
-                }
                 return false;
             }
             
             if (!validateChecksum()) {
-                if (!silent) {
-                    std::cerr << "Error: Packet header checksum mismatch" << std::endl;
-                }
                 return false;
             }
             
@@ -141,9 +136,10 @@ namespace bcsv {
          * @brief Searches, reads and validates the next packet header from binary stream
          * @param stream Input stream to read from
          * @param position start postion to search from, updated to position of packet header magic if found, else EoL
+         * @param maxScanBytes Maximum number of bytes to scan before giving up (0 = unlimited, default 64 MiB)
          * @return true if read successful and header is valid
          */
-        bool readNext(std::istream& stream, std::streampos& position) {
+        bool readNext(std::istream& stream, std::streampos& position, size_t maxScanBytes = 64 * 1024 * 1024) {
             stream.clear();
             stream.seekg(position);
             if (!stream.good()) {
@@ -152,14 +148,20 @@ namespace bcsv {
 
             constexpr size_t CHUNK_SIZE = 8192;  // 8KB chunks
             constexpr size_t HEADER_SIZE = sizeof(PacketHeader);
+            size_t totalScanned = 0;
             std::vector<char> buffer(CHUNK_SIZE);
             std::streamsize validBytes = 0;  // Number of valid bytes in buffer
             std::streampos bufferStartPos = position;  // Track file position of buffer start
             
             while (stream.good()) {
+                // Enforce scan distance limit
+                if (maxScanBytes > 0 && totalScanned >= maxScanBytes) {
+                    return false;
+                }
                 // Read new data into buffer (after any existing data from sliding)
                 stream.read(buffer.data() + validBytes, CHUNK_SIZE - validBytes);
                 std::streamsize newBytes = stream.gcount();
+                totalScanned += static_cast<size_t>(newBytes);
                 validBytes += newBytes;
                 
                 if (validBytes < static_cast<std::streamsize>(HEADER_SIZE)) {

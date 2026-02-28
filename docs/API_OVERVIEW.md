@@ -205,13 +205,13 @@ print(df.head())
 using BCSV;
 
 // Create layout
-var layout = new BCSVLayout();
+var layout = new BcsvLayout();
 layout.AddColumn("player_id", ColumnType.INT32);
 layout.AddColumn("score", ColumnType.FLOAT);
 layout.AddColumn("name", ColumnType.STRING);
 
 // Write data
-using (var writer = new BCSVWriter(layout))
+using (var writer = new BcsvWriter(layout))
 {
     writer.Open("playerdata.bcsv", overwrite: true);
     
@@ -222,7 +222,7 @@ using (var writer = new BCSVWriter(layout))
 }
 
 // Read data
-using (var reader = new BCSVReader())
+using (var reader = new BcsvReader())
 {
     reader.Open("playerdata.bcsv");
     

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -495,7 +495,7 @@ namespace bcsv {
         Row() = delete; // no default constructor, we always need a layout
         Row(const Layout& layout);
         Row(const Row& other);
-        Row(Row&& other);
+        Row(Row&& other) noexcept;
 
         ~Row();
 
@@ -547,7 +547,7 @@ namespace bcsv {
         void                        visitConst(size_t startIndex, Visitor&& visitor, size_t count = 1) const;
 
         Row&                        operator=(const Row& other);               // Throws std::invalid_argument if layouts incompatible
-        Row&                        operator=(Row&& other);
+        Row&                        operator=(Row&& other) noexcept;
     };
 
 

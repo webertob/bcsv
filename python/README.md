@@ -112,7 +112,9 @@ layout.column_index(name: str) -> int
 
 ```python
 writer = pybcsv.Writer(layout: Layout)
-writer.open(filename: str) -> bool
+writer.open(filename: str, overwrite: bool = True,
+            compression_level: int = 1, block_size_kb: int = 64,
+            flags: FileFlags = FileFlags.NONE) -> None  # raises RuntimeError on failure
 writer.write_row(values: list) -> None
 writer.flush() -> None
 writer.close() -> None
@@ -123,7 +125,7 @@ writer.is_open() -> bool
 
 ```python
 reader = pybcsv.Reader()
-reader.open(filename: str) -> bool
+reader.open(filename: str) -> None  # raises RuntimeError on failure
 reader.read_next() -> bool
 reader.read_all() -> list[list]
 reader.close() -> None

@@ -67,7 +67,7 @@ namespace bcsv {
     }
 
     inline void Layout::Data::throwIfLocked(const char* method) const {
-        if (structural_lock_count_.load(std::memory_order_relaxed) > 0) [[unlikely]] {
+        if (structural_lock_count_ > 0) [[unlikely]] {
             throw std::logic_error(std::string("Layout::Data::") + method + ": layout is structurally locked by an active codec");
         }
     }
@@ -460,6 +460,15 @@ namespace bcsv {
         if (it != callbacks_.end()) {
             std::swap(*it, callbacks_.back());
             callbacks_.pop_back();  // O(1) removal
+        }
+    }
+
+    inline void Layout::Data::replaceCallbackOwner(void* old_owner, void* new_owner, Callbacks new_callbacks) noexcept {
+        auto it = std::find_if(callbacks_.begin(), callbacks_.end(),
+            [old_owner](const auto& p) { return p.first == old_owner; });
+        if (it != callbacks_.end()) {
+            it->first = new_owner;
+            it->second = std::move(new_callbacks);
         }
     }
 

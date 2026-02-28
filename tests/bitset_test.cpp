@@ -2325,19 +2325,19 @@ TEST(BitsetEncodeDecode, MultipleWordBoundaries) {
 }
 
 TEST(BitsetSummaryTest, AllSizesWork) {
-    std::cout << "\n=== Bitset Test Summary ===\n";
-    std::cout << "✓ Fixed-size bitsets: 1, 8, 64, 256, 1024, 8192 bits\n";
-    std::cout << "✓ Dynamic-size bitsets: 8, 256, 1024, 65536 bits\n";
-    std::cout << "✓ All operations tested: set, reset, flip, count, any, all, none\n";
-    std::cout << "✓ Bitwise operators: &, |, ^, ~, <<, >>\n";
-    std::cout << "✓ Conversions: toUlong, toUllong, toString, toFixed\n";
-    std::cout << "✓ I/O operations: data, readFrom, writeTo\n";
-    std::cout << "✓ Dynamic operations: resize, reserve, clear, shrinkToFit, insert, erase, pushBack\n";
-    std::cout << "✓ Edge cases: word boundaries, partial words, out of range\n";
-    std::cout << "✓ Std::Bitset parity: sizes 0-130, shifts, bitwise ops\n";
-    std::cout << "✓ Interoperability: fixed ↔ dynamic conversions\n";
-    std::cout << "✓ Block operations: equalRange, assignRange, free-function dual-offset\n";
-    std::cout << "============================\n\n";
+    // std::cout << "\n=== Bitset Test Summary ===\n";
+    // std::cout << "✓ Fixed-size bitsets: 1, 8, 64, 256, 1024, 8192 bits\n";
+    // std::cout << "✓ Dynamic-size bitsets: 8, 256, 1024, 65536 bits\n";
+    // std::cout << "✓ All operations tested: set, reset, flip, count, any, all, none\n";
+    // std::cout << "✓ Bitwise operators: &, |, ^, ~, <<, >>\n";
+    // std::cout << "✓ Conversions: toUlong, toUllong, toString, toFixed\n";
+    // std::cout << "✓ I/O operations: data, readFrom, writeTo\n";
+    // std::cout << "✓ Dynamic operations: resize, reserve, clear, shrinkToFit, insert, erase, pushBack\n";
+    // std::cout << "✓ Edge cases: word boundaries, partial words, out of range\n";
+    // std::cout << "✓ Std::Bitset parity: sizes 0-130, shifts, bitwise ops\n";
+    // std::cout << "✓ Interoperability: fixed ↔ dynamic conversions\n";
+    // std::cout << "✓ Block operations: equalRange, assignRange, free-function dual-offset\n";
+    // std::cout << "============================\n\n";
     
     SUCCEED();
 }

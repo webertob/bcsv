@@ -31,7 +31,7 @@ pytest tests/ -v        # Verbose
 pytest tests/test_basic.py -k "test_write"  # Specific test
 ```
 
-15 test files in `python/tests/` covering types, errors, interop, pandas, performance.
+13 test files in `python/tests/` covering types, errors, interop, pandas, performance.
 
 ## Package Structure
 
@@ -63,21 +63,49 @@ layout = pybcsv.Layout()
 layout.add_column("time", pybcsv.ColumnType.DOUBLE)
 layout.add_column("value", pybcsv.ColumnType.FLOAT)
 
-# Write
-writer = pybcsv.Writer()
-writer.open("data.bcsv", layout)
-writer.row().set_double(0, 1.0)
-writer.row().set_float(1, 42.0)
-writer.write_row()
+# Write (layout passed to constructor, not open)
+writer = pybcsv.Writer(layout)
+writer.open("data.bcsv")             # throws RuntimeError on failure
+writer.write_row([1.0, 42.0])        # pass values as Python list
+writer.write_rows([[1.0, 42.0], [2.0, 43.0]])  # batch write
 writer.close()
 
-# Read
+# Write with context manager
+with pybcsv.Writer(layout) as writer:
+    writer.open("data.bcsv")
+    writer.write_row([1.0, 42.0])
+# auto-closes on exit
+
+# Read (returns Python lists, no per-column get/set)
+reader = pybcsv.Reader()
+reader.open("data.bcsv")             # throws RuntimeError on failure
+while reader.read_next():
+    row = reader.read_row()           # returns Python list [1.0, 42.0]
+reader.close()
+
+# Read with iterator protocol
+with pybcsv.Reader() as reader:
+    reader.open("data.bcsv")
+    for row in reader:                # yields Python lists
+        print(row)
+
+# Read all at once
 reader = pybcsv.Reader()
 reader.open("data.bcsv")
-while reader.read_next():
-    t = reader.row().get_double(0)
-    v = reader.row().get_float(1)
+all_rows = reader.read_all()          # list of lists
+row_count = reader.count_rows()       # instant row count (from file footer)
 reader.close()
+
+# CSV text I/O
+csv_writer = pybcsv.CsvWriter(layout, ',', '.')  # delimiter, decimal separator
+csv_writer.open("data.csv")
+csv_writer.write_row([1.0, 42.0])
+csv_writer.close()
+
+csv_reader = pybcsv.CsvReader(layout)
+csv_reader.open("data.csv")
+for row in csv_reader:
+    print(row)
 
 # Pandas integration
 import pandas as pd
@@ -87,6 +115,8 @@ df = read_dataframe("data.bcsv")
 ```
 
 > **Note:** Python API uses `snake_case` (Pythonic), C++ API uses `lowerCamelCase`.
+> Writer and Reader `open()` throw `RuntimeError` on failure (not bool return).
+> Row data is passed/returned as plain Python lists — no per-column `get_*`/`set_*` methods.
 
 ## Header Sync Mechanism
 
@@ -110,8 +140,11 @@ See `python/README.md` for full publishing workflow and CI integration via `.git
 ## Binding Source
 
 `python/pybcsv/bindings.cpp` — pybind11 module wrapping:
-- `bcsv::Layout` → `pybcsv.Layout`
-- `bcsv::Writer<Layout>` → `pybcsv.Writer`
-- `bcsv::Reader<Layout>` → `pybcsv.Reader`
-- `bcsv::Row` → `pybcsv.Row` (via Writer/Reader `.row()` accessor)
-- All 12 column types with type-specific get/set methods
+- `bcsv::Layout` → `pybcsv.Layout` (add_column, column_count, column_name, column_type, has_column, column_index, etc.)
+- `bcsv::Writer<Layout>` → `pybcsv.Writer(layout)` — open, write_row(list), write_rows(list_of_lists), close, flush, is_open, context manager
+- `bcsv::Reader<Layout>` → `pybcsv.Reader()` — open, read_next, read_row, read_all, close, is_open, count_rows, iterator, context manager
+- `bcsv::CsvWriter<Layout>` → `pybcsv.CsvWriter(layout, delimiter, decimal_separator)` — open, write_row, write_rows, close
+- `bcsv::CsvReader<Layout>` → `pybcsv.CsvReader(layout)` — open, read_next, iterator, context manager
+- `bcsv::ColumnType` enum (all 12 types) + `bcsv::FileFlags` (NONE, ZERO_ORDER_HOLD)
+- `bcsv::ColumnDefinition` struct (name, type)
+- Row data is passed as Python lists, not via per-column accessors

@@ -1,7 +1,7 @@
 #pragma once
 
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -288,7 +288,9 @@ namespace bcsv {
         if constexpr (FITS_IN_REGISTER) {
             PacketType packet = 0;
             
-            // Fast path: over-read full register if buffer allows
+            // Fast path: over-read up to sizeof(PacketType) bytes from the source buffer.
+            // This reads past the meaningful VLE payload (1-3 bytes) into trailing bytes,
+            // then masks out the garbage. This is safe because:\n            //   1. The guard `src_capacity >= sizeof(PacketType)` ensures we never read\n            //      past the end of the caller-provided buffer.\n            //   2. All callers provide application-owned buffers (ByteBuffer, std::vector,\n            //      or stack-local arrays) — never raw file-mapped memory at page boundaries.\n            //   3. The trailing bytes are cleaned up via the shift-mask below.
             if (src_capacity >= sizeof(PacketType)) {
                  std::memcpy(&packet, bytes, sizeof(PacketType));
                  

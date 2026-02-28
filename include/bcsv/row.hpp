@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -14,6 +14,40 @@
  * @brief Binary CSV (BCSV) Library - Row implementations
  * 
  * This file contains the implementations for the Row and RowStatic classes.
+ *
+ * ## Strict Aliasing & Type-Punning Notes
+ *
+ * Row stores scalar column values in a packed std::vector<std::byte> buffer (data_).
+ * Access to typed values uses reinterpret_cast<T*>(&data_[offset]) in get<T>(),
+ * ref<T>(), visitConst(), and visit(). This is well-defined for the following reasons:
+ *
+ * 1. All scalar column types (int8..uint64, float, double) are implicit-lifetime
+ *    types (trivially constructible and destructible). Under C++20 P0593R6
+ *    ("Implicit creation of objects for low-level object manipulation"),
+ *    operations that write into byte-type storage — such as std::memcpy (used
+ *    by the row codecs during deserialization and by set<T>()) and std::memset
+ *    (used by clear()) — implicitly create objects of implicit-lifetime types
+ *    in that storage.
+ *
+ * 2. Codec deserialization (RowCodecFlat001, RowCodecZoH001, RowCodecDelta002)
+ *    populates data_ exclusively via std::memcpy, which implicitly starts the
+ *    lifetime of the typed objects at the target offsets.
+ *
+ * 3. set<T>() uses std::memcpy to write values into data_, which likewise
+ *    implicitly creates the typed object.
+ *
+ * 4. Subsequent reads via reinterpret_cast<const T*>(&data_[offset]) in
+ *    get<T>(), ref<T>(), and the visitor dispatch are therefore accessing
+ *    objects whose lifetime has already been started by a prior write.
+ *
+ * 5. clear() uses std::memset(..., 0, ...) which implicitly creates
+ *    zero-valued objects of implicit-lifetime types (all arithmetic types
+ *    have a valid zero representation).
+ *
+ * References:
+ *   - P0593R6: https://wg21.link/P0593R6
+ *   - [intro.object] §6.7.2.11-13 (implicit object creation)
+ *   - [basic.types] §6.8 (implicit-lifetime types)
  */
 
 #include "bcsv/bitset.h"
@@ -85,13 +119,16 @@ namespace bcsv {
         );
     }
 
-    inline Row::Row(Row&& other)
+    inline Row::Row(Row&& other) noexcept
         : layout_(other.layout_)
         , bits_(std::move(other.bits_))
         , data_(std::move(other.data_))
         , strg_(std::move(other.strg_))
     {
-        layout_.registerCallback(this, {
+        // Take over other's callback slot instead of allocating a new one.
+        // This is noexcept (in-place update), fixes the moved-from callback leak,
+        // and enables std::vector<Row> to use move during reallocation.
+        layout_.replaceCallbackOwner(&other, this, {
             [this](const std::vector<Layout::Data::Change>& changes) { onLayoutUpdate(changes); }
         });
     }
@@ -152,9 +189,14 @@ namespace bcsv {
     // String views (string_view, span<const char>) return lightweight views.
     // Type must match exactly (no conversions).
     // For flexible access with type conversions, use get(index, T& dst) instead.
+    //
+    // Aliasing safety: The reinterpret_cast read of data_ is well-defined
+    // because a T object has been implicitly created at the target offset by
+    // a prior std::memcpy (codec deserialization or set<T>()) or std::memset
+    // (clear()). See file-level documentation for details (P0593R6).
     // =========================================================================
     template<typename T>
-    inline decltype(auto) Row::get(size_t index) const {
+    BCSV_ALWAYS_INLINE decltype(auto) Row::get(size_t index) const {
         // Compile-time type validation
         static_assert(
             std::is_trivially_copyable_v<T> || 
@@ -256,8 +298,17 @@ namespace bcsv {
         return success;
     }
 
+    /** 
+     * Mutable reference access to a scalar column value.
+     *
+     * @pre A T object must already exist at the target offset. This is
+     *      guaranteed after codec deserialization (memcpy), set<T>(), or
+     *      clear() — all of which implicitly create typed objects in data_
+     *      per C++20 P0593R6. Do not call ref<T>() on an offset that has
+     *      never been written to by one of these operations.
+     */
     template<typename T>
-    inline decltype(auto) Row::ref(size_t index) {
+    BCSV_ALWAYS_INLINE decltype(auto) Row::ref(size_t index) {
         if constexpr (RANGE_CHECKING) {
             if (index >= layout_.columnCount()) [[unlikely]] {
                 throw std::out_of_range("Row::ref<T>: Index out of range");
@@ -282,7 +333,7 @@ namespace bcsv {
      * Set the value at the specified column index.
      */
     template<detail::BcsvAssignable T>
-    inline void Row::set(size_t index, const T& value) {
+    BCSV_ALWAYS_INLINE void Row::set(size_t index, const T& value) {
 
     // Helper: detect bool proxy types
     constexpr bool isBoolLike = std::is_same_v<T, bool> || 
@@ -326,7 +377,10 @@ namespace bcsv {
             str.resize(MAX_STRING_LENGTH);
         }
     } else {
-        *reinterpret_cast<T*>(&data_[offset]) = value;
+        // Use memcpy to write the scalar value into the byte buffer.
+        // This implicitly creates a T object at the target offset (P0593R6),
+        // making subsequent reinterpret_cast reads in get<T>()/ref<T>() well-defined.
+        std::memcpy(&data_[offset], &value, sizeof(T));
     }
 }
 
@@ -365,8 +419,14 @@ namespace bcsv {
     // Visit (const)
     // =========================================================================
 
+    // Aliasing safety: The reinterpret_cast reads in visitConst() and the
+    // reinterpret_cast read-modify-write in visit() are well-defined because
+    // typed objects have been implicitly created at these offsets by prior
+    // memcpy (codec deserialization / set<T>()) or memset (clear()).
+    // See file-level documentation for the full P0593R6 rationale.
+
     template<RowVisitorConst Visitor>
-    inline void Row::visitConst(size_t startIndex, Visitor&& visitor, size_t count) const {
+    BCSV_ALWAYS_INLINE void Row::visitConst(size_t startIndex, Visitor&& visitor, size_t count) const {
         if (count == 0) 
             return;
         
@@ -441,7 +501,7 @@ namespace bcsv {
     // =========================================================================
 
     template<RowVisitor Visitor>
-    inline void Row::visit(size_t startIndex, Visitor&& visitor, size_t count) {
+    BCSV_ALWAYS_INLINE void Row::visit(size_t startIndex, Visitor&& visitor, size_t count) {
         if (count == 0) return;
         
         size_t endIndex = startIndex + count;
@@ -725,11 +785,12 @@ namespace bcsv {
         return *this;
     }
 
-    inline Row& Row::operator=(Row&& other) 
+    inline Row& Row::operator=(Row&& other) noexcept
     {
         if (this == &other) 
             return *this;
         
+        // Unregister this from its current layout
         layout_.unregisterCallback(this);
         
         layout_ = other.layout_;
@@ -737,7 +798,8 @@ namespace bcsv {
         data_ = std::move(other.data_);
         strg_ = std::move(other.strg_);
         
-        layout_.registerCallback(this, {
+        // Take over other's callback slot (noexcept, no allocation)
+        layout_.replaceCallbackOwner(&other, this, {
             [this](const std::vector<Layout::Data::Change>& changes) { onLayoutUpdate(changes); }
         });
         

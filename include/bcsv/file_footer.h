@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -11,7 +11,8 @@
 
 #include <cstdint>
 #include <vector>
-#include <iostream>
+#include <istream>
+#include <ostream>
 #include <cstring>
 #include "definitions.h"
 #include "checksum.hpp"
@@ -110,19 +111,16 @@ namespace bcsv {
         }
 
         /**
-         * @brief Get all packet entries
-         * @return reference to packetIndex
-         */
-        auto& packetIndex() {
-            return packet_index_;
-        }
-
-        /**
-         * @brief Get all packet entries
+         * @brief Get all packet entries (const)
          * @return Const reference to packetIndex
          */
         const auto& packetIndex() const {
             return packet_index_;
+        }
+
+        /// @brief Append a packet entry to the index. Preferred over mutating packetIndex() directly.
+        void addPacketEntry(uint64_t byteOffset, uint64_t firstRow) {
+            packet_index_.emplace_back(byteOffset, firstRow);
         }
                 
         /**
@@ -222,7 +220,6 @@ namespace bcsv {
             stream.read(reinterpret_cast<char*>(&const_section_), sizeof(ConstSection));
             
             if (!stream.good() || const_section_.start_magic != FOOTER_EIDX_MAGIC) {
-                std::cerr << "Error: Invalid file index footer" << std::endl;
                 stream.seekg(originalPos);
                 return false;
             }
@@ -234,7 +231,6 @@ namespace bcsv {
             char startMagic[4];
             stream.read(startMagic, 4);
             if (!stream.good() || std::memcmp(startMagic, "BIDX", 4) != 0) {
-                std::cerr << "Error: Invalid file index start magic" << std::endl;
                 stream.seekg(originalPos);
                 return false;
             }
@@ -242,7 +238,6 @@ namespace bcsv {
             // Calculate number of packet entries
             size_t indexSize = const_section_.start_offset - sizeof(ConstSection) - sizeof(startMagic);
             if (indexSize % sizeof(PacketIndexEntry) != 0) {
-                std::cerr << "Error: Invalid file index size" << std::endl;
                 stream.seekg(originalPos);
                 return false;
             }
@@ -252,7 +247,6 @@ namespace bcsv {
             packet_index_.resize(entryCount);
             stream.read(reinterpret_cast<char*>(packet_index_.data()), indexSize);
             if (!stream.good()) {
-                std::cerr << "Error: Failed to read packet index entries" << std::endl;
                 stream.seekg(originalPos);
                 return false;
             }
@@ -264,7 +258,6 @@ namespace bcsv {
             checksum.update(&const_section_, sizeof(ConstSection) - sizeof(const_section_.checksum));
             uint64_t calculatedChecksum = checksum.finalize();
             if (calculatedChecksum != const_section_.checksum) {
-                std::cerr << "Error: File index checksum mismatch" << std::endl;
                 stream.seekg(originalPos);
                 return false;
             }

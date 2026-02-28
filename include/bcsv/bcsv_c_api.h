@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -78,14 +78,8 @@ void            bcsv_layout_assign          (bcsv_layout_t dest, const_bcsv_layo
 
 // Reader API - Start
 // These functions operate on reader objects, which read BCSV files row by row
-// Readers can be opened in strict or resilient mode (handle schema mismatches)
-// Readers provide access to the current row and its index
-typedef enum {
-    BCSV_READ_MODE_STRICT    = 0,
-    BCSV_READ_MODE_RESILIENT = 1
-} bcsv_read_mode_t;
 
-bcsv_reader_t       bcsv_reader_create  (bcsv_read_mode_t mode);
+bcsv_reader_t       bcsv_reader_create  (void);
 void                bcsv_reader_destroy (bcsv_reader_t reader);
 
 size_t              bcsv_reader_count_rows(const_bcsv_reader_t reader); // counts total rows in file (may be slow)

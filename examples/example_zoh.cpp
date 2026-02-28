@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -10,7 +10,7 @@
 #include <iostream>
 #include <iomanip>
 #include <fstream>
-#include <sys/stat.h>
+#include <filesystem>
 #include <bcsv/bcsv.h>
 
 /**
@@ -320,24 +320,21 @@ void compareCompressionEfficiency() {
     std::cout << "=== Compression Efficiency Analysis ===\n\n";
     
     // Get file sizes
-    struct stat st;
+    namespace fs = std::filesystem;
     
     std::string normalFile = "example_flexible.bcsv";
     std::string zohFile = "example_flexible_zoh.bcsv";
     
-    if (stat(normalFile.c_str(), &st) == 0) {
-        size_t normalSize = st.st_size;
+    if (fs::exists(normalFile) && fs::exists(zohFile)) {
+        auto normalSize = fs::file_size(normalFile);
+        auto zohSize    = fs::file_size(zohFile);
         std::cout << "Normal BCSV file size: " << normalSize << " bytes\n";
+        std::cout << "ZoH BCSV file size: " << zohSize << " bytes\n";
         
-        if (stat(zohFile.c_str(), &st) == 0) {
-            size_t zohSize = st.st_size;
-            std::cout << "ZoH BCSV file size: " << zohSize << " bytes\n";
-            
-            if (normalSize > 0) {
-                double compressionRatio = (double)(normalSize - zohSize) / normalSize * 100.0;
-                std::cout << "Compression ratio: " << std::fixed << std::setprecision(1) 
-                          << compressionRatio << "% space savings\n";
-            }
+        if (normalSize > 0) {
+            double compressionRatio = static_cast<double>(normalSize - zohSize) / normalSize * 100.0;
+            std::cout << "Compression ratio: " << std::fixed << std::setprecision(1) 
+                      << compressionRatio << "% space savings\n";
         }
     }
     std::cout << "\n";

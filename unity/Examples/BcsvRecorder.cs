@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -68,17 +68,17 @@ public class SubscriptionBuilder
         return this;
     }
     
-    public SubscriptionBuilder TrackExcenter(Excenter exc, string objectName = null)
-    {
-        if (exc == null) return this;
-        
-        string baseName = objectName ?? exc.name;
-        subscriptions.Add(new DataSubscription($"{baseName}.CurrentPhase", ColumnType.Float, () => exc.CurrentPhase));
-        subscriptions.Add(new DataSubscription($"{baseName}.CurrentFrequency", ColumnType.Float, () => exc.CurrentFrequency));
-        subscriptions.Add(new DataSubscription($"{baseName}.CurrentAmplitude", ColumnType.String, () => exc.CurrentAmplitude.ToString()));
-        subscriptions.Add(new DataSubscription($"{baseName}.CurrentForce", ColumnType.String, () => exc.CurrentForce.ToString()));
-        return this;
-    }
+    // Uncomment and adapt TrackExcenter for your project-specific MonoBehaviour:
+    // public SubscriptionBuilder TrackExcenter(YourComponent exc, string objectName = null)
+    // {
+    //     if (exc == null) return this;
+    //     string baseName = objectName ?? exc.name;
+    //     subscriptions.Add(new DataSubscription($"{baseName}.CurrentPhase", ColumnType.Float, () => exc.CurrentPhase));
+    //     subscriptions.Add(new DataSubscription($"{baseName}.CurrentFrequency", ColumnType.Float, () => exc.CurrentFrequency));
+    //     subscriptions.Add(new DataSubscription($"{baseName}.CurrentAmplitude", ColumnType.String, () => exc.CurrentAmplitude.ToString()));
+    //     subscriptions.Add(new DataSubscription($"{baseName}.CurrentForce", ColumnType.String, () => exc.CurrentForce.ToString()));
+    //     return this;
+    // }
     
     public List<DataSubscription> Build() => subscriptions;
 }
@@ -126,12 +126,12 @@ public class BcsvRecorder : MonoBehaviour
             builder.TrackRigidbody(cubeRb0, "Cube_0");
         }
         
-        // Method 3: Custom tracking with full lambda control
-        Excenter exc = GameObject.Find("Cube_0")?.GetComponent<Excenter>();
-        if (exc != null)
-        {
-            builder.TrackExcenter(exc, "Cube_0");
-        }
+        // Method 3: Custom tracking — uncomment and adapt for your project:
+        // var exc = GameObject.Find("Cube_0")?.GetComponent<YourComponent>();
+        // if (exc != null)
+        // {
+        //     builder.TrackExcenter(exc, "Cube_0");
+        // }
         
         //// Method 4: Direct lambda subscriptions (most flexible)
         //GameObject player = GameObject.Find("Player");

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -19,6 +19,7 @@ namespace BCSV
     public class BcsvLayout : IDisposable
     {
         private IntPtr handle;
+        private readonly bool ownsHandle = true;
 
         /// <summary>
         /// Create a new empty layout
@@ -44,9 +45,10 @@ namespace BCSV
                 throw new InvalidOperationException("Failed to clone BCSV layout");
         }
 
-        internal BcsvLayout(IntPtr nativeHandle)
+        internal BcsvLayout(IntPtr nativeHandle, bool ownsHandle = true)
         {
             handle = nativeHandle;
+            this.ownsHandle = ownsHandle;
         }
 
         /// <summary>
@@ -88,7 +90,8 @@ namespace BCSV
         public int GetColumnIndex(string name)
         {
             var result = NativeMethods.bcsv_layout_column_index(Handle, name);
-            return result == UIntPtr.Zero ? -1 : (int)result;
+            // C API returns SIZE_MAX on failure, not 0 (which is a valid column index)
+            return result == UIntPtr.MaxValue ? -1 : (int)result;
         }
 
         /// <summary>
@@ -234,10 +237,14 @@ namespace BCSV
 
         protected virtual void Dispose(bool disposing)
         {
-            if (handle != IntPtr.Zero)
+            if (handle != IntPtr.Zero && ownsHandle)
             {
-                // Always clean up native resources regardless of disposing flag
+                // Only destroy if we own the handle (not a borrowed reference from Reader/Writer)
                 NativeMethods.bcsv_layout_destroy(handle);
+                handle = IntPtr.Zero;
+            }
+            else
+            {
                 handle = IntPtr.Zero;
             }
         }

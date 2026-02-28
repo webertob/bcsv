@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
  * 
  * This file is part of the BCSV library.
  * 
@@ -174,10 +174,7 @@ void bcsv_layout_assign(bcsv_layout_t dest, const_bcsv_layout_t src) {
 }
 
 // Reader API
-bcsv_reader_t bcsv_reader_create(bcsv_read_mode_t mode) {
-    // Mode is currently ignored as ReaderDirectAccess provides full functionality
-    // and strict/resilient modes are not yet exposed in the new C++ API
-    (void)mode; 
+bcsv_reader_t bcsv_reader_create(void) {
     BCSV_CAPI_TRY_RETURN("bcsv_reader_create", nullptr, new bcsv::ReaderDirectAccess<bcsv::Layout>())
 }
 

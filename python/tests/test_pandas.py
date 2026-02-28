@@ -3,7 +3,7 @@
 Test script for pybcsv pandas integration
 """
 
-# Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+# Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
 # 
 # This file is part of the BCSV library.
 # 

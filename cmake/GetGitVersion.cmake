@@ -70,9 +70,9 @@ else()
     message(STATUS "Git not found, using default version: ${VERSION_STRING}")
 endif()
 
-# Generate version header file
+# Generate version header file into the build tree (not the source tree)
 configure_file(
     "${CMAKE_SOURCE_DIR}/cmake/version.h.in"
-    "${CMAKE_SOURCE_DIR}/include/bcsv/version_generated.h"
+    "${CMAKE_BINARY_DIR}/include/bcsv/version_generated.h"
     @ONLY
 )

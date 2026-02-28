@@ -4,7 +4,7 @@ Pandas integration tests for PyBCSV.
 Tests DataFrame read/write, type conversions, large datasets, and pandas-specific functionality.
 """
 
-# Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+# Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
 # 
 # This file is part of the BCSV library.
 # 
