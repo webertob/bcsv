@@ -470,14 +470,14 @@ namespace bcsv {
     // Forward declarations for codec friend access
     template<typename LayoutType> class RowCodecFlat001;
     template<typename LayoutType> class RowCodecZoH001;
-    template<typename LayoutType> class RowCodecDelta001;
+    template<typename LayoutType> class RowCodecDelta002;
 
     class Row {
         // Codec friend access — direct access to bits_, data_, strg_ for serialization.
         // See docs/ITEM_11_PLAN.md §5 for rationale.
         template<typename LT> friend class RowCodecFlat001;
         template<typename LT> friend class RowCodecZoH001;
-        template<typename LT> friend class RowCodecDelta001;
+        template<typename LT> friend class RowCodecDelta002;
 
     private:
         // Immutable after construction
@@ -565,7 +565,7 @@ namespace bcsv {
         // See docs/ITEM_11_PLAN.md §5 for rationale.
         template<typename LT> friend class RowCodecFlat001;
         template<typename LT> friend class RowCodecZoH001;
-        template<typename LT> friend class RowCodecDelta001;
+        template<typename LT> friend class RowCodecDelta002;
 
     private:
         // Immutable after construction

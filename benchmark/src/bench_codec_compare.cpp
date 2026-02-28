@@ -117,7 +117,7 @@ IterResult runBcsv(const bench::DatasetProfile& profile,
         timer.start();
         for (size_t i = 0; i < numRows; ++i) {
             auto& row = writer.row();
-            profile.generateZoH(row, i);  // Delta uses time-series data (same as ZoH)
+            profile.generateZoH(row, i);
             writer.writeRow();
         }
         writer.close();

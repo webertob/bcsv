@@ -293,10 +293,10 @@ in-memory data storage.
 The file codec determines how rows are encoded on disk:
 
 ```
-Writer ──── RowCodecType ──▶ RowCodecFlat001  or  RowCodecZoH001
+Writer ──── RowCodecType ──▶ RowCodecFlat001  or  RowCodecZoH001  or  RowCodecDelta002
             (compile-time)   (Writer knows what it writes)
 
-Reader ──── RowCodecDispatch ──▶ RowCodecFlat001  or  RowCodecZoH001
+Reader ──── RowCodecDispatch ──▶ RowCodecFlat001  or  RowCodecZoH001  or  RowCodecDelta002
             (runtime)         (file flags determine codec)
 ```
 
@@ -306,13 +306,32 @@ Reader ──── RowCodecDispatch ──▶ RowCodecFlat001  or  RowCodecZoH0
 |-------|------|----------|-------|
 | `RowCodecFlat001<Layout>` | `row_codec_flat001.h/hpp` | Dense flat encoding | Wire metadata + per-column offsets |
 | `RowCodecZoH001<Layout>` | `row_codec_zoh001.h/hpp` | Zero-Order-Hold delta | Composes `RowCodecFlat001` for first-row; internal `wire_bits_` for change header |
+| `RowCodecDelta002<Layout>` | `row_codec_delta002.h/hpp` | Delta + VLE encoding | Type-grouped loops, combined header codes, per-column gradient/prev state |
 | `RowCodecDispatch<Layout>` | `row_codec_dispatch.h` | Runtime dispatch | Heap allocation + function pointers |
 
 Each codec provides:
 - `setup(layout)` — compute wire-format metadata from the layout
 - `serialize(row, buffer) → span<byte>` — encode a row to wire format
 - `deserialize(span, row)` — decode wire format into a row
-- `reset()` — clear per-packet state (ZoH previous-row buffer)
+- `reset()` — clear per-packet state (ZoH previous-row buffer, Delta gradient buffers)
+
+#### Codec Lifecycle
+
+All codecs follow the same state machine:
+
+```
+[Constructed] ──setup(layout)──▶ [Ready] ──reset()──▶ [Active] ⇄ serialize()/deserialize()
+                                    ▲                     │
+                                    └─────── reset() ─────┘  (new packet)
+```
+
+Invariants:
+- `setup(layout)` must be called exactly once before any operation.
+- `reset()` must be called at each packet start (before the first row).
+- Codec is single-stream stateful — not thread-safe. One codec per Writer/Reader.
+- `RowCodecFlat001`: stateless between rows — `reset()` is a no-op.
+- `RowCodecZoH001`: `reset()` clears `prev_buffer_`, sets `is_first_row_`, marks all columns changed.
+- `RowCodecDelta002`: `reset()` clears prev/gradient buffers and resets row counter.
 
 `setup()` also acquires a `LayoutGuard` (RAII, defined in `layout_guard.h`)
 that increments a reference counter on `Layout::Data`.  While any guard is
@@ -344,20 +363,25 @@ first row.
 **Writer** — compile-time selection via type alias:
 - `Writer<Layout>` → `Writer<Layout, RowCodecFlat001<Layout>>` (flat encoding)
 - `WriterZoH<Layout>` → `Writer<Layout, RowCodecZoH001<Layout>>` (ZoH encoding)
-- The caller passes `FileFlags::ZERO_ORDER_HOLD` to `Writer::open()` which
-  records the flag in the file header for readers to detect.
+- `WriterDelta<Layout>` → `Writer<Layout, RowCodecDelta002<Layout>>` (delta encoding)
+- The caller passes the appropriate `FileFlags` (`ZERO_ORDER_HOLD` or
+  `DELTA_ENCODING`) to `Writer::open()` which records the flag in the file
+  header for readers to detect.
 
 **Reader** — runtime selection from file header flags:
 - `Reader::open()` reads the file header, then calls
   `RowCodecDispatch::selectCodec(flags, layout)` which maps
-  `ZERO_ORDER_HOLD` → `RowCodecId::ZOH001`, otherwise → `RowCodecId::FLAT001`.
+  `DELTA_ENCODING` → `RowCodecId::DELTA002`,
+  `ZERO_ORDER_HOLD` → `RowCodecId::ZOH001`,
+  otherwise → `RowCodecId::FLAT001`.
 
 #### Naming Convention
 
 `RowCodec` + `Format` + `Version`:
 - `Flat001` — dense flat encoding, version 001
 - `ZoH001` — zero-order-hold, version 001
-- Future formats (e.g., `Delta001`, `CSV001`) follow the same pattern.
+- `Delta002` — delta + VLE encoding with type-grouped loops
+- Future formats follow the same pattern.
 
 #### Row ↔ Codec Access Pattern
 
@@ -380,8 +404,9 @@ include/bcsv/           C++ header-only library (all core types)
   row.h / row.hpp        Row, RowStatic — in-memory storage
   row_codec_flat001.h/hpp  RowCodecFlat001 — dense flat encoding
   row_codec_zoh001.h/hpp   RowCodecZoH001 — ZoH delta encoding
+  row_codec_delta002.h/hpp RowCodecDelta002 — delta + VLE encoding
   row_codec_dispatch.h     RowCodecDispatch — runtime codec selection
-  writer.h / writer.hpp   Writer, WriterFlat, WriterZoH
+  writer.h / writer.hpp   Writer, WriterFlat, WriterZoH, WriterDelta
   reader.h / reader.hpp   Reader, ReaderDirectAccess
   file_header.h/hpp      FileHeader (16-byte ConstSection)
   packet_header.h        PacketHeader (16-byte struct)
@@ -496,79 +521,45 @@ PacketHeader (16 B) | uint32_t uncompressed_size | uint32_t compressed_size
 
 ---
 
-### Phase 5: Variable-Length Encoding (v1.5.0) 🔄 **Feb 2026**
+### Phase 5: Delta Encoding (v1.5.0) ✅ **Complete**
 
-**Goal**: 20%+ compression improvement on time-series data
+**Status**: Complete (Feb 2026)
 
-**⚠️ Complexity Warning**: Major undertaking, consider deferring
+**Delivered** (`RowCodecDelta002`):
+- ✅ Combined mode+length header field per column (ZoH/FoC/delta + byte count in one code)
+- ✅ Type-grouped column loops via `forEachScalarType` (compile-time dispatch, no runtime branching)
+- ✅ Float XOR + leading-zero byte stripping (VLE byte packing)
+- ✅ Integer zigzag + VLE byte packing
+- ✅ First-order prediction (FoC) for linear trends (zero data bytes emitted)
+- ✅ Zero-order hold (ZoH) for unchanged values (zero data bytes emitted)
+- ✅ 39 unit tests + 5 file-codec integration tests
+- ✅ `WriterDelta<Layout>` compile-time writer alias
+- ✅ `DELTA_ENCODING` file flag (bit 4) for reader auto-detection
 
-**Encoding scheme** (bit-packed, non-byte-aligned):
+**Performance** (median across 14 profiles, 50K rows):
+- StrmLZ4+Delta: 1,238 Krow/s write, 1,861 Krow/s read, 2.3% of CSV file size
+- Comparable throughput to ZoH with better compression (0.023 vs 0.030 ratio)
 
-```
-Row Header (per column):
-  Bit 0: Repetition flag
-    0 = New encoding info follows
-    1 = Same encoding as previous row
-  
-  Bit 1-2: Encoding mode (if bit 0 == 0)
-    00 = CONST (value unchanged)
-    01 = PLAIN (raw value)
-    10 = EXTRAPOLATE (2nd order hold)
-    11 = DELTA (1st order hold)
-  
-  Bit 3-5: Length field (variable width)
-    1-byte types: 0 bits (implicit)
-    2-byte types: 1 bit  (1-2 bytes)
-    4-byte types: 2 bits (1-4 bytes)
-    8-byte types: 3 bits (1-8 bytes)
-  
-  Bit 6+: Data payload (variable length)
-```
+**Wire format**: See `docs/PHASE3_DELTA_REPORT.md` for full specification.
 
-**Column hints** (metadata for optimization):
-
-```cpp
-enum class ColumnHint : uint8_t {
-    NONE        = 0x00,
-    VOLATILE    = 0x01,  // Arbitrary changes, minimal compression
-    INDEX       = 0x02,  // Relationship with row number (e.g., timestamp)
-    MONOTONIC   = 0x04,  // Nearly constant rate of change
-    UNIQUE      = 0x08,  // No duplicates
-    ASCENDING   = 0x10,  // Non-decreasing
-    DESCENDING  = 0x20,  // Non-increasing
-};
-```
-
-**Implementation tasks**:
-1. Design bit-packing specification
-2. Implement BitWriter/BitReader utilities
-3. Encoding decision logic (heuristics)
-4. Column hints system
-5. Extensive testing (type boundaries, alignment)
-6. Performance benchmarks (encoding time vs compression)
-7. Document when to use RAW_MODE instead
+**Design decisions**:
+- CHIMP/GORILLA bit-level encoding rejected (designed for columnar stores, poor fit for row-major format)
+- Column hints deferred (not needed for current compression levels)
 
 ---
 
-### Phase 6: Advanced Compression (v1.6.0) 🔄 **Mar 2026**
+### Phase 6: Advanced Compression (v1.6.0) 🔄
 
-**Goal**: State-of-the-art compression for specific data patterns
+**Goal**: Further compression for specific data patterns
 
-**String dictionary compression**:
-- Per-packet string dictionary
-- 16-bit indices replace strings
-- Automatic overflow handling
-- Variable-length integer encoding for indices
+**Candidates**:
+- String dictionary compression (per-packet, 16-bit indices)
+- ZigZag integer VLE for string lengths and row lengths
+- SIMD gradient computation (layout memory is SIMD-ready)
 
-**Integer optimizations**:
-- ZigZag encoding for signed integers
-- Protobuf-style varint encoding
-- Apply to string addresses, row lengths
-
-**Float compression**:
-- CHIMP algorithm (minimal bit-flip encoding)
-- GORILLA algorithm (XOR-based compression)
-- Evaluate trade-offs (compression vs decode speed)
+**Evaluated and rejected** (Phase 5 investigation):
+- CHIMP/GORILLA bit-level float encoding — poor fit for row-major format
+- Non-byte-aligned bit-packing — throughput regression outweighs marginal gains
 
 ---
 

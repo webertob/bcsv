@@ -23,7 +23,7 @@
 
 #include "row_codec_flat001.h"
 #include "row_codec_zoh001.h"
-#include "row_codec_delta001.h"
+#include "row_codec_delta002.h"
 #include "definitions.h"
 
 #include <cassert>
@@ -37,15 +37,15 @@ namespace bcsv {
 enum class RowCodecId : uint8_t {
     FLAT001,
     ZOH001,
-    DELTA001,
+    DELTA002,
 };
 
 template<typename LayoutType>
 class RowCodecDispatch {
     using RowType = typename LayoutType::RowType;
-    using FlatCodec   = RowCodecFlat001<LayoutType>;
-    using ZoHCodec    = RowCodecZoH001<LayoutType>;
-    using DeltaCodec  = RowCodecDelta001<LayoutType>;
+    using FlatCodec    = RowCodecFlat001<LayoutType>;
+    using ZoHCodec     = RowCodecZoH001<LayoutType>;
+    using DeltaCodec   = RowCodecDelta002<LayoutType>;
 
 public:
     using SerializeFn = std::span<std::byte> (*)(void* codec, RowType& row, ByteBuffer& buffer);
@@ -117,7 +117,7 @@ public:
                 clone_fn_ = &cloneZoH;
                 break;
             }
-            case RowCodecId::DELTA001: {
+            case RowCodecId::DELTA002: {
                 auto* codec = new DeltaCodec();
                 codec->setup(*layout_);
                 ctx_ = codec;
@@ -142,7 +142,7 @@ public:
     void selectCodec(FileFlags flags, const LayoutType& layout) {
         RowCodecId id;
         if ((flags & FileFlags::DELTA_ENCODING) != FileFlags::NONE)
-            id = RowCodecId::DELTA001;
+            id = RowCodecId::DELTA002;
         else if ((flags & FileFlags::ZERO_ORDER_HOLD) != FileFlags::NONE)
             id = RowCodecId::ZOH001;
         else
@@ -180,7 +180,7 @@ public:
     bool isSetup() const noexcept { return ctx_ != nullptr; }
     bool isZoH() const noexcept { return isSetup() && codec_id_ == RowCodecId::ZOH001; }
     bool isFlat() const noexcept { return isSetup() && codec_id_ == RowCodecId::FLAT001; }
-    bool isDelta() const noexcept { return isSetup() && codec_id_ == RowCodecId::DELTA001; }
+    bool isDelta() const noexcept { return isSetup() && codec_id_ == RowCodecId::DELTA002; }
     RowCodecId codecId() const noexcept { return codec_id_; }
 
 private:

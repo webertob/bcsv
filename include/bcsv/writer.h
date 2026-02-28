@@ -20,7 +20,6 @@
 #include "row_codec_dispatch.h"
 #include "row_codec_flat001.h"
 #include "row_codec_zoh001.h"
-#include "row_codec_delta001.h"
 #include "file_header.h"
 #include "file_codec_dispatch.h"
 
@@ -88,6 +87,6 @@ namespace bcsv {
     using WriterZoH = Writer<LayoutType, RowCodecZoH001<LayoutType>>;
 
     template<LayoutConcept LayoutType>
-    using WriterDelta = Writer<LayoutType, RowCodecDelta001<LayoutType>>;
+    using WriterDelta = Writer<LayoutType, RowCodecDelta002<LayoutType>>;
 
 } // namespace bcsv
