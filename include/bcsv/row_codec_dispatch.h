@@ -249,6 +249,6 @@ private:
 };
 
 template<typename LayoutType>
-using CodecDispatch = RowCodecDispatch<LayoutType>;
+using RowCodec = RowCodecDispatch<LayoutType>;
 
 } // namespace bcsv

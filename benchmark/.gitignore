@@ -1,4 +1,10 @@
 # Benchmark results are machine-specific and not committed
 runs/
 results/
+benchmark/
 __pycache__/
+
+# Generated reports and result snapshots
+CODEC_COMPARISON_RESULTS.md
+*.results.json
+codec_compare_*.json

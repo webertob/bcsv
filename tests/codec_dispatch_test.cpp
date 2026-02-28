@@ -293,7 +293,7 @@ TEST_F(CodecDispatchStaticTest, ZoHFile_DisabledReader) {
 // ════════════════════════════════════════════════════════════════════════════
 
 TEST(CodecDispatchUnitTest, DefaultState) {
-    bcsv::CodecDispatch<bcsv::Layout> dispatch;
+    bcsv::RowCodec<bcsv::Layout> dispatch;
     EXPECT_FALSE(dispatch.isSetup());
     EXPECT_FALSE(dispatch.isZoH());
     EXPECT_FALSE(dispatch.isFlat());
@@ -301,7 +301,7 @@ TEST(CodecDispatchUnitTest, DefaultState) {
 
 TEST(CodecDispatchUnitTest, SelectFlat) {
     auto layout = createFlexLayout();
-    bcsv::CodecDispatch<bcsv::Layout> dispatch;
+    bcsv::RowCodec<bcsv::Layout> dispatch;
     dispatch.selectCodec(bcsv::FileFlags::NONE, layout);
     EXPECT_TRUE(dispatch.isSetup());
     EXPECT_TRUE(dispatch.isFlat());
@@ -310,7 +310,7 @@ TEST(CodecDispatchUnitTest, SelectFlat) {
 
 TEST(CodecDispatchUnitTest, SelectZoH) {
     auto layout = createFlexLayout();
-    bcsv::CodecDispatch<bcsv::Layout> dispatch;
+    bcsv::RowCodec<bcsv::Layout> dispatch;
     dispatch.selectCodec(bcsv::FileFlags::ZERO_ORDER_HOLD, layout);
     EXPECT_TRUE(dispatch.isSetup());
     EXPECT_FALSE(dispatch.isFlat());
@@ -319,7 +319,7 @@ TEST(CodecDispatchUnitTest, SelectZoH) {
 
 TEST(CodecDispatchUnitTest, ReSelect) {
     auto layout = createFlexLayout();
-    bcsv::CodecDispatch<bcsv::Layout> dispatch;
+    bcsv::RowCodec<bcsv::Layout> dispatch;
 
     // First select flat
     dispatch.selectCodec(bcsv::FileFlags::NONE, layout);

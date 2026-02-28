@@ -63,7 +63,7 @@ namespace bcsv {
         }
         
         stream_.close();
-        codec_ = CodecType();  // Move-assign default; old codec's destructor releases the structural lock
+        row_codec_ = CodecType();  // Move-assign default; old codec's destructor releases the structural lock
         file_codec_.destroy();
         file_path_.clear();
         row_cnt_ = 0;       
@@ -150,8 +150,8 @@ namespace bcsv {
             row_.clear();
 
             // Initialize row codec (Item 11)
-            codec_.setup(layout());
-            codec_.reset();
+            row_codec_.setup(layout());
+            row_codec_.reset();
 
             return true;
 
@@ -189,13 +189,13 @@ namespace bcsv {
         // Packet lifecycle: beginWrite handles close-if-full → open-if-needed.
         // Returns true when a packet boundary was crossed → reset RowCodec.
         if (file_codec_.beginWrite(stream_, row_cnt_)) {
-            codec_.reset();
+            row_codec_.reset();
         }
 
         // 1. Serialize row to codec's internal buffer via row codec
         auto& buf = file_codec_.writeBuffer();
         buf.clear();
-        std::span<std::byte> actRow = codec_.serialize(row_, buf);
+        std::span<std::byte> actRow = row_codec_.serialize(row_, buf);
 
         // 2. Write row via file codec (handles VLE, compression, checksum, I/O)
         file_codec_.writeRow(stream_, actRow);

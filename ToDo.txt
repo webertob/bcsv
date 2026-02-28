@@ -6,8 +6,23 @@ background:
 - ./tmp provides space for temporary experiments and runs and is not version controlled (ignored) by git
 - we are using cmake & ninja for builds
 - we are using google test for tests ./tests/bcsv_gtest
-- benchmark suite is located under:
-- documentation (also on the API) is provided here:
+- benchmark suite is located under: ./benchmark (README.md has full docs)
+- documentation (also on the API) is provided here: ./docs
+
+=== PROGRESS (2026-02-28) ===
+Items 0–11.F: DONE (all committed and pushed, HEAD at 13fb4b9)
+Current position: just completed 11.F (File Codecs + BatchLZ4 benchmark)
+Next up: 12 → 13 → 14 (target for today: reach end of 14)
+
+Priority order for remaining work:
+  12. CSV Reader/Writer under BCSV API    — infrastructure (enables cleaner CLI + benchmarks)
+  13. Update Tools & Libraries            — Python/C# sync, CLI polish
+  14. Advanced row encoding (VLE/delta)   — core feature (compression improvement)
+
+Deferred (not blocking 12–14):
+  11.G bitset encode/decode               — prerequisite for Item 14 only
+  11.B open items (perf regression, memory footprint, minor refactorings)
+===
 
 Lean checklist gate (for every non-trivial item):
 - Run docs/LEAN_CHECKLIST.md before coding (A-C) and before merge (D-H)
@@ -391,63 +406,78 @@ Lean checklist gate (for every non-trivial item):
         - reset() is no-op in both codecs — low, dead code path in CodecDispatch
         - ZoH serialize incremental resize — low, perf not correctness
 
-11. c Benchmark 
+[x] 11.C Benchmark — Reduce Complexity
+    DONE (2026-02):
+    1. Benchmarks reduced to MICRO, MACRO-SMALL, MACRO-LARGE ✓
+    2. run.py has streamlined CLI: --type=MICRO,MACRO-SMALL,MACRO-LARGE, subcommands wip/baseline/compare/interleaved ✓
+    3. report.py produces comparison reports ✓
+    4. leaderboard.json removed, report_latest.md removed ✓
+    5. benchmark/README.md is the unified doc (386 lines) ✓
+    Additionally: bench_codec_compare.cpp added for file-codec matrix (all 5 codecs × Flat/ZoH × 14 profiles)
 
-Reduce Complexity
-Issue: To many tools (scripts), steps and documents make it harder than necessary to interact with the benchmark suite
-Goal: Reduce our effort to understand and interact with the tools.
-Item: 
-1. Reduce benchmarks to MICRO (GoogleBenchmarks), MARCO-SMALL, MARCO-large
-2. run_benchmarks.py should use a streamlined CLI i.e.:
-    run_benchmarks.py --type=MICRO, MACRO-SMALL, MACRO-LARGE --repetitions=1 --cpus=1 --pin=NONE --git=WIP --results=results/WorkhorseLNX/WIP
-    Defaults are: type = MACRO_SMALL, repetition=1, cpus=1 pin=none --git WIP (work in progress current work dir)
-    run_benchmarks.py should create a summary report (report_GIT(wip)_datetime.md) that only contains the host information, the Condensed Performance Matrixt and Condensed Performance Matrix Comparison (against the latest git-clean results)
-3. report.py can be used to create a comparision report between two runs or create and/or more detailed report as required (mean, stddev, result tables per dataset and benchmark)
-4. compare should be removed as it gets integrated into report.py, leaderboard should be removed. report_latest,md should be removed and does not need to be produced
-5. Unify documentation benchmark/OPERATOR_GUIDE.md and benchmark/SKILLS.md into benchmark/README.md addressing both agentic and human users reference this tocument in project root/SKILLS.md
+[x] 11.B Benchmarks:
+    DONE (2026-02):
+    - reference workloads: benchmark/reference_workloads.json + REFERENCE_WORKLOADS.md ✓
+    - python benchmarks: python/benchmarks/run_pybcsv_benchmarks.py (357 lines, S/M/L, plain/numpy/pandas) ✓
+    - C# benchmarks: csharp/benchmarks/Program.cs (376 lines, P/Invoke) ✓
 
-11. B Benchmarks:
-    - add reference workloads for timeseries data: https://www.vldb.org/pvldb/vol15/p3058-liakos.pdf
-    - create python based benchmarks
-    - create C# based benchmarks
+[x] 11.E Rework/optimize ZoH Codec, serialize and deserialize
+    DONE (2026-02):
+    - bits_prev_ removed; bool previous values stored in head_[0..bool_count_) via equalRange/assignRange ✓
+    - single-pass serialize: writes head_ + changed data in one buffer pass ✓
 
-11. E Rework/optimize ZoH Codec, serialize and deserialize
-        --> don't store old bits_prev_ in codec
-        --> aim on single pass operation
+[x] 11.F Add File Codec and Backward Compatibility
+    DONE (2026-02, committed 13fb4b9):
+    - FileCodecPacket001 (packet-uncompressed) ✓
+    - FileCodecPacketLZ4001 (packet-lz4) ✓
+    - FileCodecStream001 (stream-uncompressed) ✓
+    - FileCodecStreamLZ4001 (stream-lz4) ✓
+    - FileCodecPacketLZ4Batch001 (async double-buffered lz4) ✓
+    - FileCodecDispatch (runtime dispatch from FileFlags) ✓
+    - FileCodecConcept (concept/interface) ✓
+    - Reader/Writer use FileCodecDispatch — all codecs auto-selected from file header flags
+    - Comprehensive codec comparison benchmark completed (14 profiles × 11 candidates × 2 sizes)
+    - Recommendation: BatchLZ4+ZoH as default (11× write, 4× read, 48× compression vs CSV)
 
-11. F Add File Codec and Backward Compatibility
-         Stream-uncompressed
-         Stream-lz4
-         Packet-uncompressed
-         Packet-lz4
+[ ] 11.G bitset, add encode() and decode() functions for dense unaligned encoding of small integer values.
+    Status: DEFERRED — prerequisite for Item 14 (advanced row encoding), not needed until then.
+    readFrom()/writeTo() cover current codec needs. encode()/decode() for sub-byte integer packing
+    only required when implementing VLE-based row codec.
+    Idea: For the upcoming new row encoding schema, we need to store many small numbers (0 to 8) to preserve the amount of bytes required to encode a certain column using VLE. Storing the size information with the actual payload (default VLE) is known to be slow, thus blck encoding is prefered. However reseving a single byte for the size information is a wast of storgae space. Thus we want to store size(byteCount) informaton for each column, within the rowheader, which is of type bcsv::bitset. We need a way to store and load these small number to/from bitset.
+    Approach: add function bitset::encode(firstBitPos, bitCnt, value). Value can be of any uint type. Encode function should check if the actual value (not type!) fits into the bit range defined. i.e. 3 bits required to store a 7 and throw if it does fit. 
+              add function bitset::decode(firstBitPos, bitCnt). To return a value of any uint type. Actual type should be the smallest required for the given bit range. i.e. uint8_t for bitCnt <=8, uint16_t for 8 to 16 bits etc.
+              add function bitset::encodeTruncat(firstBitPos, bitCnt, value). Same as encode(...), but does not throw, simply truncats to match the available space. Truncats by applying a bit mask, thus an overflow by one, leads to storing a zero. 
 
 12. Implement CSV write and read functionality using the BCSV interface
-    10.a: Restructure BCSV Reader/ Writer API
-        - Create a ReadAPI and WriterAPI class that defined the basic functionality each Reader and Writer needs to support.
-        - Prepare for spars rows (RowView and direct access)
-            Reader<Layout, Row> --> Reader<Layout, RowView>
-            - row()
-        - Make it easier to write your own Reader/Writer, while using the BCSV ecosystem:
-            - Layout and Row interface --> continue using the CLI tools
-    10.b: Develop LayoutCSV, ReaderCSV and WriterCSV
+    Status: NOT STARTED — bench_common.hpp has internal CsvWriter/CsvReader (benchmark-only, not public API).
+    CLI tools csv2bcsv/bcsv2csv do inline CSV parsing. This item would unify CSV handling under
+    the BCSV Reader/Writer API, enabling seamless CSV↔BCSV pipelines.
+    Priority: MEDIUM — current CLI tools work, but a public CsvReader/CsvWriter would improve
+    the ecosystem (piping, round-trip tests, benchmark fairness).
+    12.a: Restructure BCSV Reader/Writer API
+        - Create a ReaderAPI and WriterAPI base class defining common functionality
+        - Consider whether RowView-based sparse reads belong here or in Item 20
+    12.b: Develop ReaderCSV and WriterCSV
         - add tests csv-to-csv, csv-to-bcsv, bcsv-to-csv
         - add tests, different delimiters, different comma/decimal characters
-    10.c: Update CLI tools csv-to-bcsv and bcsv2csv to use new CSV Reader/Writer
-    10.b: Update Benchmarks to use new CSV Reader/Writer
+    12.c: Update CLI tools csv2bcsv and bcsv2csv to use new CSV Reader/Writer
+    12.d: Update Benchmarks to use new CSV Reader/Writer
         
 
 13. Update Tools and Libraries to use new API
-    update and test CLI tool to use new C_API
-    Update CLI tools to auto-detect FileFlags::ZERO_ORDER_HOLD and switch to ReaderZoH (or surface a clear message). 
-    Medium: CLI tools don’t support ZoH outputs by default, while csv2bcsv still defaults to ZoH. The CLI tools (bcsvHeader, bcsvHead, bcsvTail, bcsv2csv) construct Reader<Layout> with Tracking disabled, which will refuse ZoH files. This is a UX/documentation mismatch: the default csv2bcsv output is not readable by those tools without --no-zoh. See csv2bcsv default in csv2bcsv.cpp:31-40 and the default reader usage in
-    update and test python libraries
-        - add python benchmarks
-    update and test C# (Unity)
-        - add C# benchmarks
-        - add Unity / bcsv benchmark
+    [x] CLI tools: ZoH auto-detection is RESOLVED — Reader uses RowCodecDispatch + FileCodecDispatch,
+        automatically selects correct row/file codec from file header flags. All CLI tools (bcsv2csv,
+        bcsvHead, bcsvTail, bcsvHeader) work with any codec combination without manual flags.
+    [x] Python benchmarks: python/benchmarks/run_pybcsv_benchmarks.py exists ✓
+    [x] C# benchmarks: csharp/benchmarks/Program.cs exists ✓
+    [ ] Python: sync pybcsv with file codec API (currently wraps Writer/Reader but doesn't expose
+        file codec selection or FileFlags at Python level)
+    [ ] C#/Unity: no standalone library/NuGet package — only raw P/Invoke benchmark exists.
+        Needs proper C# wrapper if Unity support is a goal.
+    [ ] Update CLI tools to use C_API (currently they use C++ API directly — acceptable for now,
+        but C_API path would enable cross-language CLI tool builds)
 
-Sonntag API freez
-Sonntag: Switch Gears Dr
+
 14. Implement new row encoding schema, using variable length encoding for float and integer values
     Main usage of bcsv is the handling of time-series data. Thus we expect many rcurring or constantly falling or raising values and values that are similar to previouse values. In many cases the full extend of a variable type is not required to encode the actual value.
     This feature is working on a per row level, not only a single cell/value as the current vle_encode / vle_decode functions do. It tries to provide a better balance between computational effort and compression and takes advantange on previouse data (time-series).

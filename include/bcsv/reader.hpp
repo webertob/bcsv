@@ -68,7 +68,7 @@ namespace bcsv {
 
         file_path_.clear();
         stream_.close();
-        codec_.destroy();  // Deletes inner codec; inner codec's destructor releases the structural lock
+        row_codec_.destroy();  // Deletes inner codec; inner codec's destructor releases the structural lock
         file_codec_.destroy();
         row_pos_ = 0;
         row_.clear();
@@ -134,7 +134,7 @@ namespace bcsv {
         } catch (const std::exception& ex) {
             err_msg_ = ex.what();
             file_codec_.destroy();
-            codec_.destroy();
+            row_codec_.destroy();
             if (stream_.is_open()) {
                 stream_.close();
             }
@@ -178,7 +178,7 @@ namespace bcsv {
 
             // Initialize codec dispatch — selects Flat001 or ZoH001 based on
             // file flags. Codec is selected at file-open time (Item 11 §7).
-            codec_.selectCodec(file_header_.getFlags(), row_.layout());
+            row_codec_.selectCodec(file_header_.getFlags(), row_.layout());
 
             return true;
             
@@ -214,7 +214,7 @@ namespace bcsv {
 
         // Reset RowCodec state if a packet boundary was crossed
         if (file_codec_.packetBoundaryCrossed()) {
-            codec_.reset();
+            row_codec_.reset();
         }
 
         // Check for ZoH repeat sentinel — reuse previous row
@@ -230,7 +230,7 @@ namespace bcsv {
         }
 
         // Deserialize row via row codec (Item 11)
-        codec_.deserialize(rowRawData, row_);
+        row_codec_.deserialize(rowRawData, row_);
         row_pos_++;
         return true;        
     }

@@ -15,13 +15,12 @@
 #include <string>
 
 #include "definitions.h"
-#include "byte_buffer.h"
 #include "layout.h"
 #include "row.h"
+#include "row_codec_dispatch.h"
 #include "row_codec_flat001.h"
 #include "row_codec_zoh001.h"
 #include "file_header.h"
-#include "file_footer.h"
 #include "file_codec_dispatch.h"
 
 namespace bcsv {
@@ -36,6 +35,7 @@ namespace bcsv {
     class Writer {
         using RowType           = typename LayoutType::RowType;
         using FilePath          = std::filesystem::path;
+        using RowCodecDispatch  = RowCodecDispatch<LayoutType>;
 
         std::string             err_msg_;                    // last error message description
         FileHeader              file_header_;                // File header for accessing flags and metadata
@@ -45,9 +45,10 @@ namespace bcsv {
         // File-level codec (framing, compression, checksums, packet lifecycle)
         FileCodecDispatch       file_codec_;                 // Runtime-selected file codec
 
+        CodecType               row_codec_;                      // Compile-time selected row codec
         uint64_t                row_cnt_ = 0;                // Total rows written across all packets
         RowType                 row_;
-        CodecType               codec_;                      // Compile-time selected row codec
+        
 
     public:
         Writer() = delete;

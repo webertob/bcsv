@@ -43,10 +43,12 @@ namespace bcsv {
         // File-level codec (framing, decompression, checksums, packet lifecycle)
         FileCodecDispatch       file_codec_;             // Runtime-selected file codec
 
+
         // Global row tracking
+        RowCodec<LayoutType> row_codec_;      // Runtime codec dispatch (Item 11 Phase 7)
         size_t                  row_pos_;                // postion of current row in file (0-based row counter)
         RowType                 row_;                   // current row, decoded data
-        CodecDispatch<LayoutType> codec_;      // Runtime codec dispatch (Item 11 Phase 7)
+
         
     public:
         /**

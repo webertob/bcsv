@@ -9,21 +9,18 @@
 
 /**
  * @file bench_codec_compare.cpp
- * @brief Focused codec comparison: all 5 file codecs + CSV baseline
+ * @brief Comprehensive codec comparison: all 5 file codecs × {Flat,ZoH} + CSV baseline
  *
- * Runs write/read round-trips for each codec on representative datasets,
- * with interleaved iterations to neutralize thermal throttling.
+ * Runs write/read round-trips for every codec × row-codec combination on all
+ * dataset profiles, with interleaved iterations to neutralize thermal throttling.
  *
- * Codecs compared:
- *   1. CSV          (text baseline)
- *   2. PacketRaw    (compression=0, no flags)
- *   3. PacketLZ4    (compression=1, no flags)        [default]
- *   4. StreamRaw    (compression=0, STREAM_MODE)
- *   5. StreamLZ4    (compression=1, STREAM_MODE)
- *   6. BatchLZ4     (compression=1, BATCH_COMPRESS)  [async double-buffered]
+ * Candidates (12 total):
+ *   File codecs:   CSV, PacketRaw, PacketLZ4, StreamRaw, StreamLZ4, BatchLZ4
+ *   Row codecs:    Flat (Writer<Layout>), ZoH (WriterZoH<Layout>)
+ *   CSV only runs with Flat (ZoH is a binary-only concept).
  *
  * Usage:
- *   bench_codec_compare [--rows=N] [--iterations=N] [--profile=NAME]
+ *   bench_codec_compare [--rows=N] [--iterations=N] [--profile=NAME|all] [--json=PATH]
  */
 
 #include "bench_common.hpp"
@@ -44,27 +41,37 @@
 namespace {
 
 // ============================================================================
-// Codec descriptor
+// Candidate descriptor  (file-codec × row-codec)
 // ============================================================================
 
-struct CodecConfig {
-    std::string label;
-    size_t      compressionLevel;
+struct Candidate {
+    std::string     label;
+    size_t          compressionLevel;
     bcsv::FileFlags flags;
-    bool        isCsv;       // true = use CsvWriter/CsvReader instead of BCSV
+    bool            isCsv;
+    bool            useZoH;          // true → WriterZoH + generateZoH
 };
 
-std::vector<CodecConfig> buildCodecConfigs() {
-    std::vector<CodecConfig> configs;
-    configs.push_back({"CSV",         0, bcsv::FileFlags::NONE,           true });
-    configs.push_back({"PacketRaw",   0, bcsv::FileFlags::NONE,           false});
-    configs.push_back({"PacketLZ4",   1, bcsv::FileFlags::NONE,           false});
-    configs.push_back({"StreamRaw",   0, bcsv::FileFlags::STREAM_MODE,    false});
-    configs.push_back({"StreamLZ4",   1, bcsv::FileFlags::STREAM_MODE,    false});
+std::vector<Candidate> buildCandidates() {
+    std::vector<Candidate> c;
+    // --- Flat (dense) row codec ---
+    c.push_back({"CSV",              0, bcsv::FileFlags::NONE,        true,  false});
+    c.push_back({"PktRaw",           0, bcsv::FileFlags::NONE,        false, false});
+    c.push_back({"PktLZ4",           1, bcsv::FileFlags::NONE,        false, false});
+    c.push_back({"StrmRaw",          0, bcsv::FileFlags::STREAM_MODE, false, false});
+    c.push_back({"StrmLZ4",          1, bcsv::FileFlags::STREAM_MODE, false, false});
 #ifdef BCSV_HAS_BATCH_CODEC
-    configs.push_back({"BatchLZ4",    1, bcsv::FileFlags::BATCH_COMPRESS, false});
+    c.push_back({"BatchLZ4",         1, bcsv::FileFlags::BATCH_COMPRESS, false, false});
 #endif
-    return configs;
+    // --- ZoH row codec (ZERO_ORDER_HOLD flag ORed in) ---
+    c.push_back({"PktRaw+ZoH",       0, bcsv::FileFlags::ZERO_ORDER_HOLD,        false, true});
+    c.push_back({"PktLZ4+ZoH",       1, bcsv::FileFlags::ZERO_ORDER_HOLD,        false, true});
+    c.push_back({"StrmRaw+ZoH",      0, bcsv::FileFlags::STREAM_MODE | bcsv::FileFlags::ZERO_ORDER_HOLD, false, true});
+    c.push_back({"StrmLZ4+ZoH",      1, bcsv::FileFlags::STREAM_MODE | bcsv::FileFlags::ZERO_ORDER_HOLD, false, true});
+#ifdef BCSV_HAS_BATCH_CODEC
+    c.push_back({"BatchLZ4+ZoH",     1, bcsv::FileFlags::BATCH_COMPRESS | bcsv::FileFlags::ZERO_ORDER_HOLD, false, true});
+#endif
+    return c;
 }
 
 // ============================================================================
@@ -79,26 +86,40 @@ struct IterResult {
 };
 
 // ============================================================================
-// Run one write/read cycle for a BCSV codec
+// Run one write/read cycle for a BCSV candidate (flat or ZoH)
 // ============================================================================
 
 IterResult runBcsv(const bench::DatasetProfile& profile,
                    size_t numRows,
-                   const CodecConfig& codec,
+                   const Candidate& cand,
                    const std::string& filePath)
 {
     IterResult r;
     bench::Timer timer;
 
     // ----- Write -----
-    {
-        bcsv::Writer<bcsv::Layout> writer(profile.layout);
-        if (!writer.open(filePath, true, codec.compressionLevel, 64, codec.flags)) {
-            std::cerr << "  ERROR: open failed for " << codec.label << ": "
+    if (cand.useZoH) {
+        bcsv::WriterZoH<bcsv::Layout> writer(profile.layout);
+        if (!writer.open(filePath, true, cand.compressionLevel, 64, cand.flags)) {
+            std::cerr << "  ERROR: open failed for " << cand.label << ": "
                       << writer.getErrorMsg() << "\n";
             return r;
         }
-
+        timer.start();
+        for (size_t i = 0; i < numRows; ++i) {
+            auto& row = writer.row();
+            profile.generateZoH(row, i);
+            writer.writeRow();
+        }
+        writer.close();
+        timer.stop();
+    } else {
+        bcsv::Writer<bcsv::Layout> writer(profile.layout);
+        if (!writer.open(filePath, true, cand.compressionLevel, 64, cand.flags)) {
+            std::cerr << "  ERROR: open failed for " << cand.label << ": "
+                      << writer.getErrorMsg() << "\n";
+            return r;
+        }
         timer.start();
         for (size_t i = 0; i < numRows; ++i) {
             auto& row = writer.row();
@@ -115,7 +136,7 @@ IterResult runBcsv(const bench::DatasetProfile& profile,
     {
         bcsv::Reader<bcsv::Layout> reader;
         if (!reader.open(filePath)) {
-            std::cerr << "  ERROR: read open failed for " << codec.label << "\n";
+            std::cerr << "  ERROR: read open failed for " << cand.label << "\n";
             return r;
         }
 
@@ -126,19 +147,20 @@ IterResult runBcsv(const bench::DatasetProfile& profile,
         timer.start();
         while (reader.readNext()) {
             const auto& row = reader.row();
-            profile.generate(expected, rowsRead);
+            if (cand.useZoH)
+                profile.generateZoH(expected, rowsRead);
+            else
+                profile.generate(expected, rowsRead);
 
             // spot-check first and every 1000th row
             if (rowsRead == 0 || rowsRead % 1000 == 0) {
                 for (size_t c = 0; c < profile.layout.columnCount(); ++c) {
                     if (profile.layout.columnType(c) == bcsv::ColumnType::STRING) {
-                        if (expected.get<std::string>(c) != row.get<std::string>(c)) {
+                        if (expected.get<std::string>(c) != row.get<std::string>(c))
                             mismatch = true;
-                        }
                     }
                 }
             }
-
             bench::doNotOptimize(row);
             ++rowsRead;
         }
@@ -148,7 +170,6 @@ IterResult runBcsv(const bench::DatasetProfile& profile,
         r.read_ms = timer.elapsedMs();
         r.valid = (rowsRead == numRows && !mismatch);
     }
-
     return r;
 }
 
@@ -163,7 +184,6 @@ IterResult runCsv(const bench::DatasetProfile& profile,
     IterResult r;
     bench::Timer timer;
 
-    // ----- Write -----
     {
         std::ofstream ofs(filePath);
         bench::CsvWriter csvWriter(ofs);
@@ -181,7 +201,6 @@ IterResult runCsv(const bench::DatasetProfile& profile,
     r.write_ms = timer.elapsedMs();
     r.file_size = std::filesystem::file_size(filePath);
 
-    // ----- Read -----
     {
         std::ifstream ifs(filePath);
         std::string line;
@@ -202,7 +221,6 @@ IterResult runCsv(const bench::DatasetProfile& profile,
         r.read_ms = timer.elapsedMs();
         r.valid = (rowsRead == numRows);
     }
-
     return r;
 }
 
@@ -222,6 +240,7 @@ double mean(const std::vector<double>& v) {
     return std::accumulate(v.begin(), v.end(), 0.0) / v.size();
 }
 
+[[maybe_unused]]
 double stdev(const std::vector<double>& v) {
     if (v.size() < 2) return 0;
     double m = mean(v);
@@ -236,9 +255,8 @@ double stdev(const std::vector<double>& v) {
 
 std::string getArg(const std::vector<std::string>& args, const std::string& key, const std::string& def) {
     for (const auto& a : args) {
-        if (a.rfind("--" + key + "=", 0) == 0) {
+        if (a.rfind("--" + key + "=", 0) == 0)
             return a.substr(key.size() + 3);
-        }
     }
     return def;
 }
@@ -248,6 +266,101 @@ bool hasFlag(const std::vector<std::string>& args, const std::string& flag) {
         if (a == "--" + flag) return true;
     }
     return false;
+}
+
+// ============================================================================
+// Per-profile result row (for aggregate reporting)
+// ============================================================================
+
+struct ProfileResult {
+    std::string profileName;
+    size_t      numCols;
+    std::string candidateLabel;
+    double      medianWriteMs;
+    double      medianReadMs;
+    size_t      fileSize;
+    double      ratioVsCsv;       // file_size / csv_file_size
+    double      writeRowsPerSec;
+    double      readRowsPerSec;
+    bool        allValid;
+};
+
+// ============================================================================
+// Run all candidates on one profile, return ProfileResults
+// ============================================================================
+
+std::vector<ProfileResult> runProfile(
+    const bench::DatasetProfile& profile,
+    size_t numRows,
+    size_t iterations,
+    const std::vector<Candidate>& candidates,
+    bool quiet)
+{
+    const size_t numCands = candidates.size();
+
+    // results[cand][iter]
+    std::vector<std::vector<IterResult>> results(numCands, std::vector<IterResult>(iterations));
+
+    for (size_t iter = 0; iter < iterations; ++iter) {
+        if (!quiet)
+            std::cerr << "  iter " << (iter + 1) << "/" << iterations;
+
+        for (size_t ci = 0; ci < numCands; ++ci) {
+            const auto& cand = candidates[ci];
+            std::string ext = cand.isCsv ? ".csv" : ".bcsv";
+            std::string filePath = bench::tempFilePath(
+                profile.name + "_c_" + cand.label, ext);
+
+            IterResult r;
+            if (cand.isCsv)
+                r = runCsv(profile, numRows, filePath);
+            else
+                r = runBcsv(profile, numRows, cand, filePath);
+
+            results[ci][iter] = r;
+            std::filesystem::remove(filePath);
+        }
+        if (!quiet) std::cerr << "  done\n";
+    }
+
+    // Find CSV file size for ratio
+    size_t csvFileSize = 0;
+    for (size_t ci = 0; ci < numCands; ++ci) {
+        if (candidates[ci].isCsv && !candidates[ci].useZoH) {
+            std::vector<double> sizes;
+            for (auto& r : results[ci]) sizes.push_back(static_cast<double>(r.file_size));
+            csvFileSize = static_cast<size_t>(median(sizes));
+            break;
+        }
+    }
+
+    std::vector<ProfileResult> out;
+    for (size_t ci = 0; ci < numCands; ++ci) {
+        std::vector<double> wt, rt;
+        size_t fsize = 0;
+        bool allValid = true;
+        for (auto& r : results[ci]) {
+            wt.push_back(r.write_ms);
+            rt.push_back(r.read_ms);
+            fsize = r.file_size;
+            if (!r.valid) allValid = false;
+        }
+        double wMed = median(wt);
+        double rMed = median(rt);
+        ProfileResult pr;
+        pr.profileName     = profile.name;
+        pr.numCols         = profile.layout.columnCount();
+        pr.candidateLabel  = candidates[ci].label;
+        pr.medianWriteMs   = wMed;
+        pr.medianReadMs    = rMed;
+        pr.fileSize        = fsize;
+        pr.ratioVsCsv      = (csvFileSize > 0) ? static_cast<double>(fsize) / csvFileSize : 0;
+        pr.writeRowsPerSec = (wMed > 0) ? numRows / (wMed / 1000.0) : 0;
+        pr.readRowsPerSec  = (rMed > 0) ? numRows / (rMed / 1000.0) : 0;
+        pr.allValid        = allValid;
+        out.push_back(pr);
+    }
+    return out;
 }
 
 } // anonymous namespace
@@ -260,202 +373,167 @@ int main(int argc, char* argv[]) {
     std::vector<std::string> args(argv + 1, argv + argc);
 
     if (hasFlag(args, "help")) {
-        std::cout << "bench_codec_compare — Focused codec comparison benchmark\n\n"
+        std::cout << "bench_codec_compare — Comprehensive codec×row-codec comparison\n\n"
                   << "Usage: bench_codec_compare [options]\n"
-                  << "  --rows=N         Number of rows (default: 10000)\n"
-                  << "  --iterations=N   Number of interleaved iterations (default: 5)\n"
-                  << "  --profile=NAME   Dataset profile (default: mixed_generic)\n"
-                  << "  --help           Show this help\n";
+                  << "  --rows=N          Number of rows (default: 10000)\n"
+                  << "  --iterations=N    Number of interleaved iterations (default: 5)\n"
+                  << "  --profile=NAME    Dataset profile, or 'all' (default: all)\n"
+                  << "  --json=PATH       Write JSON results to file\n"
+                  << "  --quiet           Suppress per-iteration progress\n"
+                  << "  --help            Show this help\n";
         return 0;
     }
 
     const size_t numRows    = std::stoull(getArg(args, "rows", "10000"));
     const size_t iterations = std::stoull(getArg(args, "iterations", "5"));
-    const std::string profileName = getArg(args, "profile", "mixed_generic");
+    const std::string profileFilter = getArg(args, "profile", "all");
+    const std::string jsonPath      = getArg(args, "json", "");
+    const bool quiet = hasFlag(args, "quiet");
 
-    // Resolve profile
+    // Resolve profiles
     const auto& allProfiles = bench::getAllProfiles();
-    const bench::DatasetProfile* profile = nullptr;
-    for (const auto& p : allProfiles) {
-        if (p.name == profileName) { profile = &p; break; }
-    }
-    if (!profile) {
-        std::cerr << "ERROR: Unknown profile '" << profileName << "'\n"
-                  << "Available: ";
-        for (const auto& p : allProfiles) std::cerr << p.name << " ";
-        std::cerr << "\n";
-        return 1;
+    std::vector<const bench::DatasetProfile*> profiles;
+    if (profileFilter == "all") {
+        for (const auto& p : allProfiles) profiles.push_back(&p);
+    } else {
+        for (const auto& p : allProfiles) {
+            if (p.name == profileFilter) { profiles.push_back(&p); break; }
+        }
+        if (profiles.empty()) {
+            std::cerr << "ERROR: Unknown profile '" << profileFilter << "'\nAvailable: ";
+            for (const auto& p : allProfiles) std::cerr << p.name << " ";
+            std::cerr << "\n";
+            return 1;
+        }
     }
 
-    auto codecs = buildCodecConfigs();
-    const size_t numCodecs = codecs.size();
+    auto candidates = buildCandidates();
 
     std::cerr << "=== Codec Comparison Benchmark ===\n"
-              << "  Profile:    " << profile->name << " (" << profile->layout.columnCount() << " cols)\n"
+              << "  Profiles:   " << profiles.size() << "\n"
               << "  Rows:       " << numRows << "\n"
               << "  Iterations: " << iterations << " (interleaved)\n"
-              << "  Codecs:     " << numCodecs << "\n\n";
+              << "  Candidates: " << candidates.size() << "\n\n";
 
-    // Storage: [codec_index][iteration]
-    std::vector<std::vector<IterResult>> results(numCodecs, std::vector<IterResult>(iterations));
+    // Gather all results
+    std::vector<ProfileResult> allResults;
+    bench::Timer totalTimer;
+    totalTimer.start();
 
-    // ----- Interleaved iterations -----
-    for (size_t iter = 0; iter < iterations; ++iter) {
-        std::cerr << "--- Iteration " << (iter + 1) << "/" << iterations << " ---\n";
+    for (const auto* profile : profiles) {
+        std::cerr << "=== " << profile->name << " (" << profile->layout.columnCount() << " cols) ===\n";
+        auto pr = runProfile(*profile, numRows, iterations, candidates, quiet);
+        allResults.insert(allResults.end(), pr.begin(), pr.end());
+    }
 
-        for (size_t ci = 0; ci < numCodecs; ++ci) {
-            const auto& codec = codecs[ci];
-            std::string ext = codec.isCsv ? ".csv" : ".bcsv";
-            std::string filePath = bench::tempFilePath(
-                profile->name + "_codec_" + codec.label, ext);
+    totalTimer.stop();
 
-            IterResult r;
-            if (codec.isCsv) {
-                r = runCsv(*profile, numRows, filePath);
-            } else {
-                r = runBcsv(*profile, numRows, codec, filePath);
-            }
+    // ============================================================================
+    // Print summary table
+    // ============================================================================
 
-            results[ci][iter] = r;
+    // Determine column widths
+    const int wCand = 15, wTime = 10, wSize = 12, wRatio = 8, wTput = 14;
 
-            std::cerr << "  " << std::left << std::setw(12) << codec.label
-                      << std::right
-                      << "  write=" << std::fixed << std::setprecision(1) << std::setw(8) << r.write_ms << " ms"
-                      << "  read=" << std::setw(8) << r.read_ms << " ms"
-                      << "  size=" << std::setw(10) << r.file_size
-                      << (r.valid ? "  OK" : "  FAIL") << "\n";
+    std::cout << "\n========== CODEC COMPARISON: " << numRows << " rows, "
+              << iterations << " iterations, " << profiles.size() << " profiles ==========\n\n";
 
-            // Clean up
-            std::filesystem::remove(filePath);
+    // Group by profile
+    for (const auto* profile : profiles) {
+        std::cout << "--- " << profile->name << " (" << profile->layout.columnCount() << " cols) ---\n";
+        std::cout << std::left << std::setw(wCand) << "Candidate"
+                  << std::right
+                  << std::setw(wTime)  << "Wr(ms)"
+                  << std::setw(wTime)  << "Rd(ms)"
+                  << std::setw(wSize)  << "Size(B)"
+                  << std::setw(wRatio) << "Ratio"
+                  << std::setw(wTput)  << "Wr(Krow/s)"
+                  << std::setw(wTput)  << "Rd(Krow/s)"
+                  << "  Valid\n";
+        std::cout << std::string(wCand + wTime*2 + wSize + wRatio + wTput*2 + 7, '-') << "\n";
+
+        for (const auto& r : allResults) {
+            if (r.profileName != profile->name) continue;
+            std::cout << std::left << std::setw(wCand) << r.candidateLabel
+                      << std::right << std::fixed
+                      << std::setprecision(1) << std::setw(wTime)  << r.medianWriteMs
+                      << std::setprecision(1) << std::setw(wTime)  << r.medianReadMs
+                      << std::setw(wSize)  << r.fileSize
+                      << std::setprecision(3) << std::setw(wRatio) << r.ratioVsCsv
+                      << std::setprecision(0) << std::setw(wTput)  << (r.writeRowsPerSec / 1000.0)
+                      << std::setprecision(0) << std::setw(wTput)  << (r.readRowsPerSec / 1000.0)
+                      << (r.allValid ? "  OK" : "  FAIL") << "\n";
         }
+        std::cout << "\n";
     }
 
     // ============================================================================
-    // Aggregate & report
+    // Aggregate across profiles (median per candidate)
     // ============================================================================
 
-    // Find CSV file size for compression ratio
-    size_t csvFileSize = 0;
-    for (size_t ci = 0; ci < numCodecs; ++ci) {
-        if (codecs[ci].isCsv) {
-            // Use median file size
-            std::vector<double> sizes;
-            for (const auto& r : results[ci]) sizes.push_back(static_cast<double>(r.file_size));
-            csvFileSize = static_cast<size_t>(median(sizes));
-            break;
-        }
-    }
+    std::cout << "========== AGGREGATE (median across " << profiles.size() << " profiles) ==========\n\n";
+    std::cout << std::left << std::setw(wCand) << "Candidate"
+              << std::right
+              << std::setw(wTput)  << "Wr(Krow/s)"
+              << std::setw(wTput)  << "Rd(Krow/s)"
+              << std::setw(wRatio+2) << "Ratio"
+              << "\n";
+    std::cout << std::string(wCand + wTput*2 + wRatio + 2, '-') << "\n";
 
-    std::cout << "\n";
-    std::cout << "╔══════════════════════════════════════════════════════════════════════════════════════════════════════════════╗\n";
-    std::cout << "║  CODEC COMPARISON — " << std::left << std::setw(20) << profile->name
-              << " — " << numRows << " rows × " << profile->layout.columnCount() << " cols"
-              << " — " << iterations << " iterations" << std::setw(15) << "" << "║\n";
-    std::cout << "╠══════════════╦══════════════════════════════╦══════════════════════════════╦═════════════╦═══════════════════╣\n";
-    std::cout << "║ Codec        ║  Write (ms)                  ║  Read (ms)                   ║  File Size  ║ Compression Ratio ║\n";
-    std::cout << "║              ║  median    mean    stdev     ║  median    mean    stdev      ║  (bytes)    ║ vs CSV            ║\n";
-    std::cout << "╠══════════════╬══════════════════════════════╬══════════════════════════════╬═════════════╬═══════════════════╣\n";
-
-    for (size_t ci = 0; ci < numCodecs; ++ci) {
-        std::vector<double> writeTimes, readTimes;
-        size_t fileSize = 0;
-        bool allValid = true;
-
-        for (const auto& r : results[ci]) {
-            writeTimes.push_back(r.write_ms);
-            readTimes.push_back(r.read_ms);
-            fileSize = r.file_size;
-            if (!r.valid) allValid = false;
-        }
-
-        double wMed = median(writeTimes);
-        double wMean = mean(writeTimes);
-        double wStd = stdev(writeTimes);
-        double rMed = median(readTimes);
-        double rMean = mean(readTimes);
-        double rStd = stdev(readTimes);
-
-        double ratio = (csvFileSize > 0) ? static_cast<double>(fileSize) / csvFileSize : 0;
-
-        std::cout << "║ " << std::left << std::setw(13) << codecs[ci].label
-                  << "║ " << std::right << std::fixed
-                  << std::setprecision(1) << std::setw(7) << wMed
-                  << std::setprecision(1) << std::setw(8) << wMean
-                  << std::setprecision(1) << std::setw(9) << wStd << "     "
-                  << "║ " << std::setprecision(1) << std::setw(7) << rMed
-                  << std::setprecision(1) << std::setw(8) << rMean
-                  << std::setprecision(1) << std::setw(9) << rStd << "      "
-                  << "║ " << std::setw(10) << fileSize << "  "
-                  << "║ " << std::setprecision(4) << std::setw(7) << ratio
-                  << (allValid ? "  OK       " : "  FAIL     ")
-                  << "║\n";
-    }
-
-    std::cout << "╠══════════════╩══════════════════════════════╩══════════════════════════════╩═════════════╩═══════════════════╣\n";
-
-    // Throughput summary
-    std::cout << "║                                                                                                             ║\n";
-    std::cout << "║  THROUGHPUT (median, rows/sec)                                                                              ║\n";
-    std::cout << "╠══════════════╦═══════════════════╦═══════════════════╦══════════════════════════════════════════════════════════╣\n";
-    std::cout << "║ Codec        ║  Write rows/s     ║  Read rows/s      ║  Speedup vs CSV (write / read)                         ║\n";
-    std::cout << "╠══════════════╬═══════════════════╬═══════════════════╬══════════════════════════════════════════════════════════╣\n";
-
-    double csvWriteRowsPerSec = 0, csvReadRowsPerSec = 0;
-    // Compute CSV baseline throughput first
-    for (size_t ci = 0; ci < numCodecs; ++ci) {
-        if (codecs[ci].isCsv) {
-            std::vector<double> writeTimes, readTimes;
-            for (const auto& r : results[ci]) {
-                writeTimes.push_back(r.write_ms);
-                readTimes.push_back(r.read_ms);
+    for (const auto& cand : candidates) {
+        std::vector<double> wrs, rrs, ratios;
+        for (const auto& r : allResults) {
+            if (r.candidateLabel == cand.label) {
+                wrs.push_back(r.writeRowsPerSec / 1000.0);
+                rrs.push_back(r.readRowsPerSec / 1000.0);
+                ratios.push_back(r.ratioVsCsv);
             }
-            double wMed = median(writeTimes);
-            double rMed = median(readTimes);
-            csvWriteRowsPerSec = (wMed > 0) ? numRows / (wMed / 1000.0) : 0;
-            csvReadRowsPerSec  = (rMed > 0) ? numRows / (rMed / 1000.0) : 0;
-            break;
         }
+        std::cout << std::left << std::setw(wCand) << cand.label
+                  << std::right << std::fixed
+                  << std::setprecision(0) << std::setw(wTput) << median(wrs)
+                  << std::setprecision(0) << std::setw(wTput) << median(rrs)
+                  << std::setprecision(3) << std::setw(wRatio+2) << median(ratios)
+                  << "\n";
     }
 
-    for (size_t ci = 0; ci < numCodecs; ++ci) {
-        std::vector<double> writeTimes, readTimes;
-        for (const auto& r : results[ci]) {
-            writeTimes.push_back(r.write_ms);
-            readTimes.push_back(r.read_ms);
-        }
-        double wMed = median(writeTimes);
-        double rMed = median(readTimes);
-        double wRps = (wMed > 0) ? numRows / (wMed / 1000.0) : 0;
-        double rRps = (rMed > 0) ? numRows / (rMed / 1000.0) : 0;
+    std::cout << "\nTotal time: " << std::fixed << std::setprecision(1) << totalTimer.elapsedSec() << " s\n";
 
-        double wSpeedup = (csvWriteRowsPerSec > 0) ? wRps / csvWriteRowsPerSec : 0;
-        double rSpeedup = (csvReadRowsPerSec > 0)  ? rRps / csvReadRowsPerSec  : 0;
-
-        std::ostringstream speedup;
-        if (codecs[ci].isCsv) {
-            speedup << "  (baseline)";
-        } else {
-            speedup << "  " << std::fixed << std::setprecision(2)
-                    << wSpeedup << "x / " << rSpeedup << "x";
-        }
-
-        std::cout << "║ " << std::left << std::setw(13) << codecs[ci].label
-                  << "║ " << std::right << std::setw(14) << static_cast<size_t>(wRps) << "    "
-                  << "║ " << std::setw(14) << static_cast<size_t>(rRps) << "    "
-                  << "║ " << std::left << std::setw(55) << speedup.str()
-                  << "║\n";
-    }
-
-    std::cout << "╚══════════════╩═══════════════════╩═══════════════════╩══════════════════════════════════════════════════════════╝\n";
-
-    // Validation summary
+    // Validation
     bool allOk = true;
-    for (size_t ci = 0; ci < numCodecs; ++ci) {
-        for (const auto& r : results[ci]) {
-            if (!r.valid) { allOk = false; break; }
-        }
+    for (const auto& r : allResults) {
+        if (!r.allValid) { allOk = false; break; }
     }
-    std::cout << "\nValidation: " << (allOk ? "ALL PASSED" : "SOME FAILED") << "\n";
+    std::cout << "Validation: " << (allOk ? "ALL PASSED" : "SOME FAILED") << "\n";
+
+    // ============================================================================
+    // Optional JSON output
+    // ============================================================================
+
+    if (!jsonPath.empty()) {
+        std::ofstream jf(jsonPath);
+        jf << "[\n";
+        for (size_t i = 0; i < allResults.size(); ++i) {
+            const auto& r = allResults[i];
+            jf << "  {"
+               << "\"profile\":\"" << r.profileName << "\""
+               << ",\"cols\":" << r.numCols
+               << ",\"candidate\":\"" << r.candidateLabel << "\""
+               << ",\"rows\":" << numRows
+               << ",\"write_ms\":" << std::fixed << std::setprecision(2) << r.medianWriteMs
+               << ",\"read_ms\":" << std::setprecision(2) << r.medianReadMs
+               << ",\"file_size\":" << r.fileSize
+               << ",\"ratio_vs_csv\":" << std::setprecision(4) << r.ratioVsCsv
+               << ",\"write_krows_sec\":" << std::setprecision(1) << (r.writeRowsPerSec / 1000.0)
+               << ",\"read_krows_sec\":" << std::setprecision(1) << (r.readRowsPerSec / 1000.0)
+               << ",\"valid\":" << (r.allValid ? "true" : "false")
+               << "}";
+            if (i + 1 < allResults.size()) jf << ",";
+            jf << "\n";
+        }
+        jf << "]\n";
+        std::cerr << "JSON results written to: " << jsonPath << "\n";
+    }
 
     return allOk ? 0 : 1;
 }
