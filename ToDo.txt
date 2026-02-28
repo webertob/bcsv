@@ -9,19 +9,16 @@ background:
 - benchmark suite is located under: ./benchmark (README.md has full docs)
 - documentation (also on the API) is provided here: ./docs
 
-=== PROGRESS (2026-02-28) ===
-Items 0–11.F: DONE (all committed and pushed, HEAD at 13fb4b9)
-Current position: just completed 11.F (File Codecs + BatchLZ4 benchmark)
-Next up: 12 → 13 → 14 (target for today: reach end of 14)
+=== PROGRESS (2026-03-01) ===
+Items 0–14: DONE (all committed)
+  12. CSV Reader/Writer             — committed 4fdd6f2
+  13. Update Tools & Libraries      — committed b806a01
+  14. Delta + VLE row codec         — committed f48a51d
+  11.G bitset encode/decode         — included in Item 14
 
-Priority order for remaining work:
-  12. CSV Reader/Writer under BCSV API    — infrastructure (enables cleaner CLI + benchmarks)
-  13. Update Tools & Libraries            — Python/C# sync, CLI polish
-  14. Advanced row encoding (VLE/delta)   — core feature (compression improvement)
-
-Deferred (not blocking 12–14):
-  11.G bitset encode/decode               — prerequisite for Item 14 only
+Deferred / remaining:
   11.B open items (perf regression, memory footprint, minor refactorings)
+  14b. dictionary encoding for strings
 ===
 
 Lean checklist gate (for every non-trivial item):
@@ -490,7 +487,7 @@ Lean checklist gate (for every non-trivial item):
         C API lacks CsvReader/CsvWriter. No functional benefit to porting.
 
 
-14. Implement new row encoding schema (Delta Encoding), which uses variable length encoding for float and integer values
+[x] 14. Implement new row encoding schema (Delta Encoding), which uses variable length encoding for float and integer values
     Main usage of bcsv is the handling of time-series data. Thus we expect many recurring, monotonic falling or raising values (First-Order-Constant) or values that are similar (close) to previouse values. In many cases the full extend of a variable type is not required to encode the actual value.
     This feature is working on a per row level, not only a single cell/value as the current vle_encode / vle_decode functions do. It tries to provide a better balance between computational effort and compression and takes advantange on previouse data (time-series).
     
