@@ -40,6 +40,7 @@
 #include "row.h"
 #include "row_codec_flat001.h"  // Flat001 codec (Item 11)
 #include "row_codec_zoh001.h"   // ZoH001 codec (Item 11)
+#include "row_codec_delta001.h" // Delta001 codec (Item 14)
 #include "row_codec_dispatch.h" // Runtime dispatch (Item 11)
 #include "file_codec_concept.h"      // FileCodec concept + sentinels (Item 12)
 #include "file_codec_stream001.h"    // Stream-raw file codec (Item 12)
@@ -66,6 +67,7 @@
 #include "row.hpp"
 #include "row_codec_flat001.hpp"  // Flat001 codec implementation (Item 11)
 #include "row_codec_zoh001.hpp"  // ZoH001 codec implementation (Item 11)
+#include "row_codec_delta001.hpp" // Delta001 codec implementation (Item 14)
 #include "writer.hpp"
 #include "csv_writer.hpp"         // CsvWriter implementation (Item 12)
 #include "csv_reader.hpp"         // CsvReader implementation (Item 12)

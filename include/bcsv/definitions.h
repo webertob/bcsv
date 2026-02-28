@@ -77,7 +77,8 @@ namespace bcsv {
         NO_FILE_INDEX       = 0x0002,                  ///< Bit 1: File has no index (sequential scan only, minimal footer) - for embedded platforms
         STREAM_MODE         = 0x0004,                  ///< Bit 2: File uses stream mode (no packets/checksums/footer). Default (0) = packet mode.
         BATCH_COMPRESS      = 0x0008,                  ///< Bit 3: Packet payload is batch-compressed as a single LZ4 block (async double-buffered I/O).
-        // Bits 4-15 reserved for future use
+        DELTA_ENCODING      = 0x0010,                  ///< Bit 4: Delta + VLE row encoding (implies ZoH; delta/FoC/VLE for numerics).
+        // Bits 5-15 reserved for future use
     };
 
     // Enable bitwise operations for FileFlags

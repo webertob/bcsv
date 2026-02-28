@@ -372,6 +372,78 @@ TEST_F(FileCodecTest, RoundTrip_StreamLZ4_Empty) {
 }
 
 // ============================================================================
+// Delta codec: file round-trips
+// ============================================================================
+
+/// Write N rows with Delta codec + specified file codec flags, verify round-trip.
+template<typename WriterType>
+void roundTripDelta(const std::string& path, Layout layout,
+                    size_t numRows, size_t compressionLevel,
+                    FileFlags flags, size_t blockSizeKB = 64) {
+    // Write — vary values to exercise delta/ZoH/FoC modes
+    {
+        WriterType writer(layout);
+        FileFlags deltaFlags = flags | FileFlags::DELTA_ENCODING;
+        ASSERT_TRUE(writer.open(path, true, compressionLevel, blockSizeKB, deltaFlags))
+            << writer.getErrorMsg();
+        for (size_t i = 0; i < numRows; ++i) {
+            writer.row().set(0, static_cast<int32_t>(i));
+            writer.row().set(1, static_cast<float>(i) * 0.1f);
+            if (i % 5 == 0) {
+                writer.row().set(2, std::string("d") + std::to_string(i));
+            }
+            writer.writeRow();
+        }
+        writer.close();
+    }
+
+    // Read
+    {
+        Reader<Layout> reader;
+        ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
+
+        std::string expectedS = "d0";
+        for (size_t i = 0; i < numRows; ++i) {
+            if (i % 5 == 0) {
+                expectedS = std::string("d") + std::to_string(i);
+            }
+            ASSERT_TRUE(reader.readNext()) << "Failed at row " << i;
+            EXPECT_EQ(reader.row().get<int32_t>(0), static_cast<int32_t>(i)) << "Row " << i;
+            EXPECT_FLOAT_EQ(reader.row().get<float>(1), static_cast<float>(i) * 0.1f) << "Row " << i;
+            EXPECT_EQ(reader.row().get<std::string>(2), expectedS) << "Row " << i;
+        }
+        EXPECT_FALSE(reader.readNext());
+        reader.close();
+    }
+}
+
+TEST_F(FileCodecTest, RoundTrip_PacketLZ4_Delta) {
+    roundTripDelta<WriterDelta<Layout>>(
+        testFile("pkt_lz4_delta.bcsv"), makeLayout(), 100, 1, FileFlags::NONE);
+}
+
+TEST_F(FileCodecTest, RoundTrip_PacketRaw_Delta) {
+    roundTripDelta<WriterDelta<Layout>>(
+        testFile("pkt_raw_delta.bcsv"), makeLayout(), 100, 0, FileFlags::NONE);
+}
+
+TEST_F(FileCodecTest, RoundTrip_StreamRaw_Delta) {
+    roundTripDelta<WriterDelta<Layout>>(
+        testFile("str_raw_delta.bcsv"), makeLayout(), 100, 0, FileFlags::STREAM_MODE);
+}
+
+TEST_F(FileCodecTest, RoundTrip_StreamLZ4_Delta) {
+    roundTripDelta<WriterDelta<Layout>>(
+        testFile("str_lz4_delta.bcsv"), makeLayout(), 100, 1, FileFlags::STREAM_MODE);
+}
+
+TEST_F(FileCodecTest, RoundTrip_PacketLZ4_Delta_MultiPacket) {
+    // Tiny block size to force multiple packets
+    roundTripDelta<WriterDelta<Layout>>(
+        testFile("pkt_lz4_delta_multi.bcsv"), makeLayout(), 500, 1, FileFlags::NONE, 1);
+}
+
+// ============================================================================
 // PacketLZ4Batch001 (async double-buffered batch LZ4)
 // ============================================================================
 
@@ -396,6 +468,11 @@ TEST_F(FileCodecTest, RoundTrip_PacketLZ4Batch_Flat) {
 TEST_F(FileCodecTest, RoundTrip_PacketLZ4Batch_ZoH) {
     roundTripZoH<WriterZoH<Layout>>(
         testFile("batch_zoh.bcsv"), makeLayout(), 100, 1, FileFlags::BATCH_COMPRESS);
+}
+
+TEST_F(FileCodecTest, RoundTrip_PacketLZ4Batch_Delta) {
+    roundTripDelta<WriterDelta<Layout>>(
+        testFile("batch_delta.bcsv"), makeLayout(), 100, 1, FileFlags::BATCH_COMPRESS);
 }
 
 TEST_F(FileCodecTest, RoundTrip_PacketLZ4Batch_MultiPacket) {

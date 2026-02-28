@@ -23,6 +23,7 @@
 
 #include "row_codec_flat001.h"
 #include "row_codec_zoh001.h"
+#include "row_codec_delta001.h"
 #include "definitions.h"
 
 #include <cassert>
@@ -36,13 +37,15 @@ namespace bcsv {
 enum class RowCodecId : uint8_t {
     FLAT001,
     ZOH001,
+    DELTA001,
 };
 
 template<typename LayoutType>
 class RowCodecDispatch {
     using RowType = typename LayoutType::RowType;
-    using FlatCodec = RowCodecFlat001<LayoutType>;
-    using ZoHCodec  = RowCodecZoH001<LayoutType>;
+    using FlatCodec   = RowCodecFlat001<LayoutType>;
+    using ZoHCodec    = RowCodecZoH001<LayoutType>;
+    using DeltaCodec  = RowCodecDelta001<LayoutType>;
 
 public:
     using SerializeFn = std::span<std::byte> (*)(void* codec, RowType& row, ByteBuffer& buffer);
@@ -114,6 +117,18 @@ public:
                 clone_fn_ = &cloneZoH;
                 break;
             }
+            case RowCodecId::DELTA001: {
+                auto* codec = new DeltaCodec();
+                codec->setup(*layout_);
+                ctx_ = codec;
+                codec_id_ = id;
+                serialize_fn_ = &serializeDelta;
+                deserialize_fn_ = &deserializeDelta;
+                reset_fn_ = &resetDelta;
+                destroy_fn_ = &destroyDelta;
+                clone_fn_ = &cloneDelta;
+                break;
+            }
             default:
                 throw std::logic_error("RowCodecDispatch::setup() failed: unsupported codec id");
         }
@@ -125,9 +140,13 @@ public:
     }
 
     void selectCodec(FileFlags flags, const LayoutType& layout) {
-        const RowCodecId id = ((flags & FileFlags::ZERO_ORDER_HOLD) != FileFlags::NONE)
-            ? RowCodecId::ZOH001
-            : RowCodecId::FLAT001;
+        RowCodecId id;
+        if ((flags & FileFlags::DELTA_ENCODING) != FileFlags::NONE)
+            id = RowCodecId::DELTA001;
+        else if ((flags & FileFlags::ZERO_ORDER_HOLD) != FileFlags::NONE)
+            id = RowCodecId::ZOH001;
+        else
+            id = RowCodecId::FLAT001;
         setup(id, layout);
     }
 
@@ -161,6 +180,7 @@ public:
     bool isSetup() const noexcept { return ctx_ != nullptr; }
     bool isZoH() const noexcept { return isSetup() && codec_id_ == RowCodecId::ZOH001; }
     bool isFlat() const noexcept { return isSetup() && codec_id_ == RowCodecId::FLAT001; }
+    bool isDelta() const noexcept { return isSetup() && codec_id_ == RowCodecId::DELTA001; }
     RowCodecId codecId() const noexcept { return codec_id_; }
 
 private:
@@ -245,6 +265,26 @@ private:
 
     static void* cloneZoH(const void* codec) {
         return new ZoHCodec(*static_cast<const ZoHCodec*>(codec));
+    }
+
+    static std::span<std::byte> serializeDelta(void* codec, RowType& row, ByteBuffer& buffer) {
+        return static_cast<DeltaCodec*>(codec)->serialize(row, buffer);
+    }
+
+    static void deserializeDelta(void* codec, std::span<const std::byte> buffer, RowType& row) {
+        static_cast<DeltaCodec*>(codec)->deserialize(buffer, row);
+    }
+
+    static void resetDelta(void* codec) {
+        static_cast<DeltaCodec*>(codec)->reset();
+    }
+
+    static void destroyDelta(void* codec) {
+        delete static_cast<DeltaCodec*>(codec);
+    }
+
+    static void* cloneDelta(const void* codec) {
+        return new DeltaCodec(*static_cast<const DeltaCodec*>(codec));
     }
 };
 

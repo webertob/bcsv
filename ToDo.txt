@@ -511,12 +511,14 @@ Lean checklist gate (for every non-trivial item):
     row header to change:
         bits_ / bool section un changed.
         but for each data column we are going to store a small single digit number, instead of bit.
-            0: Zero Order Hold, the value in this column hasn c
+            0: Zero Order Hold, the value in this column hasn changed vs. previouse column --> no data stored in data section for this column
+            1: First Order Constant, the value in this column is a linear extrapolation of the previouse two rows. --> no data stored in data section for this column
+            2: 1 byte of data stored for this column in the data section
+            3: 2 bytes of data stored for this column in the data section
+            ...
+    The value range and hence the number of bits required for to encode a column in the row_header depends on the type. i.e. uint8_t/int8_t can only have 1 byte. Given the encoding above valid values are 0,1,2 (requiers 2 bits)
+    uint16_t/int16_t have value range 0,1,2,3 (4 bits) etc. 
 
-
-    
-    
-    
     Codec Architecture.
         ZoH codec do be used as the base line for the row format.
         row_header to be extended to hold information about number of bytes required to encode a specific column value.
@@ -530,30 +532,6 @@ Lean checklist gate (for every non-trivial item):
                     0: means current row is linear interpolation from previouse 2 rows, no value stored.
                     1-2: means value is neiter contstant (ZoH), nor linear interpolation (First Order Hold) thus it is encoded directly using 1 or 2 bytes. The actual value stored is the difference between current and previouse value, stored in VLE/zigzag encoding.
 
-
-
-
-        
-    Bit-0 Repetion (Rep)
-        0: check bits 1:5 for additional information on column encoding
-        1: column encoding is same as previouse row bit3 1:5 are skipped
-        Note: 
-            1. For column type=bool, this column directly holds the value, no further bits required!
-            2. For column hint=volatile, this column directly switches const/plain.
-    Bit 1:2: column encoding
-        00: const, previouse value is kept constant, bits 3:5 are skipped
-        01: plain, bits 3:5 contain length of field, bits 6:14 contain data, data to simply contain the value we search
-        10: extra, extrapolate using diff between row(n) = row(n-1) + row(n-1) - row(n-2), bits3:5 (length) and bits 6:14 (data) are skipped
-        11: delta, delta relative to previouse row row(n) = row(n-1) + delta;
-        Note: This filed is not present for variables maked volatile!
-    Bit 3:5 length of the following data field, only present if data is provided and length is undefined, length is defined as number of bytes!
-        for 1 byte types this field has a length of 0 bits (as data filed implictily is defined to length of 1 byte)
-        for 2 byte types this field has a length of 1 bit  (0:short (1byte), 1:long (2bytes))
-        for 4 byte types the filed has a maximum length of 2 bits (00:1byte, 01:2bytes, 10:3bytes, 11:4bytes)
-        for 8 byte types the filed has a maximum length of 3 bits (double, unit64) it has a length of 
-    Bit 6:14 data actual data stored for this variable
-
-    Special cases: For small types (1 byte) avoid unnecessary overhead (complexity, runtime, control bits) that won't pay off
 
 14. dictionary encoding for strings
     For strings a low cardinality is expected (many repetitions of the same string) are expected. Thus a dictionary based compression should be implemented. Exploit similar approach as for numerical values.

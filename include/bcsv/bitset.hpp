@@ -1381,6 +1381,31 @@ void Bitset<N>::shrinkToFit() requires(!IS_FIXED) {
     data_ = reinterpret_cast<std::uintptr_t>(new_data);
 }
 
+// ===== Multi-bit Field Packing =====
+
+template<size_t N>
+void Bitset<N>::encode(size_t pos, size_t bitCount, uint8_t value) {
+    assert(bitCount >= 1 && bitCount <= 8);
+    assert(pos + bitCount <= size());
+    // Write bits LSB-first
+    for (size_t i = 0; i < bitCount; ++i) {
+        (*this)[pos + i] = (value >> i) & 1;
+    }
+}
+
+template<size_t N>
+uint8_t Bitset<N>::decode(size_t pos, size_t bitCount) const {
+    assert(bitCount >= 1 && bitCount <= 8);
+    assert(pos + bitCount <= size());
+    uint8_t result = 0;
+    for (size_t i = 0; i < bitCount; ++i) {
+        if ((*this)[pos + i]) {
+            result |= (1u << i);
+        }
+    }
+    return result;
+}
+
 // ===== Operation Implementations =====
 
 template<size_t N>

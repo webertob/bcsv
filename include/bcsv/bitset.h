@@ -293,6 +293,19 @@ class Bitset {
     void pushBack(bool value = false) requires(!IS_FIXED);             // Append bit at end
     void shrinkToFit() requires(!IS_FIXED);
     
+    // ===== Multi-bit Field Packing (for codec headers) =====
+    // Write/read unsigned integer values spanning multiple bits at arbitrary positions.
+    // value must fit in bitCount bits (truncated if larger).
+    // Bits outside the field are preserved.
+    
+    /// Pack an unsigned integer (up to 8 bits) into [pos..pos+bitCount).
+    /// bitCount must be in [1..8]. Bits are stored LSB-first.
+    void encode(size_t pos, size_t bitCount, uint8_t value);
+    
+    /// Unpack an unsigned integer (up to 8 bits) from [pos..pos+bitCount).
+    /// bitCount must be in [1..8]. Returns the value extracted.
+    [[nodiscard]] uint8_t decode(size_t pos, size_t bitCount) const;
+    
     // ===== Operations =====
     
     bool all() const noexcept;

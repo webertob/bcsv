@@ -36,6 +36,7 @@ set(TEST_SOURCES
     visit_test.cpp
     row_codec_flat001_test.cpp
     row_codec_zoh001_test.cpp
+    row_codec_delta001_test.cpp
     codec_dispatch_test.cpp
     layout_guard_test.cpp
     review_fixes_test.cpp
