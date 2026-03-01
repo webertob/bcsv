@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <vector>
+#include <algorithm>
 #include <istream>
 #include <ostream>
 #include <cstring>
@@ -108,6 +109,29 @@ namespace bcsv {
         {
             // check if packeIndex size matches totalRowCount
             return !packet_index_.empty() && const_section_.row_count > 0;
+        }
+
+        /**
+         * @brief Find the packet containing a given row index (binary search).
+         * @param rowIndex 0-based file-wide row index
+         * @return Const iterator to the PacketIndexEntry whose packet contains rowIndex,
+         *         or packetIndex().end() if rowIndex is out of range.
+         *
+         * The returned entry satisfies: entry.first_row <= rowIndex < next_entry.first_row
+         * (or rowIndex < rowCount() for the last packet).
+         */
+        PacketIndex::const_iterator findPacket(uint64_t rowIndex) const {
+            if (packet_index_.empty() || rowIndex >= const_section_.row_count) {
+                return packet_index_.end();
+            }
+            // upper_bound finds first entry with first_row > rowIndex; decrement gives the containing packet
+            auto it = std::upper_bound(
+                packet_index_.begin(), packet_index_.end(), rowIndex,
+                [](uint64_t row, const PacketIndexEntry& e) { return row < e.first_row; });
+            if (it == packet_index_.begin()) {
+                return packet_index_.end();  // Should not happen if index is well-formed
+            }
+            return --it;
         }
 
         /**

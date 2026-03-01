@@ -134,6 +134,16 @@ public:
         }
     }
 
+    /// Seek to a specific packet by absolute file offset and prepare for reading.
+    /// Resets LZ4 decompression context and delegates to inner packet codec.
+    bool seekToPacket(std::istream& is, std::streamoff offset) {
+        // Reset LZ4 decompression context for the new packet
+        if (lz4_decompress_.has_value()) {
+            lz4_decompress_->reset();
+        }
+        return packet_.seekToPacket(is, offset);
+    }
+
 private:
     ByteBuffer write_buffer_;   // Owned write buffer for RowCodec serialization
     FileCodecPacket001 packet_;         // Handles framing, checksums, packet lifecycle

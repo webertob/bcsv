@@ -14,12 +14,11 @@
 #include <fstream>
 #include <filesystem>
 #include <string>
-#include "definitions.h"
+#include <vector>
 #include "layout.h"
 #include "row.h"
 #include "row_codec_dispatch.h"
 #include "file_header.h"
-#include "byte_buffer.h"
 #include "file_codec_dispatch.h"
 #include "file_footer.h"
 
@@ -78,6 +77,13 @@ namespace bcsv {
 
     /**
      * @brief Class for direct access reading of BCSV binary files
+     *
+     * Provides O(log P) random access to any row by index (P = number of packets).
+     * Both compressed (LZ4) and uncompressed codecs cache the entire target
+     * packet in memory.  Subsequent reads within the same packet are O(1)
+     * vector-index lookups.  Cross-packet seeks load only the target packet.
+     *
+     * Optimized for piecewise-sequential access patterns (head, tail, slice).
      */
     template<LayoutConcept LayoutType>
     class ReaderDirectAccess : public Reader<LayoutType> {
@@ -85,13 +91,23 @@ namespace bcsv {
         using Base              = Reader<LayoutType>;
         using RowType           = typename LayoutType::RowType;
         using FilePath          = std::filesystem::path;
+        using RowCodeDisptch    = RowCodecDispatch<LayoutType>;
 
         FileFooter  file_footer_;
 
-        //ToDo: Develop a caching strategy to improve performance in Direct Access Mode (balance with memory requirement)
-        //For now consider: piece wise sequential read as the targeted option. Still a file access. Load to RAW for fully random access, using your own use-case optimizes structures. 
-        //pkt cache --> keep a set of packets open
-        //row cache --> keep a set of rows open
+        // ── Packet cache ────────────────────────────────────────────────
+        // When a new packet is needed, the entire packet is read via the
+        // file codec (which handles decompression transparently) into
+        // cached_rows_.  Subsequent reads within the same packet are
+        // O(1) vector-index lookups.
+
+        size_t                          cached_packet_idx_{SIZE_MAX};  ///< Index into PacketIndex of cached packet (SIZE_MAX = none)
+        size_t                          cached_first_row_{0};          ///< first_row of the cached packet
+        size_t                          cached_row_count_{0};          ///< Number of rows in the cached packet
+        std::vector<std::vector<std::byte>> cached_rows_;              ///< Raw row data per row
+
+        // Row codec for direct-access deserialization (separate from sequential)
+        RowCodeDisptch                  da_row_codec_;
 
     public:
         void    close();
@@ -102,6 +118,8 @@ namespace bcsv {
 
     protected:
         void    buildFileFooter();
+        bool    loadPacket(size_t packetIdx);
+        bool    deserializeCachedRow(size_t rowInPacket, size_t index);
     };
 
     

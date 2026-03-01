@@ -179,6 +179,28 @@ public:
         packet_size_ = 0;
     }
 
+    /// Seek to a specific packet by absolute file offset and prepare for reading.
+    /// Resets all per-packet state and opens the packet at the given offset.
+    /// Returns true if the packet was successfully opened.
+    bool seekToPacket(std::istream& is, std::streamoff offset) {
+        // Force-close any currently open packet (skip remaining checksum validation)
+        packet_open_ = false;
+        packet_boundary_crossed_ = true;
+        packet_hash_.reset();
+        packet_size_ = 0;
+
+        // Seek to the packet's absolute file offset
+        is.clear();  // Clear any EOF/error flags
+        is.seekg(offset, std::ios::beg);
+        if (!is.good()) {
+            return false;
+        }
+
+        // Open the packet (reads + validates PacketHeader)
+        packet_open_ = openPacketRead(is);
+        return packet_open_;
+    }
+
 protected:
     // ── Internal packet lifecycle ───────────────────────────────────────
 

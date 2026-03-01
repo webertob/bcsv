@@ -61,6 +61,7 @@ public:
     using ReadRowFn              = std::span<const std::byte> (*)(void* ctx, std::istream& is);
     using PacketBoundaryCrossedFn = bool (*)(const void* ctx);
     using ResetFn                = void (*)(void* ctx);
+    using SeekToPacketFn         = bool (*)(void* ctx, std::istream& is, std::streamoff offset);
     using DestroyFn              = void (*)(void* ctx);
 
     // ── Constructors / Rule of Five ─────────────────────────────────────
@@ -180,6 +181,18 @@ public:
         reset_fn_(ctx_);
     }
 
+    /// Seek to a specific packet by absolute file offset.
+    /// Only supported by packet-based codecs; returns false if unsupported or on error.
+    bool seekToPacket(std::istream& is, std::streamoff offset) {
+        if (!ctx_ || !seek_to_packet_fn_) {
+            return false;
+        }
+        return seek_to_packet_fn_(ctx_, is, offset);
+    }
+
+    /// True if this codec supports seekToPacket() (packet-based codecs only).
+    bool supportsSeek() const noexcept { return seek_to_packet_fn_ != nullptr; }
+
     // ── Queries ─────────────────────────────────────────────────────────
 
     bool isSetup() const noexcept { return ctx_ != nullptr; }
@@ -198,6 +211,7 @@ private:
     ReadRowFn               read_row_fn_{nullptr};
     PacketBoundaryCrossedFn packet_boundary_crossed_fn_{nullptr};
     ResetFn                 reset_fn_{nullptr};
+    SeekToPacketFn           seek_to_packet_fn_{nullptr};
     DestroyFn               destroy_fn_{nullptr};
 
     void nullifyFnPtrs() noexcept {
@@ -210,6 +224,7 @@ private:
         read_row_fn_ = nullptr;
         packet_boundary_crossed_fn_ = nullptr;
         reset_fn_ = nullptr;
+        seek_to_packet_fn_ = nullptr;
         destroy_fn_ = nullptr;
     }
 
@@ -225,6 +240,7 @@ private:
         read_row_fn_ = other.read_row_fn_;
         packet_boundary_crossed_fn_ = other.packet_boundary_crossed_fn_;
         reset_fn_ = other.reset_fn_;
+        seek_to_packet_fn_ = other.seek_to_packet_fn_;
         destroy_fn_ = other.destroy_fn_;
 
         other.ctx_ = nullptr;
@@ -266,6 +282,16 @@ private:
         reset_fn_ = [](void* ctx) {
             static_cast<ConcreteCodec*>(ctx)->reset();
         };
+        // Wire seekToPacket only if the codec has the method (SFINAE)
+        if constexpr (requires(ConcreteCodec& c, std::istream& is, std::streamoff off) {
+            { c.seekToPacket(is, off) } -> std::convertible_to<bool>;
+        }) {
+            seek_to_packet_fn_ = [](void* ctx, std::istream& is, std::streamoff off) -> bool {
+                return static_cast<ConcreteCodec*>(ctx)->seekToPacket(is, off);
+            };
+        } else {
+            seek_to_packet_fn_ = nullptr;
+        }
         destroy_fn_ = [](void* ctx) {
             delete static_cast<ConcreteCodec*>(ctx);
         };

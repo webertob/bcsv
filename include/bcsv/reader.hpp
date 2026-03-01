@@ -238,7 +238,12 @@ namespace bcsv {
     template<LayoutConcept LayoutType>
     void ReaderDirectAccess<LayoutType>::close() {
         Base::close();
+        da_row_codec_.destroy();
         file_footer_.clear();
+        cached_rows_.clear();
+        cached_packet_idx_ = SIZE_MAX;
+        cached_first_row_ = 0;
+        cached_row_count_ = 0;
     }
 
     template<LayoutConcept LayoutType>
@@ -248,6 +253,9 @@ namespace bcsv {
             return false;
 
         std::streampos originalPos = Base::stream_.tellg();
+
+        // Initialize a separate row codec for direct-access deserialization
+        da_row_codec_.selectCodec(Base::file_header_.getFlags(), Base::row_.layout());
 
         // additionally read file footer
         try {
@@ -279,6 +287,152 @@ namespace bcsv {
 
         // restore original position after reader::open(), as expected by the default reader(i.e. ::readNext()).
         Base::stream_.seekg(originalPos);
+        return true;
+    }
+
+    /**
+     * @brief Read a specific row by absolute index (0-based).
+     *
+     * Uses the packet index for O(log P) packet lookup, then loads the
+     * target packet into an in-memory cache (decompressing if LZ4).
+     * Subsequent reads within the same packet are O(1) vector lookups.
+     *
+     * @param index 0-based row index in the file
+     * @return true if the row was successfully read (accessible via row()),
+     *         false if index is out of range or an error occurred
+     */
+    template<LayoutConcept LayoutType>
+    bool ReaderDirectAccess<LayoutType>::read(size_t index) {
+        if (!Base::isOpen()) {
+            Base::err_msg_ = "Error: File is not open";
+            return false;
+        }
+
+        if (index >= file_footer_.rowCount()) {
+            Base::err_msg_ = "Error: Row index out of range (" + std::to_string(index) +
+                             " >= " + std::to_string(file_footer_.rowCount()) + ")";
+            return false;
+        }
+
+        // Fast path: row is in the currently cached packet
+        if (cached_packet_idx_ != SIZE_MAX &&
+            index >= cached_first_row_ &&
+            index < cached_first_row_ + cached_row_count_) {
+            size_t rowInPacket = index - cached_first_row_;
+            return deserializeCachedRow(rowInPacket, index);
+        }
+
+        // Binary search: find the packet containing this row
+        auto pktIt = file_footer_.findPacket(static_cast<uint64_t>(index));
+        if (pktIt == file_footer_.packetIndex().end()) {
+            Base::err_msg_ = "Error: Could not locate packet for row " + std::to_string(index);
+            return false;
+        }
+
+        size_t packetIdx = static_cast<size_t>(std::distance(file_footer_.packetIndex().cbegin(), pktIt));
+        size_t rowInPacket = index - static_cast<size_t>(pktIt->first_row);
+
+        try {
+            // Load packet into cache if not already cached
+            if (packetIdx != cached_packet_idx_) {
+                if (!loadPacket(packetIdx)) return false;
+            }
+
+            return deserializeCachedRow(rowInPacket, index);
+
+        } catch (const std::exception& ex) {
+            Base::err_msg_ = std::string("Error: Exception during direct read: ") + ex.what();
+            if constexpr (DEBUG_OUTPUTS) {
+                std::cerr << Base::err_msg_ << std::endl;
+            }
+            return false;
+        }
+    }
+
+    /**
+     * @brief Load an entire packet into the row cache.
+     *
+     * Seeks to the target packet and reads all rows via the file codec
+     * (which handles VLE framing, checksums, and decompression
+     * transparently).  Stores the raw/decompressed row data in
+     * cached_rows_ for O(1) subsequent access.
+     */
+    template<LayoutConcept LayoutType>
+    bool ReaderDirectAccess<LayoutType>::loadPacket(size_t packetIdx) {
+        const auto& pktEntry = file_footer_.packetIndex()[packetIdx];
+
+        // Seek file codec to the target packet
+        if (!Base::file_codec_.seekToPacket(Base::stream_,
+                static_cast<std::streamoff>(pktEntry.byte_offset))) {
+            Base::err_msg_ = "Error: Failed to seek to packet at offset " +
+                             std::to_string(pktEntry.byte_offset);
+            return false;
+        }
+
+        // Reset row codec for the new packet boundary
+        da_row_codec_.reset();
+
+        // Determine how many rows this packet contains
+        size_t pktRowCount;
+        if (packetIdx + 1 < file_footer_.packetIndex().size()) {
+            pktRowCount = static_cast<size_t>(
+                file_footer_.packetIndex()[packetIdx + 1].first_row - pktEntry.first_row);
+        } else {
+            pktRowCount = static_cast<size_t>(file_footer_.rowCount() - pktEntry.first_row);
+        }
+
+        // Read all rows via the file codec (handles VLE framing + checksum)
+        cached_rows_.clear();
+        cached_rows_.reserve(pktRowCount);
+
+        for (size_t i = 0; i < pktRowCount; ++i) {
+            auto rowRawData = Base::file_codec_.readRow(Base::stream_);
+
+            if (rowRawData.data() == EOF_SENTINEL.data()) {
+                break;  // Unexpected EOF within packet
+            }
+
+            if (rowRawData.data() == ZOH_REPEAT_SENTINEL.data()) {
+                cached_rows_.emplace_back();  // Empty = ZoH sentinel
+            } else {
+                cached_rows_.emplace_back(rowRawData.begin(), rowRawData.end());
+            }
+        }
+
+        cached_packet_idx_ = packetIdx;
+        cached_first_row_ = static_cast<size_t>(pktEntry.first_row);
+        cached_row_count_ = cached_rows_.size();
+
+        return true;
+    }
+
+    /**
+     * @brief Deserialize a row from the in-memory packet cache.
+     *
+     * Handles ZoH repeat sentinels (empty vector) and bounds checks.
+     * Shared by both compressed and uncompressed cache paths.
+     */
+    template<LayoutConcept LayoutType>
+    bool ReaderDirectAccess<LayoutType>::deserializeCachedRow(size_t rowInPacket, size_t index) {
+        if (rowInPacket >= cached_row_count_) {
+            Base::err_msg_ = "Error: Row offset within packet out of range";
+            return false;
+        }
+
+        const auto& rawRow = cached_rows_[rowInPacket];
+
+        if (rawRow.empty()) {
+            // ZoH repeat: row_ retains previous value
+            if (rowInPacket == 0) {
+                Base::err_msg_ = "Error: ZoH repeat on first row of packet";
+                return false;
+            }
+        } else {
+            auto rowSpan = std::span<const std::byte>(rawRow.data(), rawRow.size());
+            da_row_codec_.deserialize(rowSpan, Base::row_);
+        }
+
+        Base::row_pos_ = index;
         return true;
     }
 

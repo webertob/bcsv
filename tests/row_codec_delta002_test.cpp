@@ -147,7 +147,7 @@ TEST(CodecDelta002Test, DeltaEncoding_Double) {
     Row row(layout), out(layout);
 
     row.set<double>(0, 100.0);
-    enc.serialize(row, buf);
+    (void)enc.serialize(row, buf);
     dec.deserialize({buf.data(), buf.size()}, out);
     EXPECT_DOUBLE_EQ(out.get<double>(0), 100.0);
 
@@ -202,7 +202,7 @@ TEST(CodecDelta002Test, FoC_LinearIntegerSequence) {
     Row row(layout), out(layout);
 
     row.set<int32_t>(0, 100);
-    enc.serialize(row, buf);
+    (void)enc.serialize(row, buf);
     dec.deserialize({buf.data(), buf.size()}, out);
 
     row.set<int32_t>(0, 110);
@@ -234,7 +234,7 @@ TEST(CodecDelta002Test, FoC_LinearDoubleSequence) {
     Row row(layout), out(layout);
 
     row.set<double>(0, 0.0);
-    enc.serialize(row, buf);
+    (void)enc.serialize(row, buf);
     dec.deserialize({buf.data(), buf.size()}, out);
 
     row.set<double>(0, 0.5);
@@ -263,7 +263,7 @@ TEST(CodecDelta002Test, FoC_NoMatchFallsBackToDelta) {
     Row row(layout), out(layout);
 
     row.set<int32_t>(0, 100);
-    enc.serialize(row, buf);
+    (void)enc.serialize(row, buf);
     dec.deserialize({buf.data(), buf.size()}, out);
 
     row.set<int32_t>(0, 110);
@@ -720,7 +720,7 @@ TEST(CodecDelta002Test, SignedOverflow_INT32_MinMax) {
     Row row(layout), out(layout);
 
     row.set<int32_t>(0, std::numeric_limits<int32_t>::min());
-    enc.serialize(row, buf);
+    (void)enc.serialize(row, buf);
     dec.deserialize({buf.data(), buf.size()}, out);
     EXPECT_EQ(out.get<int32_t>(0), std::numeric_limits<int32_t>::min());
 
@@ -745,7 +745,7 @@ TEST(CodecDelta002Test, SignedOverflow_INT64_MinMax) {
     Row row(layout), out(layout);
 
     row.set<int64_t>(0, std::numeric_limits<int64_t>::min());
-    enc.serialize(row, buf);
+    (void)enc.serialize(row, buf);
     dec.deserialize({buf.data(), buf.size()}, out);
     EXPECT_EQ(out.get<int64_t>(0), std::numeric_limits<int64_t>::min());
 
@@ -849,7 +849,7 @@ TEST(CodecDelta002Test, FoC_Float_NoAccumulatedError) {
     Row row(layout), out(layout);
 
     row.set<double>(0, 0.0);
-    enc.serialize(row, buf);
+    (void)enc.serialize(row, buf);
     dec.deserialize({buf.data(), buf.size()}, out);
 
     row.set<double>(0, 0.125);
@@ -919,7 +919,7 @@ TEST(CodecDelta002Test, DeltaEncoding_UINT64_LargeDelta) {
     Row row(layout), out(layout);
 
     row.set<uint64_t>(0, 0);
-    enc.serialize(row, buf);
+    (void)enc.serialize(row, buf);
     dec.deserialize({buf.data(), buf.size()}, out);
 
     row.set<uint64_t>(0, 0xFFFFFFFFFFFFFFFFULL);
@@ -938,7 +938,7 @@ TEST(CodecDelta002Test, FoC_SignedInteger_NegativeGradient) {
     Row row(layout), out(layout);
 
     row.set<int32_t>(0, 100);
-    enc.serialize(row, buf);
+    (void)enc.serialize(row, buf);
     dec.deserialize({buf.data(), buf.size()}, out);
 
     row.set<int32_t>(0, 90);

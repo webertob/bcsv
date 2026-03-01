@@ -45,6 +45,7 @@ set(TEST_SOURCES
     csv_reader_writer_test.cpp
     bench_dataset_profiles_test.cpp
     file_header_byte_buffer_test.cpp
+    direct_access_test.cpp
 )
 
 if(BCSV_ENABLE_STRESS_TESTS)
