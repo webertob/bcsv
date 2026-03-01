@@ -17,9 +17,9 @@
 #include <vector>
 #include "layout.h"
 #include "row.h"
-#include "row_codec_dispatch.h"
+#include "codec_row/row_codec_dispatch.h"
 #include "file_header.h"
-#include "file_codec_dispatch.h"
+#include "codec_file/file_codec_dispatch.h"
 #include "file_footer.h"
 
 namespace bcsv {

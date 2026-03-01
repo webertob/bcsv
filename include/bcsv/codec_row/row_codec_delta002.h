@@ -51,10 +51,10 @@
  * @see row_codec_zoh001.h for the type-grouped loop pattern.
  */
 
-#include "bitset.h"
-#include "byte_buffer.h"
-#include "layout.h"
-#include "layout_guard.h"
+#include "../bitset.h"
+#include "../byte_buffer.h"
+#include "../layout.h"
+#include "../layout_guard.h"
 
 #include <cstddef>
 #include <cstdint>

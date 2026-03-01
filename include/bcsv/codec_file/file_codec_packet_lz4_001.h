@@ -31,7 +31,7 @@
  */
 
 #include "file_codec_packet001.h"
-#include "lz4_stream.hpp"
+#include "../lz4_stream.hpp"
 
 #include <cassert>
 #include <cstddef>

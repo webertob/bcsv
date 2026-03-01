@@ -18,8 +18,8 @@
  */
 
 #include "row_codec_delta002.h"
-#include "row.hpp"
-#include "vle.hpp"
+#include "../row.hpp"
+#include "../vle.hpp"
 
 #include <algorithm>
 #include <bit>

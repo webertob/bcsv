@@ -21,8 +21,8 @@
 
 #include <bcsv/bcsv.h>
 #include <bcsv/row_visitors.h>
-#include <bcsv/row_codec_flat001.h>
-#include <bcsv/row_codec_flat001.hpp>
+#include <bcsv/codec_row/row_codec_flat001.h>
+#include <bcsv/codec_row/row_codec_flat001.hpp>
 #include <iostream>
 #include <sstream>
 #include <iomanip>

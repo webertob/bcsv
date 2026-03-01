@@ -1326,7 +1326,7 @@ Follows existing CLI tool patterns (`bcsv2csv.cpp`):
 **Goal:** User documentation, performance validation
 
 **Deliverables:**
-- `examples/bcsvSampler.md` — CLI documentation
+- `src/tools/bcsvSampler.md` — CLI documentation
 - `docs/SAMPLER.md` — API documentation with examples
 - Benchmark: Sampler throughput vs. raw Reader throughput
 - Integration into benchmark suite

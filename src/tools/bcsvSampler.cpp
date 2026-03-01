@@ -24,8 +24,8 @@
 #include <chrono>
 #include <iomanip>
 #include <bcsv/bcsv.h>
-#include <bcsv/sampler.h>
-#include <bcsv/sampler.hpp>
+#include <bcsv/sampler/sampler.h>
+#include <bcsv/sampler/sampler.hpp>
 
 // ── Configuration ───────────────────────────────────────────────────
 

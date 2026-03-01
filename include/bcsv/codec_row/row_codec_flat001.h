@@ -25,10 +25,10 @@
  * @see ITEM_11_PLAN.md for architecture and design rationale.
  */
 
-#include "definitions.h"
-#include "byte_buffer.h"
-#include "layout.h"
-#include "layout_guard.h"
+#include "../definitions.h"
+#include "../byte_buffer.h"
+#include "../layout.h"
+#include "../layout_guard.h"
 
 #include <cstdint>
 #include <span>

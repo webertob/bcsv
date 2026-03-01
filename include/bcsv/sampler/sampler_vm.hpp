@@ -10,9 +10,9 @@
 #pragma once
 
 #include "sampler_vm.h"
-#include "row.h"
-#include "row.hpp"
-#include "definitions.h"
+#include "../row.h"
+#include "../row.hpp"
+#include "../definitions.h"
 
 #include <cmath>
 #include <limits>

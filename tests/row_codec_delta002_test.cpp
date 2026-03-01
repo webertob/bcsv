@@ -9,7 +9,7 @@
 
 #include <gtest/gtest.h>
 #include "bcsv/bcsv.h"
-#include "bcsv/row_codec_delta002.h"
+#include "bcsv/codec_row/row_codec_delta002.h"
 
 #include <cmath>
 #include <limits>

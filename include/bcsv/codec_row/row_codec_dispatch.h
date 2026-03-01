@@ -24,7 +24,7 @@
 #include "row_codec_flat001.h"
 #include "row_codec_zoh001.h"
 #include "row_codec_delta002.h"
-#include "definitions.h"
+#include "../definitions.h"
 
 #include <cassert>
 #include <cstddef>

@@ -99,8 +99,8 @@ int main() {
 
 ### 🎯 Getting Started
 
-- **[examples/](examples/)** - C++ usage examples and CLI tools
-- **[examples/CLI_TOOLS.md](examples/CLI_TOOLS.md)** - csv2bcsv and bcsv2csv documentation
+- **[examples/](examples/)** - C++ usage examples
+- **[src/tools/CLI_TOOLS.md](src/tools/CLI_TOOLS.md)** - CLI tools documentation (csv2bcsv, bcsv2csv, bcsvSampler, bcsvGenerator, ...)
 - **[python/README.md](python/README.md)** - Python package (pandas integration)
 - **[unity/README.md](unity/README.md)** - C# Unity integration guide
 

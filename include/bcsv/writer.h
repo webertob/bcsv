@@ -17,12 +17,12 @@
 #include "definitions.h"
 #include "layout.h"
 #include "row.h"
-#include "row_codec_dispatch.h"
-#include "row_codec_flat001.h"
-#include "row_codec_zoh001.h"
-#include "row_codec_delta002.h"
+#include "codec_row/row_codec_dispatch.h"
+#include "codec_row/row_codec_flat001.h"
+#include "codec_row/row_codec_zoh001.h"
+#include "codec_row/row_codec_delta002.h"
 #include "file_header.h"
-#include "file_codec_dispatch.h"
+#include "codec_file/file_codec_dispatch.h"
 
 namespace bcsv {
 

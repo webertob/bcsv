@@ -20,7 +20,7 @@
 #include "bcsv/file_footer.h"
 #include "reader.h"
 #include "file_header.h"
-#include "file_codec_concept.h"
+#include "codec_file/file_codec_concept.h"
 #include "layout.h"
 #include "packet_header.h"
 #include "definitions.h"

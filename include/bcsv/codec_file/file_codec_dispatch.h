@@ -36,8 +36,8 @@
 #ifdef BCSV_HAS_BATCH_CODEC
 #include "file_codec_packet_lz4_batch001.h"
 #endif
-#include "definitions.h"
-#include "byte_buffer.h"
+#include "../definitions.h"
+#include "../byte_buffer.h"
 
 #include <cassert>
 #include <cstddef>

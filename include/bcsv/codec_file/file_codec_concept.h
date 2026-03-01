@@ -41,10 +41,10 @@
 #include <span>
 #include <iosfwd>
 
-#include "byte_buffer.h"
-#include "definitions.h"
-#include "file_header.h"
-#include "file_footer.h"
+#include "../byte_buffer.h"
+#include "../definitions.h"
+#include "../file_header.h"
+#include "../file_footer.h"
 
 namespace bcsv {
 

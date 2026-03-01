@@ -26,15 +26,24 @@ bcsvGenerator --help
 | `-p, --profile NAME` | Dataset profile | `mixed_generic` |
 | `-n, --rows N` | Number of rows | `10000` |
 | `-d, --data-mode MODE` | `timeseries` or `random` | `timeseries` |
+| `--file-codec CODEC` | File codec (see below) | `packet_lz4_batch` |
+| `--row-codec CODEC` | Row codec: `delta`, `zoh`, `flat` | `delta` |
 | `--compression-level N` | LZ4 compression level | `1` |
 | `--block-size N` | Block size in KB | `64` |
-| `--no-batch` | Disable batch compression | |
-| `--no-delta` | Use flat codec instead of delta | |
-| `--no-lz4` | Disable LZ4 compression | |
 | `-f, --overwrite` | Overwrite output file if it exists | |
 | `-v, --verbose` | Verbose progress output | |
 | `--list` | List all available profiles and exit | |
 | `-h, --help` | Show help message | |
+
+### File Codecs
+
+| Value | Description |
+|-------|-------------|
+| `packet_lz4_batch` | Async double-buffered LZ4 (default, best throughput) |
+| `packet_lz4` | Packet LZ4 |
+| `packet` | Packet, no compression |
+| `stream_lz4` | Streaming LZ4 |
+| `stream` | Streaming, no compression |
 
 ## Dataset Profiles
 
@@ -74,13 +83,16 @@ bcsvGenerator -p simulation_smooth -d random -o stress.bcsv
 
 ## Encoding
 
-Default output encoding is **packet + lz4 + batch + delta**.
+Default output encoding is **packet_lz4_batch + delta**.
 
 ```bash
-# No compression at all
-bcsvGenerator --no-delta --no-lz4 --no-batch -o flat.bcsv
+# No compression at all (flat, uncompressed packets)
+bcsvGenerator --file-codec packet --row-codec flat -o flat.bcsv
 
-# Maximum compression
+# ZoH row codec with streaming LZ4
+bcsvGenerator --file-codec stream_lz4 --row-codec zoh -o zoh_stream.bcsv
+
+# Maximum LZ4 compression
 bcsvGenerator --compression-level 12 -o compressed.bcsv
 ```
 

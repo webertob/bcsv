@@ -33,8 +33,12 @@ Optimized for **large time-series data** on platforms from STM32 to desktop.
 
 ```
 bcsv/
-├── include/bcsv/          # Header-only C++ library (28 files: .h declarations, .hpp implementations)
-├── examples/              # CLI tools + usage examples (11 build targets)
+├── include/bcsv/          # Header-only C++ library (.h declarations, .hpp implementations)
+│   ├── sampler/           # Sampler API headers
+│   ├── codec_file/        # File codec headers
+│   └── codec_row/         # Row codec headers
+├── src/tools/             # CLI tools (7 targets: csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvSampler, bcsvGenerator)
+├── examples/              # Usage examples (7 targets)
 ├── tests/                 # Google Test suite + benchmark executables
 ├── benchmark/             # Python orchestrator, report generator, regression detector
 ├── python/                # Python bindings (pybind11) + pandas integration
@@ -79,7 +83,8 @@ cmake --build --preset ninja-release-build -j$(nproc) --target bench_macro_datas
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `BUILD_EXAMPLES` | ON | Build CLI tools + example programs |
+| `BUILD_EXAMPLES` | ON | Build example programs |
+| `BUILD_TOOLS` | ON | Build CLI tools (csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvSampler, bcsvGenerator) |
 | `BUILD_TESTS` | ON | Build Google Test suite + C API tests |
 | `BCSV_ENABLE_BENCHMARKS` | ON | Macro benchmarks + CSV generator |
 | `BCSV_ENABLE_MICRO_BENCHMARKS` | ON | Google Benchmark per-type latency |
@@ -95,8 +100,8 @@ cmake --build --preset ninja-release-build -j$(nproc) --target bench_macro_datas
 
 Executables land in `build/ninja-debug/bin/` (debug) or `build/ninja-release/bin/` (release):
 - Tests: `bcsv_gtest`, `test_row_api`, `test_c_api`
-- CLI tools: `csv2bcsv`, `bcsv2csv`, `bcsvHead`, `bcsvTail`, `bcsvHeader`
-- Examples: `example`, `example_static`, `example_zoh`, `example_zoh_static`, `visitor_examples`, `c_api_vectorized_example`
+- CLI tools: `csv2bcsv`, `bcsv2csv`, `bcsvHead`, `bcsvTail`, `bcsvHeader`, `bcsvSampler`, `bcsvGenerator`
+- Examples: `example`, `example_static`, `example_zoh`, `example_zoh_static`, `visitor_examples`, `c_api_vectorized_example`, `example_sampler`
 - Benchmarks: `bench_macro_datasets`, `bench_micro_types`, `bench_generate_csv`, `bench_external_csv`
 
 ### Quick Verification Commands
@@ -253,7 +258,8 @@ reader.close();
 |-----------|-----------|---------|
 | Tests | tests/SKILLS.md | Build, run, filter tests; test files inventory; sanitizers |
 | Benchmarks | benchmark/README.md | Build, run, interpret benchmarks; streamlined benchmark CLI and reporting |
-| Examples & CLI | examples/SKILLS.md | CLI tools, example programs, known caveats |
+| CLI Tools | src/tools/SKILLS.md | CLI tool build, usage, source structure |
+| Examples | examples/SKILLS.md | Example programs, build targets |
 | Python bindings | python/SKILLS.md | Build, test, publish Python package |
 | Unity / C# | unity/SKILLS.md | Architecture, prerequisites, key files |
 
@@ -297,7 +303,9 @@ Key source entry points by area:
 - Types & constants: include/bcsv/definitions.h
 - Column schema: include/bcsv/layout.h
 - Row data model: include/bcsv/row.h (RowImpl is internal — users see Row, RowStatic)
-- Row codecs: include/bcsv/row_codec_flat001.h, include/bcsv/row_codec_zoh001.h
+- Row codecs: include/bcsv/codec_row/row_codec_flat001.h, row_codec_zoh001.h, row_codec_delta002.h
+- File codecs: include/bcsv/codec_file/file_codec_dispatch.h
+- Sampler: include/bcsv/sampler/sampler.h
 - File I/O: include/bcsv/reader.h, include/bcsv/writer.h
 - Visitor pattern: include/bcsv/row_visitors.h
 - VLE encoding: include/bcsv/vle.hpp
@@ -310,6 +318,6 @@ Build & verify: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug && cmake -
 - Working on Reader/Writer: "Also read include/bcsv/reader.hpp and writer.hpp for implementation details"
 - Working on benchmarks: "Also read benchmark/README.md and tests/bench_common.hpp"
 - Working on Python: "Also read python/SKILLS.md and python/pybcsv/bindings.cpp"
-- Working on CLI tools: "Also read examples/SKILLS.md and examples/CLI_TOOLS.md"
+- Working on CLI tools: "Also read src/tools/SKILLS.md and src/tools/CLI_TOOLS.md"
 - Working on file format: "Also read include/bcsv/file_header.h, packet_header.h, file_footer.h"
 - Working on bitset: "Also read include/bcsv/bitset.h and bitset.hpp"

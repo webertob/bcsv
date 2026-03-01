@@ -11,7 +11,7 @@
 
 #include "sampler_ast.h"
 #include "sampler_types.h"
-#include "definitions.h"
+#include "../definitions.h"
 
 #include <cstdint>
 #include <cstring>

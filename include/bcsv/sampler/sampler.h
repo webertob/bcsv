@@ -16,9 +16,9 @@
 #include "sampler_compiler.h"
 #include "sampler_vm.h"
 #include "sampler_window.h"
-#include "reader.h"
-#include "layout.h"
-#include "row.h"
+#include "../reader.h"
+#include "../layout.h"
+#include "../row.h"
 
 #include <memory>
 #include <string>

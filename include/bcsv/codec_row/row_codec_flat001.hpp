@@ -17,7 +17,7 @@
  */
 
 #include "row_codec_flat001.h"
-#include "row.h"
+#include "../row.h"
 
 #include <algorithm>
 #include <cassert>

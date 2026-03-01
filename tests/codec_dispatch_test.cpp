@@ -27,7 +27,7 @@
 
 #include "bcsv/writer.h"
 #include "bcsv/reader.h"
-#include "bcsv/row_codec_dispatch.h"
+#include "bcsv/codec_row/row_codec_dispatch.h"
 #include <bcsv/bcsv.h>
 
 namespace {

@@ -36,7 +36,7 @@
  */
 
 #include "row_codec_zoh001.h"
-#include "row.h"
+#include "../row.h"
 
 #include <algorithm>
 #include <cstring>

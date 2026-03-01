@@ -9,7 +9,7 @@
 
 #pragma once
 
-#include "row.h"
+#include "../row.h"
 #include "sampler_vm.h"
 
 #include <cstdint>

@@ -10,7 +10,7 @@
 #pragma once
 
 #include "sampler_ast.h"
-#include "definitions.h"
+#include "../definitions.h"
 
 #include <algorithm>
 #include <cstdint>

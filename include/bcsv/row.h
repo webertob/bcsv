@@ -21,7 +21,7 @@
 #include "definitions.h"
 #include "layout.h"
 #include "bitset.h"
-#include "row_codec_flat001.h"
+#include "codec_row/row_codec_flat001.h"
 
 namespace bcsv {
 

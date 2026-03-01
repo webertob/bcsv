@@ -11,8 +11,8 @@
 
 #include <gtest/gtest.h>
 #include <bcsv/bcsv.h>
-#include <bcsv/row_codec_flat001.h>
-#include <bcsv/row_codec_flat001.hpp>
+#include <bcsv/codec_row/row_codec_flat001.h>
+#include <bcsv/codec_row/row_codec_flat001.hpp>
 #include <set>
 #include <string>
 

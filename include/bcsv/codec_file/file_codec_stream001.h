@@ -30,12 +30,12 @@
  */
 
 #include "file_codec_concept.h"
-#include "byte_buffer.h"
-#include "checksum.hpp"
-#include "definitions.h"
+#include "../byte_buffer.h"
+#include "../checksum.hpp"
+#include "../definitions.h"
 
-#include "file_footer.h"
-#include "vle.hpp"
+#include "../file_footer.h"
+#include "../vle.hpp"
 
 #include <cassert>
 #include <cstddef>

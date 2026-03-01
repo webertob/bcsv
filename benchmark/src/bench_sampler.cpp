@@ -25,8 +25,8 @@
 
 #include <benchmark/benchmark.h>
 #include <bcsv/bcsv.h>
-#include <bcsv/sampler.h>
-#include <bcsv/sampler.hpp>
+#include <bcsv/sampler/sampler.h>
+#include <bcsv/sampler/sampler.hpp>
 
 #include <filesystem>
 #include <string>

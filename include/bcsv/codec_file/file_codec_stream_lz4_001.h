@@ -35,12 +35,12 @@
 
 #include "file_codec_concept.h"
 #include "file_codec_stream001.h"
-#include "byte_buffer.h"
-#include "checksum.hpp"
-#include "definitions.h"
-#include "file_header.h"
-#include "lz4_stream.hpp"
-#include "vle.hpp"
+#include "../byte_buffer.h"
+#include "../checksum.hpp"
+#include "../definitions.h"
+#include "../file_header.h"
+#include "../lz4_stream.hpp"
+#include "../vle.hpp"
 
 #include <cstddef>
 #include <cstdint>

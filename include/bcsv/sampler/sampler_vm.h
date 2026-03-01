@@ -11,7 +11,7 @@
 
 #include "sampler_compiler.h"
 #include "sampler_ast.h"
-#include "row.h"
+#include "../row.h"
 
 #include <cstdint>
 #include <cstring>

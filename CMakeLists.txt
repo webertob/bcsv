@@ -144,6 +144,11 @@ if(BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
+option(BUILD_TOOLS "Build CLI tools" ON)
+if(BUILD_TOOLS)
+    add_subdirectory(src/tools)
+endif()
+
 option(BUILD_TESTS "Build test programs" ON)
 if(BUILD_TESTS)
     include(CTest)

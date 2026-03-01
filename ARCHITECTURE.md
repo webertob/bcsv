@@ -417,11 +417,15 @@ include/bcsv/           C++ header-only library (all core types)
   byte_buffer.h          ByteBuffer utility
   checksum.h             Streaming xxHash64/xxHash32 wrapper
   bcsv_c_api.h           C API header (stable ABI)
+  sampler/               Sampler API (filter & project)
+  codec_file/            File codec headers (packet, stream, LZ4, batch)
+  codec_row/             Row codec headers (flat, ZoH, delta)
 
 src/
   bcsv_c_api.cpp         C API shared library implementation
+  tools/                 CLI tools (csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvSampler, bcsvGenerator)
 
-examples/               CLI tools (bcsv2csv, csv2bcsv, bcsvHead, bcsvTail, bcsvHeader)
+examples/               Usage examples (flexible, static, ZoH, visitors, sampler)
 tests/                  GTest suite, C API tests, Row API tests
 benchmark/              Macro/micro benchmarks, Python orchestrator
 python/pybcsv/          pybind11 Python bindings
