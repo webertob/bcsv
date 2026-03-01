@@ -29,6 +29,8 @@
 // C++ API for comparison benchmarks
 #include <bcsv/bcsv.h>
 #include <bcsv/bcsv.hpp>
+#include <bcsv/sampler/sampler.h>
+#include <bcsv/sampler/sampler.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -427,6 +429,243 @@ static void BM_CApi_CSV_Roundtrip(benchmark::State& state) {
     state.SetLabel("CSV write+read");
 }
 BENCHMARK(BM_CApi_CSV_Roundtrip)->Range(1000, 100000)->Unit(benchmark::kMicrosecond);
+
+// ============================================================================
+// C API Sampler — Conditional filter throughput
+// ============================================================================
+
+static void BM_CApi_Sampler_Conditional(benchmark::State& state) {
+    const int64_t nRows = state.range(0);
+    ensureBenchDir();
+    std::string path = benchFile("bench_capi_sampler_cond.bcsv");
+
+    // Write fixture
+    {
+        bcsv_layout_t layout = makeCLayout();
+        bcsv_writer_t writer = bcsv_writer_create(layout);
+        bcsv_writer_open(writer, path.c_str(), true, 1, 64, BCSV_FLAG_NONE);
+        bcsv_row_t row = bcsv_writer_row(writer);
+        for (int64_t i = 0; i < nRows; ++i) {
+            fillCRow(row, static_cast<int>(i));
+            bcsv_writer_next(writer);
+        }
+        bcsv_writer_close(writer);
+        bcsv_writer_destroy(writer);
+        bcsv_layout_destroy(layout);
+    }
+
+    for (auto _ : state) {
+        bcsv_reader_t reader = bcsv_reader_create();
+        bcsv_reader_open(reader, path.c_str());
+
+        bcsv_sampler_t sampler = bcsv_sampler_create(reader);
+        bcsv_sampler_set_conditional(sampler, "X[0][0] >= 50");
+
+        int64_t count = 0;
+        while (bcsv_sampler_next(sampler)) { ++count; }
+        benchmark::DoNotOptimize(count);
+
+        bcsv_sampler_destroy(sampler);
+        bcsv_reader_close(reader);
+        bcsv_reader_destroy(reader);
+    }
+    state.SetItemsProcessed(state.iterations() * nRows);
+    state.SetLabel("conditional: id >= 50");
+}
+BENCHMARK(BM_CApi_Sampler_Conditional)->Range(1000, 100000)->Unit(benchmark::kMicrosecond);
+
+// ============================================================================
+// C API Sampler — Selection (projection) throughput
+// ============================================================================
+
+static void BM_CApi_Sampler_Selection(benchmark::State& state) {
+    const int64_t nRows = state.range(0);
+    ensureBenchDir();
+    std::string path = benchFile("bench_capi_sampler_sel.bcsv");
+
+    // Write fixture
+    {
+        bcsv_layout_t layout = makeCLayout();
+        bcsv_writer_t writer = bcsv_writer_create(layout);
+        bcsv_writer_open(writer, path.c_str(), true, 1, 64, BCSV_FLAG_NONE);
+        bcsv_row_t row = bcsv_writer_row(writer);
+        for (int64_t i = 0; i < nRows; ++i) {
+            fillCRow(row, static_cast<int>(i));
+            bcsv_writer_next(writer);
+        }
+        bcsv_writer_close(writer);
+        bcsv_writer_destroy(writer);
+        bcsv_layout_destroy(layout);
+    }
+
+    for (auto _ : state) {
+        bcsv_reader_t reader = bcsv_reader_create();
+        bcsv_reader_open(reader, path.c_str());
+
+        bcsv_sampler_t sampler = bcsv_sampler_create(reader);
+        bcsv_sampler_set_selection(sampler, "X[0][0], X[0][1], X[0][2]");
+
+        int64_t count = 0;
+        while (bcsv_sampler_next(sampler)) {
+            const_bcsv_row_t row = bcsv_sampler_row(sampler);
+            benchmark::DoNotOptimize(bcsv_row_get_double(row, 0));
+            ++count;
+        }
+        benchmark::DoNotOptimize(count);
+
+        bcsv_sampler_destroy(sampler);
+        bcsv_reader_close(reader);
+        bcsv_reader_destroy(reader);
+    }
+    state.SetItemsProcessed(state.iterations() * nRows);
+    state.SetLabel("select 3 cols");
+}
+BENCHMARK(BM_CApi_Sampler_Selection)->Range(1000, 100000)->Unit(benchmark::kMicrosecond);
+
+// ============================================================================
+// C API Sampler — Conditional + Selection combined
+// ============================================================================
+
+static void BM_CApi_Sampler_Combined(benchmark::State& state) {
+    const int64_t nRows = state.range(0);
+    ensureBenchDir();
+    std::string path = benchFile("bench_capi_sampler_comb.bcsv");
+
+    // Write fixture
+    {
+        bcsv_layout_t layout = makeCLayout();
+        bcsv_writer_t writer = bcsv_writer_create(layout);
+        bcsv_writer_open(writer, path.c_str(), true, 1, 64, BCSV_FLAG_NONE);
+        bcsv_row_t row = bcsv_writer_row(writer);
+        for (int64_t i = 0; i < nRows; ++i) {
+            fillCRow(row, static_cast<int>(i));
+            bcsv_writer_next(writer);
+        }
+        bcsv_writer_close(writer);
+        bcsv_writer_destroy(writer);
+        bcsv_layout_destroy(layout);
+    }
+
+    for (auto _ : state) {
+        bcsv_reader_t reader = bcsv_reader_create();
+        bcsv_reader_open(reader, path.c_str());
+
+        bcsv_sampler_t sampler = bcsv_sampler_create(reader);
+        bcsv_sampler_set_conditional(sampler, "X[0][1] > 0.0");
+        bcsv_sampler_set_selection(sampler, "X[0][0], X[0][1] * 2.0");
+
+        int64_t count = 0;
+        while (bcsv_sampler_next(sampler)) {
+            const_bcsv_row_t row = bcsv_sampler_row(sampler);
+            benchmark::DoNotOptimize(bcsv_row_get_double(row, 0));
+            ++count;
+        }
+        benchmark::DoNotOptimize(count);
+
+        bcsv_sampler_destroy(sampler);
+        bcsv_reader_close(reader);
+        bcsv_reader_destroy(reader);
+    }
+    state.SetItemsProcessed(state.iterations() * nRows);
+    state.SetLabel("filter+project");
+}
+BENCHMARK(BM_CApi_Sampler_Combined)->Range(1000, 100000)->Unit(benchmark::kMicrosecond);
+
+// ============================================================================
+// C API Sampler vs C++ Sampler — overhead comparison
+// ============================================================================
+
+static void BM_CppApi_Sampler_Conditional(benchmark::State& state) {
+    const int64_t nRows = state.range(0);
+    ensureBenchDir();
+    std::string path = benchFile("bench_cpp_sampler.bcsv");
+
+    // Write fixture with C++ API
+    {
+        auto layout = makeCppLayout();
+        bcsv::WriterFlat<bcsv::Layout> writer(layout);
+        writer.open(path, true, 1, 64);
+        auto& row = writer.row();
+        for (int64_t i = 0; i < nRows; ++i) {
+            row.set<int32_t>(0, static_cast<int32_t>(i));
+            row.set<double>(1, i * 0.1);
+            row.set<double>(2, i * 0.2);
+            row.set<double>(3, i * 0.3);
+            row.set<std::string>(4, "label");
+            row.set<bool>(5, (i & 1) == 0);
+            writer.writeRow();
+        }
+        writer.close();
+    }
+
+    for (auto _ : state) {
+        bcsv::Reader<bcsv::Layout> reader;
+        reader.open(path);
+        bcsv::Sampler<bcsv::Layout> sampler(reader);
+        sampler.setConditional("X[0][0] >= 50");
+        int64_t count = 0;
+        while (sampler.next()) { ++count; }
+        benchmark::DoNotOptimize(count);
+        reader.close();
+    }
+    state.SetItemsProcessed(state.iterations() * nRows);
+    state.SetLabel("C++ sampler baseline");
+}
+BENCHMARK(BM_CppApi_Sampler_Conditional)->Range(1000, 100000)->Unit(benchmark::kMicrosecond);
+
+// ============================================================================
+// C API Row Visit — iterate all columns via visitor callback
+// ============================================================================
+
+static void benchVisitCallback(size_t /*col_index*/, bcsv_type_t /*col_type*/,
+                               const void* value, void* user_data) {
+    double* acc = static_cast<double*>(user_data);
+    // Accumulate raw bytes to prevent optimisation
+    *acc += *static_cast<const double*>(value);
+}
+
+static void BM_CApi_RowVisitConst(benchmark::State& state) {
+    const int64_t nRows = state.range(0);
+    ensureBenchDir();
+    std::string path = benchFile("bench_capi_visit.bcsv");
+
+    // Write fixture — 3 doubles for fast visit
+    {
+        bcsv_layout_t layout = bcsv_layout_create();
+        bcsv_layout_add_column(layout, 0, "a", BCSV_TYPE_DOUBLE);
+        bcsv_layout_add_column(layout, 1, "b", BCSV_TYPE_DOUBLE);
+        bcsv_layout_add_column(layout, 2, "c", BCSV_TYPE_DOUBLE);
+        bcsv_writer_t writer = bcsv_writer_create(layout);
+        bcsv_writer_open(writer, path.c_str(), true, 1, 64, BCSV_FLAG_NONE);
+        bcsv_row_t row = bcsv_writer_row(writer);
+        for (int64_t i = 0; i < nRows; ++i) {
+            bcsv_row_set_double(row, 0, i * 1.0);
+            bcsv_row_set_double(row, 1, i * 2.0);
+            bcsv_row_set_double(row, 2, i * 3.0);
+            bcsv_writer_next(writer);
+        }
+        bcsv_writer_close(writer);
+        bcsv_writer_destroy(writer);
+        bcsv_layout_destroy(layout);
+    }
+
+    for (auto _ : state) {
+        bcsv_reader_t reader = bcsv_reader_create();
+        bcsv_reader_open(reader, path.c_str());
+        double acc = 0.0;
+        while (bcsv_reader_next(reader)) {
+            const_bcsv_row_t row = bcsv_reader_row(reader);
+            bcsv_row_visit_const(row, 0, 3, benchVisitCallback, &acc);
+        }
+        benchmark::DoNotOptimize(acc);
+        benchmark::ClobberMemory();
+        bcsv_reader_close(reader);
+        bcsv_reader_destroy(reader);
+    }
+    state.SetItemsProcessed(state.iterations() * nRows);
+    state.SetLabel("visit 3 doubles");
+}
+BENCHMARK(BM_CApi_RowVisitConst)->Range(1000, 100000)->Unit(benchmark::kMicrosecond);
 
 // ============================================================================
 BENCHMARK_MAIN();

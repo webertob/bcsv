@@ -614,12 +614,6 @@ Parking LOT:
             - use Template parameters to "punch out" inividual columns
 
 Unscheduled requests and ideas.
-BCSV code base, navigation
-- move source codes for bcsv CLI tools from examples/ to src/ folder
-- move sampler relatet source codes to include/bcsv/sampler
-- move file codec related source codes to include/bcsv/codec_file
-- move row codec related source codes to include/bcsv/codec_row
-
 
 Sampler functionality:
 - Sampler to support conditional assignments i.e. conditional = { {x[0][0] > 1},{x[0][0]<=1} }, selection = {x[0][*], x[-1][*]}

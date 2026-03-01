@@ -15,6 +15,10 @@
 // Include full implementations (headers + .hpp files)
 #include "bcsv/bcsv.h"  // This includes all implementations
 
+// Sampler includes
+#include "bcsv/sampler/sampler.h"
+#include "bcsv/sampler/sampler.hpp"
+
 namespace {
 thread_local std::string g_last_error;
 thread_local bool g_has_error = false;     // flag-based: avoids string::clear() per call
@@ -97,6 +101,12 @@ WriterHandle* createWriterHandle(WriterHandle::Type type, W* writer) {
     };
     return h;
 }
+
+// ---- Sampler handle -------------------------------------------------------
+struct SamplerHandle {
+    bcsv::Sampler<bcsv::Layout>* sampler;
+    std::string                  error_msg;  // cached error message
+};
 
 } // namespace
 
@@ -988,6 +998,197 @@ const char* bcsv_row_to_string(const_bcsv_row_t row) {
         g_fmt_buf = oss.str();
         return g_fmt_buf.c_str();
     })())
+}
+
+size_t bcsv_row_column_count(const_bcsv_row_t row) {
+    if (null_handle("bcsv_row_column_count", row)) return 0u;
+    BCSV_CAPI_TRY_RETURN("bcsv_row_column_count", 0u, static_cast<const bcsv::Row*>(row)->layout().columnCount())
+}
+
+// ============================================================================
+// Row Visit API
+// ============================================================================
+void bcsv_row_visit_const(const_bcsv_row_t row, size_t start_col, size_t count,
+                           bcsv_visit_callback_t cb, void* user_data) {
+    if (null_handle("bcsv_row_visit_const", row) || !cb) return;
+    try {
+        const auto* r = static_cast<const bcsv::Row*>(row);
+        const auto& layout = r->layout();
+        const size_t end = start_col + count;
+        if (end > layout.columnCount()) {
+            g_has_error = true;
+            g_last_error = "bcsv_row_visit_const: column range out of bounds";
+            return;
+        }
+        r->visitConst(start_col, [&](size_t col, auto&& val) {
+            using T = std::decay_t<decltype(val)>;
+            if constexpr (std::is_same_v<T, bool>) {
+                bool v = val;
+                cb(col, BCSV_TYPE_BOOL, &v, user_data);
+            } else if constexpr (std::is_same_v<T, uint8_t>) {
+                cb(col, BCSV_TYPE_UINT8, &val, user_data);
+            } else if constexpr (std::is_same_v<T, uint16_t>) {
+                cb(col, BCSV_TYPE_UINT16, &val, user_data);
+            } else if constexpr (std::is_same_v<T, uint32_t>) {
+                cb(col, BCSV_TYPE_UINT32, &val, user_data);
+            } else if constexpr (std::is_same_v<T, uint64_t>) {
+                cb(col, BCSV_TYPE_UINT64, &val, user_data);
+            } else if constexpr (std::is_same_v<T, int8_t>) {
+                cb(col, BCSV_TYPE_INT8, &val, user_data);
+            } else if constexpr (std::is_same_v<T, int16_t>) {
+                cb(col, BCSV_TYPE_INT16, &val, user_data);
+            } else if constexpr (std::is_same_v<T, int32_t>) {
+                cb(col, BCSV_TYPE_INT32, &val, user_data);
+            } else if constexpr (std::is_same_v<T, int64_t>) {
+                cb(col, BCSV_TYPE_INT64, &val, user_data);
+            } else if constexpr (std::is_same_v<T, float>) {
+                cb(col, BCSV_TYPE_FLOAT, &val, user_data);
+            } else if constexpr (std::is_same_v<T, double>) {
+                cb(col, BCSV_TYPE_DOUBLE, &val, user_data);
+            } else if constexpr (std::is_same_v<T, std::string>) {
+                const char* cstr = val.c_str();
+                cb(col, BCSV_TYPE_STRING, cstr, user_data);
+            }
+        }, count);
+    } catch (const std::exception& ex) {
+        set_last_error("bcsv_row_visit_const", ex);
+    } catch (...) {
+        set_last_error_unknown("bcsv_row_visit_const");
+    }
+}
+
+// ============================================================================
+// Sampler API
+// ============================================================================
+bcsv_sampler_t bcsv_sampler_create(bcsv_reader_t reader) {
+    if (null_handle("bcsv_sampler_create", reader)) return nullptr;
+    BCSV_CAPI_TRY_RETURN("bcsv_sampler_create", nullptr, ([&]() -> bcsv_sampler_t {
+        auto* r = static_cast<bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader);
+        auto* h = new SamplerHandle();
+        h->sampler = new bcsv::Sampler<bcsv::Layout>(*r);
+        return static_cast<bcsv_sampler_t>(h);
+    })())
+}
+
+void bcsv_sampler_destroy(bcsv_sampler_t sampler) {
+    if (!sampler) return;
+    BCSV_CAPI_TRY_VOID("bcsv_sampler_destroy", ([&]() {
+        auto* h = static_cast<SamplerHandle*>(sampler);
+        delete h->sampler;
+        delete h;
+    })())
+}
+
+bool bcsv_sampler_set_conditional(bcsv_sampler_t sampler, const char* expr) {
+    if (null_handle("bcsv_sampler_set_conditional", sampler)) return false;
+    try {
+        auto* h = static_cast<SamplerHandle*>(sampler);
+        auto result = h->sampler->setConditional(expr ? expr : "");
+        if (result.success) {
+            h->error_msg.clear();
+            clear_last_error();
+            return true;
+        } else {
+            h->error_msg = result.error_msg;
+            g_has_error = true;
+            g_last_error = "bcsv_sampler_set_conditional: " + result.error_msg;
+            return false;
+        }
+    } catch (const std::exception& ex) {
+        set_last_error("bcsv_sampler_set_conditional", ex);
+        auto* h = static_cast<SamplerHandle*>(sampler);
+        h->error_msg = ex.what();
+        return false;
+    } catch (...) {
+        set_last_error_unknown("bcsv_sampler_set_conditional");
+        return false;
+    }
+}
+
+bool bcsv_sampler_set_selection(bcsv_sampler_t sampler, const char* expr) {
+    if (null_handle("bcsv_sampler_set_selection", sampler)) return false;
+    try {
+        auto* h = static_cast<SamplerHandle*>(sampler);
+        auto result = h->sampler->setSelection(expr ? expr : "");
+        if (result.success) {
+            h->error_msg.clear();
+            clear_last_error();
+            return true;
+        } else {
+            h->error_msg = result.error_msg;
+            g_has_error = true;
+            g_last_error = "bcsv_sampler_set_selection: " + result.error_msg;
+            return false;
+        }
+    } catch (const std::exception& ex) {
+        set_last_error("bcsv_sampler_set_selection", ex);
+        auto* h = static_cast<SamplerHandle*>(sampler);
+        h->error_msg = ex.what();
+        return false;
+    } catch (...) {
+        set_last_error_unknown("bcsv_sampler_set_selection");
+        return false;
+    }
+}
+
+const char* bcsv_sampler_get_conditional(const_bcsv_sampler_t sampler) {
+    if (null_handle("bcsv_sampler_get_conditional", sampler)) return "";
+    BCSV_CAPI_TRY_RETURN("bcsv_sampler_get_conditional", "", static_cast<const SamplerHandle*>(sampler)->sampler->getConditional().c_str())
+}
+
+const char* bcsv_sampler_get_selection(const_bcsv_sampler_t sampler) {
+    if (null_handle("bcsv_sampler_get_selection", sampler)) return "";
+    BCSV_CAPI_TRY_RETURN("bcsv_sampler_get_selection", "", static_cast<const SamplerHandle*>(sampler)->sampler->getSelection().c_str())
+}
+
+void bcsv_sampler_set_mode(bcsv_sampler_t sampler, bcsv_sampler_mode_t mode) {
+    if (null_handle("bcsv_sampler_set_mode", sampler)) return;
+    BCSV_CAPI_TRY_VOID("bcsv_sampler_set_mode",
+        static_cast<SamplerHandle*>(sampler)->sampler->setMode(static_cast<bcsv::SamplerMode>(mode)))
+}
+
+bcsv_sampler_mode_t bcsv_sampler_get_mode(const_bcsv_sampler_t sampler) {
+    if (null_handle("bcsv_sampler_get_mode", sampler)) return BCSV_SAMPLER_TRUNCATE;
+    BCSV_CAPI_TRY_RETURN("bcsv_sampler_get_mode", BCSV_SAMPLER_TRUNCATE,
+        static_cast<bcsv_sampler_mode_t>(static_cast<const SamplerHandle*>(sampler)->sampler->getMode()))
+}
+
+bool bcsv_sampler_next(bcsv_sampler_t sampler) {
+    if (null_handle("bcsv_sampler_next", sampler)) return false;
+    try {
+        auto* h = static_cast<SamplerHandle*>(sampler);
+        return h->sampler->next();
+    } catch (const std::exception& ex) {
+        set_last_error("bcsv_sampler_next", ex);
+        static_cast<SamplerHandle*>(sampler)->error_msg = ex.what();
+        return false;
+    } catch (...) {
+        set_last_error_unknown("bcsv_sampler_next");
+        return false;
+    }
+}
+
+const_bcsv_row_t bcsv_sampler_row(const_bcsv_sampler_t sampler) {
+    if (null_handle("bcsv_sampler_row", sampler)) return nullptr;
+    BCSV_CAPI_TRY_RETURN("bcsv_sampler_row", static_cast<const_bcsv_row_t>(nullptr),
+        reinterpret_cast<const_bcsv_row_t>(&static_cast<const SamplerHandle*>(sampler)->sampler->row()))
+}
+
+const_bcsv_layout_t bcsv_sampler_output_layout(const_bcsv_sampler_t sampler) {
+    if (null_handle("bcsv_sampler_output_layout", sampler)) return nullptr;
+    BCSV_CAPI_TRY_RETURN("bcsv_sampler_output_layout", static_cast<const_bcsv_layout_t>(nullptr),
+        reinterpret_cast<const_bcsv_layout_t>(&static_cast<const SamplerHandle*>(sampler)->sampler->outputLayout()))
+}
+
+size_t bcsv_sampler_source_row_pos(const_bcsv_sampler_t sampler) {
+    if (null_handle("bcsv_sampler_source_row_pos", sampler)) return 0u;
+    BCSV_CAPI_TRY_RETURN("bcsv_sampler_source_row_pos", 0u,
+        static_cast<const SamplerHandle*>(sampler)->sampler->sourceRowPos())
+}
+
+const char* bcsv_sampler_error_msg(const_bcsv_sampler_t sampler) {
+    if (null_handle("bcsv_sampler_error_msg", sampler)) return "";
+    return static_cast<const SamplerHandle*>(sampler)->error_msg.c_str();
 }
 
 // ============================================================================

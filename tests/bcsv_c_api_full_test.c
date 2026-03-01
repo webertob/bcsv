@@ -686,6 +686,78 @@ static void test_csv_delimiter(void) {
     bcsv_layout_destroy(layout);
 }
 
+/* ── CSV Accessor functions (filename, layout, index, error_msg) ───── */
+static void test_csv_accessors(void) {
+    TEST_START("CSV Accessor Functions (filename, layout, index, error_msg)");
+
+    bcsv_layout_t layout = bcsv_layout_create();
+    bcsv_layout_add_column(layout, 0, "id",  BCSV_TYPE_INT32);
+    bcsv_layout_add_column(layout, 1, "val", BCSV_TYPE_DOUBLE);
+
+    char filepath[256];
+    make_path(filepath, sizeof(filepath), "test_csv_accessors.csv");
+
+    /* CSV Writer accessors */
+    bcsv_csv_writer_t cw = bcsv_csv_writer_create(layout, ',', '.');
+    bcsv_csv_writer_open(cw, filepath, true, true);
+
+    /* csv_writer_filename */
+    const char* wfn = bcsv_csv_writer_filename(cw);
+    TEST_ASSERT(wfn != NULL && strlen(wfn) > 0, "csv_writer_filename non-empty");
+    TEST_ASSERT(strstr(wfn, "test_csv_accessors.csv") != NULL, "csv_writer_filename contains expected name");
+
+    /* csv_writer_layout */
+    const_bcsv_layout_t wlayout = bcsv_csv_writer_layout(cw);
+    TEST_ASSERT(wlayout != NULL, "csv_writer_layout non-NULL");
+    TEST_ASSERT_EQ_INT((int)bcsv_layout_column_count(wlayout), 2, "csv_writer_layout has 2 columns");
+
+    /* csv_writer_error_msg (should be empty/non-NULL on no error) */
+    const char* werr = bcsv_csv_writer_error_msg(cw);
+    TEST_ASSERT(werr != NULL, "csv_writer_error_msg non-NULL");
+
+    /* Write some rows */
+    bcsv_row_t row = bcsv_csv_writer_row(cw);
+    for (int i = 0; i < 5; ++i) {
+        bcsv_row_set_int32(row, 0, i);
+        bcsv_row_set_double(row, 1, i * 1.5);
+        bcsv_csv_writer_next(cw);
+    }
+    bcsv_csv_writer_close(cw);
+
+    /* CSV Reader accessors */
+    bcsv_csv_reader_t cr = bcsv_csv_reader_create(layout, ',', '.');
+    bcsv_csv_reader_open(cr, filepath, true);
+
+    /* csv_reader_filename */
+    const char* rfn = bcsv_csv_reader_filename(cr);
+    TEST_ASSERT(rfn != NULL && strlen(rfn) > 0, "csv_reader_filename non-empty");
+    TEST_ASSERT(strstr(rfn, "test_csv_accessors.csv") != NULL, "csv_reader_filename contains expected name");
+
+    /* csv_reader_layout */
+    const_bcsv_layout_t rlayout = bcsv_csv_reader_layout(cr);
+    TEST_ASSERT(rlayout != NULL, "csv_reader_layout non-NULL");
+    TEST_ASSERT_EQ_INT((int)bcsv_layout_column_count(rlayout), 2, "csv_reader_layout has 2 columns");
+
+    /* csv_reader_index (before read should be 0) */
+    TEST_ASSERT_EQ_INT((int)bcsv_csv_reader_index(cr), 0, "csv_reader_index starts at 0");
+
+    /* Read rows and check index progression */
+    TEST_ASSERT(bcsv_csv_reader_next(cr), "csv_reader read first row");
+    TEST_ASSERT_EQ_INT((int)bcsv_csv_reader_index(cr), 1, "csv_reader_index is 1 after first read");
+
+    TEST_ASSERT(bcsv_csv_reader_next(cr), "csv_reader read second row");
+    TEST_ASSERT_EQ_INT((int)bcsv_csv_reader_index(cr), 2, "csv_reader_index is 2 after second read");
+
+    /* Read remaining rows */
+    while (bcsv_csv_reader_next(cr)) { /* consume */ }
+    TEST_ASSERT_EQ_INT((int)bcsv_csv_reader_index(cr), 5, "csv_reader_index is 5 after all reads");
+
+    bcsv_csv_reader_close(cr);
+    bcsv_csv_reader_destroy(cr);
+    bcsv_csv_writer_destroy(cw);
+    bcsv_layout_destroy(layout);
+}
+
 /* ── CSV write external row ────────────────────────────────────────── */
 static void test_csv_write_external_row(void) {
     TEST_START("CSV Writer write(external row)");
@@ -725,6 +797,7 @@ static void test_null_handles(void) {
     bcsv_reader_destroy(NULL);
     bcsv_writer_destroy(NULL);
     bcsv_row_destroy(NULL);
+    bcsv_sampler_destroy(NULL);
     TEST_ASSERT(true, "destroy(NULL) doesn't crash");
 
     TEST_ASSERT(bcsv_layout_clone(NULL) == NULL, "clone(NULL) returns NULL");
@@ -741,6 +814,17 @@ static void test_null_handles(void) {
     TEST_ASSERT(bcsv_writer_next(NULL) == false, "writer_next(NULL) returns false");
     TEST_ASSERT(bcsv_writer_write(NULL, NULL) == false, "writer_write(NULL) returns false");
 
+    /* Sampler NULL safety */
+    TEST_ASSERT(bcsv_sampler_create(NULL) == NULL, "sampler_create(NULL) returns NULL");
+    TEST_ASSERT(bcsv_sampler_set_conditional(NULL, "x") == false, "sampler_set_conditional(NULL) returns false");
+    TEST_ASSERT(bcsv_sampler_set_selection(NULL, "x") == false, "sampler_set_selection(NULL) returns false");
+    TEST_ASSERT(bcsv_sampler_next(NULL) == false, "sampler_next(NULL) returns false");
+    TEST_ASSERT(bcsv_sampler_row(NULL) == NULL, "sampler_row(NULL) returns NULL");
+    TEST_ASSERT(bcsv_sampler_output_layout(NULL) == NULL, "sampler_output_layout(NULL) returns NULL");
+
+    /* Row column_count / visit NULL safety */
+    TEST_ASSERT(bcsv_row_column_count(NULL) == 0, "row_column_count(NULL) returns 0");
+
     /* bcsv_last_error should have something after NULL handle calls */
     const char* err = bcsv_last_error();
     TEST_ASSERT(err != NULL && strlen(err) > 0, "bcsv_last_error reports NULL handle");
@@ -749,6 +833,374 @@ static void test_null_handles(void) {
     bcsv_clear_last_error();
     err = bcsv_last_error();
     TEST_ASSERT(err != NULL && strlen(err) == 0, "bcsv_clear_last_error resets to empty");
+}
+
+/* ── Row column_count ──────────────────────────────────────────────── */
+static void test_row_column_count(void) {
+    TEST_START("Row column_count");
+
+    bcsv_layout_t layout = bcsv_layout_create();
+    bcsv_layout_add_column(layout, 0, "a", BCSV_TYPE_INT32);
+    bcsv_layout_add_column(layout, 1, "b", BCSV_TYPE_DOUBLE);
+    bcsv_layout_add_column(layout, 2, "c", BCSV_TYPE_STRING);
+
+    bcsv_row_t row = bcsv_row_create(layout);
+    TEST_ASSERT_EQ_INT((int)bcsv_row_column_count(row), 3, "row_column_count = 3");
+
+    bcsv_row_destroy(row);
+    bcsv_layout_destroy(layout);
+}
+
+/* ── Row Visit API ─────────────────────────────────────────────────── */
+struct VisitResult {
+    size_t count;
+    int32_t int_val;
+    double  dbl_val;
+    char    str_val[64];
+    bool    bool_val;
+    bcsv_type_t types[4];
+};
+
+static void visit_cb(size_t col_index, bcsv_type_t col_type, const void* value, void* user_data) {
+    (void)col_index;
+    struct VisitResult* r = (struct VisitResult*)user_data;
+    r->types[r->count] = col_type;
+    switch (col_type) {
+        case BCSV_TYPE_INT32:  r->int_val = *(const int32_t*)value; break;
+        case BCSV_TYPE_DOUBLE: r->dbl_val = *(const double*)value; break;
+        case BCSV_TYPE_STRING: strncpy(r->str_val, (const char*)value, sizeof(r->str_val)-1); r->str_val[sizeof(r->str_val)-1]='\0'; break;
+        case BCSV_TYPE_BOOL:   r->bool_val = *(const bool*)value; break;
+        default: break;
+    }
+    r->count++;
+}
+
+static void test_row_visit_const(void) {
+    TEST_START("Row Visit Const API");
+
+    bcsv_layout_t layout = bcsv_layout_create();
+    bcsv_layout_add_column(layout, 0, "id",   BCSV_TYPE_INT32);
+    bcsv_layout_add_column(layout, 1, "val",  BCSV_TYPE_DOUBLE);
+    bcsv_layout_add_column(layout, 2, "name", BCSV_TYPE_STRING);
+    bcsv_layout_add_column(layout, 3, "flag", BCSV_TYPE_BOOL);
+
+    bcsv_row_t row = bcsv_row_create(layout);
+    bcsv_row_set_int32 (row, 0, 42);
+    bcsv_row_set_double(row, 1, 3.14);
+    bcsv_row_set_string(row, 2, "hello");
+    bcsv_row_set_bool  (row, 3, true);
+
+    /* Visit all 4 columns */
+    struct VisitResult vr;
+    memset(&vr, 0, sizeof(vr));
+    bcsv_row_visit_const(row, 0, 4, visit_cb, &vr);
+
+    TEST_ASSERT_EQ_INT((int)vr.count, 4, "visited 4 columns");
+    TEST_ASSERT_EQ_INT(vr.int_val, 42, "visit int32 = 42");
+    TEST_ASSERT_NEAR(vr.dbl_val, 3.14, 1e-6, "visit double = 3.14");
+    TEST_ASSERT_EQ_STR(vr.str_val, "hello", "visit string = hello");
+    TEST_ASSERT(vr.bool_val == true, "visit bool = true");
+
+    /* Visit type tracking */
+    TEST_ASSERT_EQ_INT(vr.types[0], BCSV_TYPE_INT32, "col 0 type INT32");
+    TEST_ASSERT_EQ_INT(vr.types[1], BCSV_TYPE_DOUBLE, "col 1 type DOUBLE");
+    TEST_ASSERT_EQ_INT(vr.types[2], BCSV_TYPE_STRING, "col 2 type STRING");
+    TEST_ASSERT_EQ_INT(vr.types[3], BCSV_TYPE_BOOL, "col 3 type BOOL");
+
+    /* Visit partial range (columns 1-2 only) */
+    memset(&vr, 0, sizeof(vr));
+    bcsv_row_visit_const(row, 1, 2, visit_cb, &vr);
+    TEST_ASSERT_EQ_INT((int)vr.count, 2, "visited 2 columns (partial range)");
+    TEST_ASSERT_NEAR(vr.dbl_val, 3.14, 1e-6, "partial visit double = 3.14");
+    TEST_ASSERT_EQ_STR(vr.str_val, "hello", "partial visit string = hello");
+
+    /* Visit with out-of-bounds should set error */
+    bcsv_clear_last_error();
+    bcsv_row_visit_const(row, 0, 10, visit_cb, &vr);
+    const char* err = bcsv_last_error();
+    TEST_ASSERT(strlen(err) > 0, "visit out-of-bounds sets error");
+
+    /* Visit with NULL callback should not crash */
+    bcsv_row_visit_const(row, 0, 4, NULL, NULL);
+    TEST_ASSERT(true, "visit with NULL callback doesn't crash");
+
+    bcsv_row_destroy(row);
+    bcsv_layout_destroy(layout);
+}
+
+/* ── Sampler API ───────────────────────────────────────────────────── */
+static void test_sampler_basic(void) {
+    TEST_START("Sampler Basic: conditional filter");
+
+    /* Create a BCSV file with 100 rows, id=0..99, value=i*1.5 */
+    bcsv_layout_t layout = bcsv_layout_create();
+    bcsv_layout_add_column(layout, 0, "id",    BCSV_TYPE_INT32);
+    bcsv_layout_add_column(layout, 1, "value", BCSV_TYPE_DOUBLE);
+    bcsv_layout_add_column(layout, 2, "name",  BCSV_TYPE_STRING);
+
+    char filepath[256];
+    make_path(filepath, sizeof(filepath), "test_sampler_basic.bcsv");
+
+    bcsv_writer_t writer = bcsv_writer_create(layout);
+    bcsv_writer_open(writer, filepath, true, 1, 64, BCSV_FLAG_NONE);
+    bcsv_row_t row = bcsv_writer_row(writer);
+    for (int i = 0; i < 100; ++i) {
+        bcsv_row_set_int32(row, 0, i);
+        bcsv_row_set_double(row, 1, i * 1.5);
+        char name[32]; snprintf(name, sizeof(name), "row_%d", i);
+        bcsv_row_set_string(row, 2, name);
+        bcsv_writer_next(writer);
+    }
+    bcsv_writer_close(writer);
+    bcsv_writer_destroy(writer);
+
+    /* Open reader and create sampler */
+    bcsv_reader_t reader = bcsv_reader_create();
+    bool ok = bcsv_reader_open(reader, filepath);
+    TEST_ASSERT(ok, "reader opened for sampler");
+
+    bcsv_sampler_t sampler = bcsv_sampler_create(reader);
+    TEST_ASSERT(sampler != NULL, "sampler created");
+
+    /* Set conditional: only rows where id >= 50 */
+    ok = bcsv_sampler_set_conditional(sampler, "X[0][0] >= 50");
+    TEST_ASSERT(ok, "sampler_set_conditional compiled OK");
+
+    /* Verify getConditional */
+    const char* cond = bcsv_sampler_get_conditional(sampler);
+    TEST_ASSERT_EQ_STR(cond, "X[0][0] >= 50", "get_conditional returns expression");
+
+    /* Mode defaults */
+    TEST_ASSERT_EQ_INT(bcsv_sampler_get_mode(sampler), BCSV_SAMPLER_TRUNCATE, "default mode = TRUNCATE");
+
+    /* Set and verify mode */
+    bcsv_sampler_set_mode(sampler, BCSV_SAMPLER_EXPAND);
+    TEST_ASSERT_EQ_INT(bcsv_sampler_get_mode(sampler), BCSV_SAMPLER_EXPAND, "mode set to EXPAND");
+    bcsv_sampler_set_mode(sampler, BCSV_SAMPLER_TRUNCATE);
+
+    /* Iterate and count matching rows */
+    int count = 0;
+    while (bcsv_sampler_next(sampler)) {
+        const_bcsv_row_t srow = bcsv_sampler_row(sampler);
+        int32_t id = bcsv_row_get_int32(srow, 0);
+        TEST_ASSERT(id >= 50, "sampler row id >= 50");
+        if (count == 0) {
+            TEST_ASSERT_EQ_INT(id, 50, "first sampler result id=50");
+        }
+        count++;
+    }
+    TEST_ASSERT_EQ_INT(count, 50, "sampler filtered to 50 rows");
+
+    /* output_layout with no selection is empty (row comes from reader directly) */
+    const_bcsv_layout_t out_layout = bcsv_sampler_output_layout(sampler);
+    TEST_ASSERT(out_layout != NULL, "sampler output_layout non-NULL");
+    TEST_ASSERT_EQ_INT((int)bcsv_layout_column_count(out_layout), 0, "output_layout has 0 columns (no selection = empty layout)");
+
+    /* error_msg should be empty on success */
+    const char* serr = bcsv_sampler_error_msg(sampler);
+    TEST_ASSERT(serr != NULL && strlen(serr) == 0, "sampler error_msg empty on success");
+
+    bcsv_sampler_destroy(sampler);
+    bcsv_reader_close(reader);
+    bcsv_reader_destroy(reader);
+    bcsv_layout_destroy(layout);
+}
+
+static void test_sampler_selection(void) {
+    TEST_START("Sampler: selection (projection)");
+
+    /* Create file with 5 columns: id, x, y, z, name */
+    bcsv_layout_t layout = bcsv_layout_create();
+    bcsv_layout_add_column(layout, 0, "id",   BCSV_TYPE_INT32);
+    bcsv_layout_add_column(layout, 1, "x",    BCSV_TYPE_DOUBLE);
+    bcsv_layout_add_column(layout, 2, "y",    BCSV_TYPE_DOUBLE);
+    bcsv_layout_add_column(layout, 3, "z",    BCSV_TYPE_DOUBLE);
+    bcsv_layout_add_column(layout, 4, "name", BCSV_TYPE_STRING);
+
+    char filepath[256];
+    make_path(filepath, sizeof(filepath), "test_sampler_select.bcsv");
+
+    bcsv_writer_t writer = bcsv_writer_create(layout);
+    bcsv_writer_open(writer, filepath, true, 1, 64, BCSV_FLAG_NONE);
+    bcsv_row_t row = bcsv_writer_row(writer);
+    for (int i = 0; i < 20; ++i) {
+        bcsv_row_set_int32 (row, 0, i);
+        bcsv_row_set_double(row, 1, i * 0.1);
+        bcsv_row_set_double(row, 2, i * 0.2);
+        bcsv_row_set_double(row, 3, i * 0.3);
+        char name[32]; snprintf(name, sizeof(name), "item_%d", i);
+        bcsv_row_set_string(row, 4, name);
+        bcsv_writer_next(writer);
+    }
+    bcsv_writer_close(writer);
+    bcsv_writer_destroy(writer);
+
+    /* Open and create sampler with selection (project to id, y only) */
+    bcsv_reader_t reader = bcsv_reader_create();
+    bcsv_reader_open(reader, filepath);
+
+    bcsv_sampler_t sampler = bcsv_sampler_create(reader);
+    bool ok = bcsv_sampler_set_selection(sampler, "X[0][0], X[0][2]");
+    TEST_ASSERT(ok, "sampler selection compiled");
+
+    /* Verify getSelection */
+    const char* sel = bcsv_sampler_get_selection(sampler);
+    TEST_ASSERT(strlen(sel) > 0, "get_selection returns non-empty expression");
+
+    /* Output layout should have 2 columns */
+    const_bcsv_layout_t out = bcsv_sampler_output_layout(sampler);
+    TEST_ASSERT_EQ_INT((int)bcsv_layout_column_count(out), 2, "output_layout has 2 columns");
+
+    /* Iterate and verify projection */
+    int count = 0;
+    while (bcsv_sampler_next(sampler)) {
+        const_bcsv_row_t srow = bcsv_sampler_row(sampler);
+        int32_t id = bcsv_row_get_int32(srow, 0);
+        double y_val = bcsv_row_get_double(srow, 1);
+        TEST_ASSERT_EQ_INT(id, count, "projected id matches");
+        TEST_ASSERT_NEAR(y_val, count * 0.2, 1e-9, "projected y matches");
+
+        /* Check sourceRowPos (1-based: rowPos is incremented after read) */
+        size_t src_pos = bcsv_sampler_source_row_pos(sampler);
+        TEST_ASSERT_EQ_INT((int)src_pos, count + 1, "source_row_pos matches (1-based)");
+
+        count++;
+    }
+    TEST_ASSERT_EQ_INT(count, 20, "all 20 rows projected");
+
+    bcsv_sampler_destroy(sampler);
+    bcsv_reader_close(reader);
+    bcsv_reader_destroy(reader);
+    bcsv_layout_destroy(layout);
+}
+
+static void test_sampler_combined(void) {
+    TEST_START("Sampler: conditional + selection combined");
+
+    bcsv_layout_t layout = bcsv_layout_create();
+    bcsv_layout_add_column(layout, 0, "id",    BCSV_TYPE_INT32);
+    bcsv_layout_add_column(layout, 1, "value", BCSV_TYPE_DOUBLE);
+    bcsv_layout_add_column(layout, 2, "name",  BCSV_TYPE_STRING);
+
+    char filepath[256];
+    make_path(filepath, sizeof(filepath), "test_sampler_combined.bcsv");
+
+    bcsv_writer_t writer = bcsv_writer_create_zoh(layout);
+    bcsv_writer_open(writer, filepath, true, 1, 64, BCSV_FLAG_NONE);
+    bcsv_row_t row = bcsv_writer_row(writer);
+    for (int i = 0; i < 100; ++i) {
+        bcsv_row_set_int32(row, 0, i);
+        bcsv_row_set_double(row, 1, i * 2.0);
+        char name[32]; snprintf(name, sizeof(name), "item_%d", i);
+        bcsv_row_set_string(row, 2, name);
+        bcsv_writer_next(writer);
+    }
+    bcsv_writer_close(writer);
+    bcsv_writer_destroy(writer);
+
+    bcsv_reader_t reader = bcsv_reader_create();
+    bcsv_reader_open(reader, filepath);
+
+    bcsv_sampler_t sampler = bcsv_sampler_create(reader);
+
+    /* Filter: value < 20 (i.e. id < 10) */
+    bool ok = bcsv_sampler_set_conditional(sampler, "X[0][1] < 20");
+    TEST_ASSERT(ok, "conditional compiled");
+
+    /* Project: only id and name */
+    ok = bcsv_sampler_set_selection(sampler, "X[0][0], X[0][2]");
+    TEST_ASSERT(ok, "selection compiled");
+
+    int count = 0;
+    while (bcsv_sampler_next(sampler)) {
+        const_bcsv_row_t srow = bcsv_sampler_row(sampler);
+        int32_t id = bcsv_row_get_int32(srow, 0);
+        TEST_ASSERT(id < 10, "combined: id < 10");
+        count++;
+    }
+    TEST_ASSERT_EQ_INT(count, 10, "combined filter+select yields 10 rows");
+
+    bcsv_sampler_destroy(sampler);
+    bcsv_reader_close(reader);
+    bcsv_reader_destroy(reader);
+    bcsv_layout_destroy(layout);
+}
+
+static void test_sampler_compile_error(void) {
+    TEST_START("Sampler: compile error handling");
+
+    /* Create a minimal file */
+    bcsv_layout_t layout = bcsv_layout_create();
+    bcsv_layout_add_column(layout, 0, "id", BCSV_TYPE_INT32);
+
+    char filepath[256];
+    make_path(filepath, sizeof(filepath), "test_sampler_err.bcsv");
+
+    bcsv_writer_t writer = bcsv_writer_create(layout);
+    bcsv_writer_open(writer, filepath, true, 1, 64, BCSV_FLAG_NONE);
+    bcsv_row_set_int32(bcsv_writer_row(writer), 0, 1);
+    bcsv_writer_next(writer);
+    bcsv_writer_close(writer);
+    bcsv_writer_destroy(writer);
+
+    bcsv_reader_t reader = bcsv_reader_create();
+    bcsv_reader_open(reader, filepath);
+
+    bcsv_sampler_t sampler = bcsv_sampler_create(reader);
+
+    /* Invalid expression should fail */
+    bool ok = bcsv_sampler_set_conditional(sampler, "X[0][999] >= 50");
+    TEST_ASSERT(!ok, "invalid conditional fails");
+
+    const char* err = bcsv_sampler_error_msg(sampler);
+    TEST_ASSERT(err != NULL && strlen(err) > 0, "sampler error msg non-empty on failure");
+
+    bcsv_sampler_destroy(sampler);
+    bcsv_reader_close(reader);
+    bcsv_reader_destroy(reader);
+    bcsv_layout_destroy(layout);
+}
+
+/* ── Visit on reader rows (integration) ────────────────────────────── */
+static void test_visit_on_reader_rows(void) {
+    TEST_START("Visit on Reader Rows (integration)");
+
+    bcsv_layout_t layout = bcsv_layout_create();
+    bcsv_layout_add_column(layout, 0, "id",   BCSV_TYPE_INT32);
+    bcsv_layout_add_column(layout, 1, "val",  BCSV_TYPE_DOUBLE);
+    bcsv_layout_add_column(layout, 2, "name", BCSV_TYPE_STRING);
+
+    char filepath[256];
+    make_path(filepath, sizeof(filepath), "test_visit_reader.bcsv");
+
+    bcsv_writer_t writer = bcsv_writer_create_zoh(layout);
+    bcsv_writer_open(writer, filepath, true, 1, 64, BCSV_FLAG_NONE);
+    bcsv_row_t row = bcsv_writer_row(writer);
+    bcsv_row_set_int32(row, 0, 7);
+    bcsv_row_set_double(row, 1, 99.5);
+    bcsv_row_set_string(row, 2, "test");
+    bcsv_writer_next(writer);
+    bcsv_writer_close(writer);
+    bcsv_writer_destroy(writer);
+
+    bcsv_reader_t reader = bcsv_reader_create();
+    bcsv_reader_open(reader, filepath);
+    TEST_ASSERT(bcsv_reader_next(reader), "reader next");
+
+    const_bcsv_row_t rrow = bcsv_reader_row(reader);
+
+    struct VisitResult vr;
+    memset(&vr, 0, sizeof(vr));
+    bcsv_row_visit_const(rrow, 0, 3, visit_cb, &vr);
+
+    TEST_ASSERT_EQ_INT((int)vr.count, 3, "visited 3 reader columns");
+    TEST_ASSERT_EQ_INT(vr.int_val, 7, "visit reader int32 = 7");
+    TEST_ASSERT_NEAR(vr.dbl_val, 99.5, 1e-6, "visit reader double = 99.5");
+    TEST_ASSERT_EQ_STR(vr.str_val, "test", "visit reader string = test");
+
+    bcsv_reader_close(reader);
+    bcsv_reader_destroy(reader);
+    bcsv_layout_destroy(layout);
 }
 
 /* ── Cross-format: BCSV → CSV → BCSV ──────────────────────────────── */
@@ -919,6 +1371,7 @@ int main(void) {
     /* CSV */
     test_csv_roundtrip();
     test_csv_delimiter();
+    test_csv_accessors();
     test_csv_write_external_row();
 
     /* Cross-format */
@@ -929,6 +1382,19 @@ int main(void) {
 
     /* NULL safety */
     test_null_handles();
+
+    /* Row column_count */
+    test_row_column_count();
+
+    /* Row Visit API */
+    test_row_visit_const();
+    test_visit_on_reader_rows();
+
+    /* Sampler API */
+    test_sampler_basic();
+    test_sampler_selection();
+    test_sampler_combined();
+    test_sampler_compile_error();
 
     /* Summary */
     printf("\n=====================================\n");

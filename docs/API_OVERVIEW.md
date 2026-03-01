@@ -114,6 +114,61 @@ bcsv_layout_destroy(layout);
 - **File flags**: `bcsv_file_flags_t` enum supports `BCSV_FLAG_NONE`, `BCSV_FLAG_ZOH`, `BCSV_FLAG_NO_FILE_INDEX`, `BCSV_FLAG_STREAM_MODE`, `BCSV_FLAG_BATCH_COMPRESS`, `BCSV_FLAG_DELTA_ENCODING`.
 - **Error API**: `bcsv_last_error()` returns the thread-local last error string. `bcsv_clear_last_error()` explicitly resets error state. Error state is set on failure and persists until the next failure or explicit clear — always check function return values for success/failure, and consult `bcsv_last_error()` for detail when a function reports failure.
 
+### Row Visitor API
+
+The visitor API iterates over columns in a row without knowing their type at compile time, dispatching each value through a callback:
+
+```c
+// Callback signature
+void my_visitor(size_t col_index, bcsv_type_t col_type,
+                const void* value, void* user_data);
+
+// Visit columns [start_col, start_col + count)
+bcsv_row_visit_const(row, 0, bcsv_row_column_count(row),
+                     my_visitor, &my_context);
+```
+
+- **`bcsv_row_column_count(row)`** returns the number of columns in the row's layout.
+- **`bcsv_row_visit_const(row, start, count, cb, user_data)`** invokes `cb` for each column in the range. The `value` pointer points to the native type (`int32_t*`, `double*`, `const char*`, `bool*`, etc.).
+
+### Sampler API (Filter & Project)
+
+The Sampler applies expression-based filtering (conditional) and projection (selection) over a reader, powered by a bytecode VM with sliding-window look-behind/look-ahead:
+
+```c
+bcsv_reader_t reader = bcsv_reader_create();
+bcsv_reader_open(reader, "data.bcsv");
+
+bcsv_sampler_t sampler = bcsv_sampler_create(reader);
+
+// Filter: only rows where temperature > 25
+bcsv_sampler_set_conditional(sampler, "X[0][1] > 25.0");
+
+// Project: timestamp and temperature only
+bcsv_sampler_set_selection(sampler, "X[0][0], X[0][1]");
+
+while (bcsv_sampler_next(sampler)) {
+    const_bcsv_row_t row = bcsv_sampler_row(sampler);
+    double ts   = bcsv_row_get_double(row, 0);
+    double temp = bcsv_row_get_double(row, 1);
+}
+
+bcsv_sampler_destroy(sampler);
+bcsv_reader_close(reader);
+bcsv_reader_destroy(reader);
+```
+
+**Key functions:**
+- `bcsv_sampler_create(reader)` / `bcsv_sampler_destroy(sampler)` — lifecycle
+- `bcsv_sampler_set_conditional(sampler, expr)` — compile a filter expression (returns `true` on success)
+- `bcsv_sampler_set_selection(sampler, expr)` — compile a projection expression
+- `bcsv_sampler_set_mode(sampler, mode)` — set boundary mode (`BCSV_SAMPLER_TRUNCATE` or `BCSV_SAMPLER_EXPAND`)
+- `bcsv_sampler_next(sampler)` — advance to next matching row
+- `bcsv_sampler_row(sampler)` — access the current output row
+- `bcsv_sampler_output_layout(sampler)` — layout of projected columns
+- `bcsv_sampler_source_row_pos(sampler)` — position in the source file
+- `bcsv_sampler_error_msg(sampler)` — compilation error detail
+
 ---
 
 ## Python API (PyBCSV)
@@ -341,6 +396,8 @@ See [INTEROPERABILITY.md](INTEROPERABILITY.md) for cross-language examples and b
 | CSV read/write | ✅ | ✅ | ✅ | ❌ |
 | Checksums (xxHash64) | ✅ | ✅ | ✅ | ✅ |
 | Crash recovery | ✅ | ✅ | ✅ | ✅ |
+| Sampler (filter/project) | ✅ | ✅ | ❌ | ❌ |
+| Row visitor | ✅ | ✅ | ❌ | ❌ |
 | Static typing | ✅ | ❌ | ❌ | ❌ |
 | Pandas integration | N/A | N/A | ✅ | ❌ |
 | Unity integration | N/A | N/A | ❌ | ✅ |

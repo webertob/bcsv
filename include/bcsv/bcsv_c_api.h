@@ -27,12 +27,14 @@ typedef void* bcsv_row_t;
 typedef void* bcsv_layout_t;
 typedef void* bcsv_csv_reader_t;
 typedef void* bcsv_csv_writer_t;
+typedef void* bcsv_sampler_t;
 typedef const void* const_bcsv_reader_t;
 typedef const void* const_bcsv_writer_t;
 typedef const void* const_bcsv_row_t;
 typedef const void* const_bcsv_layout_t;
 typedef const void* const_bcsv_csv_reader_t;
 typedef const void* const_bcsv_csv_writer_t;
+typedef const void* const_bcsv_sampler_t;
 
 // ============================================================================
 // Enums
@@ -63,6 +65,23 @@ typedef enum {
     BCSV_FLAG_BATCH_COMPRESS  = 1 << 3,  // Batch-compressed LZ4 packets
     BCSV_FLAG_DELTA_ENCODING  = 1 << 4,  // Delta + VLE row encoding
 } bcsv_file_flags_t;
+
+// Sampler mode — must match bcsv::SamplerMode!
+typedef enum {
+    BCSV_SAMPLER_TRUNCATE = 0,  // Skip rows where window is incomplete at boundaries
+    BCSV_SAMPLER_EXPAND   = 1,  // Clamp out-of-bounds references to edge row
+} bcsv_sampler_mode_t;
+
+// ============================================================================
+// Visitor callback type
+// ============================================================================
+// Called once per column during bcsv_row_visit_const.
+// col_index: column index (0-based)
+// col_type:  bcsv_type_t of this column
+// value:     pointer to the column value (bool*, uint8_t*, ..., const char* for STRING)
+// user_data: opaque pointer passed through from bcsv_row_visit_const
+typedef void (*bcsv_visit_callback_t)(size_t col_index, bcsv_type_t col_type,
+                                       const void* value, void* user_data);
 
 // ============================================================================
 // Version API
@@ -267,6 +286,58 @@ void                bcsv_row_set_double_array (bcsv_row_t row, int start_col, co
 
 // Debug
 const char*         bcsv_row_to_string  (const_bcsv_row_t row);                   // debug string (thread-local buffer, valid until next call)
+
+// Column count
+size_t              bcsv_row_column_count(const_bcsv_row_t row);                   // number of columns in this row's layout
+
+// ============================================================================
+// Row Visit API (read-only visitor pattern via callback)
+// ============================================================================
+// Visits each column in [start_col, start_col+count) calling cb once per column.
+// For each column the callback receives: column index, column type, pointer to
+// value (bool*, uint8_t*, ..., const char* for STRING), and user_data.
+// Numeric pointers remain valid only for the duration of the callback invocation.
+void                bcsv_row_visit_const(const_bcsv_row_t row, size_t start_col, size_t count,
+                                          bcsv_visit_callback_t cb, void* user_data);
+
+// ============================================================================
+// Sampler API (expression-based filter + project over a Reader)
+// ============================================================================
+// Creates a sampler attached to an opened reader. The sampler does NOT take
+// ownership of the reader — the caller must keep the reader open and destroy
+// it after the sampler is destroyed.
+bcsv_sampler_t      bcsv_sampler_create         (bcsv_reader_t reader);
+void                bcsv_sampler_destroy        (bcsv_sampler_t sampler);
+
+// Compile a conditional (filter) expression. Returns true on success.
+// On failure, bcsv_sampler_error_msg() reports the compilation error.
+bool                bcsv_sampler_set_conditional(bcsv_sampler_t sampler, const char* expr);
+
+// Compile a selection (projection) expression. Returns true on success.
+bool                bcsv_sampler_set_selection  (bcsv_sampler_t sampler, const char* expr);
+
+// Get the compiled expressions (empty if not set)
+const char*         bcsv_sampler_get_conditional(const_bcsv_sampler_t sampler);
+const char*         bcsv_sampler_get_selection  (const_bcsv_sampler_t sampler);
+
+// Set/get boundary mode (TRUNCATE or EXPAND)
+void                bcsv_sampler_set_mode       (bcsv_sampler_t sampler, bcsv_sampler_mode_t mode);
+bcsv_sampler_mode_t bcsv_sampler_get_mode       (const_bcsv_sampler_t sampler);
+
+// Advance to next matching row. Returns true if a row is available.
+bool                bcsv_sampler_next           (bcsv_sampler_t sampler);
+
+// Current output row (valid after a successful bcsv_sampler_next)
+const_bcsv_row_t    bcsv_sampler_row            (const_bcsv_sampler_t sampler);
+
+// Output layout (reflects selection projection; equals source layout if no selection set)
+const_bcsv_layout_t bcsv_sampler_output_layout  (const_bcsv_sampler_t sampler);
+
+// Source-file row index of the current output row
+size_t              bcsv_sampler_source_row_pos (const_bcsv_sampler_t sampler);
+
+// Last error/compile-error message (empty if no error)
+const char*         bcsv_sampler_error_msg      (const_bcsv_sampler_t sampler);
 
 #ifdef __cplusplus
 }
