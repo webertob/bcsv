@@ -79,18 +79,18 @@ writer.writeRow();
 
 // Create layout
 bcsv_layout_t layout = bcsv_layout_create();
-bcsv_layout_add_column(layout, "id", BCSV_TYPE_INT32);
-bcsv_layout_add_column(layout, "value", BCSV_TYPE_DOUBLE);
+bcsv_layout_add_column(layout, 0, "id", BCSV_TYPE_INT32);
+bcsv_layout_add_column(layout, 1, "value", BCSV_TYPE_DOUBLE);
 
-// Create writer
+// Create writer (flat, ZOH, or delta codec)
 bcsv_writer_t writer = bcsv_writer_create(layout);
-bcsv_writer_open(writer, "data.bcsv", 1);  // overwrite=1
+bcsv_writer_open(writer, "data.bcsv", true, 0, 0, BCSV_FLAG_NONE);
 
 // Write row
 bcsv_row_t row = bcsv_writer_row(writer);
 bcsv_row_set_int32(row, 0, 42);
 bcsv_row_set_double(row, 1, 3.14);
-bcsv_writer_write_row(writer);
+bcsv_writer_next(writer);
 
 // Cleanup
 bcsv_writer_destroy(writer);
@@ -104,6 +104,15 @@ bcsv_layout_destroy(layout);
 - ✅ FFI from other languages
 - ✅ When ABI stability is critical
 - ✅ Interfacing with legacy C code
+
+### Additional Features
+
+- **Version API**: `bcsv_version()` returns the library version string; `bcsv_format_version()` returns the file format version.
+- **Writer codecs**: `bcsv_writer_create(layout)` (flat), `bcsv_writer_create_zoh(layout)` (zero-order hold), `bcsv_writer_create_delta(layout)` (delta + VLE encoding).
+- **Extended reader**: `bcsv_reader_open_ex(reader, filename, rebuild_footer)` opens with optional footer rebuild; `bcsv_reader_read(reader, index)` provides random-access by row index.
+- **CSV reader/writer**: `bcsv_csv_reader_create(layout, delimiter, decimal_sep)` and `bcsv_csv_writer_create(layout, delimiter, decimal_sep)` for reading and writing plain CSV files through the same row API.
+- **File flags**: `bcsv_file_flags_t` enum supports `BCSV_FLAG_NONE`, `BCSV_FLAG_ZOH`, `BCSV_FLAG_NO_FILE_INDEX`, `BCSV_FLAG_STREAM_MODE`, `BCSV_FLAG_BATCH_COMPRESS`, `BCSV_FLAG_DELTA_ENCODING`.
+- **Error API**: `bcsv_last_error()` returns the thread-local last error string. `bcsv_clear_last_error()` explicitly resets error state. Error state is set on failure and persists until the next failure or explicit clear — always check function return values for success/failure, and consult `bcsv_last_error()` for detail when a function reports failure.
 
 ---
 
@@ -328,6 +337,8 @@ See [INTEROPERABILITY.md](INTEROPERABILITY.md) for cross-language examples and b
 | Random access | ✅ | ✅ | ✅ | ✅ |
 | Compression (LZ4) | ✅ | ✅ | ✅ | ✅ |
 | Zero-Order Hold | ✅ | ✅ | ✅ | ✅ |
+| Delta encoding | ✅ | ✅ | ✅ | ❌ |
+| CSV read/write | ✅ | ✅ | ✅ | ❌ |
 | Checksums (xxHash64) | ✅ | ✅ | ✅ | ✅ |
 | Crash recovery | ✅ | ✅ | ✅ | ✅ |
 | Static typing | ✅ | ❌ | ❌ | ❌ |

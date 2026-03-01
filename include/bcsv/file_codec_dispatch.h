@@ -220,8 +220,8 @@ private:
     ReadRowFn               read_row_fn_{nullptr};
     PacketBoundaryCrossedFn packet_boundary_crossed_fn_{nullptr};
     ResetFn                 reset_fn_{nullptr};
-    SeekToPacketFn           seek_to_packet_fn_{nullptr};
-    FlushPacketFn            flush_packet_fn_{nullptr};
+    SeekToPacketFn          seek_to_packet_fn_{nullptr};
+    FlushPacketFn           flush_packet_fn_{nullptr};
     DestroyFn               destroy_fn_{nullptr};
 
     void nullifyFnPtrs() noexcept {

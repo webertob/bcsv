@@ -150,13 +150,13 @@ public class PredictionLoader : MonoBehaviour
 
 void log_system_metrics(void) {
     bcsv_layout_t layout = bcsv_layout_create();
-    bcsv_layout_add_column(layout, "timestamp", BCSV_TYPE_UINT64);
-    bcsv_layout_add_column(layout, "cpu_usage", BCSV_TYPE_FLOAT);
-    bcsv_layout_add_column(layout, "memory_mb", BCSV_TYPE_UINT32);
-    bcsv_layout_add_column(layout, "error_code", BCSV_TYPE_INT32);
+    bcsv_layout_add_column(layout, 0, "timestamp", BCSV_TYPE_UINT64);
+    bcsv_layout_add_column(layout, 1, "cpu_usage", BCSV_TYPE_FLOAT);
+    bcsv_layout_add_column(layout, 2, "memory_mb", BCSV_TYPE_UINT32);
+    bcsv_layout_add_column(layout, 3, "error_code", BCSV_TYPE_INT32);
     
     bcsv_writer_t writer = bcsv_writer_create(layout);
-    bcsv_writer_open(writer, "system_metrics.bcsv", 1);
+    bcsv_writer_open(writer, "system_metrics.bcsv", true, 0, 0, BCSV_FLAG_NONE);
     
     for (int i = 0; i < 10000; i++) {
         bcsv_row_t row = bcsv_writer_row(writer);
@@ -164,7 +164,7 @@ void log_system_metrics(void) {
         bcsv_row_set_float(row, 1, get_cpu_usage());
         bcsv_row_set_uint32(row, 2, get_memory_usage_mb());
         bcsv_row_set_int32(row, 3, get_last_error());
-        bcsv_writer_write_row(writer);
+        bcsv_writer_next(writer);
     }
     
     bcsv_writer_destroy(writer);

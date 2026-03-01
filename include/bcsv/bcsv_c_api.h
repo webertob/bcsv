@@ -18,17 +18,27 @@
 extern "C" {
 #endif
 
-// Opaque handles for C++ objects
+// ============================================================================
+// Opaque handles
+// ============================================================================
 typedef void* bcsv_reader_t;
 typedef void* bcsv_writer_t;
 typedef void* bcsv_row_t;
 typedef void* bcsv_layout_t;
+typedef void* bcsv_csv_reader_t;
+typedef void* bcsv_csv_writer_t;
 typedef const void* const_bcsv_reader_t;
 typedef const void* const_bcsv_writer_t;
 typedef const void* const_bcsv_row_t;
 typedef const void* const_bcsv_layout_t;
+typedef const void* const_bcsv_csv_reader_t;
+typedef const void* const_bcsv_csv_writer_t;
 
-// Enum for column types must match bcsv::ColumnType!
+// ============================================================================
+// Enums
+// ============================================================================
+
+// Column type enum — must match bcsv::ColumnType!
 typedef enum {
     BCSV_TYPE_BOOL   = 0,
     BCSV_TYPE_UINT8  = 1,
@@ -44,18 +54,38 @@ typedef enum {
     BCSV_TYPE_STRING = 11
 } bcsv_type_t;
 
+// File flags — must match bcsv::FileFlags!
 typedef enum {
-    BCSV_FLAG_NONE   = 0,
-    BCSV_FLAG_ZOH    = 1 << 0, // Write in ZoH format
+    BCSV_FLAG_NONE            = 0,
+    BCSV_FLAG_ZOH             = 1 << 0,  // Zero-order hold row codec
+    BCSV_FLAG_NO_FILE_INDEX   = 1 << 1,  // No file index (sequential scan only)
+    BCSV_FLAG_STREAM_MODE     = 1 << 2,  // Stream mode (no packets/checksums/footer)
+    BCSV_FLAG_BATCH_COMPRESS  = 1 << 3,  // Batch-compressed LZ4 packets
+    BCSV_FLAG_DELTA_ENCODING  = 1 << 4,  // Delta + VLE row encoding
 } bcsv_file_flags_t;
 
-// Layout API - Start
-// These functions operate on layout objects, which define the schema of BCSV files
-// Layouts can be shared between readers and writers
-// Layouts can be modified dynamically (add/remove columns) or cloned
-// Layouts can be compared for compatibility (same columns and types)
-// Layouts can be queried for column count, names, and types
-bcsv_layout_t   bcsv_layout_create          ();
+// ============================================================================
+// Version API
+// ============================================================================
+const char*         bcsv_version        (void);                         // library version string, e.g. "1.2.0"
+int                 bcsv_version_major  (void);                         // library major version
+int                 bcsv_version_minor  (void);                         // library minor version
+int                 bcsv_version_patch  (void);                         // library patch version
+const char*         bcsv_format_version (void);                         // file format version string, e.g. "1.3.0"
+
+// ============================================================================
+// Error API
+// ============================================================================
+const char*         bcsv_last_error     (void);                         // thread-local last error string (empty if no error)
+void                bcsv_clear_last_error(void);                        // explicitly reset error state
+
+// ============================================================================
+// Layout API
+// ============================================================================
+// Layouts define the schema (column names and types) of BCSV files.
+// They can be shared between readers and writers, modified dynamically,
+// cloned, compared for compatibility, and queried.
+bcsv_layout_t   bcsv_layout_create          (void);
 bcsv_layout_t   bcsv_layout_clone           (const_bcsv_layout_t layout);
 void            bcsv_layout_destroy         (bcsv_layout_t layout);
 
@@ -70,21 +100,20 @@ void            bcsv_layout_set_column_type (bcsv_layout_t layout, size_t index,
 bool            bcsv_layout_add_column      (bcsv_layout_t layout, size_t index, const char* name, bcsv_type_t type);
 void            bcsv_layout_remove_column   (bcsv_layout_t layout, size_t index);
 void            bcsv_layout_clear           (bcsv_layout_t layout);
-bool            bcsv_layout_is_compatible    (const_bcsv_layout_t layout1, const_bcsv_layout_t layout2);
+bool            bcsv_layout_is_compatible   (const_bcsv_layout_t layout1, const_bcsv_layout_t layout2);
 void            bcsv_layout_assign          (bcsv_layout_t dest, const_bcsv_layout_t src);
-// Layout API - End
+size_t          bcsv_layout_column_count_by_type(const_bcsv_layout_t layout, bcsv_type_t type); // count columns of given type
+const char*     bcsv_layout_to_string       (const_bcsv_layout_t layout);                       // debug string (thread-local buffer, valid until next call)
 
-
-
-// Reader API - Start
-// These functions operate on reader objects, which read BCSV files row by row
-
+// ============================================================================
+// Reader API (BCSV binary files)
+// ============================================================================
 bcsv_reader_t       bcsv_reader_create  (void);
 void                bcsv_reader_destroy (bcsv_reader_t reader);
 
-size_t              bcsv_reader_count_rows(const_bcsv_reader_t reader); // counts total rows in file (may be slow)
 void                bcsv_reader_close   (bcsv_reader_t reader);
 bool                bcsv_reader_open    (bcsv_reader_t reader, const char* filename);
+bool                bcsv_reader_open_ex (bcsv_reader_t reader, const char* filename, bool rebuild_footer);  // open with optional footer rebuild
 bool                bcsv_reader_is_open (const_bcsv_reader_t reader);
 #ifdef _WIN32
 const wchar_t*      bcsv_reader_filename(const_bcsv_reader_t reader);
@@ -93,24 +122,26 @@ const char*         bcsv_reader_filename(const_bcsv_reader_t reader);
 #endif
 const_bcsv_layout_t bcsv_reader_layout  (const_bcsv_reader_t reader);    // returns layout of opened file, or NULL if not open
 
-bool                bcsv_reader_next    (bcsv_reader_t reader);          // returns 1 if row available, 0 if EOF
+bool                bcsv_reader_next    (bcsv_reader_t reader);          // read next row sequentially, returns true if row available
+bool                bcsv_reader_read    (bcsv_reader_t reader, size_t index); // random-access read by row index, returns true on success
 const_bcsv_row_t    bcsv_reader_row     (const_bcsv_reader_t reader);    // returns reference to internal row (no copy)
-size_t              bcsv_reader_index   (const_bcsv_reader_t reader);    // returns current row index (0-based), number of rows read so far
-// Reader API - End
+size_t              bcsv_reader_index   (const_bcsv_reader_t reader);    // returns current row index (0-based)
+size_t              bcsv_reader_count_rows(const_bcsv_reader_t reader);  // total row count from file footer
 
+const char*         bcsv_reader_error_msg       (const_bcsv_reader_t reader);    // per-handle error message
+uint8_t             bcsv_reader_compression_level(const_bcsv_reader_t reader);   // compression level of opened file
 
-
-// Writer API - Start
-// These functions operate on writer objects, which write BCSV files row by row
-// Writers can be opened in strict or resilient mode (handle schema mismatches)
-// Writers provide access to the current row and its index
-bcsv_writer_t       bcsv_writer_create      (bcsv_layout_t layout);
-bcsv_writer_t       bcsv_writer_create_zoh  (bcsv_layout_t layout);
+// ============================================================================
+// Writer API (BCSV binary files)
+// ============================================================================
+bcsv_writer_t       bcsv_writer_create      (bcsv_layout_t layout);           // flat (no row codec) writer
+bcsv_writer_t       bcsv_writer_create_zoh  (bcsv_layout_t layout);           // zero-order hold writer
+bcsv_writer_t       bcsv_writer_create_delta(bcsv_layout_t layout);           // delta + VLE writer
 void                bcsv_writer_destroy (bcsv_writer_t writer);
 
 void                bcsv_writer_close   (bcsv_writer_t writer);
 void                bcsv_writer_flush   (bcsv_writer_t writer);
-bool                bcsv_writer_open    (bcsv_writer_t writer, const char* filename, bool overwrite, int compress, int block_size_kb, bcsv_file_flags_t flags); // defaults: overwrite=false, compress=1, block_size_kb=64, flags=0
+bool                bcsv_writer_open    (bcsv_writer_t writer, const char* filename, bool overwrite, int compress, int block_size_kb, bcsv_file_flags_t flags);
 bool                bcsv_writer_is_open (const_bcsv_writer_t writer);
 #ifdef _WIN32
 const wchar_t*      bcsv_writer_filename(const_bcsv_writer_t writer);
@@ -119,13 +150,60 @@ const char*         bcsv_writer_filename(const_bcsv_writer_t writer);
 #endif
 const_bcsv_layout_t bcsv_writer_layout  (const_bcsv_writer_t writer);             // returns layout
 
-bool                bcsv_writer_next    (bcsv_writer_t writer);                   // writes current row, returns false on error
+bool                bcsv_writer_next    (bcsv_writer_t writer);                   // writes internal row, returns false on error
+bool                bcsv_writer_write   (bcsv_writer_t writer, const_bcsv_row_t row); // writes external row, returns false on error
 bcsv_row_t          bcsv_writer_row     (bcsv_writer_t writer);                   // returns reference to internal row (no copy)
-size_t              bcsv_writer_index   (const_bcsv_writer_t writer);             // returns current row index (0-based), number of rows written so far
-// Writer API - End
+size_t              bcsv_writer_index   (const_bcsv_writer_t writer);             // returns rows written so far
 
+const char*         bcsv_writer_error_msg       (const_bcsv_writer_t writer);    // per-handle error message
+uint8_t             bcsv_writer_compression_level(const_bcsv_writer_t writer);   // compression level
 
-// Row API - Start
+// ============================================================================
+// CSV Reader API
+// ============================================================================
+bcsv_csv_reader_t       bcsv_csv_reader_create  (bcsv_layout_t layout, char delimiter, char decimal_sep);
+void                    bcsv_csv_reader_destroy  (bcsv_csv_reader_t reader);
+
+bool                    bcsv_csv_reader_open     (bcsv_csv_reader_t reader, const char* filename, bool has_header);
+void                    bcsv_csv_reader_close    (bcsv_csv_reader_t reader);
+bool                    bcsv_csv_reader_is_open  (const_bcsv_csv_reader_t reader);
+#ifdef _WIN32
+const wchar_t*          bcsv_csv_reader_filename (const_bcsv_csv_reader_t reader);
+#else
+const char*             bcsv_csv_reader_filename (const_bcsv_csv_reader_t reader);
+#endif
+const_bcsv_layout_t     bcsv_csv_reader_layout   (const_bcsv_csv_reader_t reader);
+bool                    bcsv_csv_reader_next     (bcsv_csv_reader_t reader);       // read next CSV row
+const_bcsv_row_t        bcsv_csv_reader_row      (const_bcsv_csv_reader_t reader); // current row
+size_t                  bcsv_csv_reader_index    (const_bcsv_csv_reader_t reader);  // rows read so far
+size_t                  bcsv_csv_reader_file_line(const_bcsv_csv_reader_t reader);  // current file line number (1-based)
+const char*             bcsv_csv_reader_error_msg(const_bcsv_csv_reader_t reader);  // per-handle error message
+
+// ============================================================================
+// CSV Writer API
+// ============================================================================
+bcsv_csv_writer_t       bcsv_csv_writer_create   (bcsv_layout_t layout, char delimiter, char decimal_sep);
+void                    bcsv_csv_writer_destroy   (bcsv_csv_writer_t writer);
+
+bool                    bcsv_csv_writer_open      (bcsv_csv_writer_t writer, const char* filename, bool overwrite, bool include_header);
+void                    bcsv_csv_writer_close     (bcsv_csv_writer_t writer);
+bool                    bcsv_csv_writer_is_open   (const_bcsv_csv_writer_t writer);
+#ifdef _WIN32
+const wchar_t*          bcsv_csv_writer_filename  (const_bcsv_csv_writer_t writer);
+#else
+const char*             bcsv_csv_writer_filename  (const_bcsv_csv_writer_t writer);
+#endif
+const_bcsv_layout_t     bcsv_csv_writer_layout    (const_bcsv_csv_writer_t writer);
+bool                    bcsv_csv_writer_next      (bcsv_csv_writer_t writer);                    // writes internal row
+bool                    bcsv_csv_writer_write     (bcsv_csv_writer_t writer, const_bcsv_row_t row); // writes external row
+bcsv_row_t              bcsv_csv_writer_row       (bcsv_csv_writer_t writer);                    // mutable row handle
+size_t                  bcsv_csv_writer_index     (const_bcsv_csv_writer_t writer);               // rows written so far
+const char*             bcsv_csv_writer_error_msg (const_bcsv_csv_writer_t writer);               // per-handle error message
+
+// ============================================================================
+// Row API
+// ============================================================================
+
 // Row lifecycle
 bcsv_row_t          bcsv_row_create      (const_bcsv_layout_t layout);            // creates a new row with given layout
 bcsv_row_t          bcsv_row_clone       (const_bcsv_row_t row);                  // creates a copy of an existing row
@@ -160,8 +238,7 @@ void                bcsv_row_set_float  (bcsv_row_t row, int col, float       va
 void                bcsv_row_set_double (bcsv_row_t row, int col, double      value);
 void                bcsv_row_set_string (bcsv_row_t row, int col, const char* value);
 
-// Vectorized access - bulk get/set multiple consecutive columns
-// These functions provide efficient bulk access to multiple consecutive columns of the same type
+// Vectorized access - bulk get/set multiple consecutive columns of the same type
 // dst/src: pointer to array buffer
 // start_col: starting column index (0-based)
 // count: number of consecutive columns to read/write
@@ -187,9 +264,9 @@ void                bcsv_row_set_int32_array  (bcsv_row_t row, int start_col, co
 void                bcsv_row_set_int64_array  (bcsv_row_t row, int start_col, const int64_t*  src, size_t count);
 void                bcsv_row_set_float_array  (bcsv_row_t row, int start_col, const float*    src, size_t count);
 void                bcsv_row_set_double_array (bcsv_row_t row, int start_col, const double*   src, size_t count);
-// Row API - End
 
-const char*         bcsv_last_error();
+// Debug
+const char*         bcsv_row_to_string  (const_bcsv_row_t row);                   // debug string (thread-local buffer, valid until next call)
 
 #ifdef __cplusplus
 }
