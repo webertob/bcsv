@@ -103,6 +103,13 @@ public:
         // Stream codecs have no footer.
     }
 
+    /// Flush: stream codecs have no packets — just flush the OS buffer.
+    /// Returns false (no packet boundary crossed).
+    bool flushPacket(std::ostream& os, uint64_t /*rowCnt*/) {
+        os.flush();
+        return false;
+    }
+
     ByteBuffer& writeBuffer() { return write_buffer_; }
 
     // ── Read lifecycle ──────────────────────────────────────────────────

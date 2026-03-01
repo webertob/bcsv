@@ -110,6 +110,20 @@ public:
         footer.write(os);
     }
 
+    /// Flush: close the current packet (terminator + checksum), flush the
+    /// stream, then open a new packet so subsequent writes continue.
+    /// Returns true if a packet boundary was crossed (caller resets RowCodec).
+    bool flushPacket(std::ostream& os, uint64_t rowCnt) {
+        if (!packet_open_) {
+            os.flush();
+            return false;
+        }
+        closePacket(os);
+        os.flush();
+        openPacket(os, rowCnt);
+        return true;  // boundary crossed — caller must reset RowCodec
+    }
+
     ByteBuffer& writeBuffer() { return write_buffer_; }
 
     // ── Read lifecycle ──────────────────────────────────────────────────

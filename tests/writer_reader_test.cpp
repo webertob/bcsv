@@ -164,6 +164,128 @@ TEST_F(WriterReaderTest, Writer_FlushWhileOpen_Succeeds) {
     writer.close();
 }
 
+TEST_F(WriterReaderTest, Writer_FlushRecovery_RowsReadableWithoutFooter) {
+    // Verify that rows written before flush() are readable by Reader,
+    // even without a proper close() (simulated crash after flush).
+    Layout layout = makeLayout();
+    auto path = testFile("flush_recovery.bcsv");
+
+    {
+        Writer<Layout> writer(layout);
+        ASSERT_TRUE(writer.open(path, true));
+
+        // Write 5 rows, then flush
+        for (int i = 0; i < 5; ++i) {
+            writer.row().set(0, i);
+            writer.row().set(1, static_cast<float>(i) * 2.0f);
+            writer.row().set(2, std::string("pre_flush_") + std::to_string(i));
+            writer.writeRow();
+        }
+        writer.flush();
+
+        // Write 3 more rows after flush, then close normally
+        for (int i = 5; i < 8; ++i) {
+            writer.row().set(0, i);
+            writer.row().set(1, static_cast<float>(i) * 2.0f);
+            writer.row().set(2, std::string("post_flush_") + std::to_string(i));
+            writer.writeRow();
+        }
+        writer.close();
+    }
+
+    // Read back and verify all 8 rows
+    Reader<Layout> reader;
+    ASSERT_TRUE(reader.open(path));
+    size_t count = 0;
+    while (reader.readNext()) {
+        EXPECT_EQ(reader.row().get<int32_t>(0), static_cast<int32_t>(count));
+        EXPECT_FLOAT_EQ(reader.row().get<float>(1), static_cast<float>(count) * 2.0f);
+        count++;
+    }
+    EXPECT_EQ(count, 8u);
+    reader.close();
+}
+
+TEST_F(WriterReaderTest, Writer_FlushMultiple_AllRowsRecoverable) {
+    // Multiple flushes in a single write session
+    Layout layout = makeLayout();
+    auto path = testFile("flush_multiple.bcsv");
+
+    constexpr size_t ROWS_PER_BATCH = 3;
+    constexpr size_t NUM_BATCHES = 4;
+
+    {
+        Writer<Layout> writer(layout);
+        ASSERT_TRUE(writer.open(path, true));
+
+        for (size_t batch = 0; batch < NUM_BATCHES; ++batch) {
+            for (size_t i = 0; i < ROWS_PER_BATCH; ++i) {
+                int32_t val = static_cast<int32_t>(batch * ROWS_PER_BATCH + i);
+                writer.row().set(0, val);
+                writer.row().set(1, static_cast<float>(val));
+                writer.row().set(2, std::string("b") + std::to_string(batch));
+                writer.writeRow();
+            }
+            writer.flush();
+        }
+        writer.close();
+    }
+
+    // Read back and verify all rows
+    Reader<Layout> reader;
+    ASSERT_TRUE(reader.open(path));
+    size_t count = 0;
+    while (reader.readNext()) {
+        EXPECT_EQ(reader.row().get<int32_t>(0), static_cast<int32_t>(count));
+        count++;
+    }
+    EXPECT_EQ(count, NUM_BATCHES * ROWS_PER_BATCH);
+    reader.close();
+}
+
+TEST_F(WriterReaderTest, Writer_FlushZoH_RoundTrip) {
+    // Verify flush works correctly with ZoH codec (row codec resets at boundary).
+    // Note: No explicit FileFlags::ZERO_ORDER_HOLD — Writer auto-ORs required_flags().
+    Layout layout = makeLayout();
+    auto path = testFile("flush_zoh.bcsv");
+
+    {
+        WriterZoH<Layout> writer(layout);
+        ASSERT_TRUE(writer.open(path, true, 1, 64));
+
+        // Write rows with ZoH-friendly data (some columns constant across rows)
+        for (int i = 0; i < 10; ++i) {
+            writer.row().set(0, i);
+            writer.row().set(1, 42.0f);           // constant — ZoH should compress
+            writer.row().set(2, std::string("zoh"));  // constant
+            writer.writeRow();
+        }
+        writer.flush();
+
+        // After flush, ZoH codec resets — write more rows
+        for (int i = 10; i < 20; ++i) {
+            writer.row().set(0, i);
+            writer.row().set(1, 42.0f);
+            writer.row().set(2, std::string("zoh"));
+            writer.writeRow();
+        }
+        writer.close();
+    }
+
+    // Read back and verify all 20 rows
+    Reader<Layout> reader;
+    ASSERT_TRUE(reader.open(path));
+    size_t count = 0;
+    while (reader.readNext()) {
+        EXPECT_EQ(reader.row().get<int32_t>(0), static_cast<int32_t>(count));
+        EXPECT_FLOAT_EQ(reader.row().get<float>(1), 42.0f);
+        EXPECT_EQ(reader.row().get<std::string>(2), "zoh");
+        count++;
+    }
+    EXPECT_EQ(count, 20u);
+    reader.close();
+}
+
 // ============================================================================
 // Writer: close without open
 // ============================================================================
@@ -308,8 +430,8 @@ TEST_F(WriterReaderTest, RoundTrip_ZoH) {
     constexpr size_t N = 100;
 
     // WriterZoH selects RowCodecZoH001 at compile time;
-    // FileFlags::ZERO_ORDER_HOLD flag is written to the file header
-    // so Reader can select the matching codec at open time.
+    // The ZERO_ORDER_HOLD flag is auto-ORed via required_flags().
+    // Passing it explicitly is harmless (OR is idempotent).
     using ZoHLayout = LayoutStatic<int32_t, float>;
     using ZoHWriter = WriterZoH<ZoHLayout>;
     using ZoHReader = Reader<ZoHLayout>;
@@ -414,5 +536,44 @@ TEST_F(WriterReaderTest, Writer_EmptyFile_IsReadable) {
     Reader<Layout> reader;
     ASSERT_TRUE(reader.open(path));
     EXPECT_FALSE(reader.readNext());
+    reader.close();
+}
+
+// ============================================================================
+// Writer auto-flags: WriterZoH sets ZERO_ORDER_HOLD without explicit flag
+// ============================================================================
+TEST_F(WriterReaderTest, Writer_AutoFlags_ZoH) {
+    // WriterZoH must auto-set ZERO_ORDER_HOLD in the file header via
+    // RowCodecFileFlags<> traits in writer.h.  Without auto-flags the Reader
+    // would select the wrong codec and corrupt the data.
+    auto path = testFile("auto_flags_zoh.bcsv");
+
+    using ZoHLayout = LayoutStatic<int32_t, float>;
+    ZoHLayout layout({"counter", "value"});
+
+    {
+        WriterZoH<ZoHLayout> writer(layout);
+        // No FileFlags argument — RowCodecFileFlags<> traits supply it automatically.
+        ASSERT_TRUE(writer.open(path, true));
+
+        for (int i = 0; i < 50; ++i) {
+            writer.row().set<0>(i);
+            writer.row().set<1>(static_cast<float>(i / 5));
+            writer.writeRow();
+        }
+        writer.close();
+    }
+
+    // Reader auto-detects codec from file header flags
+    Reader<ZoHLayout> reader;
+    ASSERT_TRUE(reader.open(path));
+
+    size_t count = 0;
+    while (reader.readNext()) {
+        EXPECT_EQ(reader.row().template get<0>(), static_cast<int32_t>(count));
+        EXPECT_FLOAT_EQ(reader.row().template get<1>(), static_cast<float>(count / 5));
+        ++count;
+    }
+    EXPECT_EQ(count, 50u);
     reader.close();
 }

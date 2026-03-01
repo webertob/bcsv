@@ -74,7 +74,16 @@ namespace bcsv {
         if (!stream_.is_open()) {
             return;
         }
-        stream_.flush();
+        // Close the current packet (terminator + checksum), flush the OS stream,
+        // then open a new packet for subsequent writes.  Row codec is reset at
+        // the packet boundary so ZoH/Delta encoders restart cleanly.
+        if (file_codec_.isSetup()) {
+            if (file_codec_.flushPacket(stream_, row_cnt_)) {
+                row_codec_.reset();
+            }
+        } else {
+            stream_.flush();
+        }
     }
 
      /**
@@ -138,7 +147,7 @@ namespace bcsv {
             // Store file path
             file_path_ = absolutePath;
             file_header_ = FileHeader(layout().columnCount(), compressionLevel);
-            file_header_.setFlags(flags);
+            file_header_.setFlags(flags | RowCodecFileFlags<CodecType>::value);
             file_header_.setPacketSize(std::clamp(blockSizeKB*1024, size_t(MIN_PACKET_SIZE), size_t(MAX_PACKET_SIZE)));  // limit packet size to 64KB-1GB
             file_header_.writeToBinary(stream_, layout());
             row_cnt_ = 0;

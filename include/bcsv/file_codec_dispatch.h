@@ -62,6 +62,7 @@ public:
     using PacketBoundaryCrossedFn = bool (*)(const void* ctx);
     using ResetFn                = void (*)(void* ctx);
     using SeekToPacketFn         = bool (*)(void* ctx, std::istream& is, std::streamoff offset);
+    using FlushPacketFn          = bool (*)(void* ctx, std::ostream& os, uint64_t rowCnt);
     using DestroyFn              = void (*)(void* ctx);
 
     // ── Constructors / Rule of Five ─────────────────────────────────────
@@ -190,6 +191,14 @@ public:
         return seek_to_packet_fn_(ctx_, is, offset);
     }
 
+    /// Flush: close the current packet (terminator + checksum), flush the OS
+    /// stream, then open a new packet for subsequent writes.
+    /// Returns true if a packet boundary was crossed (Writer resets RowCodec).
+    bool flushPacket(std::ostream& os, uint64_t rowCnt) {
+        assert(ctx_ && flush_packet_fn_);
+        return flush_packet_fn_(ctx_, os, rowCnt);
+    }
+
     /// True if this codec supports seekToPacket() (packet-based codecs only).
     bool supportsSeek() const noexcept { return seek_to_packet_fn_ != nullptr; }
 
@@ -212,6 +221,7 @@ private:
     PacketBoundaryCrossedFn packet_boundary_crossed_fn_{nullptr};
     ResetFn                 reset_fn_{nullptr};
     SeekToPacketFn           seek_to_packet_fn_{nullptr};
+    FlushPacketFn            flush_packet_fn_{nullptr};
     DestroyFn               destroy_fn_{nullptr};
 
     void nullifyFnPtrs() noexcept {
@@ -225,6 +235,7 @@ private:
         packet_boundary_crossed_fn_ = nullptr;
         reset_fn_ = nullptr;
         seek_to_packet_fn_ = nullptr;
+        flush_packet_fn_ = nullptr;
         destroy_fn_ = nullptr;
     }
 
@@ -241,6 +252,7 @@ private:
         packet_boundary_crossed_fn_ = other.packet_boundary_crossed_fn_;
         reset_fn_ = other.reset_fn_;
         seek_to_packet_fn_ = other.seek_to_packet_fn_;
+        flush_packet_fn_ = other.flush_packet_fn_;
         destroy_fn_ = other.destroy_fn_;
 
         other.ctx_ = nullptr;
@@ -292,6 +304,9 @@ private:
         } else {
             seek_to_packet_fn_ = nullptr;
         }
+        flush_packet_fn_ = [](void* ctx, std::ostream& os, uint64_t r) -> bool {
+            return static_cast<ConcreteCodec*>(ctx)->flushPacket(os, r);
+        };
         destroy_fn_ = [](void* ctx) {
             delete static_cast<ConcreteCodec*>(ctx);
         };

@@ -492,6 +492,10 @@ namespace bcsv {
         // Observer callback for layout changes
         void onLayoutUpdate(const std::vector<Layout::Data::Change>& changes);
 
+        // Legacy untyped access — implementation detail only, not for external use.
+        // Bool columns use thread_local buffer that aliases on third interleaved call.
+        [[nodiscard]] const void*   get(size_t index) const;
+
     public:
         Row() = delete; // no default constructor, we always need a layout
         Row(const Layout& layout);
@@ -504,7 +508,6 @@ namespace bcsv {
         const Layout&               layout() const noexcept         { return layout_; }
 
 
-        [[nodiscard]] const void*   get(size_t index) const;
                                     template<typename T>
         [[nodiscard]] decltype(auto) get(size_t index) const;
                                     template<typename T>
@@ -575,6 +578,9 @@ namespace bcsv {
         // Mutable data
         typename LayoutType::ColTypes   data_;
 
+        // Legacy untyped access — implementation detail for get<T>(size_t), not for external use.
+        [[nodiscard]] const void*   get(size_t index) const noexcept;
+
     public:
         // Constructors
         RowStatic() = delete;
@@ -599,7 +605,6 @@ namespace bcsv {
         // =========================================================================
         // 2. Dynamic Access (Runtime Index) - Branching Overhead
         // =========================================================================
-        [[nodiscard]] const void*   get(size_t index) const noexcept;                       // Get raw pointer (void*). returns nullptr if index invalid.
 
                                     template<typename T>
         [[nodiscard]] const T&      get(size_t index) const;                                // Scalar runtime access. Throws on type/index mismatch.

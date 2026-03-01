@@ -203,6 +203,39 @@ public:
 
     ByteBuffer& writeBuffer() { return write_buffer_; }
 
+    /// Flush: close the current packet, compress+write synchronously, open a
+    /// new packet for subsequent writes. Returns true (packet boundary crossed).
+    bool flushPacket(std::ostream& /*os*/, uint64_t rowCnt) {
+        if (raw_active_->empty()) {
+            if (os_ptr_) os_ptr_->flush();
+            return false;
+        }
+
+        // Close current packet payload
+        vleEncode<uint64_t, true>(static_cast<uint64_t>(PCKT_TERMINATOR), *raw_active_);
+
+        // Wait for any in-flight BG work, then hand off synchronously
+        waitForBgIdle();
+        rethrowBgException();
+
+        bg_first_row_ = current_packet_first_row_;
+        std::swap(raw_active_, raw_bg_);
+        {
+            std::lock_guard<std::mutex> lk(mutex_);
+            bg_task_ = BgTask::COMPRESS_WRITE;
+        }
+        cv_.notify_one();
+
+        waitForBgIdle();
+        rethrowBgException();
+
+        if (os_ptr_) os_ptr_->flush();
+
+        // Next packet starts at current rowCnt
+        current_packet_first_row_ = rowCnt;
+        return true;  // boundary crossed — caller must reset RowCodec
+    }
+
     // ── Read lifecycle ──────────────────────────────────────────────────
 
     std::span<const std::byte> readRow(std::istream& /*is*/) {

@@ -571,13 +571,13 @@ void RowCodecZoH001<LayoutStatic<ColumnTypes...>>::deserialize(
     }
     std::memcpy(row_header_.data(), buffer.data(), row_header_.sizeBytes());
 
-    // Extract bool values from header
-    // TODO: Replace && short-circuit with if constexpr in lambda (see ToDo.txt).
-    //       Current pattern works but is fragile — relies on implicit bool→T
-    //       conversion being valid for all T to compile, even when short-circuited.
+    // Extract bool values from header (matching the if constexpr pattern used in serialize)
     [&]<size_t... I>(std::index_sequence<I...>) {
-        ((std::is_same_v<typename RowType::template column_type<I>, bool> &&
-          (std::get<I>(row.data_) = row_header_.test(ROW_HEADER_BIT_INDEX[I]), true)), ...);
+        ([&] {
+            if constexpr (std::is_same_v<typename RowType::template column_type<I>, bool>) {
+                std::get<I>(row.data_) = row_header_.test(ROW_HEADER_BIT_INDEX[I]);
+            }
+        }(), ...);
     }(std::make_index_sequence<COLUMN_COUNT>{});
 
     auto dataBuffer = buffer.subspan(row_header_.sizeBytes());

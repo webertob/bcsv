@@ -59,6 +59,7 @@ namespace bcsv {
  *   2. beginWrite(os, rowCnt)        — before each row; handles packet lifecycle internally
  *   3. writeRow(os, rowData)         — write one serialized row
  *   4. finalize(os, totalRows)       — in Writer::close(); closes last packet, writes footer
+ *   5. flushPacket(os, rowCnt)       — in Writer::flush(); closes current packet + opens new one
  *
  * Lifecycle (read side):
  *   1. setupRead(is, header)         — once after Reader::open(); opens first packet if needed
@@ -98,6 +99,11 @@ concept FileCodecConcept = requires(T codec,
     /// Called once in Writer::close().  Closes any open packet and writes
     /// the file footer.  Stream codecs are no-ops (no footer).
     { codec.finalize(os, rowIndex) };
+
+    /// Called by Writer::flush().  Close current packet (terminator + checksum),
+    /// flush the OS stream, then open a new packet.  Stream codecs flush only.
+    /// Returns true if a packet boundary was crossed (Writer resets RowCodec).
+    { codec.flushPacket(os, rowIndex) } -> std::convertible_to<bool>;
 
     /// Returns a reference to the codec's internal write buffer.
     /// Writer uses this to let RowCodec serialize into the codec's buffer.

@@ -94,6 +94,17 @@ public:
         packet_.finalize(os, totalRows);
     }
 
+    /// Flush: close the current packet, flush stream, open new packet.
+    /// Resets LZ4 compression context at the boundary.
+    /// Returns true if a packet boundary was crossed (caller resets RowCodec).
+    bool flushPacket(std::ostream& os, uint64_t rowCnt) {
+        bool boundary = packet_.flushPacket(os, rowCnt);
+        if (boundary && lz4_compress_.has_value()) {
+            lz4_compress_->reset();  // Reset LZ4 context for the new packet
+        }
+        return boundary;
+    }
+
     ByteBuffer& writeBuffer() { return write_buffer_; }
 
     // ── Read lifecycle ──────────────────────────────────────────────────

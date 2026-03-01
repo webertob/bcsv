@@ -613,46 +613,27 @@ Parking LOT:
             - consider constraining string dictionary encoding to individual columns (lets do that as default, make blockwide (multi column) dictionary compression a future feature)
             - use Template parameters to "punch out" inividual columns
 
-Deferred items from critical review (2025 review, Phases 1-5):
-    [x] #8  BitBool / VLE cleanup: audit unused vle shift-after-decode paths and remove dead code
-            from vle.hpp. Unify naming: "wire_bits" vs "bits_" vs "changed_bits".
-            DONE (2026-02-28): Unified naming across all three row codecs.
-            Flat001: WIRE_BITS_SIZE → ROW_HEADER_SIZE, wireBitsSize() → rowHeaderSize().
-            ZoH001: head_ → row_header_, WIRE_HEAD_SIZE → ROW_HEADER_SIZE, WIRE_BIT_INDEX → ROW_HEADER_BIT_INDEX.
-            Delta002: head_ → row_header_, head_bits_ removed (use row_header_.size()/sizeBytes()),
-                      str_head_base_ → row_header_str_offset_.
-            All callers, tests, and docs updated. 619/619 tests pass.
-    [x] #25 Add operator<< for Row (dynamic) similar to the existing Layout operator<<.
-            DONE (2026-02-28): Added operator<< for both Row and RowStatic<ColumnTypes...>.
-            Compact values-only CSV-like output: "42, 3.14, true, \"hello world\"".
-            RFC 4180 string escaping, locale-independent numeric formatting via std::to_chars.
-            Improved Layout operator<< Doxygen documentation. 20 new test cases in stream_operator_test.cpp.
-
-
 Deferred items from ZoH wire format rewrite (2026-02-25):
-    [ ] Static RowCodecZoH001::deserialize() bool extraction uses && short-circuit fold:
-            ((std::is_same_v<T, bool> && (std::get<I>(row.data_) = head_.test(...), true)), ...);
-        This is fragile — it compiles for all T only because implicit bool→T conversion
-        happens to be valid (bool→int, bool→double, bool→char→string). If a type without
-        implicit bool conversion is ever added, the fold will fail to compile even though
-        the assignment is short-circuited at runtime.
-        Replace with if constexpr in a lambda, matching the pattern used in serialize().
-        Tracked inline: row_codec_zoh001.hpp, static deserialize() TODO comment.
+    [x] Static RowCodecZoH001::deserialize() bool extraction uses && short-circuit fold:
+        RESOLVED (2026-03-01): Replaced with if constexpr lambda fold, matching serialize() pattern.
 
 Deferred items from library review (2026-02-27):
-    [ ] Future opportunity: Reintroduce a RowView class for accelerating sparse reads.
-            row_view.h/hpp removed (was archived, contained compile errors referencing deleted methods).
-            A future RowView should provide zero-copy column access into a serialized buffer without
-            full deserialization, supporting sparse-row/sparse-column read patterns.
-            See Item 20 (Direct Access Reader / Sparse Reader) for related design notes.
+    [x] RowView feature request — REMOVED (2026-03-01): No active demand. Retrievable from git history
+        if sparse-read acceleration is needed (see Item 20 / Item 24).
 
-Deferred items from critical code review (2026-02-25, bcsv_review.md — 26/30 items fixed):
-    [ ] #13 convertValueType is inline in header — 12-case std::visit + switch in definitions.h.
-            Compile-time cost on every TU that includes it. Consider moving to .cpp or __attribute__((noinline)).
-    [ ] #16 FileFooter::start_offset is uint32_t — limits index size to ~4 GB (~268M packets).
-            Consider uint64_t if format version bumps (requires wire format change).
-    [ ] #18 Writer::flush() doesn't close/reopen the current packet.
-            Rows in incomplete packet not recoverable after crash. Document or implement
-            packet-boundary flush semantics.
-    [ ] #25 Row::get(size_t) for bools uses 2-entry rotating thread_local buffer.
-            Third interleaved call aliases the first result. Documented footgun for untyped const void* API.
+Deferred items from critical code review (2026-02-25, bcsv_review.md — 26/30 → 30/30 fixed):
+    [x] #13 convertValueType is inline in header — 12-case std::visit + switch in definitions.h.
+        RESOLVED (2026-03-01): Deleted — zero callers in entire codebase (dead code).
+        Retrievable from git history if ever needed.
+    [x] #16 FileFooter::start_offset is uint32_t — limits index size to ~4 GB (~268M packets).
+        CLOSED (2026-03-01): 268M packets × 8 MB default packet size ≈ 2 PB — sufficient.
+        Revisit only if format version bumps for other reasons.
+    [x] #18 Writer::flush() doesn't close/reopen the current packet.
+        RESOLVED (2026-03-01): Implemented packet-boundary flush semantics.
+        flush() now closes the current packet (terminator + checksum), flushes the OS stream,
+        then opens a new packet. Row codec resets at the boundary (ZoH/Delta restart cleanly).
+        Stream codecs flush the OS stream only. All previously written rows are crash-recoverable.
+    [x] #25 Row::get(size_t) for bools uses 2-entry rotating thread_local buffer.
+        RESOLVED (2026-03-01): Made private in both Row and RowStatic.
+        Zero external callers — only used internally by RowStatic::get<T>(size_t).
+        Thread_local aliasing issue is now unreachable from public API.
