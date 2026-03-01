@@ -47,6 +47,7 @@ set(TEST_SOURCES
     file_header_byte_buffer_test.cpp
     direct_access_test.cpp
     stream_operator_test.cpp
+    sampler_test.cpp
 )
 
 if(BCSV_ENABLE_STRESS_TESTS)

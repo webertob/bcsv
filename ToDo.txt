@@ -612,3 +612,26 @@ Parking LOT:
             - use RowView to avoid deserilizing all columns if not needed
             - consider constraining string dictionary encoding to individual columns (lets do that as default, make blockwide (multi column) dictionary compression a future feature)
             - use Template parameters to "punch out" inividual columns
+
+Unscheduled requests and ideas.
+BCSV code base, navigation
+- move source codes for bcsv CLI tools from examples/ to src/ folder
+- move sampler relatet source codes to include/bcsv/sampler
+- move file codec related source codes to include/bcsv/codec_file
+- move row codec related source codes to include/bcsv/codec_row
+
+
+Sampler functionality:
+- Sampler to support conditional assignments i.e. conditional = { {x[0][0] > 1},{x[0][0]<=1} }, selection = {x[0][*], x[-1][*]}
+- Sampler to support wild cards i.e. to output all columns of row.
+- Sampler to provide index based conditions i.e. every 5th row.
+
+BCSV usability
+- BCSV to support arbitary streams for I/O, not just files. i.e. support cin and cout to enable piping.
+- BCSV CLI tools to support piping, document and present
+- demonstrate how BCSV can be used for network I/O i.e. in combination with UDP/TCP (documentation, example codes)
+
+BCSV Performance:
+- consider runtime compilation (comparable to shaders) for serialization and deserialization to create optimized kernels for specific layouts and architecture.
+- consider vectorization of hot loops in serialization and deserialization
+- consider multithreading for complex filters i.e. load -> uncompress -> deserialization -> sampling -> serialization -> compression -> save

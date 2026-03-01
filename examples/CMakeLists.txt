@@ -62,7 +62,20 @@ target_link_libraries(c_api_vectorized_example PRIVATE bcsv_c_api bcsv)
 add_executable(visitor_examples visitor_examples.cpp)
 target_link_libraries(visitor_examples PRIVATE bcsv)
 
+# Sampler example — streaming filter-and-project operator
+add_executable(example_sampler example_sampler.cpp)
+target_link_libraries(example_sampler PRIVATE bcsv)
+
+# bcsvSampler CLI tool — filter & project BCSV files
+add_executable(bcsvSampler bcsvSampler.cpp)
+target_link_libraries(bcsvSampler PRIVATE bcsv)
+
+# bcsvGenerator CLI tool — generate synthetic BCSV test datasets
+add_executable(bcsvGenerator bcsvGenerator.cpp)
+target_link_libraries(bcsvGenerator PRIVATE bcsv)
+target_include_directories(bcsvGenerator PRIVATE ${CMAKE_SOURCE_DIR}/benchmark/src)
+
 # Set output directory
-set_target_properties(example example_static example_zoh example_zoh_static csv2bcsv bcsv2csv bcsvHead bcsvTail bcsvHeader c_api_vectorized_example visitor_examples PROPERTIES
+set_target_properties(example example_static example_zoh example_zoh_static csv2bcsv bcsv2csv bcsvHead bcsvTail bcsvHeader c_api_vectorized_example visitor_examples example_sampler bcsvSampler bcsvGenerator PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )

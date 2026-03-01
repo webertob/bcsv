@@ -88,6 +88,13 @@ if(BCSV_BUILD_BENCHMARKS)
         set_target_properties(bench_c_api PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
         )
+
+        add_executable(bench_sampler src/bench_sampler.cpp)
+        target_link_libraries(bench_sampler PRIVATE bcsv benchmark::benchmark)
+        target_compile_features(bench_sampler PRIVATE cxx_std_20)
+        set_target_properties(bench_sampler PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+        )
     endif()
 
     # --- Codec comparison benchmark ---
