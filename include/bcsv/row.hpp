@@ -61,8 +61,11 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <array>
 #include <cassert>
+#include <charconv>
 #include <type_traits>
+#include <ostream>
 
 namespace bcsv {
 
@@ -1125,6 +1128,66 @@ namespace bcsv {
     template<RowVisitor Visitor>
     void RowStatic<ColumnTypes...>::visit(Visitor&& visitor) {
         visit(0, std::forward<Visitor>(visitor), COLUMN_COUNT);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Stream operators — compact CSV-like value output
+    // ════════════════════════════════════════════════════════════════════════
+
+    namespace detail {
+
+        /// Write a quoted string to the stream with RFC 4180 escaping.
+        inline void writeQuotedString(std::ostream& os, const std::string& str) {
+            os << '"';
+            for (char c : str) {
+                if (c == '"') os << '"';  // double embedded quotes
+                os << c;
+            }
+            os << '"';
+        }
+
+        /// Write a numeric value using std::to_chars for locale-independent output.
+        template<typename T>
+        void writeNumeric(std::ostream& os, const T& value) {
+            // 24 bytes is enough for any numeric type including double
+            std::array<char, 24> buf;
+            auto [ptr, ec] = std::to_chars(buf.data(), buf.data() + buf.size(), value);
+            os.write(buf.data(), ptr - buf.data());
+        }
+
+    } // namespace detail
+
+    inline std::ostream& operator<<(std::ostream& os, const Row& row) {
+        const size_t count = row.layout().columnCount();
+        row.visitConst([&](size_t index, const auto& value) {
+            using T = std::decay_t<decltype(value)>;
+            if constexpr (std::is_same_v<T, bool>) {
+                os << (value ? "true" : "false");
+            } else if constexpr (std::is_same_v<T, std::string>) {
+                detail::writeQuotedString(os, value);
+            } else {
+                detail::writeNumeric(os, value);
+            }
+            if (index + 1 < count) os << ", ";
+        });
+        return os;
+    }
+
+    template<typename... ColumnTypes>
+    std::ostream& operator<<(std::ostream& os, const RowStatic<ColumnTypes...>& row) {
+        constexpr size_t COUNT = sizeof...(ColumnTypes);
+        row.visitConst([&](size_t index, const auto& value) {
+            using T = std::decay_t<decltype(value)>;
+            if constexpr (std::is_same_v<T, bool>) {
+                os << (value ? "true" : "false");
+            } else if constexpr (std::is_same_v<T, std::string>) {
+                detail::writeQuotedString(os, value);
+            } else {
+                detail::writeNumeric(os, value);
+            }
+            if (index + 1 < COUNT) os << ", ";
+        });
+        return os;
     }
 
 } // namespace bcsv

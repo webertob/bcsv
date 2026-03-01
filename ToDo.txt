@@ -397,15 +397,6 @@ Lean checklist gate (for every non-trivial item):
     [x] update ITEM_11_PLAN.md with post-implementation assessment
     [x] clean up (dead code), i.e. remove StringAddr
     [x] clean up includes (regain compile speed, avoid cyclic dependencies, keep clangd happy)
-    [ ] regain speed — benchmark pre-fetch impact, investigate remaining VisitConst_72col regression
-    [ ] Compare memory footprint
-    [ ] Consider Refactorings (redundant layout_ in codecs, setLayout() public, naming, reset() no-op)
-    Known remaining deferred issues (from ITEM_11_PLAN.md, plan now removed — see ARCHITECTURE.md):
-        - Redundant layout_ in ZoH (also in flat_) — low, wasted pointer
-        - setLayout() public on Flat001 dynamic — low, API footgun
-        - sizeOf() vs wireSizeOf() naming inconsistency — low
-        - reset() is no-op in both codecs — low, dead code path in CodecDispatch
-        - ZoH serialize incremental resize — low, perf not correctness
 
 [x] 11.C Benchmark — Reduce Complexity
     DONE (2026-02):
@@ -440,7 +431,7 @@ Lean checklist gate (for every non-trivial item):
     - Comprehensive codec comparison benchmark completed (14 profiles × 11 candidates × 2 sizes)
     - Recommendation: BatchLZ4+ZoH as default (11× write, 4× read, 48× compression vs CSV)
 
-[ ] 11.G bitset, add encode() and decode() functions for dense unaligned encoding of small integer values.
+[x] 11.G bitset, add encode() and decode() functions for dense unaligned encoding of small integer values.
     Status: DEFERRED — prerequisite for Item 14 (advanced row encoding), not needed until then.
     readFrom()/writeTo() cover current codec needs. encode()/decode() for sub-byte integer packing
     only required when implementing VLE-based row codec.
@@ -544,11 +535,27 @@ Lean checklist gate (for every non-trivial item):
                     0: means current row is linear interpolation from previouse 2 rows, no value stored.
                     1-2: means value is neiter contstant (ZoH), nor linear interpolation (First Order Hold) thus it is encoded directly using 1 or 2 bytes. The actual value stored is the difference between current and previouse value, stored in VLE/zigzag encoding.
 
+15. Update C_API to cover full functionality of BCSV C++ API
+    - Ensure full test coverage of C_API and that we pass
+    - Ensure benchmarks are in place for C_API include vectorized access (i.e. 3D double vectors, coordinates)
+    - Ensure documentation of C_API is complete
 
-14. dictionary encoding for strings
-    For strings a low cardinality is expected (many repetitions of the same string) are expected. Thus a dictionary based compression should be implemented. Exploit similar approach as for numerical values.
-    Store string at its first occurens and assign ID (simply increment number, within the current packet)
-    Other occurences just to reference that number. Run dedicated dicts per row, to balance speed and compression ratio. Block wide compression may come at a later point.
+16. Update CLI Tools to use latest BCSV API version
+    - full test coverage, for tools is in place and they have been validated
+    - documentation of bcsv CLI tools is available and updated
+
+17. Update pybcsv to utilize latest bcsv version, supporting all codecs and manjor API entrie point (lets work together to identify which to include, start broad, remove bloat/complexity/internals)
+    - full test coverage and validated
+    - pypi and github CI/CD pipline is operational
+    - pandas and numpy support
+    - benchmarking in place read to/write from pandas
+    - benchmarking in place read to/write from numpy,
+    - benchmarking in place read to/write from python (plain)
+
+18. Update C# bindinds, using latest version of bcsv library, supporting all codecs and manjor API entrie point (lets work together to identify which to include, start broad, remove bloat/complexity/internals)
+    - full test coverage and validated
+    - create and publish nuget package
+    - valdiate C# bindings work with unity
 
 16. Compare against (document and benchmarks):
         parquet
@@ -557,30 +564,20 @@ Lean checklist gate (for every non-trivial item):
         influxDb
         excel
 
-17. Write paper and release/submit
+17. Write paper and release/submit --> WIKI page on GitHub
 
 Parking LOT:
-18. Create a concept to maintain backward compatibility at least for reading/translating files!
-19. Implement File Flags (raw, stats)
-    File Flags to provide information on file layout to switch between different Read / Write approaches. Enables different behaviour based on usecase and platform. 
-    Flags to consider: 
-        raw:        omit all the complex variable length encoding to save compute --> standard flat encoding schema
-        stream:     omit packet structue and fileindex. also to save compute on constraint architecture, expected to come with significant performance constrains for random read. -> convert to Normal (packet bases) file structure in that case.
- [park] statistics: packet header to contain stasticical values on data included in each column, !min!, !max!, mean, median, std
+18. Create, demonstarte/validate a concept to maintain backward compatibility (read old BCSV files with new version of the library)
 
-20. Develop Direct Access Reader / Sparse Reader
-        1.[sparse rows, dense columns]: Read fully populated row at specific predfined row indices, includes reading sequentialy within a row segment (row_start:row_end)
-        2.[sparse rows, sparse columns]: Read a few columns per row, at specific predefined row indices, includes reading sequentialy within a row segment (row_start:row_end)
-        3.[dense rows, spares columns]: Read a few columns per row, going over the entire file.
-    
-        Some thoughts:
-            - use RowView to avoid deserilizing all columns if not needed
-            - consider constraining string dictionary encoding to individual columns (lets do that as default, make blockwide (multi column) dictionary compression a future feature)
-            - use Template parameters to "punch out" inividual columns
+19. dictionary encoding for strings
+    For strings a low cardinality is expected (many repetitions of the same string) are expected. Thus a dictionary based compression should be implemented. Exploit similar approach as for numerical values.
+    Store string at its first occurens and assign ID (simply increment number, within the current packet)
+    Other occurences just to reference that number. Run dedicated dicts per row, to balance speed and compression ratio. Block wide compression may come at a later point.
 
-21. Create sampler function / API to select data based on certain conditions: 
+20. Create sampler function / API to select data based on certain conditions: 
     - Support C++ interface (iterate over individual rows)
     - Support Python interface (iterate over individual rows and block reads (pandas/numpy))
+21. Make BCSV eco system to use piping features CLI, compareable to cat, more, sed
 
 22. CLI tools:
     - Modify CLI tools to utilize random read functionality to avoid parsing the entire file (when possible):
@@ -598,8 +595,6 @@ Parking LOT:
     - create: bcsvIndex     (tool to rebuild index)
     - create: bcsvConvert   (converts from one bcsv file format to another, use to rebuild index or improve compression)
 
-23. Make BCSV eco system to use piping features CLI, compareable to cat, more, sed
-
 23. Implement Column Modifiers
     provides hints on what encoding schema to be used for this particular column
     modifiers to consider:
@@ -608,26 +603,31 @@ Parking LOT:
         monotonic:  apply higher order delta encoding as a "nearly" monotonic (smooth) behaviour is expected
         ordered:    data to fall or grow in ordered fashion 
 
-
-LOW PRIORITY / Known Issues (from 8.h review, 2026-02-12):
-        - Internal tracking predicate conflates bool values with change flags. Semantically correct for ZoH wire protocol
-            but name is broad; keep behavior documented for callers.
-    - serializeToZoH writes raw bits_.data() via memcpy — architecture-dependent byte order. 
-      Not portable across different endianness or word sizes. Document in wire format spec if cross-platform needed.
-    - Bool changed flag in mutable visit() is passed to the visitor but silently ignored on write-back. 
-      Document that changed parameter is read-only for bool columns.
-        - setColumns(vector<string>, vector<ColumnType>) observer-notification gap is resolved in current layout path.
-            Keep coverage in tests to prevent regression.
+24. Extend Direct Access Reader to support sparse column reads
+        1.[sparse rows, dense columns]: Read fully populated row at specific predfined row indices, includes reading sequentialy within a row segment (row_start:row_end)
+        2.[sparse rows, sparse columns]: Read a few columns per row, at specific predefined row indices, includes reading sequentialy within a row segment (row_start:row_end)
+        3.[dense rows, spares columns]: Read a few columns per row, going over the entire file.
+    
+        Some thoughts:
+            - use RowView to avoid deserilizing all columns if not needed
+            - consider constraining string dictionary encoding to individual columns (lets do that as default, make blockwide (multi column) dictionary compression a future feature)
+            - use Template parameters to "punch out" inividual columns
 
 Deferred items from critical review (2025 review, Phases 1-5):
-    [ ] #5  RowStatic: add compile-time static_assert that all ColumnTypes are bcsv-supported types
-            (bool, uint8..uint64, int8..int64, float, double, std::string). Currently silently
-            compiles for unsupported types and fails at runtime.
-    [ ] #8  BitBool / VLE cleanup: audit unused vle shift-after-decode paths and remove dead code
+    [x] #8  BitBool / VLE cleanup: audit unused vle shift-after-decode paths and remove dead code
             from vle.hpp. Unify naming: "wire_bits" vs "bits_" vs "changed_bits".
-    [ ] #25 Add operator<< for Row (dynamic) similar to the existing Layout operator<<.
-            Print column values in a human-readable format for debugging.
-    [ ] P6  Future: consider size_t vs int for column indices in Row API (currently int).
+            DONE (2026-02-28): Unified naming across all three row codecs.
+            Flat001: WIRE_BITS_SIZE → ROW_HEADER_SIZE, wireBitsSize() → rowHeaderSize().
+            ZoH001: head_ → row_header_, WIRE_HEAD_SIZE → ROW_HEADER_SIZE, WIRE_BIT_INDEX → ROW_HEADER_BIT_INDEX.
+            Delta002: head_ → row_header_, head_bits_ removed (use row_header_.size()/sizeBytes()),
+                      str_head_base_ → row_header_str_offset_.
+            All callers, tests, and docs updated. 619/619 tests pass.
+    [x] #25 Add operator<< for Row (dynamic) similar to the existing Layout operator<<.
+            DONE (2026-02-28): Added operator<< for both Row and RowStatic<ColumnTypes...>.
+            Compact values-only CSV-like output: "42, 3.14, true, \"hello world\"".
+            RFC 4180 string escaping, locale-independent numeric formatting via std::to_chars.
+            Improved Layout operator<< Doxygen documentation. 20 new test cases in stream_operator_test.cpp.
+
 
 Deferred items from ZoH wire format rewrite (2026-02-25):
     [ ] Static RowCodecZoH001::deserialize() bool extraction uses && short-circuit fold:

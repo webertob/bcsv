@@ -10,6 +10,7 @@
 #pragma once
 
 #include <cstddef>
+#include <iosfwd>
 #include <span>
 #include <string>
 #include <string_view>
@@ -151,9 +152,9 @@ namespace bcsv {
  * 
  * 1. Compute section boundaries from layout wire-format metadata:
  *      bits_start   = 0
- *      data_start   = wire_bits_size
- *      strg_l_start = wire_bits_size + wire_data_size
- *      strg_d_start = wire_bits_size + wire_data_size + wire_strg_count * 2
+ *      data_start   = row_header_size
+ *      strg_l_start = row_header_size + wire_data_size
+ *      strg_d_start = row_header_size + wire_data_size + wire_strg_count * 2
  * 
  * 2. Read bits_ section → set bool column values
  * 
@@ -640,5 +641,33 @@ namespace bcsv {
         RowStatic& operator=(const RowStatic& other) = default;          // default copy assignment, tuple manages copying its members including strings (may throw on string alloc)
         RowStatic& operator=(RowStatic&& other) noexcept = default;      // default move assignment, tuple manages moving its members including strings
     };
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Stream operator for Row — prints column values in compact CSV-like format
+    // ────────────────────────────────────────────────────────────────────────
+
+    /**
+     * @brief Stream insertion operator for Row (dynamic layout).
+     *
+     * Prints column values in a compact, comma-separated format suitable for
+     * debugging and logging.  Bools print as "true"/"false", strings are
+     * double-quoted with RFC 4180 escaping (embedded quotes doubled), integers
+     * and floats use std::to_chars for locale-independent formatting.
+     *
+     * Example output:  42, 3.14, true, "hello world"
+     */
+    std::ostream& operator<<(std::ostream& os, const Row& row);
+
+    /**
+     * @brief Stream insertion operator for RowStatic (compile-time layout).
+     *
+     * Same compact, comma-separated format as the dynamic Row operator<<.
+     * Uses compile-time type dispatch via fold expression for zero runtime
+     * type switching.
+     *
+     * Example output:  42, 3.14, true, "hello world"
+     */
+    template<typename... ColumnTypes>
+    std::ostream& operator<<(std::ostream& os, const RowStatic<ColumnTypes...>& row);
 
 } // namespace bcsv

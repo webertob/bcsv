@@ -35,7 +35,7 @@ Evidence to capture:
 - [ ] Data flow between producer/consumer is explicit (who computes, who consumes, who mutates).
 
 Check these common BCSV hotspots:
-- Wire metadata (`wireBitsSize`, `wireDataSize`, `wireStrgCount`, `wireFixedSize`)
+- Wire metadata (`rowHeaderSize`, `wireDataSize`, `wireStrgCount`, `wireFixedSize`)
 - Column offsets / masks
 - Row serialization context (flat/ZoH/delta)
 

@@ -19,7 +19,7 @@
  *   2. Type-grouped column loops (compile-time sizeof, zero runtime type dispatch)
  *   3. Float XOR + leading-zero byte stripping (natural VLE of XOR result)
  *
- *   Wire layout: [head_][encoded_data...]
+ *   Wire layout: [row_header_][encoded_data...]
  *
  * Head bitset layout (fixed size per layout):
  *   Bits [0 .. boolCount):   Boolean VALUES (same as ZoH)
@@ -51,20 +51,17 @@
  * @see row_codec_zoh001.h for the type-grouped loop pattern.
  */
 
-#include "definitions.h"
 #include "bitset.h"
 #include "byte_buffer.h"
 #include "layout.h"
 #include "layout_guard.h"
 
-#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <span>
 #include <stdexcept>
 #include <string>
-#include <type_traits>
 #include <vector>
 
 namespace bcsv {
@@ -83,13 +80,12 @@ public:
     RowCodecDelta002(const RowCodecDelta002& other)
         : guard_(other.layout_ ? LayoutGuard(other.layout_->data()) : LayoutGuard())
         , layout_(other.layout_)
-        , head_(other.head_)
+        , row_header_(other.row_header_)
         , prev_data_(other.prev_data_)
         , prev_strg_(other.prev_strg_)
         , grad_data_(other.grad_data_)
         , bool_count_(other.bool_count_)
-        , head_bits_(other.head_bits_)
-        , str_head_base_(other.str_head_base_)
+        , row_header_str_offset_(other.row_header_str_offset_)
         , cols_uint8_(other.cols_uint8_)
         , cols_uint16_(other.cols_uint16_)
         , cols_uint32_(other.cols_uint32_)
@@ -109,13 +105,12 @@ public:
             LayoutGuard newGuard = other.layout_ ? LayoutGuard(other.layout_->data()) : LayoutGuard();
             guard_.release();
             layout_       = other.layout_;
-            head_         = other.head_;
+            row_header_         = other.row_header_;
             prev_data_    = other.prev_data_;
             prev_strg_    = other.prev_strg_;
             grad_data_    = other.grad_data_;
             bool_count_   = other.bool_count_;
-            head_bits_    = other.head_bits_;
-            str_head_base_= other.str_head_base_;
+            row_header_str_offset_= other.row_header_str_offset_;
             cols_uint8_   = other.cols_uint8_;
             cols_uint16_  = other.cols_uint16_;
             cols_uint32_  = other.cols_uint32_;
@@ -156,8 +151,8 @@ private:
     LayoutGuard guard_;
     const LayoutType* layout_{nullptr};
 
-    // Wire header bitset: bools + combined codes + string change flags
-    Bitset<> head_;
+    // Row header bitset: bools + combined codes + string change flags
+    Bitset<> row_header_;
 
     // Previous row state
     std::vector<std::byte>   prev_data_;     ///< previous scalar data (same layout as row.data_)
@@ -165,13 +160,12 @@ private:
     std::vector<std::byte>   grad_data_;     ///< gradient (curr - prev for ints, arithmetic for floats)
 
     size_t bool_count_{0};
-    size_t head_bits_{0};                    ///< total bit count in wire header
-    size_t str_head_base_{0};                ///< bit offset where string change flags begin
+    size_t row_header_str_offset_{0};                ///< bit offset where string change flags begin
 
     /// Per-column metadata for type-grouped iteration.
     struct ColMeta {
         uint32_t dataOffset;                 ///< byte offset into row.data_ / prev_data_
-        uint32_t headOffset;                 ///< bit offset in head_ for combined code
+        uint32_t headOffset;                 ///< bit offset in row_header_ for combined code
     };
 
     // Per-type column vectors — hot-loop iteration with compile-time sizeof(T).

@@ -428,7 +428,23 @@ namespace bcsv {
         bool                            operator==(const OtherLayout& other) const;
     };
 
-    // Stream operator for Layout - provides human-readable column information
+    /**
+     * @brief Stream insertion operator for Layout — prints column metadata.
+     *
+     * Outputs a formatted table showing column index, name, and type for each
+     * column in the layout.  Empty layouts print "Empty layout (no columns)".
+     *
+     * Example output for a 3-column layout:
+     * @code
+     * Col | Name   | Type
+     * ----+--------+--------
+     *   0 | time   | DOUBLE
+     *   1 | sensor | INT32
+     *   2 | label  | STRING
+     * @endcode
+     *
+     * Works with both Layout (dynamic) and LayoutStatic<Ts...> via LayoutConcept.
+     */
     template<LayoutConcept LayoutType>
     std::ostream& operator<<(std::ostream& os, const LayoutType& layout);
 

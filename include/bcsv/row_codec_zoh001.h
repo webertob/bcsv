@@ -13,9 +13,9 @@
  * @file row_codec_zoh001.h
  * @brief RowCodecZoH001 — codec for the Zero-Order-Hold wire format (version 001).
  *
- * ZoH wire layout: [head_][changed_data...]
+ * ZoH wire layout: [row_header_][changed_data...]
  *
- * The head_ bitset has columnCount bits with a type-grouped layout:
+ * The row_header_ bitset has columnCount bits with a type-grouped layout:
  *   Bits [0 .. boolCount):              Boolean VALUES (same layout as row.bits_)
  *   Bits [boolCount .. columnCount):    Change flags grouped by ColumnType enum order:
  *       UINT8, UINT16, UINT32, UINT64, INT8, INT16, INT32, INT64,
@@ -24,7 +24,7 @@
  * The data section follows the same type-grouped order as the change flags.
  * Only non-BOOL columns with their change flag set have data in the section.
  *
- * Bool values are bulk-copied between row.bits_ and head_ using
+ * Bool values are bulk-copied between row.bits_ and row_header_ using
  * assignRange/equalRange for word-level performance.
  * Scalar change detection uses per-type offset vectors for tight inner loops.
  *
@@ -44,6 +44,7 @@
 
 #include "definitions.h"
 #include "bitset.h"
+#include "byte_buffer.h"
 #include "layout.h"
 #include "layout_guard.h"
 
@@ -51,7 +52,6 @@
 #include <cstdint>
 #include <span>
 #include <string>
-#include <type_traits>
 #include <vector>
 
 namespace bcsv {
@@ -70,7 +70,7 @@ public:
     RowCodecZoH001(const RowCodecZoH001& other)
         : guard_(other.layout_ ? LayoutGuard(other.layout_->data()) : LayoutGuard())
         , layout_(other.layout_)
-        , head_(other.head_)
+        , row_header_(other.row_header_)
         , data_(other.data_)
         , strg_(other.strg_)
         , bool_count_(other.bool_count_)
@@ -94,7 +94,7 @@ public:
             LayoutGuard newGuard = other.layout_ ? LayoutGuard(other.layout_->data()) : LayoutGuard();
             guard_.release();
             layout_ = other.layout_;
-            head_ = other.head_;
+            row_header_ = other.row_header_;
             data_ = other.data_;
             strg_ = other.strg_;
             bool_count_ = other.bool_count_;
@@ -140,12 +140,12 @@ private:
     LayoutGuard guard_;                     // Prevents layout mutation while codec is active
     const LayoutType* layout_{nullptr};
 
-    // Wire header bitset (columnCount-sized):
+    // Row header bitset (columnCount-sized):
     //   [0..bool_count_)           = bool VALUES (same layout as row.bits_)
     //   [bool_count_..columnCount) = change flags, type-grouped (ColumnType enum order)
-    // Also serves as the previous-bool-value tracker (head_[0..bool_count_) persists
+    // Also serves as the previous-bool-value tracker (row_header_[0..bool_count_) persists
     // between serialize() calls for change detection via equalRange).
-    mutable Bitset<> head_;
+    mutable Bitset<> row_header_;
 
     // Local prev-row copy for change detection (double-buffer strategy)
     std::vector<std::byte> data_;           // Previous scalar data (aligned, same layout as row.data_)
@@ -178,7 +178,7 @@ private:
 
     // ── Serialize/Deserialize helpers (type-grouped scalar loops) ────────
 
-    /// Serialize scalars of a given byte size: compare, set head_ bit, emit changed data.
+    /// Serialize scalars of a given byte size: compare, set row_header_ bit, emit changed data.
     template<size_t TypeSize>
     void serializeScalars(const std::vector<uint32_t>& offsets,
                           const RowType& row, ByteBuffer& buffer,
@@ -190,7 +190,7 @@ private:
                      const RowType& row, ByteBuffer& buffer,
                      size_t& buf_idx);
 
-    /// Deserialize scalars of a given byte size: read head_ bit, read data if set.
+    /// Deserialize scalars of a given byte size: read row_header_ bit, read data if set.
     template<size_t TypeSize>
     void deserializeScalars(const std::vector<uint32_t>& offsets,
                             RowType& row, std::span<const std::byte> buffer,
@@ -213,12 +213,12 @@ public:
     static constexpr size_t SCALAR_COUNT = COLUMN_COUNT - BOOL_COUNT - STRING_COUNT;
 
     // Wire header: columnCount bits = BOOL values + change flags
-    static constexpr size_t WIRE_HEAD_SIZE = (COLUMN_COUNT + 7) / 8;
+    static constexpr size_t ROW_HEADER_SIZE = (COLUMN_COUNT + 7) / 8;
 
-    /// Maps column index → bit position in the wire header.
+    /// Maps column index → bit position in the row header.
     /// Bools get positions [0..BOOL_COUNT), non-bools get positions
     /// [BOOL_COUNT..COLUMN_COUNT) in ColumnType enum order.
-    static constexpr std::array<size_t, COLUMN_COUNT> WIRE_BIT_INDEX = []() {
+    static constexpr std::array<size_t, COLUMN_COUNT> ROW_HEADER_BIT_INDEX = []() {
         constexpr auto& types = LayoutType::COLUMN_TYPES;
         std::array<size_t, COLUMN_COUNT> r{};
 
@@ -269,7 +269,7 @@ public:
 
 private:
     const LayoutType* layout_{nullptr};
-    mutable Bitset<COLUMN_COUNT> head_;   // Wire header (bool values + change flags)
+    mutable Bitset<COLUMN_COUNT> row_header_;   // Row header (bool values + change flags)
     bool first_row_in_packet_{true};
 
     // Local prev-row copy for change detection (tuple-based storage)
@@ -278,7 +278,7 @@ private:
     // ── Compile-time helpers ─────────────────────────────────────────────
 
     /// Serialize non-bool elements in SERIALIZATION_ORDER, checking/setting
-    /// head_ bits at WIRE_BIT_INDEX positions. Writes changed data to buffer.
+    /// row_header_ bits at ROW_HEADER_BIT_INDEX positions. Writes changed data to buffer.
     template<size_t OrderIdx>
     void serializeInOrder(const RowType& row, ByteBuffer& buffer,
                           size_t& writeOff);
@@ -288,7 +288,7 @@ private:
     void serializeAllInOrder(const RowType& row, ByteBuffer& buffer,
                              size_t& writeOff);
 
-    /// Compute payload size for changed non-bool columns (using WIRE_BIT_INDEX).
+    /// Compute payload size for changed non-bool columns (using ROW_HEADER_BIT_INDEX).
     static size_t computePayloadSize(const RowType& row, const Bitset<COLUMN_COUNT>& header);
 
     /// Compute payload size when all non-bool columns are emitted.

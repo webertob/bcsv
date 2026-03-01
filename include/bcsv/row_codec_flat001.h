@@ -85,7 +85,7 @@ public:
         std::span<const std::byte> buffer, RowType& row) const;
 
     // ── Wire metadata ───────────────────────────────────────────────────
-    uint32_t wireBitsSize()  const noexcept {
+    uint32_t rowHeaderSize()  const noexcept {
         return layout_ ? static_cast<uint32_t>((layout_->columnCount(ColumnType::BOOL) + 7u) / 8u) : 0u;
     }
     uint32_t wireDataSize()  const noexcept { return wire_data_size_; }
@@ -93,7 +93,7 @@ public:
         return layout_ ? static_cast<uint32_t>(layout_->columnCount(ColumnType::STRING)) : 0u;
     }
     uint32_t wireFixedSize() const noexcept {
-        return wireBitsSize() + wire_data_size_ + wireStrgCount() * static_cast<uint32_t>(sizeof(uint16_t));
+        return rowHeaderSize() + wire_data_size_ + wireStrgCount() * static_cast<uint32_t>(sizeof(uint16_t));
     }
     uint32_t columnOffset(size_t col) const noexcept { return offsets_ptr_[col]; }
     const uint32_t* columnOffsetsPtr() const noexcept { return offsets_ptr_; }
@@ -123,10 +123,10 @@ public:
     static constexpr size_t BOOL_COUNT   = LayoutType::COLUMN_COUNT_BOOL;
     static constexpr size_t STRING_COUNT = LayoutType::COLUMN_COUNT_STRINGS;
 
-    static constexpr size_t WIRE_BITS_SIZE  = (BOOL_COUNT + 7) / 8;
+    static constexpr size_t ROW_HEADER_SIZE = (BOOL_COUNT + 7) / 8;
     static constexpr size_t WIRE_DATA_SIZE  = (0 + ... + (!std::is_same_v<ColumnTypes, bool> && !std::is_same_v<ColumnTypes, std::string> ? sizeof(ColumnTypes) : 0));
     static constexpr size_t WIRE_STRG_COUNT = STRING_COUNT;
-    static constexpr size_t WIRE_FIXED_SIZE = WIRE_BITS_SIZE + WIRE_DATA_SIZE + WIRE_STRG_COUNT * sizeof(uint16_t);
+    static constexpr size_t WIRE_FIXED_SIZE = ROW_HEADER_SIZE + WIRE_DATA_SIZE + WIRE_STRG_COUNT * sizeof(uint16_t);
 
     static constexpr auto WIRE_OFFSETS = LayoutType::COLUMN_OFFSETS_PACKED;
 
@@ -147,7 +147,7 @@ public:
         std::span<const std::byte> buffer, RowType& row) const;
 
     // ── Wire metadata ───────────────────────────────────────────────────
-    static constexpr uint32_t wireBitsSize()  noexcept { return WIRE_BITS_SIZE; }
+    static constexpr uint32_t rowHeaderSize()  noexcept { return ROW_HEADER_SIZE; }
     static constexpr uint32_t wireDataSize()  noexcept { return WIRE_DATA_SIZE; }
     static constexpr uint32_t wireStrgCount() noexcept { return WIRE_STRG_COUNT; }
     static constexpr uint32_t wireFixedSize() noexcept { return WIRE_FIXED_SIZE; }

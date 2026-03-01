@@ -455,8 +455,8 @@ TEST_F(LayoutSyncTest, Clone_PreservesWireMetadata) {
     codecCloned.setup(cloned);
 
     // Verify codec wire metadata matches between original and clone
-    EXPECT_EQ(codecCloned.wireBitsSize(), codecOrig.wireBitsSize())
-        << "Cloned wireBitsSize must match original";
+    EXPECT_EQ(codecCloned.rowHeaderSize(), codecOrig.rowHeaderSize())
+        << "Cloned rowHeaderSize must match original";
     EXPECT_EQ(codecCloned.wireDataSize(), codecOrig.wireDataSize())
         << "Cloned wireDataSize must match original";
     EXPECT_EQ(codecCloned.wireStrgCount(), codecOrig.wireStrgCount())
@@ -465,7 +465,7 @@ TEST_F(LayoutSyncTest, Clone_PreservesWireMetadata) {
         << "Cloned wireFixedSize must match original";
 
     // Verify expected values
-    EXPECT_GT(codecOrig.wireBitsSize(), 0u) << "wireBitsSize should be > 0 (2 bools)";
+    EXPECT_GT(codecOrig.rowHeaderSize(), 0u) << "rowHeaderSize should be > 0 (2 bools)";
     EXPECT_GT(codecOrig.wireDataSize(), 0u) << "wireDataSize should be > 0 (int32 + double)";
     EXPECT_EQ(codecOrig.wireStrgCount(), 2u) << "wireStrgCount should be 2";
 
@@ -490,13 +490,13 @@ TEST_F(LayoutSyncTest, Clone_WireMetadata_AfterRemoveColumn) {
 
     EXPECT_EQ(codecOrig.wireDataSize(), 0u) << "No scalars after removing INT32";
     EXPECT_EQ(codecOrig.wireStrgCount(), 1u) << "One string column remains";
-    EXPECT_GT(codecOrig.wireBitsSize(), 0u) << "Two bools remain";
+    EXPECT_GT(codecOrig.rowHeaderSize(), 0u) << "Two bools remain";
 
     bcsv::Layout cloned = layout.clone();
     bcsv::RowCodecFlat001<bcsv::Layout> codecCloned;
     codecCloned.setup(cloned);
 
-    EXPECT_EQ(codecCloned.wireBitsSize(), codecOrig.wireBitsSize());
+    EXPECT_EQ(codecCloned.rowHeaderSize(), codecOrig.rowHeaderSize());
     EXPECT_EQ(codecCloned.wireDataSize(), codecOrig.wireDataSize());
     EXPECT_EQ(codecCloned.wireStrgCount(), codecOrig.wireStrgCount());
     EXPECT_EQ(codecCloned.wireFixedSize(), codecOrig.wireFixedSize());

@@ -66,7 +66,7 @@ inline std::span<std::byte> RowCodecFlat001<LayoutType>::serialize(
     assert(layout_ && "RowCodecFlat001::serialize() called before setup()");
 
     const size_t   off_row  = buffer.size();
-    const uint32_t bits_sz  = wireBitsSize();
+    const uint32_t bits_sz  = rowHeaderSize();
     const uint32_t data_sz  = wire_data_size_;
     const uint32_t fixed_sz = wireFixedSize();
     const size_t   count    = layout_->columnCount();
@@ -130,7 +130,7 @@ inline void RowCodecFlat001<LayoutType>::deserialize(
 {
     assert(layout_ && "RowCodecFlat001::deserialize() called before setup()");
 
-    const uint32_t bits_sz  = wireBitsSize();
+    const uint32_t bits_sz  = rowHeaderSize();
     const uint32_t data_sz  = wire_data_size_;
     const uint32_t fixed_sz = wireFixedSize();
     const size_t   count    = layout_->columnCount();
@@ -210,14 +210,14 @@ inline std::span<std::byte> RowCodecFlat001<LayoutStatic<ColumnTypes...>>::seria
     buffer.resize(offRow + WIRE_FIXED_SIZE + strg_payload);
 
     // Zero bits section
-    if constexpr (WIRE_BITS_SIZE > 0) {
-        std::memset(&buffer[offRow], 0, WIRE_BITS_SIZE);
+    if constexpr (ROW_HEADER_SIZE > 0) {
+        std::memset(&buffer[offRow], 0, ROW_HEADER_SIZE);
     }
 
     // Serialize each column using compile-time recursion
     size_t boolIdx = 0;
-    size_t dataOff = offRow + WIRE_BITS_SIZE;
-    size_t lenOff  = offRow + WIRE_BITS_SIZE + WIRE_DATA_SIZE;
+    size_t dataOff = offRow + ROW_HEADER_SIZE;
+    size_t lenOff  = offRow + ROW_HEADER_SIZE + WIRE_DATA_SIZE;
     size_t payOff  = offRow + WIRE_FIXED_SIZE;
     serializeElements<0>(row, buffer, offRow, boolIdx, dataOff, lenOff, payOff);
 
@@ -276,8 +276,8 @@ inline void RowCodecFlat001<LayoutStatic<ColumnTypes...>>::deserialize(
         throw std::runtime_error("RowCodecFlat001::deserialize() failed: buffer too short for fixed section");
     }
     size_t boolIdx = 0;
-    size_t dataOff = WIRE_BITS_SIZE;
-    size_t lenOff  = WIRE_BITS_SIZE + WIRE_DATA_SIZE;
+    size_t dataOff = ROW_HEADER_SIZE;
+    size_t lenOff  = ROW_HEADER_SIZE + WIRE_DATA_SIZE;
     size_t payOff  = WIRE_FIXED_SIZE;
     deserializeElements<0>(buffer, row, boolIdx, dataOff, lenOff, payOff);
 }

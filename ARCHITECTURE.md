@@ -340,7 +340,7 @@ held, the six structural mutation methods (`addColumn`, `removeColumn`,
 `setColumnName` is excluded — it does not affect wire metadata.  The guard is
 released automatically when the codec is destroyed or move-assigned.
 
-Wire-format metadata (`wireBitsSize`, `wireDataSize`, `wireStrgCount`,
+Wire-format metadata (`rowHeaderSize`, `wireDataSize`, `wireStrgCount`,
 `wireFixedSize`, per-column `offsets_[]`) is owned exclusively by the codec.
 `Layout` and `Row` classes contain no wire-format knowledge.
 

@@ -280,7 +280,7 @@ TEST(CodecFlat001EdgeTest, WireMetadata_Dynamic) {
     codec.setup(layout);
 
     // 2 bools → 1 byte; int32(4) + double(8) = 12; 1 string → 1×2 = 2; fixed = 1+12+2 = 15
-    EXPECT_EQ(codec.wireBitsSize(), 1u);
+    EXPECT_EQ(codec.rowHeaderSize(), 1u);
     EXPECT_EQ(codec.wireDataSize(), 12u);
     EXPECT_EQ(codec.wireStrgCount(), 1u);
     EXPECT_EQ(codec.wireFixedSize(), 15u);
@@ -445,7 +445,7 @@ TEST(CodecFlat001StaticTest, WireMetadata_Static) {
 
     // Verify constexpr wire constants
     // 2 bools → 1 byte; int32(4) + double(8) = 12; 1 string → 1×2 = 2; fixed = 1+12+2 = 15
-    EXPECT_EQ(Codec::WIRE_BITS_SIZE, 1u);
+    EXPECT_EQ(Codec::ROW_HEADER_SIZE, 1u);
     EXPECT_EQ(Codec::WIRE_DATA_SIZE, 12u);
     EXPECT_EQ(Codec::WIRE_STRG_COUNT, 1u);
     EXPECT_EQ(Codec::WIRE_FIXED_SIZE, 15u);

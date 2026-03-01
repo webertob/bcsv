@@ -237,7 +237,7 @@ void RowCodecDelta002<LayoutType>::setup(const LayoutType& layout) {
     }
 
     // String columns: 1 change-flag bit each
-    str_head_base_ = headPos;
+    row_header_str_offset_ = headPos;
     for (size_t i = 0; i < colCount; ++i) {
         if (types[i] == ColumnType::STRING) {
             str_offsets_.push_back(offsets[i]);
@@ -245,9 +245,8 @@ void RowCodecDelta002<LayoutType>::setup(const LayoutType& layout) {
         }
     }
 
-    head_bits_ = headPos;
-    head_.resize(head_bits_);
-    head_.reset();
+    row_header_.resize(headPos);
+    row_header_.reset();
 
     prev_data_.clear();
     prev_strg_.clear();
@@ -268,15 +267,15 @@ template<typename LayoutType>
 std::span<std::byte> RowCodecDelta002<LayoutType>::serialize(
     const RowType& row, ByteBuffer& buffer)
 {
-    const size_t headBytes  = (head_bits_ + 7) / 8;
+    const size_t headBytes  = row_header_.sizeBytes();
     const size_t numStrCols = str_offsets_.size();
 
     // Reset header to all zeros
-    head_.reset();
+    row_header_.reset();
 
     // ── Bool values ──────────────────────────────────────────────────────
     if (bool_count_ > 0) {
-        assignRange(head_, 0, row.bits_, 0, bool_count_);
+        assignRange(row_header_, 0, row.bits_, 0, bool_count_);
     }
 
     // ── First-row state initialisation ───────────────────────────────────
@@ -306,7 +305,7 @@ std::span<std::byte> RowCodecDelta002<LayoutType>::serialize(
 
             // ── ZoH check ────────────────────────────────────────────────
             if (std::memcmp(&row.data_[off], &prev_data_[off], sizeof(T)) == 0) {
-                head_.encode(col.headOffset, HB, 0);         // code 0 = ZoH
+                row_header_.encode(col.headOffset, HB, 0);         // code 0 = ZoH
                 std::memset(&grad_data_[off], 0, sizeof(T));
                 continue;
             }
@@ -320,7 +319,7 @@ std::span<std::byte> RowCodecDelta002<LayoutType>::serialize(
                     foc = checkIntFoC<T>(&row.data_[off], &prev_data_[off], &grad_data_[off]);
 
                 if (foc) {
-                    head_.encode(col.headOffset, HB, 1);     // code 1 = FoC
+                    row_header_.encode(col.headOffset, HB, 1);     // code 1 = FoC
                     std::memcpy(&prev_data_[off], &row.data_[off], sizeof(T));
                     // Gradient unchanged — prediction is consistent
                     continue;
@@ -338,7 +337,7 @@ std::span<std::byte> RowCodecDelta002<LayoutType>::serialize(
             if (deltaBytes > sizeof(T)) deltaBytes = sizeof(T);  // safety clamp
 
             const uint8_t code = static_cast<uint8_t>(deltaBytes + 1);  // code 2..sizeof(T)+1
-            head_.encode(col.headOffset, HB, code);
+            row_header_.encode(col.headOffset, HB, code);
             encodeDelta(&buffer[bufIdx], delta, deltaBytes);
             bufIdx += deltaBytes;
 
@@ -358,7 +357,7 @@ std::span<std::byte> RowCodecDelta002<LayoutType>::serialize(
         const bool changed = (rows_seen_ == 0) || (row.strg_[strIdx] != prev_strg_[strIdx]);
 
         if (changed) {
-            head_[str_head_base_ + s] = true;
+            row_header_[row_header_str_offset_ + s] = true;
             prev_strg_[strIdx] = row.strg_[strIdx];
 
             const auto& str = row.strg_[strIdx];
@@ -368,11 +367,11 @@ std::span<std::byte> RowCodecDelta002<LayoutType>::serialize(
             bufIdx += 2;
             if (len > 0) { std::memcpy(&buffer[bufIdx], str.data(), len); bufIdx += len; }
         } else {
-            head_[str_head_base_ + s] = false;
+            row_header_[row_header_str_offset_ + s] = false;
         }
     }
 
-    head_.writeTo(buffer.data(), headBytes);
+    row_header_.writeTo(buffer.data(), headBytes);
     buffer.resize(bufIdx);
     rows_seen_++;
     return std::span<std::byte>(buffer.data(), bufIdx);
@@ -386,18 +385,18 @@ template<typename LayoutType>
 void RowCodecDelta002<LayoutType>::deserialize(
     std::span<const std::byte> buffer, RowType& row)
 {
-    const size_t headBytes  = (head_bits_ + 7) / 8;
+    const size_t headBytes  = row_header_.sizeBytes();
     const size_t numStrCols = str_offsets_.size();
 
     if (buffer.size() < headBytes)
         throw std::runtime_error(
             "RowCodecDelta002::deserialize() failed! Buffer too small for head Bitset.");
 
-    head_.readFrom(buffer.data(), headBytes);
+    row_header_.readFrom(buffer.data(), headBytes);
 
     // ── Bool values ──────────────────────────────────────────────────────
     if (bool_count_ > 0) {
-        assignRange(row.bits_, 0, head_, 0, bool_count_);
+        assignRange(row.bits_, 0, row_header_, 0, bool_count_);
     }
 
     // ── First-row state initialisation ───────────────────────────────────
@@ -415,7 +414,7 @@ void RowCodecDelta002<LayoutType>::deserialize(
 
         for (const auto& col : cols) {
             const uint32_t off = col.dataOffset;
-            const uint8_t code = head_.decode(col.headOffset, HB);
+            const uint8_t code = row_header_.decode(col.headOffset, HB);
 
             // ── code 0: ZoH ──────────────────────────────────────────────
             if (code == 0) {
@@ -478,7 +477,7 @@ void RowCodecDelta002<LayoutType>::deserialize(
 
     // ── String columns ───────────────────────────────────────────────────
     for (size_t s = 0; s < numStrCols; ++s) {
-        if (head_[str_head_base_ + s]) {
+        if (row_header_[row_header_str_offset_ + s]) {
             const uint32_t strIdx = str_offsets_[s];
 
             if (dataOff + 2 > buffer.size())
