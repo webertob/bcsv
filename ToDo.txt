@@ -23,6 +23,9 @@ Items 0–14: DONE (all committed)
 Deferred / remaining:
   11.B open items (perf regression, memory footprint, minor refactorings)
   14b. dictionary encoding for strings
+  [LIB-1] ReaderDirectAccess: delta + random access → silent corruption (CRITICAL)
+  [LIB-2] ReaderDirectAccess: packet_lz4_batch + random access → read() fails (HIGH)
+  See: docs/BUG_REPORT_DirectAccess.md
 ===
 
 Lean checklist gate (for every non-trivial item):
@@ -440,7 +443,7 @@ Lean checklist gate (for every non-trivial item):
               add function bitset::decode(firstBitPos, bitCnt). To return a value of any uint type. Actual type should be the smallest required for the given bit range. i.e. uint8_t for bitCnt <=8, uint16_t for 8 to 16 bits etc.
               add function bitset::encodeTruncat(firstBitPos, bitCnt, value). Same as encode(...), but does not throw, simply truncats to match the available space. Truncats by applying a bit mask, thus an overflow by one, leads to storing a zero. 
 
-12. Implement CSV write and read functionality using the BCSV API and infrastructure 
+[x] 12. Implement CSV write and read functionality using the BCSV API and infrastructure 
     Status: COMPLETED
     Approach C (C++20 Concepts + Standalone CSV classes) — no base classes, purely concept-based API.
     [x] 12.a: ReaderConcept + WriterConcept (C++20 concepts, open() excluded — format-specific params)
@@ -535,16 +538,46 @@ Lean checklist gate (for every non-trivial item):
                     0: means current row is linear interpolation from previouse 2 rows, no value stored.
                     1-2: means value is neiter contstant (ZoH), nor linear interpolation (First Order Hold) thus it is encoded directly using 1 or 2 bytes. The actual value stored is the difference between current and previouse value, stored in VLE/zigzag encoding.
 
-15. Update C_API to cover full functionality of BCSV C++ API
+[x] 15. Update C_API to cover full functionality of BCSV C++ API
     - Ensure full test coverage of C_API and that we pass
     - Ensure benchmarks are in place for C_API include vectorized access (i.e. 3D double vectors, coordinates)
     - Ensure documentation of C_API is complete
 
-16. Update CLI Tools to use latest BCSV API version
-    - full test coverage, for tools is in place and they have been validated
-    - documentation of bcsv CLI tools is available and updated
+16. Update CLI Tools to use latest BCSV API version [WIP]
+    Status: Work in progress — core implementation done, test suite operational
 
-17. Update pybcsv to utilize latest bcsv version, supporting all codecs and manjor API entrie point (lets work together to identify which to include, start broad, remove bloat/complexity/internals)
+    Completed:
+    [x] Modernised all 7 CLI tools to latest BCSV API (shared cli_common.h)
+    [x] Bug fixes B1-B5, A2, D1, S1 from critical review applied
+        B1: bcsv2csv verbose output → stderr (was polluting stdout CSV)
+        B2: bcsv2csv ReaderDirectAccess fallback to sequential Reader
+        B3: bcsv2csv benchmark JSON → stderr
+        B4: bcsvTail sequential header via CsvWriter (proper RFC 4180 quoting)
+        B5: csv2bcsv --no-zoh → maps to delta (was incorrectly mapping to flat)
+        A2: bcsvGenerator uses resolveCodecFlags() instead of manual flag building
+        D1: CLI_TOOLS.md and SKILLS.md updated (csv_format_utils.h → cli_common.h)
+        S1: Consistent arg.starts_with("-") in bcsvHead, bcsvTail, bcsvHeader
+    [x] Integration test script: tests/test_cli_tools.sh (71 tests, all passing)
+        Covers: csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvGenerator
+        Includes: pipeline tests, edge cases, B1/B3/B4/B5 regression tests
+    [x] Documentation of library bugs: docs/BUG_REPORT_DirectAccess.md
+    [x] All 7 tools build cleanly, 662 unit tests pass
+
+    Remaining:
+    [ ] Integrate test_cli_tools.sh into CTest (add_test in tests/CMakeLists.txt)
+    [ ] Also register test_bcsvSampler.sh in CTest while at it
+    [ ] Final full build + ctest verification (662 unit tests + 2 shell scripts)
+    [ ] Review: csv2bcsv still prints conversion summary to stdout — should go
+        to stderr for consistency with other tools (low priority)
+    [ ] Review: consider adding --row-codec / --file-codec display in bcsvHeader -v
+
+    Known issues (library-level, NOT caused by Item 16):
+    [LIB-1] ReaderDirectAccess + delta row-codec → silent numeric corruption
+    [LIB-2] ReaderDirectAccess + packet_lz4_batch → read() fails for all rows
+    Test script uses --row-codec flat --file-codec packet_lz4 to work around both.
+    See: docs/BUG_REPORT_DirectAccess.md
+
+17. Update pybcsv to utilize latest bcsv version, supporting all codecs and major API entry points (lets work together to identify which to include, start broad, remove bloat/complexity/internals)
     - full test coverage and validated
     - pypi and github CI/CD pipline is operational
     - pandas and numpy support
@@ -552,7 +585,7 @@ Lean checklist gate (for every non-trivial item):
     - benchmarking in place read to/write from numpy,
     - benchmarking in place read to/write from python (plain)
 
-18. Update C# bindinds, using latest version of bcsv library, supporting all codecs and manjor API entrie point (lets work together to identify which to include, start broad, remove bloat/complexity/internals)
+18. Update C# bindinds, using latest version of bcsv library, supporting all codecs and major API entry points (lets work together to identify which to include, start broad, remove bloat/complexity/internals)
     - full test coverage and validated
     - create and publish nuget package
     - valdiate C# bindings work with unity
@@ -580,7 +613,7 @@ Parking LOT:
 21. Make BCSV eco system to use piping features CLI, compareable to cat, more, sed
 
 22. CLI tools:
-    - Modify CLI tools to utilize random read functionality to avoid parsing the entire file (when possible):
+    - Modify CLI tools to utilize direct read functionality to avoid parsing the entire file (when possible):
         - bcsvTail
         - bcsvHead
         - bcsv2csv in combiniation with slicing
@@ -613,19 +646,58 @@ Parking LOT:
             - consider constraining string dictionary encoding to individual columns (lets do that as default, make blockwide (multi column) dictionary compression a future feature)
             - use Template parameters to "punch out" inividual columns
 
-Unscheduled requests and ideas.
-
-Sampler functionality:
+25. Sampler functionality:
 - Sampler to support conditional assignments i.e. conditional = { {x[0][0] > 1},{x[0][0]<=1} }, selection = {x[0][*], x[-1][*]}
 - Sampler to support wild cards i.e. to output all columns of row.
 - Sampler to provide index based conditions i.e. every 5th row.
 
-BCSV usability
+26. BCSV usability
+- compare BCSV csv reader and writter against 3rd party implementations that are considered industry standards/references
 - BCSV to support arbitary streams for I/O, not just files. i.e. support cin and cout to enable piping.
 - BCSV CLI tools to support piping, document and present
 - demonstrate how BCSV can be used for network I/O i.e. in combination with UDP/TCP (documentation, example codes)
 
-BCSV Performance:
-- consider runtime compilation (comparable to shaders) for serialization and deserialization to create optimized kernels for specific layouts and architecture.
+27. BCSV stability and Robustness
+    confirm project can be build with out errors and warnings on windows(MSCV), linux(GCC/clangd) and apple(dlangd). 
+    confirm correct operations in debug and release mode on all 3 platforms and compilers
+    confirm performance on linux, windows, apple, stm32 and xilinix/AMD -> ZYNQ, VERSAL and KRIA
+
+28. BCSV Performance:
+- micro optimization on rowDelta serialization and deserialization
+    review assembler generate, --> inlining?, unrolling?
+    explore opportunities to help the branchprediciton, 
+    explore opportunities to use SIMD vectorization if multiple columns have same data type 
+- consider runtime compilation (comparable to GPU shaders) for serialization and deserialization to create optimized kernels for specific layouts and architecture.
+- perhaps make it a CMAKE configuration to either use the curren C++ only implementation (no deppendencies) and alternativly allow for in place compiler using LLVM or similar.
 - consider vectorization of hot loops in serialization and deserialization
-- consider multithreading for complex filters i.e. load -> uncompress -> deserialization -> sampling -> serialization -> compression -> save
+- consider multithreading for complex filters to build a pipleine like:
+        load -> uncompress -> deserialization -> sampling -> serialization -> compression -> save running on multiple CPUs connected through FIFOs. 
+        Consider throughput (rows/sec) and efficency (watt/row)
+
+=== KNOWN BUGS ===
+
+[LIB-1] ReaderDirectAccess: delta row-codec produces corrupt numeric data (CRITICAL)
+    ReaderDirectAccess::read(index) with delta-encoded files silently returns
+    wrong values for numeric columns.  Delta decoding requires previous-row state
+    which is absent during random access — numerics decode against an implicit
+    zero baseline.  Strings are unaffected.
+    Affects: delta + packet, delta + packet_lz4, delta + packet_lz4_batch
+    Since delta is the default row-codec, most files created with default
+    settings are affected.
+    Sequential reads (Reader::readNext) are correct.
+    See: docs/BUG_REPORT_DirectAccess.md
+
+[LIB-2] ReaderDirectAccess: packet_lz4_batch file-codec — read() fails for all rows (HIGH)
+    ReaderDirectAccess::open() succeeds and rowCount() returns the correct total,
+    but every call to read(index) returns false.  No data can be retrieved.
+    Affects: any row-codec + packet_lz4_batch
+    Since packet_lz4_batch is the default file-codec, most files created with
+    default settings are affected.
+    Sequential reads (Reader::readNext) are correct.
+    See: docs/BUG_REPORT_DirectAccess.md
+
+    Combined: the default codec combination (delta + packet_lz4_batch) triggers
+    BOTH bugs, making ReaderDirectAccess effectively non-functional for files
+    created with default settings.
+
+    Working combinations for direct access: flat/zoh + packet/packet_lz4

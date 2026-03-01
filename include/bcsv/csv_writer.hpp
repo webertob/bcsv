@@ -40,7 +40,12 @@ namespace bcsv {
     CsvWriter<LayoutType>::~CsvWriter() {
         if (isOpen()) {
             try {
-                close();
+                // Only close the owned stream; don't flush external ostreams in dtor
+                if (stream_.is_open()) {
+                    stream_.flush();
+                    stream_.close();
+                }
+                os_ = nullptr;
             } catch (...) {
                 // Suppress exceptions during destruction
             }
@@ -51,11 +56,14 @@ namespace bcsv {
 
     template<LayoutConcept LayoutType>
     void CsvWriter<LayoutType>::close() {
-        if (!stream_.is_open()) {
+        if (os_ == nullptr) {
             return;
         }
-        stream_.flush();
-        stream_.close();
+        os_->flush();
+        if (stream_.is_open()) {
+            stream_.close();
+        }
+        os_ = nullptr;
         file_path_.clear();
         row_cnt_ = 0;
     }
@@ -110,6 +118,7 @@ namespace bcsv {
                 throw std::runtime_error(err_msg_);
             }
 
+            os_ = &stream_;
             file_path_ = absolutePath;
             row_cnt_ = 0;
             row_.clear();
@@ -140,6 +149,32 @@ namespace bcsv {
         }
     }
 
+    // ── Stream open (stdout / external ostream) ────────────────────────
+
+    template<LayoutConcept LayoutType>
+    bool CsvWriter<LayoutType>::open(std::ostream& os, bool includeHeader) {
+        err_msg_.clear();
+
+        if (isOpen()) {
+            err_msg_ = "Warning: Writer is already open";
+            if constexpr (DEBUG_OUTPUTS) {
+                std::cerr << err_msg_ << std::endl;
+            }
+            return false;
+        }
+
+        os_ = &os;
+        file_path_.clear();
+        row_cnt_ = 0;
+        row_.clear();
+
+        if (includeHeader) {
+            writeHeader();
+        }
+
+        return true;
+    }
+
     // ── Writing ─────────────────────────────────────────────────────────
 
     template<LayoutConcept LayoutType>
@@ -150,8 +185,8 @@ namespace bcsv {
 
     template<LayoutConcept LayoutType>
     void CsvWriter<LayoutType>::writeRow() {
-        if (!stream_.is_open()) {
-            throw std::runtime_error("Error: File is not open");
+        if (os_ == nullptr) {
+            throw std::runtime_error("Error: Writer is not open");
         }
 
         buf_.clear();
@@ -182,7 +217,7 @@ namespace bcsv {
         });
 
         buf_.push_back('\n');
-        stream_.write(buf_.data(), static_cast<std::streamsize>(buf_.size()));
+        os_->write(buf_.data(), static_cast<std::streamsize>(buf_.size()));
         row_cnt_++;
     }
 
@@ -198,7 +233,7 @@ namespace bcsv {
             appendString(std::string(lay.columnName(i)));
         }
         buf_.push_back('\n');
-        stream_.write(buf_.data(), static_cast<std::streamsize>(buf_.size()));
+        os_->write(buf_.data(), static_cast<std::streamsize>(buf_.size()));
     }
 
     /// Append any numeric type via std::to_chars (no locale, no virtual dispatch)

@@ -104,7 +104,7 @@ All CLI tool source code lives in `src/tools/`:
 | `bcsvHeader.cpp` | Schema display |
 | `bcsvSampler.cpp` | Expression-based filter & project |
 | `bcsvGenerator.cpp` | Synthetic dataset generator |
-| `csv_format_utils.h` | Shared CSV formatting helpers |
+| `cli_common.h` | Shared CLI utilities (codec dispatch, validation, formatting) |
 | `CMakeLists.txt` | Build definitions for all 7 tools |
 | `*.md` | Per-tool documentation |
 

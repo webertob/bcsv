@@ -57,5 +57,5 @@ bcsvGenerator -p sensor_noisy -n 100000 -o sensor.bcsv
 All CLI tool source code is in `src/tools/`:
 - `CMakeLists.txt` — build definitions (controlled by `BUILD_TOOLS` CMake option)
 - `CLI_TOOLS.md` — comprehensive usage docs with pipeline examples
-- `csv_format_utils.h` — shared CSV formatting helpers
+- `cli_common.h` — shared CLI utilities (codec dispatch, validation, formatting)
 - Each tool has a matching `.md` documentation file (e.g., `bcsvSampler.md`)

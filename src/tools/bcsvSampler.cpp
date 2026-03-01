@@ -23,9 +23,11 @@
 #include <filesystem>
 #include <chrono>
 #include <iomanip>
+#include <stdexcept>
 #include <bcsv/bcsv.h>
 #include <bcsv/sampler/sampler.h>
 #include <bcsv/sampler/sampler.hpp>
+#include "cli_common.h"
 
 // ── Configuration ───────────────────────────────────────────────────
 
@@ -41,11 +43,10 @@ struct Config {
     std::string mode = "truncate";  // -m / --mode  {truncate, expand}
 
     // Writer encoding knobs
+    std::string row_codec    = bcsv_cli::DEFAULT_ROW_CODEC;      // --row-codec
+    std::string file_codec   = bcsv_cli::DEFAULT_FILE_CODEC;     // --file-codec
     size_t      compression_level = 1;
     size_t      block_size_kb     = 64;
-    bool        use_batch         = true;   // --no-batch to disable
-    bool        use_delta         = true;   // --no-delta to disable
-    bool        use_lz4           = true;   // --no-lz4  to disable (level 0)
 
     // Flags
     bool        overwrite         = false;  // -f / --overwrite
@@ -72,12 +73,15 @@ static void printUsage(const char* prog) {
         << "  -s, --selection EXPR     Column projection (comma-separated)\n"
         << "  -m, --mode MODE          Boundary mode: truncate (default) or expand\n\n"
 
-        << "Encoding (defaults: packet + lz4 + batch + delta):\n"
+        << "Encoding (defaults: row=delta, file=packet_lz4_batch):\n"
+        << "  --row-codec CODEC        Row codec: flat, zoh, delta (default: delta)\n"
+        << "  --file-codec CODEC       File codec: stream, stream_lz4, packet,\n"
+        << "                           packet_lz4, packet_lz4_batch (default)\n"
         << "  --compression-level N    LZ4 compression level (default: 1)\n"
         << "  --block-size N           Block size in KB (default: 64)\n"
-        << "  --no-batch               Disable batch compression\n"
-        << "  --no-delta               Disable delta encoding (use flat codec)\n"
-        << "  --no-lz4                 Disable LZ4 compression (level 0)\n\n"
+        << "  --no-batch               (deprecated) alias for --file-codec packet_lz4\n"
+        << "  --no-delta               (deprecated) alias for --row-codec flat\n"
+        << "  --no-lz4                 (deprecated) alias for --file-codec packet\n\n"
 
         << "General:\n"
         << "  -f, --overwrite          Overwrite output file if it exists\n"
@@ -112,11 +116,20 @@ static Config parseArgs(int argc, char* argv[]) {
         } else if (arg == "--disassemble") {
             cfg.disassemble = true;
         } else if (arg == "--no-batch") {
-            cfg.use_batch = false;
+            std::cerr << "Warning: --no-batch is deprecated; use --file-codec packet_lz4\n";
+            cfg.file_codec = "packet_lz4";
         } else if (arg == "--no-delta") {
-            cfg.use_delta = false;
+            std::cerr << "Warning: --no-delta is deprecated; use --row-codec flat\n";
+            cfg.row_codec = "flat";
         } else if (arg == "--no-lz4") {
-            cfg.use_lz4 = false;
+            std::cerr << "Warning: --no-lz4 is deprecated; use --file-codec packet\n";
+            cfg.file_codec = "packet";
+        } else if ((arg == "--row-codec") && i + 1 < argc) {
+            cfg.row_codec = argv[++i];
+            bcsv_cli::validateRowCodec(cfg.row_codec);
+        } else if ((arg == "--file-codec") && i + 1 < argc) {
+            cfg.file_codec = argv[++i];
+            bcsv_cli::validateFileCodec(cfg.file_codec);
         } else if ((arg == "-c" || arg == "--conditional") && i + 1 < argc) {
             cfg.conditional = argv[++i];
         } else if ((arg == "-s" || arg == "--selection") && i + 1 < argc) {
@@ -124,37 +137,30 @@ static Config parseArgs(int argc, char* argv[]) {
         } else if ((arg == "-m" || arg == "--mode") && i + 1 < argc) {
             cfg.mode = argv[++i];
             if (cfg.mode != "truncate" && cfg.mode != "expand") {
-                std::cerr << "Error: Unknown mode '" << cfg.mode
-                          << "'. Expected 'truncate' or 'expand'.\n";
-                exit(1);
+                throw std::runtime_error("Unknown mode '" + cfg.mode + "'. Expected 'truncate' or 'expand'.");
             }
         } else if (arg == "--compression-level" && i + 1 < argc) {
             try {
                 int lvl = std::stoi(argv[++i]);
                 if (lvl < 0) {
-                    std::cerr << "Error: Compression level must be non-negative.\n";
-                    exit(1);
+                    throw std::runtime_error("Compression level must be non-negative.");
                 }
                 cfg.compression_level = static_cast<size_t>(lvl);
-            } catch (const std::exception&) {
-                std::cerr << "Error: Invalid compression level: " << argv[i] << "\n";
-                exit(1);
+            } catch (const std::invalid_argument&) {
+                throw std::runtime_error(std::string("Invalid compression level: ") + argv[i]);
             }
         } else if (arg == "--block-size" && i + 1 < argc) {
             try {
                 int bs = std::stoi(argv[++i]);
                 if (bs <= 0) {
-                    std::cerr << "Error: Block size must be positive.\n";
-                    exit(1);
+                    throw std::runtime_error("Block size must be positive.");
                 }
                 cfg.block_size_kb = static_cast<size_t>(bs);
-            } catch (const std::exception&) {
-                std::cerr << "Error: Invalid block size: " << argv[i] << "\n";
-                exit(1);
+            } catch (const std::invalid_argument&) {
+                throw std::runtime_error(std::string("Invalid block size: ") + argv[i]);
             }
         } else if (arg.starts_with("-")) {
-            std::cerr << "Error: Unknown option: " << arg << "\n";
-            exit(1);
+            throw std::runtime_error("Unknown option: " + arg);
         } else {
             // Positional arguments
             if (cfg.input_file.empty()) {
@@ -162,15 +168,13 @@ static Config parseArgs(int argc, char* argv[]) {
             } else if (cfg.output_file.empty()) {
                 cfg.output_file = arg;
             } else {
-                std::cerr << "Error: Too many positional arguments.\n";
-                exit(1);
+                throw std::runtime_error("Too many positional arguments.");
             }
         }
     }
 
     if (cfg.input_file.empty() && !cfg.help) {
-        std::cerr << "Error: Input file is required.\n";
-        exit(1);
+        throw std::runtime_error("Input file is required.");
     }
 
     // Default output filename: <stem>_sampled.bcsv
@@ -183,58 +187,6 @@ static Config parseArgs(int argc, char* argv[]) {
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────
-
-/// Convert ColumnType to human-readable string.
-static std::string columnTypeStr(bcsv::ColumnType type) {
-    switch (type) {
-        case bcsv::ColumnType::BOOL:   return "bool";
-        case bcsv::ColumnType::INT8:   return "int8";
-        case bcsv::ColumnType::UINT8:  return "uint8";
-        case bcsv::ColumnType::INT16:  return "int16";
-        case bcsv::ColumnType::UINT16: return "uint16";
-        case bcsv::ColumnType::INT32:  return "int32";
-        case bcsv::ColumnType::UINT32: return "uint32";
-        case bcsv::ColumnType::INT64:  return "int64";
-        case bcsv::ColumnType::UINT64: return "uint64";
-        case bcsv::ColumnType::FLOAT:  return "float";
-        case bcsv::ColumnType::DOUBLE: return "double";
-        case bcsv::ColumnType::STRING: return "string";
-        default:                       return "unknown";
-    }
-}
-
-/// Print layout table to stderr.
-static void printLayout(const std::string& label,
-                        const bcsv::Layout& layout,
-                        std::ostream& os = std::cerr) {
-    const size_t n = layout.columnCount();
-    if (n == 0) {
-        os << label << ": (empty)\n";
-        return;
-    }
-
-    // Compute column widths
-    size_t w_idx  = std::max(std::to_string(n - 1).length(), static_cast<size_t>(3));
-    size_t w_name = 4;
-    for (size_t i = 0; i < n; ++i)
-        w_name = std::max(w_name, layout.columnName(i).length());
-
-    os << label << " (" << n << " columns):\n";
-    os << "  " << std::left
-       << std::setw(static_cast<int>(w_idx))  << "Idx" << "  "
-       << std::setw(static_cast<int>(w_name)) << "Name" << "  "
-       << "Type\n";
-    os << "  " << std::string(w_idx, '-') << "  "
-       << std::string(w_name, '-') << "  "
-       << std::string(8, '-') << "\n";
-
-    for (size_t i = 0; i < n; ++i) {
-        os << "  " << std::left
-           << std::setw(static_cast<int>(w_idx))  << i << "  "
-           << std::setw(static_cast<int>(w_name)) << layout.columnName(i) << "  "
-           << columnTypeStr(layout.columnType(i)) << "\n";
-    }
-}
 
 /// Print a compilation error with caret indicator.
 static void printCompileError(const std::string& label,
@@ -252,16 +204,6 @@ static void printCompileError(const std::string& label,
     }
 
     std::cerr << "  " << cr.error_msg << "\n";
-}
-
-/// Describe the encoding configuration for the summary.
-static std::string encodingDescription(const Config& cfg) {
-    std::string desc;
-    desc += cfg.use_delta ? "delta" : "flat";
-    if (cfg.use_lz4)   desc += " + lz4";
-    if (cfg.use_batch)  desc += " + batch";
-    desc += " (level " + std::to_string(cfg.compression_level) + ")";
-    return desc;
 }
 
 // ── Main ────────────────────────────────────────────────────────────
@@ -309,7 +251,7 @@ int main(int argc, char* argv[]) {
 
         if (cfg.verbose) {
             std::cerr << "Opened: " << cfg.input_file << "\n";
-            printLayout("Input layout", src_layout);
+            bcsv_cli::printLayoutSummary("Input layout", src_layout);
         }
 
         bcsv::Sampler<bcsv::Layout> sampler(reader);
@@ -359,40 +301,24 @@ int main(int argc, char* argv[]) {
             : sampler.outputLayout();
 
         if (cfg.verbose) {
-            printLayout("Output layout", out_layout);
+            bcsv_cli::printLayoutSummary("Output layout", out_layout);
         }
 
         // ── Build FileFlags ─────────────────────────────────────────
-        bcsv::FileFlags flags = bcsv::FileFlags::NONE;
+        auto codec_settings = bcsv_cli::resolveCodecFlags(
+            cfg.file_codec, cfg.row_codec, cfg.compression_level);
 
-        if (cfg.use_batch) {
-#ifdef BCSV_HAS_BATCH_CODEC
-            flags = flags | bcsv::FileFlags::BATCH_COMPRESS;
-#else
-            if (cfg.verbose)
-                std::cerr << "Note: Batch codec not available "
-                             "(BCSV_ENABLE_BATCH_CODEC=OFF). "
-                             "Falling back to packet codec.\n";
-            cfg.use_batch = false;
-#endif
-        }
-
-        size_t comp_level = cfg.use_lz4 ? cfg.compression_level : 0;
-
-        // ── Write via lambda (selects Writer vs WriterDelta) ────────
+        // ── Write via lambda (selects Writer variant) ────────────────
         auto start_time = std::chrono::steady_clock::now();
-        size_t rows_in  = 0;
         size_t rows_out = 0;
 
         auto do_write = [&](auto& writer) {
-            writer.open(cfg.output_file, cfg.overwrite, comp_level,
-                        cfg.block_size_kb, flags);
+            writer.open(cfg.output_file, cfg.overwrite,
+                        codec_settings.comp_level,
+                        cfg.block_size_kb, codec_settings.flags);
 
             while (sampler.next()) {
-                ++rows_in;   // source rows that reached the sampler
-
                 const auto& src_row = sampler.row();
-                // Copy each field from sampler row to writer row
                 src_row.visitConst([&](size_t col, const auto& val) {
                     writer.row().set(col, val);
                 });
@@ -407,13 +333,7 @@ int main(int argc, char* argv[]) {
             writer.close();
         };
 
-        if (cfg.use_delta) {
-            bcsv::WriterDelta<bcsv::Layout> writer(out_layout);
-            do_write(writer);
-        } else {
-            bcsv::Writer<bcsv::Layout> writer(out_layout);
-            do_write(writer);
-        }
+        bcsv_cli::withWriter(out_layout, cfg.row_codec, do_write);
 
         auto end_time = std::chrono::steady_clock::now();
         auto duration_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -436,8 +356,8 @@ int main(int argc, char* argv[]) {
 
         std::cerr << "\n=== bcsvSampler Summary ===\n";
 
-        printLayout("Input", src_layout, std::cerr);
-        printLayout("Output", out_layout, std::cerr);
+        bcsv_cli::printLayoutSummary("Input", src_layout, std::cerr);
+        bcsv_cli::printLayoutSummary("Output", out_layout, std::cerr);
 
         std::cerr << "\nRows:\n"
                   << "  Source rows read:   " << total_source_rows << "\n"
@@ -449,7 +369,11 @@ int main(int argc, char* argv[]) {
                       << std::setprecision(1) << pass_pct << "%\n";
         }
 
-        std::cerr << "\nEncoding:  " << encodingDescription(cfg) << "\n";
+        std::cerr << "\nEncoding:  "
+                  << bcsv_cli::encodingDescription(cfg.row_codec,
+                                                    cfg.file_codec,
+                                                    cfg.compression_level)
+                  << "\n";
 
         std::cerr << "\nFile sizes:\n"
                   << "  Input:  " << input_size  << " bytes ("

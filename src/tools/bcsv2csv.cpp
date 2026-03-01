@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <vector>
 #include <bcsv/bcsv.h>
+#include "cli_common.h"
 
 struct Config {
     std::string input_file;
@@ -115,6 +116,7 @@ void printUsage(const char* program_name) {
     std::cout << "  INPUT_FILE     Input BCSV file path\n";
     std::cout << "  OUTPUT_FILE    Output CSV file path (default: INPUT_FILE.csv)\n\n";
     std::cout << "Options:\n";
+    std::cout << "  -o, --output FILE       Output CSV file path (use '-' for stdout)\n";
     std::cout << "  -d, --delimiter CHAR    Field delimiter (default: ',')\n";
     std::cout << "  --no-header             Don't include header row in output\n";
     std::cout << "  --firstRow N            Start from row N (0-based, default: 0)\n";
@@ -149,6 +151,12 @@ Config parseArgs(int argc, char* argv[]) {
         } else if (arg == "-d" || arg == "--delimiter") {
             if (i + 1 < argc) {
                 config.delimiter = argv[++i][0];
+            } else {
+                throw std::runtime_error("Option " + arg + " requires an argument");
+            }
+        } else if (arg == "-o" || arg == "--output") {
+            if (i + 1 < argc) {
+                config.output_file = argv[++i];
             } else {
                 throw std::runtime_error("Option " + arg + " requires an argument");
             }
@@ -240,9 +248,9 @@ int main(int argc, char* argv[]) {
         }
         
         if (config.verbose) {
-            std::cout << "Converting: " << config.input_file << " -> " << config.output_file << std::endl;
-            std::cout << "Delimiter: '" << config.delimiter << "'" << std::endl;
-            std::cout << "Header: " << (config.include_header ? "yes" : "no") << std::endl;
+            std::cerr << "Converting: " << config.input_file << " -> " << config.output_file << std::endl;
+            std::cerr << "Delimiter: '" << config.delimiter << "'" << std::endl;
+            std::cerr << "Header: " << (config.include_header ? "yes" : "no") << std::endl;
         }
         
         // Check if input file exists
@@ -253,16 +261,33 @@ int main(int argc, char* argv[]) {
         auto input_file_size = std::filesystem::file_size(config.input_file);
         auto bench_start = std::chrono::steady_clock::now();
 
-        // Open BCSV file and get layout information
-        bcsv::ReaderDirectAccess<bcsv::Layout> reader;
-        reader.open(config.input_file);
+        // Open BCSV file — try ReaderDirectAccess first (supports rowCount),
+        // fall back to plain Reader for stream-mode files without a footer.
+        bcsv::ReaderDirectAccess<bcsv::Layout> da_reader;
+        bcsv::Reader<bcsv::Layout> seq_reader;
+        bool has_direct_access = da_reader.open(config.input_file);
+
+        // Obtain a reference to the reader we'll actually use for sequential I/O.
+        // Both Reader and ReaderDirectAccess expose readNext() / row() / layout().
+        auto& reader = has_direct_access
+                            ? static_cast<bcsv::Reader<bcsv::Layout>&>(da_reader)
+                            : seq_reader;
+
+        if (!has_direct_access) {
+            if (!seq_reader.open(config.input_file)) {
+                throw std::runtime_error("Cannot open BCSV file: " + config.input_file);
+            }
+            if (config.verbose) {
+                std::cerr << "Using sequential reader (stream-mode file)" << std::endl;
+            }
+        }
         
         const auto& layout = reader.layout();
         
         if (config.verbose) {
-            std::cout << "Opened BCSV file successfully" << std::endl;
-            std::cout << "Layout contains " << layout.columnCount() << " columns:" << std::endl;
-            std::cout << layout << std::endl;
+            std::cerr << "Opened BCSV file successfully" << std::endl;
+            std::cerr << "Layout contains " << layout.columnCount() << " columns:" << std::endl;
+            std::cerr << layout << std::endl;
         }
         
         // Resolve row range parameters
@@ -290,19 +315,26 @@ int main(int argc, char* argv[]) {
                                   (effective_stop < 0 && effective_stop != INT64_MAX);
         
         if (config.verbose && (effective_start != 0 || effective_stop != INT64_MAX || effective_step != 1)) {
-            std::cout << "Row range: start=" << effective_start 
+            std::cerr << "Row range: start=" << effective_start 
                       << ", stop=" << (effective_stop == INT64_MAX ? "end" : std::to_string(effective_stop))
                       << ", step=" << effective_step << std::endl;
             if (has_negative_indices) {
-                std::cout << "Note: Negative indices will be resolved after reading file" << std::endl;
+                std::cerr << "Note: Negative indices will be resolved after reading file" << std::endl;
             }
         }
         
-        // Create CsvWriter with same layout as BCSV file
+        // Create CsvWriter — to file or to stdout
+        const bool to_stdout = (config.output_file == "-");
         bcsv::CsvWriter<bcsv::Layout> csv_writer(layout, config.delimiter);
-        if (!csv_writer.open(config.output_file, true, config.include_header)) {
-            throw std::runtime_error("Cannot create output file: " + config.output_file +
-                                     " (" + csv_writer.getErrorMsg() + ")");
+        if (to_stdout) {
+            if (!csv_writer.open(std::cout, config.include_header)) {
+                throw std::runtime_error("Cannot open stdout for CSV output");
+            }
+        } else {
+            if (!csv_writer.open(config.output_file, true, config.include_header)) {
+                throw std::runtime_error("Cannot create output file: " + config.output_file +
+                                         " (" + csv_writer.getErrorMsg() + ")");
+            }
         }
         
         // Convert data rows with range support
@@ -314,21 +346,24 @@ int main(int argc, char* argv[]) {
         std::vector<bool> rows_to_output;
         if (has_negative_indices) {
             if (config.verbose) {
-                std::cout << "Counting rows to resolve negative indices..." << std::endl;
+                std::cerr << "Counting rows to resolve negative indices..." << std::endl;
             }
             
             // Try to use the efficient countRows() function first
             try {
-                file_size = static_cast<int64_t>(reader.rowCount());
+                if (!has_direct_access) {
+                    throw std::runtime_error("no direct access available");
+                }
+                file_size = static_cast<int64_t>(da_reader.rowCount());
                 if (file_size == 0) {
                     throw std::runtime_error("countRows() returned 0");
                 }
                 if (config.verbose) {
-                    std::cout << "Used countRows(): " << file_size << " rows" << std::endl;
+                    std::cerr << "Used countRows(): " << file_size << " rows" << std::endl;
                 }
             } catch (const std::exception& e) {
                 if (config.verbose) {
-                    std::cout << "countRows() failed (" << e.what() << "), falling back to manual counting..." << std::endl;
+                    std::cerr << "countRows() failed (" << e.what() << "), falling back to manual counting..." << std::endl;
                 }
                 // Fallback: manual counting
                 file_size = 0;
@@ -340,7 +375,7 @@ int main(int argc, char* argv[]) {
                 reader.open(config.input_file);
                 total_rows_read = 0;
                 if (config.verbose) {
-                    std::cout << "Manual counting found: " << file_size << " rows" << std::endl;
+                    std::cerr << "Manual counting found: " << file_size << " rows" << std::endl;
                 }
             }
             
@@ -358,8 +393,8 @@ int main(int argc, char* argv[]) {
             effective_stop = std::min(file_size, effective_stop);
             
             if (config.verbose) {
-                std::cout << "File contains " << file_size << " rows" << std::endl;
-                std::cout << "Resolved range: [" << effective_start << ":" << effective_stop << ":" << effective_step << "]" << std::endl;
+                std::cerr << "File contains " << file_size << " rows" << std::endl;
+                std::cerr << "Resolved range: [" << effective_start << ":" << effective_stop << ":" << effective_step << "]" << std::endl;
             }
             
             // Create mask for which rows to output
@@ -406,7 +441,7 @@ int main(int argc, char* argv[]) {
             }
             
             if (config.verbose && (total_rows_read & 0x3FFF) == 0) {  // Every 16384 rows for better performance
-                std::cout << "Processed " << total_rows_read << " rows, output " << output_rows_written << " rows..." << std::endl;
+                std::cerr << "Processed " << total_rows_read << " rows, output " << output_rows_written << " rows..." << std::endl;
             }
         }
         
@@ -417,26 +452,30 @@ int main(int argc, char* argv[]) {
         auto bench_dur_ms = std::chrono::duration_cast<std::chrono::milliseconds>(bench_end - bench_start).count();
         if (bench_dur_ms == 0) bench_dur_ms = 1;
         double bench_sec = bench_dur_ms / 1000.0;
-        auto output_file_size = std::filesystem::file_size(config.output_file);
+        uintmax_t output_file_size = to_stdout ? 0 : std::filesystem::file_size(config.output_file);
         double throughput_mb_s = (static_cast<double>(input_file_size) / (1024.0 * 1024.0)) / bench_sec;
         double rows_per_sec = static_cast<double>(output_rows_written) / bench_sec;
         
-        std::cout << "Successfully converted " << output_rows_written << " rows to " << config.output_file;
-        if (total_rows_read != output_rows_written) {
-            std::cout << " (from " << total_rows_read << " total rows)";
+        if (!to_stdout) {
+            std::cerr << "Successfully converted " << output_rows_written << " rows to " << config.output_file;
+            if (total_rows_read != output_rows_written) {
+                std::cerr << " (from " << total_rows_read << " total rows)";
+            }
+            std::cerr << std::endl;
         }
-        std::cout << std::endl;
         
         if (config.verbose) {
-            auto x = std::filesystem::file_size(config.output_file);
-            std::cout << "Output file size: " << x << " bytes" << std::endl;
+            if (!to_stdout) {
+                std::cerr << "Output file size: " << output_file_size << " bytes" << std::endl;
+            }
+            std::cerr << "Rows written: " << output_rows_written << std::endl;
         }
 
         // --benchmark: print timing stats to stderr
         if (config.benchmark) {
             if (config.json_output) {
-                // JSON blob to stdout
-                std::cout << "{\"tool\":\"bcsv2csv\""
+                // JSON blob — always to stderr to avoid corrupting CSV on stdout
+                std::cerr << "{\"tool\":\"bcsv2csv\""
                           << ",\"input_file\":\"" << config.input_file << "\""
                           << ",\"output_file\":\"" << config.output_file << "\""
                           << ",\"rows\":" << output_rows_written

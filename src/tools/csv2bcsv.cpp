@@ -24,6 +24,7 @@
 #include <chrono>
 #include <iomanip>
 #include <bcsv/bcsv.h>
+#include "cli_common.h"
 
 struct Config {
     std::string input_file;
@@ -34,9 +35,15 @@ struct Config {
     bool verbose = false;
     bool help = false;
     bool force_delimiter = false;  // True if user explicitly set delimiter
-    bool use_zoh = true;  // Use Zero-Order Hold compression by default
+    bool overwrite = false;
     bool benchmark = false;  // Print timing stats to stderr
     bool json_output = false;  // Emit JSON timing blob to stdout
+
+    // Codec selection (standardised with bcsvGenerator / bcsvSampler)
+    std::string row_codec  = bcsv_cli::DEFAULT_ROW_CODEC;   // delta | zoh | flat
+    std::string file_codec = bcsv_cli::DEFAULT_FILE_CODEC;  // packet_lz4_batch | ...
+    size_t compression_level = 1;
+    size_t block_size_kb     = 64;
 };
 
 // Enhanced data type detection with range analysis
@@ -348,17 +355,24 @@ void printUsage(const char* program_name) {
     std::cout << "  -d, --delimiter CHAR    Field delimiter (default: auto-detect)\n";
     std::cout << "  --no-header             CSV file has no header row\n";
     std::cout << "  --decimal-separator CHAR  Decimal separator: '.' or ',' (default: '.')\n";
-    std::cout << "  --no-zoh               Disable Zero-Order Hold compression (default: enabled)\n";
     std::cout << "  -v, --verbose           Enable verbose output\n";
+    std::cout << "  -f, --overwrite         Overwrite output file if it exists\n";
     std::cout << "  --benchmark             Print timing stats (wall clock, rows/s, MB/s) to stderr\n";
     std::cout << "  --json                  With --benchmark: emit JSON timing blob to stdout\n";
     std::cout << "  -h, --help              Show this help message\n\n";
+    std::cout << "Encoding (defaults: packet_lz4_batch + delta):\n";
+    std::cout << "  --row-codec CODEC       Row codec: delta (default), zoh, flat\n";
+    std::cout << "  --file-codec CODEC      File codec: packet_lz4_batch (default),\n";
+    std::cout << "                          packet_lz4, packet, stream_lz4, stream\n";
+    std::cout << "  --compression-level N   LZ4 compression level (default: 1)\n";
+    std::cout << "  --block-size N          Block size in KB (default: 64)\n\n";
     std::cout << "Examples:\n";
     std::cout << "  " << program_name << " data.csv\n";
     std::cout << "  " << program_name << " -d ';' data.csv output.bcsv\n";
     std::cout << "  " << program_name << " --no-header -v data.csv\n";
     std::cout << "  " << program_name << " --decimal-separator ',' german_data.csv\n";
-    std::cout << "  " << program_name << " --no-zoh data.csv  # Disable ZoH compression\n";
+    std::cout << "  " << program_name << " --row-codec zoh data.csv\n";
+    std::cout << "  " << program_name << " --row-codec flat --file-codec stream data.csv\n";
 }
 
 Config parseArgs(int argc, char* argv[]) {
@@ -380,13 +394,40 @@ Config parseArgs(int argc, char* argv[]) {
         } else if (arg == "--no-header") {
             config.has_header = false;
         } else if (arg == "--no-zoh") {
-            config.use_zoh = false;
+            // Deprecated alias — --no-zoh meant "disable ZoH, use default"
+            // The new default row codec is delta, so map accordingly.
+            std::cerr << "Warning: --no-zoh is deprecated. Use --row-codec delta instead.\n";
+            config.row_codec = "delta";
+        } else if (arg == "-f" || arg == "--overwrite") {
+            config.overwrite = true;
         } else if (arg == "-v" || arg == "--verbose") {
             config.verbose = true;
         } else if (arg == "--benchmark") {
             config.benchmark = true;
         } else if (arg == "--json") {
             config.json_output = true;
+        } else if (arg == "--row-codec" && i + 1 < argc) {
+            config.row_codec = argv[++i];
+            bcsv_cli::validateRowCodec(config.row_codec);
+        } else if (arg == "--file-codec" && i + 1 < argc) {
+            config.file_codec = argv[++i];
+            bcsv_cli::validateFileCodec(config.file_codec);
+        } else if (arg == "--compression-level" && i + 1 < argc) {
+            try {
+                int lvl = std::stoi(argv[++i]);
+                if (lvl < 0) throw std::runtime_error("Compression level must be non-negative");
+                config.compression_level = static_cast<size_t>(lvl);
+            } catch (const std::invalid_argument&) {
+                throw std::runtime_error(std::string("Invalid compression level: ") + argv[i]);
+            }
+        } else if (arg == "--block-size" && i + 1 < argc) {
+            try {
+                int bs = std::stoi(argv[++i]);
+                if (bs <= 0) throw std::runtime_error("Block size must be positive");
+                config.block_size_kb = static_cast<size_t>(bs);
+            } catch (const std::invalid_argument&) {
+                throw std::runtime_error(std::string("Invalid block size: ") + argv[i]);
+            }
         } else if (arg == "--decimal-separator") {
             if (i + 1 < argc) {
                 std::string sep = argv[++i];
@@ -447,7 +488,8 @@ int main(int argc, char* argv[]) {
             std::cout << "Delimiter: '" << config.delimiter << "'" << std::endl;
             std::cout << "Header: " << (config.has_header ? "yes" : "no") << std::endl;
             std::cout << "Decimal separator: '" << config.decimal_separator << "'" << std::endl;
-            std::cout << "ZoH compression: " << (config.use_zoh ? "enabled" : "disabled") << std::endl;
+            std::cout << "Encoding: " << bcsv_cli::encodingDescription(
+                config.row_codec, config.file_codec, config.compression_level) << std::endl;
         }
         
         // Check if input file exists
@@ -588,11 +630,13 @@ int main(int argc, char* argv[]) {
         input.close();
         
         // Create BCSV writer and convert data using CsvReader for the second pass
-        bcsv::FileFlags flags = config.use_zoh ? bcsv::FileFlags::ZERO_ORDER_HOLD : bcsv::FileFlags::NONE;
+        auto codec_settings = bcsv_cli::resolveCodecFlags(
+            config.file_codec, config.row_codec, config.compression_level);
         size_t row_count = 0;
         auto write_rows = [&](auto& writer) {
-            // Use compression level 1 for better performance vs file size
-            writer.open(config.output_file, true, 1, 64, flags);
+            writer.open(config.output_file, config.overwrite,
+                        codec_settings.comp_level, config.block_size_kb,
+                        codec_settings.flags);
 
             // Use CsvReader with the detected layout for type-safe CSV parsing
             bcsv::CsvReader<bcsv::Layout> csv_reader(layout, config.delimiter, config.decimal_separator);
@@ -618,13 +662,7 @@ int main(int argc, char* argv[]) {
             writer.close();
         };
 
-        if (config.use_zoh) {
-            bcsv::WriterZoH<bcsv::Layout> writer(layout);
-            write_rows(writer);
-        } else {
-            bcsv::Writer<bcsv::Layout> writer(layout);
-            write_rows(writer);
-        }
+        bcsv_cli::withWriter(layout, config.row_codec, write_rows);
 
         // Calculate conversion timing and statistics
         auto end_time = std::chrono::steady_clock::now();
@@ -662,7 +700,8 @@ int main(int argc, char* argv[]) {
             std::cout << "  File size increase: " << std::fixed << std::setprecision(1) << size_increase_ratio << "% (overhead from binary format and metadata)" << std::endl;
             std::cout << "  Additional space used: " << (output_file_size - input_file_size) << " bytes" << std::endl;
         }
-        std::cout << "  Compression mode: " << (config.use_zoh ? "ZoH enabled" : "Standard") << std::endl;
+        std::cout << "  Compression mode: " << bcsv_cli::encodingDescription(
+            config.row_codec, config.file_codec, config.compression_level) << std::endl;
 
         // --benchmark: structured timing output
         if (config.benchmark) {
@@ -679,7 +718,8 @@ int main(int argc, char* argv[]) {
                           << ",\"throughput_mb_s\":" << std::fixed << std::setprecision(2) << throughput_mb_s
                           << ",\"rows_per_sec\":" << std::fixed << std::setprecision(0) << rows_per_sec
                           << ",\"compression_ratio\":" << std::fixed << std::setprecision(1) << compression_ratio
-                          << ",\"zoh\":" << (config.use_zoh ? "true" : "false")
+                          << ",\"row_codec\":\"" << config.row_codec << "\""
+                          << ",\"file_codec\":\"" << config.file_codec << "\""
                           << "}" << std::endl;
             } else {
                 std::cerr << "[benchmark] csv2bcsv: "

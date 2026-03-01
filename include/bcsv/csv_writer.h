@@ -63,7 +63,8 @@ namespace bcsv {
     private:
         std::string             err_msg_;           // last error message description
         FilePath                file_path_;          // path to the output file
-        std::ofstream           stream_;             // text output stream
+        std::ofstream           stream_;             // text output stream (owned, for file open)
+        std::ostream*           os_ = nullptr;       // active output stream (points to stream_ or external ostream)
 
         RowType                 row_;                // current row (user fills, writeRow() serializes)
         uint64_t                row_cnt_ = 0;        // total rows written
@@ -82,8 +83,9 @@ namespace bcsv {
         const std::string&      getErrorMsg() const             { return err_msg_; }
         const FilePath&         filePath() const                { return file_path_; }
         const LayoutType&       layout() const                  { return row_.layout(); }
-        bool                    isOpen() const                  { return stream_.is_open(); }
+        bool                    isOpen() const                  { return os_ != nullptr; }
         bool                    open(const FilePath& filepath, bool overwrite = false, bool includeHeader = true);
+        bool                    open(std::ostream& os, bool includeHeader = true);
         RowType&                row()                           { return row_; }
         const RowType&          row() const                     { return row_; }
         size_t                  rowCount() const                { return row_cnt_; }

@@ -11,33 +11,31 @@
  * @file bcsvTail.cpp
  * @brief CLI tool to display the last few rows of a BCSV file in CSV format
  * 
- * This tool reads a BCSV file and prints the last N rows to console in CSV format,
- * without the header. Designed for quick inspection and piping to other tools.
+ * Reads a BCSV file and prints the last N rows to stdout in CSV format.
+ * Uses ReaderDirectAccess for efficient O(N_requested) random-access tail
+ * when a file footer is available.  Falls back to sequential streaming with
+ * a circular buffer when the footer is missing (stream-mode files).
+ *
+ * Uses CsvWriter with std::cout for consistent RFC 4180 output.
  */
 
 #include <iostream>
 #include <string>
+#include <sstream>
 #include <filesystem>
 #include <cstdint>
-#include <vector>
 #include <deque>
+#include <stdexcept>
 #include <bcsv/bcsv.h>
-#include "csv_format_utils.h"
-
-using bcsv_cli::escapeCsvField;
-using bcsv_cli::formatNumeric;
-using bcsv_cli::getCellValue;
+#include "cli_common.h"
 
 struct Config {
     std::string input_file;
-    size_t num_rows = 10;        // Default: show last 10 rows
+    size_t num_rows = 10;
     char delimiter = ',';
-    char quote_char = '"';
-    bool quote_all = false;
-    bool include_header = true;  // Default: include header (changed from original spec)
+    bool include_header = true;
     bool verbose = false;
     bool help = false;
-    int float_precision = -1;    // -1 means auto-detect optimal precision
 };
 
 void printUsage(const char* program_name) {
@@ -48,17 +46,14 @@ void printUsage(const char* program_name) {
     std::cout << "Options:\n";
     std::cout << "  -n, --lines N           Number of rows to display (default: 10)\n";
     std::cout << "  -d, --delimiter CHAR    Field delimiter (default: ',')\n";
-    std::cout << "  -q, --quote CHAR        Quote character (default: '\"')\n";
-    std::cout << "  --quote-all             Quote all fields (not just those that need it)\n";
     std::cout << "  --no-header             Don't include header row in output\n";
-    std::cout << "  -p, --precision N       Floating point precision (default: auto)\n";
     std::cout << "  -v, --verbose           Enable verbose output\n";
     std::cout << "  -h, --help              Show this help message\n\n";
     std::cout << "Examples:\n";
     std::cout << "  " << program_name << " data.bcsv\n";
     std::cout << "  " << program_name << " -n 20 data.bcsv\n";
     std::cout << "  " << program_name << " --no-header data.bcsv\n";
-    std::cout << "  " << program_name << " -d ';' --quote-all data.bcsv\n";
+    std::cout << "  " << program_name << " -d ';' data.bcsv\n";
     std::cout << "  " << program_name << " data.bcsv | wc -l\n";
 }
 
@@ -73,66 +68,149 @@ Config parseArgs(int argc, char* argv[]) {
             return config;
         } else if (arg == "-v" || arg == "--verbose") {
             config.verbose = true;
-        } else if (arg == "--quote-all") {
-            config.quote_all = true;
         } else if (arg == "--no-header") {
             config.include_header = false;
         } else if ((arg == "-n" || arg == "--lines") && i + 1 < argc) {
             try {
                 int num = std::stoi(argv[++i]);
                 if (num <= 0) {
-                    std::cerr << "Error: Number of lines must be positive: " << num << std::endl;
-                    exit(1);
+                    throw std::runtime_error("Number of lines must be positive: " + std::to_string(num));
                 }
                 config.num_rows = static_cast<size_t>(num);
-            } catch (const std::exception&) {
-                std::cerr << "Error: Invalid number of lines: " << argv[i] << std::endl;
-                exit(1);
+            } catch (const std::invalid_argument&) {
+                throw std::runtime_error(std::string("Invalid number of lines: ") + argv[i]);
             }
         } else if ((arg == "-d" || arg == "--delimiter") && i + 1 < argc) {
             std::string delim = argv[++i];
             if (delim.length() != 1) {
-                std::cerr << "Error: Delimiter must be a single character: " << delim << std::endl;
-                exit(1);
+                throw std::runtime_error("Delimiter must be a single character: " + delim);
             }
             config.delimiter = delim[0];
-        } else if ((arg == "-q" || arg == "--quote") && i + 1 < argc) {
-            std::string quote = argv[++i];
-            if (quote.length() != 1) {
-                std::cerr << "Error: Quote character must be a single character: " << quote << std::endl;
-                exit(1);
-            }
-            config.quote_char = quote[0];
-        } else if ((arg == "-p" || arg == "--precision") && i + 1 < argc) {
-            try {
-                config.float_precision = std::stoi(argv[++i]);
-                if (config.float_precision < 0) {
-                    std::cerr << "Error: Precision must be non-negative: " << config.float_precision << std::endl;
-                    exit(1);
-                }
-            } catch (const std::exception&) {
-                std::cerr << "Error: Invalid precision: " << argv[i] << std::endl;
-                exit(1);
-            }
-        } else if (arg.substr(0, 1) == "-") {
-            std::cerr << "Error: Unknown option: " << arg << std::endl;
-            exit(1);
+        } else if (arg.starts_with("-")) {
+            throw std::runtime_error("Unknown option: " + arg);
         } else {
             if (config.input_file.empty()) {
                 config.input_file = arg;
             } else {
-                std::cerr << "Error: Too many arguments. Only one input file expected." << std::endl;
-                exit(1);
+                throw std::runtime_error("Too many arguments. Only one input file expected.");
             }
         }
     }
     
     if (config.input_file.empty() && !config.help) {
-        std::cerr << "Error: Input file is required" << std::endl;
-        exit(1);
+        throw std::runtime_error("Input file is required");
     }
     
     return config;
+}
+
+// Helper: emit a single row from reader through CsvWriter
+static void emitRow(bcsv::CsvWriter<bcsv::Layout>& csv_writer,
+                    const bcsv::Row& row) {
+    row.visitConst([&](size_t col, const auto& val) {
+        csv_writer.row().set(col, val);
+    });
+    csv_writer.writeRow();
+}
+
+// Fast path using ReaderDirectAccess – reads only the required rows
+static size_t tailDirectAccess(const Config& config) {
+    bcsv::ReaderDirectAccess<bcsv::Layout> reader;
+    if (!reader.open(config.input_file)) {
+        // Footer missing or corrupt – signal caller to fall back
+        return SIZE_MAX;
+    }
+
+    const auto& layout = reader.layout();
+    const size_t total = reader.rowCount();
+
+    if (config.verbose) {
+        std::cerr << "Direct-access mode: " << total << " total rows" << std::endl;
+    }
+
+    bcsv::CsvWriter<bcsv::Layout> csv_writer(layout, config.delimiter);
+    csv_writer.open(std::cout, config.include_header);
+
+    const size_t start = (total > config.num_rows) ? total - config.num_rows : 0;
+    size_t rows_printed = 0;
+    for (size_t i = start; i < total; ++i) {
+        if (!reader.read(i)) {
+            std::cerr << "Warning: Failed to read row " << i << std::endl;
+            continue;
+        }
+        emitRow(csv_writer, reader.row());
+        rows_printed++;
+    }
+
+    reader.close();
+    csv_writer.close();
+    return rows_printed;
+}
+
+// Slow path – streams entire file, keeps last N formatted rows in a deque
+static size_t tailSequential(const Config& config) {
+    bcsv::Reader<bcsv::Layout> reader;
+    if (!reader.open(config.input_file)) {
+        std::cerr << "Error: Cannot open BCSV file: " << config.input_file << std::endl;
+        return 0;
+    }
+
+    const auto& layout = reader.layout();
+
+    if (config.verbose) {
+        std::cerr << "Sequential mode (footer unavailable)" << std::endl;
+    }
+
+    // Buffer the last N rows as formatted CSV strings via a stringstream.
+    // CsvWriter handles RFC 4180 escaping through its normal code path.
+    std::deque<std::string> row_buffer;
+    size_t total_rows = 0;
+
+    // A CsvWriter writing into a reusable stringstream
+    std::ostringstream oss;
+    bcsv::CsvWriter<bcsv::Layout> csv_fmt(layout, config.delimiter);
+    csv_fmt.open(oss, /*includeHeader=*/false);
+
+    while (reader.readNext()) {
+        oss.str("");
+        oss.clear();
+
+        reader.row().visitConst([&](size_t col, const auto& val) {
+            csv_fmt.row().set(col, val);
+        });
+        csv_fmt.writeRow();
+
+        row_buffer.push_back(oss.str());
+        if (row_buffer.size() > config.num_rows) {
+            row_buffer.pop_front();
+        }
+        total_rows++;
+    }
+    reader.close();
+    csv_fmt.close();
+
+    if (config.verbose) {
+        std::cerr << "Total rows in file: " << total_rows << std::endl;
+        std::cerr << "Displaying last " << row_buffer.size() << " rows" << std::endl;
+    }
+
+    // Print header (use CsvWriter for proper RFC 4180 quoting).
+    // CsvWriter::open() writes the header immediately when includeHeader
+    // is true, so we just open+close — no dummy row needed.
+    if (config.include_header) {
+        std::ostringstream hdr_oss;
+        bcsv::CsvWriter<bcsv::Layout> hdr_writer(layout, config.delimiter);
+        hdr_writer.open(hdr_oss, /*includeHeader=*/true);
+        hdr_writer.close();
+        std::cout << hdr_oss.str();
+    }
+
+    // Print buffered rows (each already ends with newline from CsvWriter)
+    for (const auto& line : row_buffer) {
+        std::cout << line;
+    }
+
+    return row_buffer.size();
 }
 
 int main(int argc, char* argv[]) {
@@ -147,86 +225,19 @@ int main(int argc, char* argv[]) {
         if (config.verbose) {
             std::cerr << "Reading: " << config.input_file << std::endl;
             std::cerr << "Lines: " << config.num_rows << std::endl;
-            std::cerr << "Include header: " << (config.include_header ? "yes" : "no") << std::endl;
-            std::cerr << "Delimiter: '" << config.delimiter << "'" << std::endl;
-            std::cerr << "Quote: '" << config.quote_char << "'" << std::endl;
-            std::cerr << "Quote all: " << (config.quote_all ? "yes" : "no") << std::endl;
         }
         
-        // Open BCSV file
-        bcsv::Reader<bcsv::Layout> reader;
-        if (!reader.open(config.input_file)) {
-            std::cerr << "Error: Cannot open BCSV file: " << config.input_file << std::endl;
-            return 1;
+        // Try fast direct-access first; fall back to sequential
+        size_t printed = tailDirectAccess(config);
+        if (printed == SIZE_MAX) {
+            if (config.verbose) {
+                std::cerr << "Direct-access unavailable, falling back to sequential" << std::endl;
+            }
+            printed = tailSequential(config);
         }
         
         if (config.verbose) {
-            std::cerr << "Opened BCSV file successfully" << std::endl;
-        }
-        
-        const auto& layout = reader.layout();
-        if (config.verbose) {
-            std::cerr << "Layout contains " << layout.columnCount() << " columns" << std::endl;
-        }
-        
-        // Strategy: Use a circular buffer (deque) to store the last N rows
-        // This is memory efficient for large files while keeping implementation simple
-        std::deque<std::vector<std::string>> row_buffer;
-        
-        // Read all rows and keep only the last N in our buffer
-        size_t total_rows = 0;
-        while (reader.readNext()) {
-            const auto& row = reader.row();
-            
-            std::vector<std::string> row_values;
-            row_values.reserve(layout.columnCount());
-            
-            for (size_t i = 0; i < layout.columnCount(); ++i) {
-                std::string value = getCellValue(row, i, layout.columnType(i), config.float_precision);
-                row_values.push_back(escapeCsvField(value, config.delimiter, config.quote_char, config.quote_all));
-            }
-            
-            row_buffer.push_back(std::move(row_values));
-            
-            // Keep only the last N rows
-            if (row_buffer.size() > config.num_rows) {
-                row_buffer.pop_front();
-            }
-            
-            total_rows++;
-        }
-        
-        reader.close();
-        
-        if (config.verbose) {
-            std::cerr << "Total rows in file: " << total_rows << std::endl;
-            std::cerr << "Displaying last " << row_buffer.size() << " rows" << std::endl;
-        }
-        
-        // Print header if requested
-        if (config.include_header) {
-            bool first = true;
-            for (size_t i = 0; i < layout.columnCount(); ++i) {
-                if (!first) std::cout << config.delimiter;
-                std::cout << escapeCsvField(layout.columnName(i), config.delimiter, config.quote_char, config.quote_all);
-                first = false;
-            }
-            std::cout << std::endl;
-        }
-        
-        // Print the buffered rows
-        for (const auto& row_values : row_buffer) {
-            bool first = true;
-            for (const auto& value : row_values) {
-                if (!first) std::cout << config.delimiter;
-                std::cout << value;
-                first = false;
-            }
-            std::cout << std::endl;
-        }
-        
-        if (config.verbose) {
-            std::cerr << "Successfully displayed " << row_buffer.size() << " rows" << std::endl;
+            std::cerr << "Successfully displayed " << printed << " rows" << std::endl;
         }
         
         return 0;
