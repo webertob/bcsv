@@ -190,11 +190,7 @@ BCSV supports multiple compression levels (0-9):
 - **Level 9**: Maximum compression (slowest)
 
 ```csharp
-Example:
-
-```csharp
 var writer = new BcsvWriter(layout, compressionLevel: 1); // Fast compression
-```
 ```
 
 ## Error Handling

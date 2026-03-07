@@ -135,7 +135,7 @@ namespace bcsv {
         /**
          * @brief Searches, reads and validates the next packet header from binary stream
          * @param stream Input stream to read from
-         * @param position start postion to search from, updated to position of packet header magic if found, else EoL
+         * @param position start position to search from, updated to position of packet header magic if found, else EoL
          * @param maxScanBytes Maximum number of bytes to scan before giving up (0 = unlimited, default 64 MiB)
          * @return true if read successful and header is valid
          */

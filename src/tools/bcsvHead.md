@@ -28,10 +28,7 @@ bcsvHead [OPTIONS] INPUT_FILE
 |--------|-------------|---------|
 | `-n, --lines N` | Number of rows to display (default: 10) | `-n 20` |
 | `-d, --delimiter CHAR` | Field delimiter (default: `,`) | `-d ';'` |
-| `-q, --quote CHAR` | Quote character (default: `"`) | `-q "'"` |
-| `--quote-all` | Quote all fields (not just when necessary) | `--quote-all` |
 | `--no-header` | Don't include header row in output | `--no-header` |
-| `-p, --precision N` | Floating point precision (default: auto) | `-p 2` |
 | `-v, --verbose` | Enable verbose output | `-v` |
 | `-h, --help` | Show help message | `--help` |
 
@@ -71,14 +68,8 @@ bcsvHead data.bcsv | awk -F, '$3 > 250 {print $2, $3}'
 ### 3. Custom Formatting
 
 ```bash
-# Semicolon-delimited with quotes
-bcsvHead -d ';' --quote-all data.bcsv
-
-# Fixed precision for floats
-bcsvHead -p 2 data.bcsv
-
-# European format
-bcsvHead -d ';' --quote-all -p 1 data.bcsv
+# Semicolon-delimited output
+bcsvHead -d ';' data.bcsv
 ```
 
 ## Examples
@@ -87,8 +78,8 @@ bcsvHead -d ';' --quote-all -p 1 data.bcsv
 # Basic inspection
 bcsvHead sales_data.bcsv
 
-# Show more rows with formatting
-bcsvHead -n 25 -p 1 financial_data.bcsv
+# Show more rows
+bcsvHead -n 25 financial_data.bcsv
 
 # Data-only output for processing
 bcsvHead -n 10 --no-header data.bcsv | awk -F, '{sum+=$3} END {print sum}'
@@ -97,7 +88,7 @@ bcsvHead -n 10 --no-header data.bcsv | awk -F, '{sum+=$3} END {print sum}'
 bcsvHead -n 100 data.bcsv | grep "error" | wc -l
 
 # Custom delimiter for specific tools
-bcsvHead -d '|' --quote-all data.bcsv | some_tool
+bcsvHead -d '|' data.bcsv | some_tool
 
 # Check file structure before processing
 bcsvHead -n 3 -v unknown_data.bcsv

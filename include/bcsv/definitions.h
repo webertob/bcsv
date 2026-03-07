@@ -77,7 +77,7 @@ namespace bcsv {
     constexpr size_t MAX_COLUMN_COUNT  = std::numeric_limits<uint16_t>::max();  // Maximum number of columns
     constexpr size_t MAX_COLUMN_LENGTH = std::numeric_limits<uint16_t>::max();  // Maximum width of column content
     constexpr size_t MAX_STRING_LENGTH = std::numeric_limits<uint16_t>::max(); // Maximum length of string data (wire format uses uint16_t lengths)
-    constexpr size_t MAX_ROW_LENGTH    = (1ULL << 24) - 2 ;                     // about 16MB maximum Maximum size of a single row in bytes, using 4b BLE encoding (2 bits for length), reserve 0xFFFF for terminator.
+    constexpr size_t MAX_ROW_LENGTH    = (1ULL << 24) - 2 ;                     // ~16 MB maximum row size, 4b BLE encoding (2 bits for length), reserve 0xFFFF for terminator.
     constexpr size_t MIN_PACKET_SIZE   = 64 * 1024;                             // 64KB minimum packet size    
     constexpr size_t MAX_PACKET_SIZE   = 1024 * 1024 * 1024;                    // 1GB maximum packet size
     /**
@@ -148,7 +148,7 @@ namespace bcsv {
     }
 
     /** Column data type enumeration (stored as uint8_t in file) 
-     * Ensure the order matches ValueType variant! As we rely on index() to match note isType()
+     * Ensure the order matches ValueType variant! As we rely on index() to match @see isType()
      */
     enum class ColumnType : uint8_t {
         BOOL,
@@ -166,7 +166,7 @@ namespace bcsv {
         VOID = 255
     };
     /** Variant type representing all possible column value types
-     *  Ensure the order matches ColumnType enum! As we rely on index() to match note isType()
+     *  Ensure the order matches ColumnType enum! As we rely on index() to match @see isType()
      */
     using ValueType = std::variant< bool, 
                                     uint8_t, 

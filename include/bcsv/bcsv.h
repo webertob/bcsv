@@ -37,25 +37,25 @@
 #include "packet_header.h"
 #include "reader.h"
 #include "row.h"
-#include "codec_row/row_codec_flat001.h"  // Flat001 codec (Item 11)
-#include "codec_row/row_codec_zoh001.h"   // ZoH001 codec (Item 11)
-#include "codec_row/row_codec_delta002.h" // Delta row codec (Item 14)
-#include "codec_row/row_codec_dispatch.h" // Runtime dispatch (Item 11)
-#include "codec_file/file_codec_concept.h"      // FileCodec concept + sentinels (Item 12)
-#include "codec_file/file_codec_stream001.h"    // Stream-raw file codec (Item 12)
-#include "codec_file/file_codec_stream_lz4_001.h" // Stream-LZ4 file codec (Item 12)
-#include "codec_file/file_codec_packet001.h"    // Packet-raw file codec (Item 12)
-#include "codec_file/file_codec_packet_lz4_001.h" // Packet-LZ4 file codec (Item 12)
+#include "codec_row/row_codec_flat001.h"        // Flat001 codec
+#include "codec_row/row_codec_zoh001.h"         // ZoH001 codec
+#include "codec_row/row_codec_delta002.h"       // Delta row codec
+#include "codec_row/row_codec_dispatch.h"       // Runtime dispatch
+#include "codec_file/file_codec_concept.h"      // FileCodec concept + sentinels
+#include "codec_file/file_codec_stream001.h"    // Stream-raw file codec
+#include "codec_file/file_codec_stream_lz4_001.h" // Stream-LZ4 file codec
+#include "codec_file/file_codec_packet001.h"    // Packet-raw file codec
+#include "codec_file/file_codec_packet_lz4_001.h" // Packet-LZ4 file codec
 #ifdef BCSV_HAS_BATCH_CODEC
 #include "codec_file/file_codec_packet_lz4_batch001.h" // Batch-LZ4 async file codec
 #endif
-#include "codec_file/file_codec_dispatch.h"     // FileCodec runtime dispatch (Item 12)
+#include "codec_file/file_codec_dispatch.h"     // FileCodec runtime dispatch
 #include "row_visitors.h"  // Row visitor pattern concepts and helpers
 #include "writer.h"
-#include "reader_concept.h"          // ReaderConcept (Item 12)
-#include "writer_concept.h"          // WriterConcept (Item 12)
-#include "csv_writer.h"              // CsvWriter (Item 12)
-#include "csv_reader.h"              // CsvReader (Item 12)
+#include "reader_concept.h"          // ReaderConcept
+#include "writer_concept.h"          // WriterConcept
+#include "csv_writer.h"              // CsvWriter
+#include "csv_reader.h"              // CsvReader
 
 // Include implementations
 #include "bcsv.hpp"
@@ -64,9 +64,9 @@
 #include "layout.hpp"
 #include "reader.hpp"
 #include "row.hpp"
-#include "codec_row/row_codec_flat001.hpp"  // Flat001 codec implementation (Item 11)
-#include "codec_row/row_codec_zoh001.hpp"  // ZoH001 codec implementation (Item 11)
-#include "codec_row/row_codec_delta002.hpp" // Delta row codec implementation (Item 14)
+#include "codec_row/row_codec_flat001.hpp"      // Flat001 codec implementation
+#include "codec_row/row_codec_zoh001.hpp"       // ZoH001 codec implementation
+#include "codec_row/row_codec_delta002.hpp"     // Delta row codec implementation
 #include "writer.hpp"
-#include "csv_writer.hpp"         // CsvWriter implementation (Item 12)
-#include "csv_reader.hpp"         // CsvReader implementation (Item 12)
+#include "csv_writer.hpp"         // CsvWriter implementation
+#include "csv_reader.hpp"         // CsvReader implementation

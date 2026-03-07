@@ -39,7 +39,7 @@ python/
 ├── include/           # ← Auto-generated, not tracked in git
 │   ├── bcsv/         # ← Synced from ../include/bcsv/
 │   ├── lz4-1.10.0/   # ← Synced from ../include/lz4-1.10.0/
-│   └── boost-1.89.0/ # ← Synced from ../include/boost-1.89.0/
+│   └── xxHash-0.8.3/ # ← Synced from ../include/xxHash-0.8.3/
 ├── pybcsv/           # ← Python package source
 ├── sync_headers.py   # ← Header synchronization script
 └── setup.py          # ← Build configuration

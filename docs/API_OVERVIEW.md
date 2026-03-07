@@ -254,7 +254,6 @@ print(df.head())
 
 - **Unity integration**: Drag-and-drop plugin
 - **Minimal GC pressure**: Efficient memory usage
-- **Thread-safe**: Safe for Unity's job system
 - **Asset serialization**: Save/load game data
 - **Cross-platform**: Windows, macOS, Linux, consoles
 

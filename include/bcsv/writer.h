@@ -17,7 +17,6 @@
 #include "definitions.h"
 #include "layout.h"
 #include "row.h"
-#include "codec_row/row_codec_dispatch.h"
 #include "codec_row/row_codec_flat001.h"
 #include "codec_row/row_codec_zoh001.h"
 #include "codec_row/row_codec_delta002.h"
@@ -84,15 +83,6 @@ namespace bcsv {
         ~Writer();
 
         void                    close();
-
-        /// @brief Flush all buffered data to disk in a crash-recoverable state.
-        /// @note For packet-based codecs, this closes the current packet
-        ///       (writes terminator + checksum), flushes the OS stream, then
-        ///       opens a new packet for subsequent writes.  The row codec is
-        ///       reset at the packet boundary (ZoH/Delta restart cleanly).
-        ///       For stream codecs, this flushes the OS stream buffer only.
-        ///       After flush(), all previously written rows are recoverable
-        ///       by a Reader even if the process crashes.
         void                    flush();
         uint8_t                 compressionLevel() const        { return file_header_.getCompressionLevel(); }
         const std::string&      getErrorMsg() const             { return err_msg_; }

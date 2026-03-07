@@ -5,7 +5,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://isocpp.org/)
-[![Version](https://img.shields.io/badge/version-1.3.0--dev-orange.svg)](VERSIONING.md)
+[![Version](https://img.shields.io/badge/version-1.3.0-orange.svg)](VERSIONING.md)
 
 ---
 
@@ -133,8 +133,8 @@ python3 benchmark/run.py wip --type=MICRO,MACRO-SMALL,MACRO-LARGE
 python3 benchmark/report.py <candidate_run_dir> --baseline <baseline_run_dir>
 ```
 
-14 dataset profiles × 5 modes (CSV, BCSV Flexible, BCSV Flexible ZoH, BCSV Static, BCSV Static ZoH), with optional
-external CSV library comparison. See [tests/README.md](tests/README.md#benchmark-suite) for details.
+14 dataset profiles × multiple mode combinations (storage × tracking × codec), with optional
+external CSV library comparison. See [benchmark/README.md](benchmark/README.md) for details.
 
 ---
 
@@ -185,18 +185,19 @@ For language bindings and embedded systems.
 
 ## Project Status
 
-**Current Version:** v1.3.0-dev (Active Development)
+**Current Version:** v1.3.0
 
-### Recent Additions (v1.3.0)
+### Delivered in v1.3.0
 
 - ✅ Streaming LZ4 compression with constant write latency
-- ✅ Variable-length encoding (VLE) for efficient integer storage
-- ✅ Enhanced Reader with improved validation
+- ✅ File indexing (`FileFooter`) for O(log N) random access (`ReaderDirectAccess`)
+- ✅ Delta + VLE row codec (`RowCodecDelta002`) — 2.3% of CSV size
+- ✅ Five file codec strategies (stream, stream-LZ4, packet, packet-LZ4, packet-LZ4-batch)
+- ✅ Sampler API — bytecode VM for row filtering and column projection
+- ✅ 8 CLI tools including `bcsvSampler`, `bcsvGenerator`, `bcsvValidate`
 
 ### Roadmap
 
-- **v1.4.0** (Jan 2026): File indexing for fast random access
-- **v1.5.0** (Feb 2026): Advanced compression strategies
 - **v2.0.0** (Q2 2026): Stable release with compatibility guarantees
 
 ⚠️ **Development Notice:** Until v2.0.0, file formats may change between minor versions. Use for experimentation and non-critical storage.
@@ -218,12 +219,18 @@ bcsv/
 │   ├── ERROR_HANDLING.md  #    Error handling guide
 │   └── INTEROPERABILITY.md#    Cross-language compatibility
 │
-├── examples/              # 🎯 Usage examples and CLI tools
-│   ├── example.cpp        #    Basic usage
-│   ├── csv2bcsv.cpp       #    CSV → BCSV converter
-│   └── bcsv2csv.cpp       #    BCSV → CSV converter
+├── examples/              # 🎯 Usage examples (7 programs)
+│   ├── example.cpp        #    Basic flexible-layout usage
+│   ├── example_static.cpp #    Static-layout usage
+│   └── example_sampler.cpp#    Sampler API demonstration
 │
-├── tests/                 # ✅ Comprehensive test suite
+├── src/tools/             # 🔧 CLI tools (8 utilities)
+│   ├── csv2bcsv.cpp       #    CSV → BCSV converter
+│   ├── bcsv2csv.cpp       #    BCSV → CSV converter
+│   ├── bcsvSampler.cpp    #    Filter & project rows
+│   └── ...                #    bcsvHead, bcsvTail, bcsvHeader, bcsvGenerator, bcsvValidate
+│
+├── tests/                 # ✅ Comprehensive test suite (694 tests)
 ├── python/                # 🐍 Python package (pip install)
 ├── unity/                 # 🎮 C# Unity integration
 ├── cmake/                 # 🔧 Build system utilities

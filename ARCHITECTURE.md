@@ -89,7 +89,7 @@ Technical design, requirements, and implementation roadmap
 
 | Metric | Target | Status | Platform |
 |--------|--------|--------|----------|
-| **Desktop sequential** | ≥1M rows/sec | ✅ 127K-220K | Zen3 CPU |
+| **Desktop sequential** | ≥1M rows/sec | ✅ 3.6–7.5M | Zen3 CPU |
 | **Random access latency** | <10 ms | ✅ v1.3.0 | FileFooter + ReaderDirectAccess |
 | **Decompression speed** | ≥500 MB/s | ✅ ~650 MB/s | LZ4 decompression |
 | **Checksum validation** | ≥10 GB/s | ✅ ~13 GB/s | xxHash64 |
@@ -135,8 +135,8 @@ Technical design, requirements, and implementation roadmap
 - ✅ Automatic LZ4 compression
 - ✅ Zero-Order Hold (ZoH) for constant values
 - ✅ Streaming compression (v1.3.0)
-- 🔄 Variable-Length Encoding (v1.5.0)
-- 🔄 Dictionary encoding for strings (v1.6.0)
+- ✅ Variable-Length Encoding (via RowCodecDelta002)
+- 🔄 Dictionary encoding for strings (v2.0.0+)
 
 #### FR5: Multi-Language Support
 - ✅ C++ (header-only library)
@@ -424,7 +424,7 @@ include/bcsv/           C++ header-only library (all core types)
 
 src/
   bcsv_c_api.cpp         C API shared library implementation
-  tools/                 CLI tools (csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvSampler, bcsvGenerator, bcsvValidate)
+  tools/                 CLI tools (8 utilities: csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvSampler, bcsvGenerator, bcsvValidate)
 
 examples/               Usage examples (flexible, static, ZoH, visitors, sampler)
 tests/                  GTest suite, C API tests, Row API tests
@@ -553,22 +553,7 @@ PacketHeader (16 B) | uint32_t uncompressed_size | uint32_t compressed_size
 
 ---
 
-### Phase 6: Advanced Compression (v1.6.0) 🔄
-
-**Goal**: Further compression for specific data patterns
-
-**Candidates**:
-- String dictionary compression (per-packet, 16-bit indices)
-- ZigZag integer VLE for string lengths and row lengths
-- SIMD gradient computation (layout memory is SIMD-ready)
-
-**Evaluated and rejected** (Phase 5 investigation):
-- CHIMP/GORILLA bit-level float encoding — poor fit for row-major format
-- Non-byte-aligned bit-packing — throughput regression outweighs marginal gains
-
----
-
-### Phase 7: Stable Release (v2.0.0) 🎯 **Q2 2026**
+### Phase 6: Stable Release (v2.0.0) 🎯 **Q2 2026**
 
 **Goal**: Production-ready with compatibility guarantees
 
@@ -579,6 +564,8 @@ PacketHeader (16 B) | uint32_t uncompressed_size | uint32_t compressed_size
 - Full documentation overhaul
 - Performance validation against all targets
 - Community feedback integration
+- String dictionary compression (per-packet, 16-bit indices)
+- SIMD gradient computation (layout memory is SIMD-ready)
 
 **Compatibility policy**:
 - v2.x.y: Patch versions fully compatible
@@ -730,9 +717,8 @@ PacketHeader (16 B) | uint32_t uncompressed_size | uint32_t compressed_size
 ### Benchmark Suite
 
 **Macro benchmarks** (`benchmark/src/bench_macro_datasets.cpp`):
-- 9 dataset profiles: mixed_generic, sparse_events, sensor_noisy, string_heavy,
-  bool_heavy, arithmetic_wide, simulation_smooth, weather_timeseries, high_cardinality_string
-- CSV / BCSV Flexible / BCSV ZoH round-trip validation
+- 14 dataset profiles covering diverse real-world schemas
+- Multiple mode combinations: storage (flexible/static) × tracking (on/off) × codec (dense/ZoH)
 - Configurable row count: `--size=S|M|L|XL` (10K/100K/500K/2M)
 
 **Micro benchmarks** (`benchmark/src/bench_micro_types.cpp`):

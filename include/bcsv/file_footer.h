@@ -149,15 +149,13 @@ namespace bcsv {
                 
         /**
          * @brief Access to files total row count
-         * @param reference to totalRowCount
          */
         auto& rowCount() {
             return const_section_.row_count;
         }
         
         /**
-         * @brief Access to files total row count
-         * @param const reference to totalRowCount
+         * @brief Access to files total row count (const)
          */
         const auto& rowCount() const {
             return const_section_.row_count;

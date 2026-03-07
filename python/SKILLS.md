@@ -31,7 +31,7 @@ pytest tests/ -v        # Verbose
 pytest tests/test_basic.py -k "test_write"  # Specific test
 ```
 
-13 test files in `python/tests/` covering types, errors, interop, pandas, performance.
+14 test files in `python/tests/` covering types, errors, interop, pandas, performance.
 
 ## Package Structure
 
@@ -50,7 +50,7 @@ python/
 │   ├── basic_usage.py
 │   ├── pandas_integration.py
 │   └── performance_benchmark.py
-└── tests/                      # 15 test files
+└── tests/                      # 14 test files
 ```
 
 ## Key API

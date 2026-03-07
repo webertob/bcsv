@@ -52,10 +52,6 @@ namespace bcsv {
 
         
     public:
-        /**
-         * @brief Construct a Reader with a given layout
-         * @param None
-         */
                                 Reader();
                                 ~Reader();
 

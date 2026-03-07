@@ -5,8 +5,8 @@
 This directory contains comprehensive tests for the BCSV (Binary CSV) library, focusing on the recently refactored Row API that replaced `std::variant` with direct memory access for improved performance.
 
 **Test Framework:** Google Test (GTest)  
-**Total Tests:** 150+ across 11 test files  
-**Estimated Coverage:** 91% line coverage, 87% branch coverage, 100% function coverage
+**Total Tests:** 694 across 26 .cpp files + 3 .c files  
+**Test Executable:** `bcsv_gtest` (GTest), `test_c_api`, `test_c_api_full`, `test_row_api`
 
 ---
 
@@ -144,24 +144,33 @@ This directory contains comprehensive tests for the BCSV (Binary CSV) library, f
 
 #### 9. **bcsv_c_api_test.c**
 **Purpose:** C language API validation  
-**Tests:** ~50 assertions
-
-**Coverage:**
-- ✅ Layout creation and manipulation
-- ✅ Row operations
-- ✅ Reader/Writer integration
-- ✅ Type conversions
-- ✅ Error handling
 
 #### 10. **bcsv_c_api_row_test.c**
 **Purpose:** Focused C API row tests  
-**Tests:** 9
 
-**Coverage:**
-- ✅ Row creation/destruction
-- ✅ Change tracking
-- ✅ Clear operation
-- ✅ Clone and assign
+#### 11. **bcsv_c_api_full_test.c**
+**Purpose:** Full C API test coverage including reader/writer/sampler
+
+### Additional Test Files (added post-v1.2.0)
+
+| File | Covers |
+|------|--------|
+| `row_codec_flat001_test.cpp` | Flat001 codec serialize/deserialize |
+| `row_codec_zoh001_test.cpp` | ZoH001 codec delta encoding |
+| `row_codec_delta002_test.cpp` | Delta002 codec type-grouped loops, FoC, VLE |
+| `codec_dispatch_test.cpp` | Runtime codec selection and dispatch |
+| `layout_guard_test.cpp` | RAII structural lock on Layout |
+| `file_codec_test.cpp` | File codec strategies (stream, packet, LZ4, batch) |
+| `writer_reader_test.cpp` | Writer/Reader integration |
+| `csv_reader_writer_test.cpp` | CsvReader/CsvWriter round-trip |
+| `direct_access_test.cpp` | ReaderDirectAccess random seek |
+| `sampler_test.cpp` | Sampler bytecode VM filter/project |
+| `stream_operator_test.cpp` | Stream operator overloads |
+| `review_fixes_test.cpp` | Regression tests for review-found bugs |
+| `file_header_byte_buffer_test.cpp` | FileHeader + ByteBuffer edge cases |
+| `bench_dataset_profiles_test.cpp` | Benchmark dataset profile validation |
+| `vle_test.cpp` | Variable-Length Encoding |
+| `lz4_stress_test.cpp` | LZ4 long-running stress tests (optional) |
 
 ---
 
@@ -171,25 +180,52 @@ This directory contains comprehensive tests for the BCSV (Binary CSV) library, f
 
 ```
 tests/
-├── Row API Tests
-│   ├── row_parameterized_test.cpp    # Type-parameterized tests (NEW)
-│   ├── vectorized_access_test.cpp    # Bulk access optimizations
-│   └── bcsv_comprehensive_test.cpp   # End-to-end integration
+├── Core Tests
+│   ├── bcsv_comprehensive_test.cpp    # End-to-end integration
+│   ├── row_parameterized_test.cpp     # Type-parameterized tests
+│   ├── vectorized_access_test.cpp     # Bulk access optimizations
+│   └── visit_test.cpp                 # Visitor pattern
 │
-├── Component Tests
-│   ├── file_footer_test.cpp          # Footer/index tests
-│   ├── lz4_stream_test.cpp           # Compression tests
-│   ├── lz4_stress_test.cpp           # Stress tests (optional)
-│   ├── vle_test.cpp                  # VLE encoding tests
-│   └── vle_template_test.cpp         # VLE template tests
+├── Codec Tests
+│   ├── row_codec_flat001_test.cpp     # Flat001 codec
+│   ├── row_codec_zoh001_test.cpp      # ZoH001 codec
+│   ├── row_codec_delta002_test.cpp    # Delta002 codec
+│   ├── codec_dispatch_test.cpp        # Runtime dispatch
+│   └── file_codec_test.cpp            # File codec strategies
+│
+├── Schema & Layout Tests
+│   ├── layout_sync_test.cpp           # Observer callbacks
+│   ├── layout_guard_test.cpp          # RAII structural lock
+│   └── bitset_test.cpp                # Bitset SOO, shift, slice
+│
+├── I/O & Format Tests
+│   ├── writer_reader_test.cpp         # Writer/Reader integration
+│   ├── csv_reader_writer_test.cpp     # CSV round-trip
+│   ├── direct_access_test.cpp         # ReaderDirectAccess
+│   ├── file_footer_test.cpp           # Footer/index
+│   ├── file_header_byte_buffer_test.cpp # Header + ByteBuffer
+│   ├── lz4_stream_test.cpp            # LZ4 streaming
+│   ├── lz4_stress_test.cpp            # LZ4 stress (optional)
+│   ├── vle_test.cpp                   # VLE encoding
+│   └── vle_template_test.cpp          # VLE template
+│
+├── Feature Tests
+│   ├── sampler_test.cpp               # Sampler bytecode VM
+│   ├── stream_operator_test.cpp       # Stream operators
+│   └── error_handling_test.cpp        # Error paths
+│
+├── Validation & Regression
+│   ├── bench_dataset_profiles_test.cpp # Profile validation
+│   └── review_fixes_test.cpp          # Regression tests
 │
 ├── C API Tests
-│   ├── bcsv_c_api_test.c             # C API comprehensive
-│   └── bcsv_c_api_row_test.c         # C API row-specific
+│   ├── bcsv_c_api_test.c              # Core C API
+│   ├── bcsv_c_api_full_test.c          # Full C API coverage
+│   └── bcsv_c_api_row_test.c           # Row-specific C API
 │
 └── Configuration
-    ├── CMakeLists.txt                # Build configuration
-    └── README.md                     # This file
+    ├── CMakeLists.txt                 # Build configuration
+    └── README.md                      # This file
 ```
 
 ### Test Naming Conventions
@@ -264,6 +300,21 @@ cmake -B build -S . -DCMAKE_CXX_FLAGS="-fsanitize=thread -g"
 valgrind --leak-check=full --show-leak-kinds=all ./build/bin/bcsv_gtest
 ```
 
+### Shell Integration Tests
+
+Three bash scripts test CLI tools end-to-end:
+
+```bash
+# All CLI tools (csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvGenerator)
+bash tests/test_cli_tools.sh
+
+# bcsvSampler conditional sampling
+bash tests/test_bcsvSampler.sh
+
+# bcsvValidate structure, pattern, and comparison modes
+bash tests/test_bcsvValidate.sh
+```
+
 ---
 
 ## Coverage Analysis
@@ -288,16 +339,10 @@ genhtml coverage_filtered.info --output-directory coverage_html
 xdg-open coverage_html/index.html
 ```
 
-### Current Coverage Estimates
+### Current Coverage
 
-| Component | Line Coverage | Branch Coverage | Function Coverage |
-|-----------|--------------|-----------------|-------------------|
-| **Row** | 92% | 88% | 100% |
-| **RowStatic** | 91% | 87% | 100% |
-| **Layout** | 94% | 90% | 100% |
-| **Serialization** | 93% | 91% | 100% |
-| **C API** | 88% | 85% | 100% |
-| **Overall** | **91%** | **87%** | **100%** |
+Run `lcov` after building with `--coverage` to get up-to-date numbers.
+All public API methods are covered. All error paths are validated. All 12 data types are tested.
 
 ---
 

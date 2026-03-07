@@ -11,28 +11,8 @@
 
 /**
  * @file row_codec_zoh001.hpp
- * @brief Implementation of RowCodecZoH001 — Zero-Order-Hold codec.
- *
- * ZoH wire format per row:
- *   [row_header_][changed_column_data...]
- *
- * row_header_ is a columnCount-sized bitset with type-grouped layout:
- *   Bits [0..boolCount):              Bool VALUES (identical to row.bits_ layout)
- *   Bits [boolCount..columnCount):    Change flags in ColumnType enum order:
- *       UINT8, UINT16, UINT32, UINT64, INT8, INT16, INT32, INT64,
- *       FLOAT, DOUBLE, STRING
- *
- * Bool values are bulk-copied via assignRange/equalRange (word-level ops).
- * Scalar change detection uses per-type offset vectors for tight inner loops.
- * Data section follows the same type-grouped order as the change flags.
- *
- * An empty span return from serialize() means "no changes" (caller writes
- * length 0 for ZoH repeat).
- *
- * Change detection uses a local copy of the previous row (double-buffer).
- * row_header_[0..boolCount) also serves as previous-bool-value storage between
- * serialize() calls — equalRange detects bool changes, then assignRange
- * updates from the current row.
+ * @brief RowCodecZoH001 template implementation.
+ * @see row_codec_zoh001.h for wire format specification.
  */
 
 #include "row_codec_zoh001.h"

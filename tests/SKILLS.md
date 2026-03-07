@@ -30,7 +30,7 @@ cmake --build build --target bcsv_gtest -j$(nproc)
 
 | Target | Source(s) | Gate | Description |
 |--------|-----------|------|-------------|
-| `bcsv_gtest` | 10 test source files | `BUILD_TESTS=ON` | Main Google Test executable (~299 tests) |
+| `bcsv_gtest` | 26 .cpp test files | `BUILD_TESTS=ON` | Main Google Test executable (694 tests) |
 | `test_c_api` | `bcsv_c_api_test.c` | always | Standalone C API test (linked against `bcsv_c_api`) |
 | `test_row_api` | `bcsv_c_api_row_test.c` | always | Standalone C Row API test |
 
@@ -51,23 +51,45 @@ cmake --build build -j$(nproc)
 
 ## Test Source Files
 
-| File | Tests | Covers |
-|------|-------|--------|
-| `bcsv_comprehensive_test.cpp` | ~80 | Core write/read/validate, flexible + static layouts, ZoH, string handling, edge cases |
-| `vectorized_access_test.cpp` | ~30 | Vectorized C API read patterns, batch operations |
-| `row_parameterized_test.cpp` | ~40 | Parameterized type coverage for Row get/set/visit across all 12 column types |
-| `vle_template_test.cpp` | ~25 | VLE encode/decode round-trip for all integer types, edge values, zigzag encoding |
-| `lz4_stream_test.cpp` | ~15 | LZ4 streaming compression/decompression, ring buffer, multi-block |
-| `file_footer_test.cpp` | ~15 | FileFooter encode/decode, packet index, random access support |
-| `error_handling_test.cpp` | ~12 | Reader/Writer error paths, missing files, corrupt data, type mismatches |
-| `layout_sync_test.cpp` | ~20 | Layout observer callbacks, Row sync on addColumn/removeColumn/changeType |
-| `bitset_test.cpp` | ~40 | Bitset fixed + dynamic, SOO transitions, shift, slice, insert, resize |
-| `visit_test.cpp` | ~20 | Visitor pattern: const/mutable visitors, typed visit, all column types |
+| File | Covers |
+|------|--------|
+| `bcsv_comprehensive_test.cpp` | Core write/read/validate, flexible + static layouts, ZoH, string handling, edge cases |
+| `bench_dataset_profiles_test.cpp` | Benchmark dataset profile definitions and validation |
+| `bitset_test.cpp` | Bitset fixed + dynamic, SOO transitions, shift, slice, insert, resize |
+| `codec_dispatch_test.cpp` | Codec selection and dispatch logic |
+| `csv_reader_writer_test.cpp` | CSV text reader/writer round-trips |
+| `direct_access_test.cpp` | ReaderDirectAccess random-access API |
+| `error_handling_test.cpp` | Reader/Writer error paths, missing files, corrupt data, type mismatches |
+| `file_codec_test.cpp` | File-level codec encode/decode (stream, packet, LZ4 variants) |
+| `file_footer_test.cpp` | FileFooter encode/decode, packet index, random access |
+| `file_header_byte_buffer_test.cpp` | FileHeader serialization to/from byte buffers |
+| `layout_guard_test.cpp` | LayoutGuard RAII scoping |
+| `layout_sync_test.cpp` | Layout observer callbacks, Row sync on addColumn/removeColumn/changeType |
+| `lz4_stream_test.cpp` | LZ4 streaming compression/decompression, ring buffer, multi-block |
+| `review_fixes_test.cpp` | Regression tests for code-review fixes |
+| `row_codec_delta002_test.cpp` | Delta002 row codec encode/decode |
+| `row_codec_flat001_test.cpp` | Flat001 row codec encode/decode |
+| `row_codec_zoh001_test.cpp` | ZoH001 row codec encode/decode |
+| `row_parameterized_test.cpp` | Parameterized type coverage for Row get/set/visit across all 12 column types |
+| `sampler_test.cpp` | Sampler time-based sub-sampling |
+| `stream_operator_test.cpp` | operator<< formatting for Row / Layout |
+| `vectorized_access_test.cpp` | Vectorized C API read patterns, batch operations |
+| `visit_test.cpp` | Visitor pattern: const/mutable visitors, typed visit, all column types |
+| `vle_template_test.cpp` | VLE encode/decode round-trip for all integer types, edge values, zigzag |
+| `vle_test.cpp` | VLE basic encode/decode |
+| `writer_reader_test.cpp` | Writer → Reader round-trip tests |
 
 Optional (gated):
 | File | Gate | Description |
 |------|------|-------------|
 | `lz4_stress_test.cpp` | `BCSV_ENABLE_STRESS_TESTS=ON` | Long-running LZ4 stress tests, large data volumes |
+
+C API tests (standalone executables, not part of `bcsv_gtest`):
+| File | Executable |
+|------|------------|
+| `bcsv_c_api_test.c` | `test_c_api` |
+| `bcsv_c_api_row_test.c` | `test_row_api` |
+| `bcsv_c_api_full_test.c` | `test_c_api_full` |
 
 ## Adding a New Test
 

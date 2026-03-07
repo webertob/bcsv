@@ -37,7 +37,7 @@ bcsv/
 │   ├── sampler/           # Sampler API headers
 │   ├── codec_file/        # File codec headers
 │   └── codec_row/         # Row codec headers
-├── src/tools/             # CLI tools (7 targets: csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvSampler, bcsvGenerator)
+├── src/tools/             # CLI tools (8 targets: csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvSampler, bcsvGenerator, bcsvValidate)
 ├── examples/              # Usage examples (7 targets)
 ├── tests/                 # Google Test suite + benchmark executables
 ├── benchmark/             # Python orchestrator, report generator, regression detector
@@ -84,13 +84,13 @@ cmake --build --preset ninja-release-build -j$(nproc) --target bench_macro_datas
 | Option | Default | Description |
 |--------|---------|-------------|
 | `BUILD_EXAMPLES` | ON | Build example programs |
-| `BUILD_TOOLS` | ON | Build CLI tools (csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvSampler, bcsvGenerator) |
+| `BUILD_TOOLS` | ON | Build CLI tools (csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvSampler, bcsvGenerator, bcsvValidate) |
 | `BUILD_TESTS` | ON | Build Google Test suite + C API tests |
-| `BCSV_ENABLE_BENCHMARKS` | ON | Macro benchmarks + CSV generator |
-| `BCSV_ENABLE_MICRO_BENCHMARKS` | ON | Google Benchmark per-type latency |
+| `BCSV_ENABLE_BATCH_CODEC` | ON | Enable batch-LZ4 file codec (requires threading) |
+| `BCSV_BUILD_BENCHMARKS` | ON | Macro benchmarks + CSV generator |
+| `BCSV_BUILD_MICRO_BENCHMARKS` | ON | Google Benchmark per-type latency |
 | `BCSV_ENABLE_EXTERNAL_CSV_BENCH` | OFF | External csv-parser comparison (fetches ~30 MB) |
 | `BCSV_ENABLE_STRESS_TESTS` | OFF | Time-consuming LZ4 stress tests |
-| `BCSV_ENABLE_LEGACY_BENCHMARKS` | ON | Deprecated benchmark_large / benchmark_performance |
 
 ### CMake Presets
 
@@ -100,7 +100,7 @@ cmake --build --preset ninja-release-build -j$(nproc) --target bench_macro_datas
 
 Executables land in `build/ninja-debug/bin/` (debug) or `build/ninja-release/bin/` (release):
 - Tests: `bcsv_gtest`, `test_row_api`, `test_c_api`
-- CLI tools: `csv2bcsv`, `bcsv2csv`, `bcsvHead`, `bcsvTail`, `bcsvHeader`, `bcsvSampler`, `bcsvGenerator`
+- CLI tools: `csv2bcsv`, `bcsv2csv`, `bcsvHead`, `bcsvTail`, `bcsvHeader`, `bcsvSampler`, `bcsvGenerator`, `bcsvValidate`
 - Examples: `example`, `example_static`, `example_zoh`, `example_zoh_static`, `visitor_examples`, `c_api_vectorized_example`, `example_sampler`
 - Benchmarks: `bench_macro_datasets`, `bench_micro_types`, `bench_generate_csv`, `bench_external_csv`
 
@@ -133,8 +133,11 @@ Users interact with these types (declared in `include/bcsv/`):
 | `RowStaticTracked<Policy, Types...>` | row.h | Policy-based static row alias for advanced use. |
 | `Reader<LayoutType, Policy>` | reader.h | Stream-based BCSV file reader with LZ4 decompression. |
 | `Writer<LayoutType, Policy>` | writer.h | Stream-based BCSV file writer with LZ4 compression, optional ZoH. |
-| `RowCodecFlat001<Layout, Policy>` | row_codec_flat001.h | Dense flat row codec — serialize, deserialize. |
-| `RowCodecZoH001<Layout, Policy>` | row_codec_zoh001.h | Zero-Order-Hold codec — delta-encodes unchanged columns. |
+| `RowCodecFlat001<Layout, Policy>` | codec_row/row_codec_flat001.h | Dense flat row codec — serialize, deserialize. |
+| `RowCodecZoH001<Layout, Policy>` | codec_row/row_codec_zoh001.h | Zero-Order-Hold codec — delta-encodes unchanged columns. |
+| `RowCodecDelta002<Layout>` | codec_row/row_codec_delta002.h | Delta + VLE encoding — type-grouped loops, FoC/ZoH per column. |
+| `Sampler<Layout>` | sampler/sampler.h | Bytecode VM for row filtering and column projection. |
+| `ReaderDirectAccess<Layout>` | reader.h | Random-access reader with O(log N) seek via FileFooter. |
 
 > **Note:** public row change-tracking methods were removed. Tracking is internal-only and consumed by codecs (especially ZoH).
 
@@ -190,6 +193,9 @@ reader.close();
 | `bcsv_c_api.h` | C API surface — opaque handles, `extern "C"` functions |
 | `checksum.hpp` | `Checksum` / `Checksum::Streaming` — xxHash64 wrapper |
 
+Note: Row codec headers are in `codec_row/` and file codec headers are in `codec_file/` subdirectories.
+The table above uses short names; actual paths are `include/bcsv/codec_row/row_codec_*.h` etc.
+
 ### Implementations (.hpp) — complex logic, detailed documentation
 
 | File | Purpose |
@@ -201,6 +207,7 @@ reader.close();
 | `writer.hpp` | `open()`, `close()`, `writeRow()`, packet management, codec dispatch |
 | `row_codec_flat001.hpp` | Flat001 codec implementation: serialize, deserialize |
 | `row_codec_zoh001.hpp` | ZoH001 codec implementation: delta serialize/deserialize |
+| `row_codec_delta002.hpp` | Delta002 codec: type-grouped loops, FoC/ZoH per column, float XOR + VLE |
 | `file_header.hpp` | Header read/write/validation |
 | `bitset.hpp` | Full bitset implementation (~1800 lines), SOO, shift, slice views |
 | `column_name_index.hpp` | Name parsing, sorted insert, binary search |
@@ -247,9 +254,9 @@ reader.close();
 
 ## Current Status
 
-- **Version**: v1.1.2 (generated from Git tags)
-- **Active work**: see ToDo.txt (items 10-14 are next: wire format, serializer layer, delta encoding)
-- **Test suite**: 404 tests passing (Google Test), 76 C API tests, row API tests
+- **Version**: v1.3.0 (file format v1.4.0)
+- **Active work**: see ToDo.txt for current priorities
+- **Test suite**: 694 Google Test cases (26 .cpp files), C API tests (3 .c files), shell-based CLI tests
 - **Benchmark suite**: 14 dataset profiles, macro + micro benchmarks, Python orchestrator
 
 ## Subsystem Skill Files

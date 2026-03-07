@@ -1,13 +1,7 @@
 #pragma once
 /**
  * @file column_name_index.hpp
- * @brief Binary CSV (BCSV) Library - Column Name Index utilities
- * 
- * This file contains utilities for managing column name indices, providing
- * a unified interface for both dynamic (std::vector) and fixed-size (std::array) storage.
- * 
- * Licensed under the MIT License. See LICENSE file in the project root 
- * for full license information.
+ * @brief ColumnNameIndex template implementation.
  */
 
 

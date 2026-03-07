@@ -26,7 +26,7 @@
  *   BLE(PCKT_TERMINATOR)
  *   uint64_t payload_checksum           ← xxHash64 of all (VLE + compressed data)
  *
- * Derives from FileCodecPacket001 — adds LZ4 compression/decompression
+ * Wraps FileCodecPacket001 via composition — adds LZ4 compression/decompression
  * around the raw packet I/O path.
  */
 

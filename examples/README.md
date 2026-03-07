@@ -1,56 +1,26 @@
 # BCSV Examples
 
-This directory contains three essential examples demonstrating different aspects of the BCSV (Binary CSV) library:
+This directory contains seven examples demonstrating different aspects of the BCSV library:
 
 ## Examples Overview
 
-### 1. `example.cpp` - Flexible Interface Demo
-**Purpose**: Demonstrates the runtime flexible Layout/Row interface for basic BCSV usage.
+### 1. `example.cpp` — Flexible Interface Demo
+Demonstrates the runtime flexible `Layout`/`Row` interface for basic BCSV write and read.
 
-**Key Features**:
-- Runtime-defined column schemas using `bcsv::Layout`
-- Dynamic column addition with `addColumn()`
-- Row data population using `row.set(index, value)`
-- Sequential read/write operations
-- Ideal for scenarios where data structure is not known at compile time
+### 2. `example_static.cpp` — Static Interface Demo
+Demonstrates the compile-time `LayoutStatic<Types...>`/`RowStatic` interface for type-safe, performance-optimized usage.
 
-**Usage**:
-```bash
-.\build\bin\Debug\example.exe
-```
+### 3. `example_zoh.cpp` / `example_zoh_static.cpp` — Zero-Order Hold Demos
+ZoH compression (only stores values that change between rows), for both flexible and static layouts.
 
-**Output**: Creates `example_flexible.bcsv` with sample employee data (ID, Name, Score, Active status).
+### 4. `visitor_examples.cpp` — Visitor Pattern
+Demonstrates const and mutable visitor patterns for iterating over row columns without knowing types at compile time.
 
-### 2. `example_static.cpp` - Static Interface Demo
-**Purpose**: Demonstrates the compile-time static LayoutStatic/RowStatic interface for performance-optimized BCSV usage.
+### 5. `c_api_vectorized_example.c` — C API Vectorized Read
+Shows how to use the C API with vectorized (batch) row access.
 
-**Key Features**:
-- Compile-time-defined schemas using `bcsv::LayoutStatic<Types...>`
-- Template-based type-safe column access with `(*row).set<N>(value)`
-- Better performance through compile-time optimization
-- Type safety and template specialization
-- Ideal for scenarios with known, fixed data structures
-
-**Usage**:
-```bash
-.\build\bin\Debug\example_static.exe
-```
-
-**Output**: Creates `example_static.bcsv` with the same employee data structure as the flexible example.
-
-### 3. `example_zoh.cpp` / `example_zoh_static.cpp` - Zero-Order Hold Demos
-**Purpose**: Demonstrates ZoH (Zero-Order Hold) compression, which only stores values that change between rows.
-
-**Key Features**:
-- Flexible and static ZoH writer variants
-- Significant compression for slowly-changing data
-- Binary-compatible output with standard readers
-
-**Usage**:
-```bash
-./build/bin/example_zoh
-./build/bin/example_zoh_static
-```
+### 6. `example_sampler.cpp` — Sampler API
+Demonstrates the Sampler API for expression-based row filtering and column projection.
 
 ## Building the Examples
 

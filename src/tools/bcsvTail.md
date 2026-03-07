@@ -28,10 +28,7 @@ bcsvTail [OPTIONS] INPUT_FILE
 |--------|-------------|---------|
 | `-n, --lines N` | Number of rows to display (default: 10) | `-n 20` |
 | `-d, --delimiter CHAR` | Field delimiter (default: `,`) | `-d ';'` |
-| `-q, --quote CHAR` | Quote character (default: `"`) | `-q "'"` |
-| `--quote-all` | Quote all fields (not just when necessary) | `--quote-all` |
 | `--no-header` | Don't include header row in output | `--no-header` |
-| `-p, --precision N` | Floating point precision (default: auto) | `-p 2` |
 | `-v, --verbose` | Enable verbose output | `-v` |
 | `-h, --help` | Show help message | `--help` |
 
@@ -96,14 +93,14 @@ bcsvTail --no-header data.bcsv | wc -l
 # Basic inspection of recent data (includes header)
 bcsvTail sales_data.bcsv
 
-# Show more recent entries with formatting
-bcsvTail -n 25 -p 2 transaction_log.bcsv
+# Show more recent entries
+bcsvTail -n 25 transaction_log.bcsv
 
 # Data-only output for pure processing
 bcsvTail -n 100 --no-header data.bcsv | grep -v "^[0-9]" | wc -l
 
 # Custom delimiter for specific analysis
-bcsvTail -d '|' --quote-all sensor_data.bcsv
+bcsvTail -d '|' sensor_data.bcsv
 
 # Extract recent high-value transactions (skip header for awk)
 bcsvTail -n 500 --no-header transactions.bcsv | awk -F, '$4 > 1000 {print $2, $4}'

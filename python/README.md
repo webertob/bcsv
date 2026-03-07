@@ -15,8 +15,7 @@ PyBCSV provides Python bindings for the high-performance BCSV (Binary CSV) libra
 The Python wrapper has been successfully built and installed. To use it:
 
 ```bash
-cd /home/tobias/bcsv/python
-source venv/bin/activate
+cd python
 pip install .
 ```
 

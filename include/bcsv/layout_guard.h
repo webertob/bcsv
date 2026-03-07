@@ -20,8 +20,8 @@
  * to codecs (does not change types, offsets, or wire metadata).
  *
  * Multiple guards may reference the same Layout::Data concurrently (parallel
- * read access is safe).  The internal counter uses std::atomic for race-free
- * increment/decrement, even though the library as a whole is not thread-safe.
+ * read access is safe).  The internal counter is a plain uint32_t — thread
+ * safety is the caller's responsibility, consistent with the rest of the library.
  *
  * Lifetime note: the guard holds a std::shared_ptr<Layout::Data>, so the Data
  * stays alive as long as any guard (or codec) references it — even if all
