@@ -190,15 +190,35 @@ background:
     [x] Reader::fileFooter() public accessor (ReaderDirectAccess)
     [x] All 8 tools build cleanly, 694 GTests + 95 CLI + 39 Sampler + 52 Validate pass
 
-18. project folder cleanup, skill improvement, CI/CD review, cleanup and improvement (LEAN DEVELOPMENT)
-    Observation, build, test, benchmarking is taking longer and longer. I recognize more and more adhoc scripts (multi-line, mutli-command terminal instructions are used.) Quite often these commands are errornouse and need to modified a few tme before it does as intendend.
-    The CI/CD process seems a unstable, unncessarily complex and takes longer than expected. Devlopment speed has droped. 
+[x] 18. project folder cleanup, skill improvement, CI/CD review, cleanup and improvement (LEAN DEVELOPMENT)
+    Status: COMPLETE
 
-    Let do a dedicated review of our CI/CD process. Remember we are using cmake, ninja on a c++ roject. We use gtest and google bechmarks. We have also defined that we want to run a scripted sequence of bcsv CLI tools to check these tools perform as expected and compare the results with a predefined outcome (validate).
-    It also seems that the context window seems to be polluted. Perhaps we need to better seperate unit tests, benchmarks, bcsv development, bcsv tools, bcsv file format definitions, documentation.
-    I wonder if your *.md files, documentation files, source codes, source documents and skills are still up-to-date and synchornized? Is our doumentation bloated? Can it be more concise? 
-    Please make a proposal on how we might investigate and solve the issues? Perhaps we need to do this in multiple phases and iterativly in multiple passes. Can we build more stable benchmark or tests calls using skills or MCP definitions, or opposite, should we reduce the number of tools and scripts we use? consider the context window we have? Does it make sense to store tool related documentation in a RAG or some other precomputed format, that makes agentic use easier?
-    Should we add and maintain a claud.md file? How to avoid confusion with other models i.e. codex?
+    Phase 1 — Dead Artifact Cleanup:
+    [x] Removed 3 empty directories (test_error_handling_temp/, bcsv_test_files/codec_dispatch/, docs/archive/)
+    [x] Removed orphaned vle_test.cpp from build (uses obsolete VLE API; current API covered by vle_template_test.cpp)
+    [x] Verified .gitignore covers tmp/, __pycache__/, build/
+
+    Phase 2 — Documentation Consolidation:
+    [x] Consolidated 5 satellite SKILLS.md files into root SKILLS.md "Subsystem Quick Reference" section
+        Deleted: examples/SKILLS.md, python/SKILLS.md, src/tools/SKILLS.md, tests/SKILLS.md, unity/SKILLS.md
+    [x] Merged 8 per-tool .md files + overview into single src/tools/CLI_TOOLS.md (~380 lines)
+        Deleted: csv2bcsv.md, bcsv2csv.md, bcsvHead.md, bcsvTail.md, bcsvHeader.md, bcsvSampler.md, bcsvGenerator.md, bcsvValidate.md
+    [x] Fixed ARCHITECTURE.md file format version: 1.3.0 → 1.4.0 (matches definitions.h)
+    [x] Deduplicated README.md: replaced 4 language code snippets with compact table + links to API_OVERVIEW.md
+    [x] Condensed ERROR_HANDLING.md: removed ~100 lines of redundancy (repeated patterns, broken archive links, restating conclusion)
+
+    Phase 3+4 — AI Instruction Files (model-agnostic, with embedded command reference):
+    [x] Created .github/copilot-instructions.md (~95 lines) — build commands, project layout, naming conventions, design patterns
+    [x] Created .claude.md — same content for Claude Code
+    [x] Created AGENTS.md — same content for Codex / VS Code Agent Mode
+
+    Phase 5 — CI/CD Fixes:
+    [x] release.yml: fixed heredoc indentation bug — version_generated.h was written with leading whitespace (invalid C++)
+    [x] benchmark.yml: fixed command injection risk on workflow_dispatch inputs (now uses env vars),
+        removed unused pull-requests:write permission, added src/** to path filters
+    [x] build-and-publish.yml: fixed inconsistent actions/checkout version (v4 → v5)
+
+    Verification: 694/694 GTests pass, 87/87 C API tests pass, build clean (ninja-debug)
 
 
 19. code cleanup

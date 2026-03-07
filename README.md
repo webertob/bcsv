@@ -140,46 +140,14 @@ external CSV library comparison. See [benchmark/README.md](benchmark/README.md) 
 
 ## Supported Platforms & Languages
 
-### C++ (Header-Only)
+| Language | Integration | Best For | Guide |
+|----------|-------------|----------|-------|
+| **C++** | Header-only, C++20 | Maximum performance (static API) | [examples/](examples/) |
+| **Python** | `pip install pybcsv` | Pandas workflows, prototyping | [python/README.md](python/README.md) |
+| **C# / Unity** | NuGet / Unity package | Game development | [unity/README.md](unity/README.md) |
+| **C** | Shared library (`libbcsv`) | FFI bindings, embedded systems | [docs/API_OVERVIEW.md](docs/API_OVERVIEW.md) |
 
-```cpp
-bcsv::Layout layout;
-layout.addColumn({"id", bcsv::ColumnType::INT32});
-bcsv::Writer<bcsv::Layout> writer(layout);
-```
-
-Modern C++20, header-only library. **Fastest performance** with static API.
-
-### Python (pip package)
-
-```python
-import pybcsv
-df = pybcsv.read_dataframe("data.bcsv")
-pybcsv.write_dataframe(df, "output.bcsv")
-```
-
-Full pandas integration. See [python/README.md](python/README.md).
-
-### C# / Unity
-
-```csharp
-var layout = new BcsvLayout();
-var writer = new BcsvWriter(layout);
-writer.Open("data.bcsv");
-```
-
-Game development integration. See [unity/README.md](unity/README.md).
-
-### C API (Shared Library)
-
-```c
-bcsv_writer_t writer = bcsv_writer_create(layout);
-bcsv_writer_open(writer, "data.bcsv", 1);
-```
-
-For language bindings and embedded systems.
-
-**All APIs produce identical binary format** - files are 100% cross-compatible. See [docs/INTEROPERABILITY.md](docs/INTEROPERABILITY.md).
+**All APIs produce identical binary format** — files are 100% cross-compatible. See [docs/INTEROPERABILITY.md](docs/INTEROPERABILITY.md) and [docs/API_OVERVIEW.md](docs/API_OVERVIEW.md) for code examples and comparison matrix.
 
 ---
 

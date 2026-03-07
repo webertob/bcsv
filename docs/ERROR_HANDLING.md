@@ -60,12 +60,6 @@ while (reader.readNext()) {
 // readNext() returns false - this is normal, not an error condition
 ```
 
-**Reader Error Message Storage:**
-- Member: `std::string errMsg_`
-- Access: `const std::string& getErrorMsg() const`
-- Populated: All error paths in `open()` and file reading operations
-- Stderr: Controlled by `DEBUG_OUTPUTS` constant
-
 ### 2. Writer Error Handling ✅
 
 **All error conditions properly handled:**
@@ -94,11 +88,7 @@ if (!writer.writeRow()) {
 }
 ```
 
-**Writer Error Message Storage:**
-- Member: `std::string errMsg_`
-- Access: `const std::string& getErrorMsg() const`
-- Populated: All error paths in `open()`, `writeRow()`, exception handlers
-- Stderr: Controlled by `DEBUG_OUTPUTS` constant
+> **Error message storage (both Reader & Writer):** `std::string errMsg_` accessed via `getErrorMsg()`. Populated on all error paths. Stderr output controlled by `DEBUG_OUTPUTS`.
 
 ### 3. Static Interface Validation ✅
 
@@ -180,28 +170,6 @@ All tests in [tests/error_handling_test.cpp](../tests/error_handling_test.cpp):
 11. ✅ **GetErrorMsg_AllCases** - Reader error message coverage
 12. ✅ **Writer_GetErrorMsg_AllCases** - Writer error message coverage
 
-### Total Test Suite: Continuously Evolving ✅
-
-- **Core functionality**: covered
-- **Boundary conditions**: covered
-- **Vectorized operations**: covered
-- **Parameterized type tests**: covered
-- **Edge cases**: covered
-- **VLE encoding**: covered
-- **LZ4 streaming**: covered
-- **FileFooter**: covered
-- **Error handling**: covered
-- **Performance checks**: benchmark suite maintained separately
-
-**Coverage highlights:**
-- ✅ All public API methods
-- ✅ All error paths validated
-- ✅ All data types tested
-- ✅ All error messages verified
-- ✅ Permission errors tested
-- ✅ Corruption detection tested
-- ✅ API misuse scenarios covered
-
 ---
 
 ## Production Deployment
@@ -233,77 +201,11 @@ constexpr bool DEBUG_OUTPUTS = false;  // Disable stderr, zero overhead
 - User-facing functions (like `printBinaryLayout()`) intentionally unwrapped
 - Complete code elimination when false (verified with compiler output)
 
-### Recommended Error Handling Pattern
+### Key Source Files
 
-```cpp
-#include <bcsv/bcsv.h>
-#include <iostream>
-#include <fstream>
-
-bool processData(const std::string& filename) {
-    // Setup
-    bcsv::Reader<bcsv::Layout> reader;
-    
-    // Check file open
-    if (!reader.open(filename)) {
-        logError("Failed to open BCSV file", reader.getErrorMsg());
-        return false;
-    }
-    
-    // Process rows with error handling
-    try {
-        while (reader.readNext()) {
-            auto value = reader.row().get<double>(0);
-            // Process value...
-        }
-    } catch (const std::exception& e) {
-        logError("Row processing failed", e.what());
-        return false;
-    }
-    
-    return true;
-}
-```
-
----
-
-## Documentation Index
-
-### Primary Documents
-
-1. **[ERROR_HANDLING_ANALYSIS.md](archive/ERROR_HANDLING_ANALYSIS.md)**
-   - Complete analysis of error handling implementation
-   - All error message formats documented
-   - Usage examples for Reader and Writer
-   - Production deployment recommendations
-
-2. **[ERROR_MESSAGE_IMPROVEMENTS.md](archive/ERROR_MESSAGE_IMPROVEMENTS.md)**
-   - Reader::getErrorMsg() implementation details
-   - Before/after comparison
-   - Test coverage for error messages
-
-3. **[DEBUG_OUTPUTS_IMPLEMENTATION.md](archive/DEBUG_OUTPUTS_IMPLEMENTATION.md)**
-   - Production build control mechanism
-   - All wrapped stderr locations documented
-   - Performance impact analysis
-
-4. **[README.md](../README.md#error-handling)**
-   - User-facing error handling guide
-   - Quick reference for common patterns
-   - Best practices summary
-
-### Test Files
-
-- **[tests/error_handling_test.cpp](../tests/error_handling_test.cpp)** - Complete error handling test suite
-- **[tests/README.md](../tests/README.md)** - Test suite documentation
-
-### Header Files
-
-- **[include/bcsv/reader.h](../include/bcsv/reader.h)** - Reader class with getErrorMsg()
-- **[include/bcsv/reader.hpp](../include/bcsv/reader.hpp)** - Reader implementation with error handling
-- **[include/bcsv/writer.h](../include/bcsv/writer.h)** - Writer class with getErrorMsg()
-- **[include/bcsv/writer.hpp](../include/bcsv/writer.hpp)** - Writer implementation with error handling
-- **[include/bcsv/definitions.h](../include/bcsv/definitions.h)** - DEBUG_OUTPUTS constant
+- [tests/error_handling_test.cpp](../tests/error_handling_test.cpp) — dedicated error handling test suite
+- [include/bcsv/reader.hpp](../include/bcsv/reader.hpp) / [writer.hpp](../include/bcsv/writer.hpp) — implementation
+- [include/bcsv/definitions.h](../include/bcsv/definitions.h) — `DEBUG_OUTPUTS` constant
 
 ---
 
@@ -374,39 +276,4 @@ Difference: ~25µs per error with DEBUG_OUTPUTS=false (80% reduction)
 
 ---
 
-## Future Considerations
 
-### Potential Enhancements (Not Planned for v1.x)
-
-1. **Structured error codes** - Enum for programmatic error handling
-2. **Error callbacks** - Custom error handlers instead of stderr
-3. **Warning levels** - Distinguish errors from warnings programmatically
-4. **Error recovery** - Continue reading after non-fatal errors
-
-These would be considered for v2.0+ if user demand exists.
-
----
-
-## Conclusion
-
-✅ **Complete error handling implementation**
-- Both Reader and Writer support `getErrorMsg()`
-- All error paths properly handle and report errors
-- Dedicated error handling tests are part of the active suite
-- Production-ready with DEBUG_OUTPUTS control
-- Comprehensive documentation for users
-
-✅ **Best practices followed**
-- Return values for I/O errors
-- Exceptions for programming errors  
-- Clear, actionable error messages
-- Zero overhead in production builds
-- Consistent API across Reader and Writer
-
-✅ **Production ready**
-- All recommendations from ERROR_HANDLING_ANALYSIS.md implemented
-- Test coverage validated
-- Documentation complete
-- Performance impact minimal
-
-**Status**: Ready for release in v1.3.0

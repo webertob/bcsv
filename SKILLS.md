@@ -259,30 +259,102 @@ The table above uses short names; actual paths are `include/bcsv/codec_row/row_c
 - **Test suite**: 694 Google Test cases (26 .cpp files), C API tests (3 .c files), shell-based CLI tests
 - **Benchmark suite**: 14 dataset profiles, macro + micro benchmarks, Python orchestrator
 
-## Subsystem Skill Files
+## Subsystem Quick Reference
 
-| Subsystem | Skill File | Covers |
-|-----------|-----------|---------|
-| Tests | tests/SKILLS.md | Build, run, filter tests; test files inventory; sanitizers |
-| Benchmarks | benchmark/README.md | Build, run, interpret benchmarks; streamlined benchmark CLI and reporting |
-| CLI Tools | src/tools/SKILLS.md | CLI tool build, usage, source structure |
-| Examples | examples/SKILLS.md | Example programs, build targets |
-| Python bindings | python/SKILLS.md | Build, test, publish Python package |
-| Unity / C# | unity/SKILLS.md | Architecture, prerequisites, key files |
+### Tests (`tests/`)
 
-## Item 11.B Benchmark Artifacts
+```bash
+# Build + run all GTests
+cmake --build --preset ninja-debug-build -j$(nproc) && ./build/ninja-debug/bin/bcsv_gtest
 
-- Reference workload mapping and dataset fetch helper:
-    - `benchmark/REFERENCE_WORKLOADS.md`
-    - `benchmark/reference_workloads.json`
-    - `benchmark/fetch_reference_datasets.py`
-- Dedicated Python benchmark lane:
-    - `python/benchmarks/run_pybcsv_benchmarks.py`
-    - `python/benchmarks/README.md`
-- Dedicated standalone C# benchmark lane:
-    - `csharp/benchmarks/Bcsv.Benchmarks.csproj`
-    - `csharp/benchmarks/Program.cs`
-    - `csharp/benchmarks/README.md`
+# Filter specific suite
+./build/ninja-debug/bin/bcsv_gtest --gtest_filter="ComprehensiveTest.*"
+
+# Run C API tests
+./build/ninja-debug/test_c_api && ./build/ninja-debug/test_row_api
+
+# Run shell integration tests via CTest
+ctest --test-dir build/ninja-debug -R "integration" --output-on-failure
+
+# AddressSanitizer build
+cmake -S . -B build_asan -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+  -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer"
+cmake --build build_asan -j$(nproc) && ./build_asan/bin/bcsv_gtest
+```
+
+Test targets: `bcsv_gtest` (25 .cpp), `test_c_api`, `test_row_api`, `test_c_api_full`.
+Shell integration: `test_cli_tools.sh`, `test_bcsvSampler.sh`, `test_bcsvValidate.sh` (CTest-registered, 300s timeout).
+Deep reference: `tests/README.md`.
+
+### Benchmarks (`benchmark/`)
+
+```bash
+# Quick micro benchmark
+python3 benchmark/run.py wip --type=MICRO --no-report
+
+# Macro small (14 profiles, ~30s)
+python3 benchmark/run.py wip --type=MACRO-SMALL
+
+# Full campaign
+python3 benchmark/run.py wip --type=MICRO,MACRO-SMALL,MACRO-LARGE
+
+# Direct CLI
+./build/ninja-release/bin/bench_macro_datasets --size=S --summary=compact
+
+# Compare runs
+python3 benchmark/report.py <candidate_dir> --baseline <baseline_dir>
+```
+
+Targets: `bench_macro_datasets`, `bench_micro_types`, `bench_micro_bitset`, `bench_direct_access`, `bench_c_api`, `bench_sampler`, `bench_codec_compare`.
+Deep reference: `benchmark/README.md`, `benchmark/REFERENCE_WORKLOADS.md`.
+
+### CLI Tools (`src/tools/`)
+
+```bash
+# Build all 8 tools
+cmake --build --preset ninja-release-build -j$(nproc)
+
+# Core pipeline
+csv2bcsv data.csv data.bcsv
+bcsv2csv data.bcsv output.csv
+bcsvHeader data.bcsv
+bcsvHead -n 5 data.bcsv
+bcsvTail -n 5 data.bcsv
+bcsvSampler -c 'X[0][0] > 100' data.bcsv filtered.bcsv
+bcsvGenerator -p sensor_noisy -n 100000 -o sensor.bcsv
+bcsvValidate -i data.bcsv
+```
+
+Targets: `csv2bcsv`, `bcsv2csv`, `bcsvHead`, `bcsvTail`, `bcsvHeader`, `bcsvSampler`, `bcsvGenerator`, `bcsvValidate`.
+Deep reference: `src/tools/CLI_TOOLS.md`.
+
+### Examples (`examples/`)
+
+```bash
+cmake --build --preset ninja-debug-build --target example -j$(nproc)
+./build/ninja-debug/bin/example
+```
+
+Targets: `example`, `example_static`, `example_zoh`, `example_zoh_static`, `visitor_examples`, `c_api_vectorized_example`, `example_sampler`.
+Deep reference: `examples/README.md`.
+
+### Python (`python/`)
+
+```bash
+cd python && pip install -e .       # Editable install (syncs headers, compiles pybind11)
+pytest tests/ -v                    # Run all tests
+python -m build && twine upload dist/*  # Publish
+```
+
+Key API: `pybcsv.Layout`, `pybcsv.Writer`, `pybcsv.Reader`, `pybcsv.CsvWriter`, `pybcsv.CsvReader`, `pybcsv.write_dataframe()`, `pybcsv.read_dataframe()`.
+Deep reference: `python/README.md`.
+
+### Unity / C# (`unity/`)
+
+Architecture: `C# → P/Invoke → bcsv_c_api.dll/.so → C++ bcsv`.
+Build: `cmake --build build --target bcsv_c_api -j$(nproc)` → copy to `Assets/Plugins/`.
+Key files: `Scripts/BcsvNative.cs` (P/Invoke), `BcsvLayout.cs`, `BcsvReader.cs`, `BcsvWriter.cs`, `BcsvRow.cs`.
+Deep reference: `unity/README.md`, `unity/OWNERSHIP_SEMANTICS.md`.
 
 ## Lean Architecture Gate
 
@@ -291,40 +363,3 @@ Use `docs/LEAN_CHECKLIST.md` for every non-trivial item (especially wire format,
 Recommended cadence:
 - **Before coding:** run sections A-C to validate scope and ownership
 - **Before merge:** run sections D-H and add the summary template to commit/PR notes
-
-This keeps complexity proportional to requested scope and prevents drift in ownership/layering.
-
-## AI Agent Priming
-
-**Copy-paste this block at the start of a new AI session:**
-
-```
-I'm working on the BCSV library (Binary CSV for time-series data).
-Read these files to onboard:
-1. SKILLS.md — project overview, build commands, naming conventions, API structure
-2. The SKILLS.md in the subsystem I'll be working on (tests/, benchmark/, examples/, python/, unity/)
-3. ARCHITECTURE.md — design philosophy, file format spec, roadmap (if needed for design decisions)
-4. ToDo.txt — active task list with status and priorities
-
-Key source entry points by area:
-- Types & constants: include/bcsv/definitions.h
-- Column schema: include/bcsv/layout.h
-- Row data model: include/bcsv/row.h (RowImpl is internal — users see Row, RowStatic)
-- Row codecs: include/bcsv/codec_row/row_codec_flat001.h, row_codec_zoh001.h, row_codec_delta002.h
-- File codecs: include/bcsv/codec_file/file_codec_dispatch.h
-- Sampler: include/bcsv/sampler/sampler.h
-- File I/O: include/bcsv/reader.h, include/bcsv/writer.h
-- Visitor pattern: include/bcsv/row_visitors.h
-- VLE encoding: include/bcsv/vle.hpp
-- Bitset: include/bcsv/bitset.h
-
-Build & verify: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug && cmake --build build -j$(nproc) && ./build/bin/bcsv_gtest
-```
-
-**Task-specific additions** (append to the block above):
-- Working on Reader/Writer: "Also read include/bcsv/reader.hpp and writer.hpp for implementation details"
-- Working on benchmarks: "Also read benchmark/README.md and tests/bench_common.hpp"
-- Working on Python: "Also read python/SKILLS.md and python/pybcsv/bindings.cpp"
-- Working on CLI tools: "Also read src/tools/SKILLS.md and src/tools/CLI_TOOLS.md"
-- Working on file format: "Also read include/bcsv/file_header.h, packet_header.h, file_footer.h"
-- Working on bitset: "Also read include/bcsv/bitset.h and bitset.hpp"

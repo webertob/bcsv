@@ -12,12 +12,11 @@ on:
     branches: [ main, master ]
     paths:
       - 'include/**'
+      - 'src/**'
       - 'tests/**'
       - 'benchmark/**'
       - 'examples/**'
       - 'CMakeLists.txt'
-      - 'tests/CMakeLists.txt'
-      - 'benchmark/CMakeLists.txt'
   push:
     tags:
       - 'v*'
@@ -34,7 +33,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 env:
   BUILD_TYPE: Release
@@ -230,11 +228,14 @@ jobs:
       run: ctest --test-dir build --output-on-failure
 
     - name: Run benchmarks (${{ inputs.type }})
+      env:
+        BENCH_TYPE: ${{ inputs.type }}
+        BENCH_REPS: ${{ inputs.repetitions }}
       run: |
         RUN_ROOT="${{ runner.temp }}/bench_results/manual"
         python3 benchmark/run.py wip \
-          --type=${{ inputs.type }} \
-          --repetitions=${{ inputs.repetitions }} \
+          --type="$BENCH_TYPE" \
+          --repetitions="$BENCH_REPS" \
           --build-type=Release \
           --git=manual \
           --results="$RUN_ROOT" \

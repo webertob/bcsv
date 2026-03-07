@@ -69,6 +69,14 @@ namespace bcsv {
         row_cnt_ = 0;       
     }
 
+    /// @brief Flush all buffered data to disk in a crash-recoverable state.
+    /// @note For packet-based codecs, this closes the current packet
+    ///       (writes terminator + checksum), flushes the OS stream, then
+    ///       opens a new packet for subsequent writes.  The row codec is
+    ///       reset at the packet boundary (ZoH/Delta restart cleanly).
+    ///       For stream codecs, this flushes the OS stream buffer only.
+    ///       After flush(), all previously written rows are recoverable
+    ///       by a Reader even if the process crashes.
     template<LayoutConcept LayoutType, typename CodecType>
     void Writer<LayoutType, CodecType>::flush() {
         if (!stream_.is_open()) {
@@ -183,12 +191,14 @@ namespace bcsv {
         }
     }
 
+    /// @brief Write a copy of the provided row to the file.
     template<LayoutConcept LayoutType, typename CodecType>
     void Writer<LayoutType, CodecType>::write(const RowType& row) {
         row_ = row;
         writeRow();
     }
 
+    /// @brief Write the Writer's internal row (populated via row()) to the file.
     template<LayoutConcept LayoutType, typename CodecType>
     void Writer<LayoutType, CodecType>::writeRow() {
         if (!stream_.is_open()) {
