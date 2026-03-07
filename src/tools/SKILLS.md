@@ -17,7 +17,7 @@ cmake --build build --target bcsvSampler -j$(nproc)
 
 All executables output to `build/bin/`.
 
-## Build Targets (7 total)
+## Build Targets (8 total)
 
 | Target | Source | Description |
 |--------|--------|-------------|
@@ -28,6 +28,7 @@ All executables output to `build/bin/`.
 | `bcsvTail` | bcsvTail.cpp | Display last N rows in CSV format |
 | `bcsvSampler` | bcsvSampler.cpp | Filter & project using Sampler expressions |
 | `bcsvGenerator` | bcsvGenerator.cpp | Generate synthetic datasets from 14 profiles |
+| `bcsvValidate` | bcsvValidate.cpp | Validate structure, patterns, and file comparison |
 
 ## Quick Reference
 
@@ -50,6 +51,15 @@ bcsvSampler -c 'X[0][0] > 100' data.bcsv filtered.bcsv
 
 # Generate 100K rows of sensor data
 bcsvGenerator -p sensor_noisy -n 100000 -o sensor.bcsv
+
+# Validate BCSV structure
+bcsvValidate -i data.bcsv
+
+# Validate against benchmark profile
+bcsvValidate -i data.bcsv -p sensor_noisy -n 100000
+
+# Compare BCSV against CSV source
+bcsvValidate -i data.bcsv --compare source.csv
 ```
 
 ## Source Structure

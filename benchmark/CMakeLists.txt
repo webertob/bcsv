@@ -20,10 +20,15 @@
 option(BCSV_BUILD_BENCHMARKS "Build the modular benchmark suite" ON)
 
 if(BCSV_BUILD_BENCHMARKS)
+    # Shared dataset profiles (src/shared/test_datasets.hpp)
+    # benchmark/src/bench_datasets.hpp is a forwarding include
+    set(BCSV_SHARED_DIR ${CMAKE_SOURCE_DIR}/src/shared)
+
     # --- Macro benchmark: full write/read/validate cycles ---
     add_executable(bench_macro_datasets src/bench_macro_datasets.cpp)
     target_link_libraries(bench_macro_datasets PRIVATE bcsv)
     target_compile_features(bench_macro_datasets PRIVATE cxx_std_20)
+    target_include_directories(bench_macro_datasets PRIVATE ${BCSV_SHARED_DIR})
     set_target_properties(bench_macro_datasets PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     )
@@ -32,6 +37,7 @@ if(BCSV_BUILD_BENCHMARKS)
     add_executable(bench_generate_csv src/bench_generate_csv.cpp)
     target_link_libraries(bench_generate_csv PRIVATE bcsv)
     target_compile_features(bench_generate_csv PRIVATE cxx_std_20)
+    target_include_directories(bench_generate_csv PRIVATE ${BCSV_SHARED_DIR})
     set_target_properties(bench_generate_csv PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     )
@@ -63,6 +69,7 @@ if(BCSV_BUILD_BENCHMARKS)
         add_executable(bench_micro_types src/bench_micro_types.cpp)
         target_link_libraries(bench_micro_types PRIVATE bcsv benchmark::benchmark)
         target_compile_features(bench_micro_types PRIVATE cxx_std_20)
+        target_include_directories(bench_micro_types PRIVATE ${BCSV_SHARED_DIR})
         set_target_properties(bench_micro_types PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
         )
@@ -101,6 +108,7 @@ if(BCSV_BUILD_BENCHMARKS)
     add_executable(bench_codec_compare src/bench_codec_compare.cpp)
     target_link_libraries(bench_codec_compare PRIVATE bcsv)
     target_compile_features(bench_codec_compare PRIVATE cxx_std_20)
+    target_include_directories(bench_codec_compare PRIVATE ${BCSV_SHARED_DIR})
     set_target_properties(bench_codec_compare PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     )
@@ -121,6 +129,7 @@ if(BCSV_BUILD_BENCHMARKS)
         add_executable(bench_external_csv src/bench_external_csv.cpp)
         target_link_libraries(bench_external_csv PRIVATE bcsv csv)
         target_compile_features(bench_external_csv PRIVATE cxx_std_20)
+        target_include_directories(bench_external_csv PRIVATE ${BCSV_SHARED_DIR})
         set_target_properties(bench_external_csv PROPERTIES
             RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
         )

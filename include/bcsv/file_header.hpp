@@ -18,6 +18,7 @@
  */
 
 #include <algorithm>
+#include <ctime>
 #include <iostream>
 #include <vector>
 #include "bcsv/definitions.h"
@@ -27,6 +28,7 @@ namespace bcsv {
 
     inline FileHeader::FileHeader(size_t columnCount, size_t compressionLevel, uint8_t major, uint8_t minor, uint8_t patch) {
         const_section_.magic = BCSV_MAGIC;
+        const_section_.creation_time = static_cast<uint64_t>(std::time(nullptr));
         const_section_.version_major = major;
         const_section_.version_minor = minor;
         const_section_.version_patch = patch;
@@ -233,6 +235,7 @@ namespace bcsv {
     inline void FileHeader::printBinaryLayout(const LayoutType& layout) const {
         std::cout << "FileHeader Binary Layout (" << getBinarySize(layout) << " bytes):\n";
         std::cout << "  Magic:       0x" << std::hex << const_section_.magic << std::dec << " (" << sizeof(const_section_.magic) << " bytes)\n";
+        std::cout << "  Created:     " << const_section_.creation_time << " (8 bytes)\n";
         std::cout << "  Version:     " << static_cast<int>(const_section_.version_major) << "." 
                   << static_cast<int>(const_section_.version_minor) << "." 
                   << static_cast<int>(const_section_.version_patch) << " (3 bytes)\n";

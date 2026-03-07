@@ -182,15 +182,16 @@ Technical design, requirements, and implementation roadmap
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                   File Header (16 + variable bytes)     │
+│                   File Header (24 + variable bytes)     │
 │ ┌─────────────────────────────────────────────────────┐ │
 │ │ Magic: "BCSV" (0x56534342)           4 bytes        │ │
+│ │ Creation time: Unix epoch            8 bytes        │ │
 │ │ Version: major.minor.patch           3 bytes        │ │
 │ │ Compression level: 0-9               1 byte         │ │
 │ │ Flags: FileFlags bitfield            2 bytes        │ │
 │ │ Column count: N                      2 bytes        │ │
 │ │ Packet size (bytes)                  4 bytes        │ │
-│ │ ─── ConstSection (16 bytes) ───────────────────── │ │
+│ │ ─── ConstSection (24 bytes) ───────────────────── │ │
 │ │ Column types: [UINT8] × N                          │ │
 │ │ Column name lengths: [UINT16] × N                   │ │
 │ │ Column names: concatenated UTF-8 strings            │ │
@@ -240,7 +241,7 @@ Technical design, requirements, and implementation roadmap
   continuous LZ4 stream. No separate row-length array. `PCKT_TERMINATOR` marks end of packet.
 - **PacketHeader slim-down**: 16 bytes (was 20). Removed `rowCount` (derived from next
   packet or terminator) and `payloadSize` (streaming format). Checksum is xxHash32.
-- **FileHeader**: 16-byte ConstSection includes `packet_size` field.
+- **FileHeader**: 24-byte ConstSection includes `creation_time` and `packet_size` fields.
 - **FileFooter**: Appended at EOF on `Writer::close()`. Optional (flag `NO_FILE_INDEX`
   suppresses it for embedded use). The 24-byte ConstSection is always at `EOF - 24`.
 - **start_offset** is `uint32_t` — it measures the footer size (EOF to BIDX), not a
@@ -408,7 +409,7 @@ include/bcsv/           C++ header-only library (all core types)
   row_codec_dispatch.h     RowCodecDispatch — runtime codec selection
   writer.h / writer.hpp   Writer, WriterFlat, WriterZoH, WriterDelta
   reader.h / reader.hpp   Reader, ReaderDirectAccess
-  file_header.h/hpp      FileHeader (16-byte ConstSection)
+  file_header.h/hpp      FileHeader (24-byte ConstSection)
   packet_header.h        PacketHeader (16-byte struct)
   file_footer.h/hpp      FileFooter (24-byte ConstSection + PacketIndex)
   lz4_stream.hpp         LZ4CompressionStream, LZ4DecompressionStream (non-movable)
@@ -423,7 +424,7 @@ include/bcsv/           C++ header-only library (all core types)
 
 src/
   bcsv_c_api.cpp         C API shared library implementation
-  tools/                 CLI tools (csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvSampler, bcsvGenerator)
+  tools/                 CLI tools (csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvSampler, bcsvGenerator, bcsvValidate)
 
 examples/               Usage examples (flexible, static, ZoH, visitors, sampler)
 tests/                  GTest suite, C API tests, Row API tests

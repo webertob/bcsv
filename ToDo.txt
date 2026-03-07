@@ -9,466 +9,33 @@ background:
 - benchmark suite is located under: ./benchmark (README.md has full docs)
 - documentation (also on the API) is provided here: ./docs
 
-=== PROGRESS (2026-02-28) ===
-Items 0–14: DONE (all committed)
-  12. CSV Reader/Writer             — committed 4fdd6f2
-  13. Update Tools & Libraries      — committed b806a01
-  14. Delta + VLE row codec         — committed f48a51d (Delta001)
-  11.G bitset encode/decode         — included in Item 14
-  Quality reviews (Phases 1–3)      — committed f9a4ca1
-  Delta002 optimisation             — Delta001 removed, Delta002 is sole delta codec
-  Doc cleanup                       — ITEM_11_PLAN.md removed, bcsv_review.md resolved (26/30 fixed),
-                                      PHASE1/PHASE3 reports archived, ARCHITECTURE.md updated
-
-Deferred / remaining:
-  11.B open items (perf regression, memory footprint, minor refactorings)
-  14b. dictionary encoding for strings
-  [LIB-1] FIXED — ReaderDirectAccess: delta + random access → watermark-based sequential decode
-  [LIB-2] FIXED — ReaderDirectAccess: packet_lz4_batch → seekToPacket() added
-  [LIB-3] FIXED — FileCodecPacketLZ4Batch001: shutdownBgThread() race condition (deadlock)
-  See: docs/BUG_REPORT_DirectAccess.md
-===
-
-Lean checklist gate (for every non-trivial item):
-- Run docs/LEAN_CHECKLIST.md before coding (A-C) and before merge (D-H)
-- Add a short status block to the item:
-    Lean Checklist Summary
-    - Scope fit: PASS/FAIL
-    - Ownership clarity: PASS/FAIL
-    - Layering: PASS/FAIL
-    - Duplication budget: PASS/FAIL
-    - Complexity budget: PASS/FAIL
-    - Safety guardrails: PASS/FAIL
-    - Compatibility impact: PASS/FAIL
-    High risks:
-    1) ...
-    2) ...
-    Mitigations / follow-ups:
-    1) ...
-    2) ...
-
-
-
-[x] 0.  Write project mission statement, upload to git hub
-    Aims on combining the easy usage of CSV files with the performance and file size of a binary format. It should perform specifically well for large time series data sets and also cover small embedded platforms. Therefore it is an explicit requirement that we support files that are larger than the available memory (RAM), thus the file is read in chunks or rows. For the same reason the computational effort should be reasonable small. In order to support real-time processing the call time to write or read data should be constant. 
-    The file should exploit time-series data structure to reduce file size. Specifically it should be efficient on recording  Binary Wave Forms and constant data (spars recording / events) to achieve good compression. Compression ratio to be balanced with requirements on computational and streaming. It should be possible to read data from the file even if write was interrupted. We want to be able to retrieve the last fully written row. The file format is to be optimized for sequential row wise read and write operations, but should support random read with acceptable speeds, too. 
-    The file should feel natural to programmers and compete with CSV with respect of ease of usage. Therefore, we avoid definition or validation of a schema. The file should be defined from within the programming language itself (C/C++, python, C# or …), without the need to run another tool or configuration file format. This is different to FlatBuffers or ProtoBuff. The file structure itself is documented in the file, similar to a header in a CSV. The header in BCSV is mandatory, as we won’t waste storage for delimiters. BCSV also enforces the type defined in the header for each column on every row. Thus you only need to validate the file structure once when you open a file and can rely on every row to show up with a valid type in each column (cell). 
-
-    Design Goals:
-    -	Sequential recording of a 1000 channel stream with 1KHz on an STM32F4 and 10KHz on a STM32F7, Zynq7000, RaspPi-nano
-    -	Small file growth < 1KB/s for 1000 channel stream with 10Khz if nothing happens, except counting a clock/counter. 
-    -	Processing >= 1 million rows/sec for a 1000 channel stream on a modern Zen3 CPU core.
-    -	<30% file size compared to CSV comparing a 1000 channel stream
-    -	Compatible with C/C++, C# and Python
-
-    A set if CLI tools should help working with the files, supporting common work flows (view files, filter files, split and merge files, convert from and other formats).
-    Who is the customer: Anybody how is running metrology tasks with digital tools. 
-
-
 [x] 0. Test and Stabilize direct access feature
-    - build and run unit tests  (passed)
-    - build and run benchmarks  (passed)
 [x] 1. Test and Stabilize CLI tools:
-    a. bcsv2csv
-    b. csv2bcsv
-    c. bcsvHead
-    d. bcsvTail
-[x] 2. Test and Stabilize C_API -> C#
-[x] 3. Test and Stabilize Python
-
 [x] 4. Refactor VLE (Variabel Length Encoding):
-    Note:
-        We won't distinguish between VLE and BLE as we only use "block length encoding" to implement variable length encoding. This means we are string the number of additioaly required bytes required in an block of consecutive bits at the very begining of the byte stream considered.
-        Use templates and expolit knowlegde about the type to improve performance.
-            - fallthrough for single byte types
-            - zigzag encoding only for signed types
-            - destinguish between truncated and normal length mode (truncated means the bits required to encode the length are taken from the actual value, e.g. for uint64_t truncated only leaves 61bit for value)
-            - we encode the number of ADDITIONAL bytes required to encode/decode the value, additional to the 1st byte that must be present anyway e.g. for uint64_t the range is 0 to 7)
-            - avoid loading or shifiting indivudal bytes and replace this with opertions on larger registers if possible to achive higher performance, consider speculative operations and masking (e.g. always load 8bytes for an uint64) if performance can be gained without corrupting the I/O. We now from experiments that this can be highly profitable, espacially when used on data already in memory, but that travesing back and forth in a std::stream has a significant performance penaltiy and must be avoided. 
-
-    Functions required:
-    - size_t vle_encode(const T &value, void* dst, size_t dst_capacity)  //returns the number of bytes written to dst to store the value
-    - void   vle_encode(const T &value, ByteBuffer &bufferToAppend)      //appends the bytes to the ByteBuffer increasing its size
-    - size_t vle_decode(T &value, void* src, size_t src_capacity) //returns the number of bytes consumed
-    - T      vle_decode(std::span<std::byte> &bufferToRead)     //span gets updated, removing the bytes consumed
-    - bool   vle_read(T &value, &istream, *hash = 0)
-    - bool   vle_write(const T &value, &ostream, *hash = 0)
-
 [x] 5. Consider a robust handling of ColumnNames. 
-    - do not modify ColumnNames protected by ""
-    - allow dupplicate ColumnNames
-   
 [x] 6. Modify Row and Layout to not use std::variants, consider alignment
-    [x] get it compiled
-    [x] pass tests
-    [x] pass benchmark
-    [o] update tools --> [10]
-    [o] commit
-    [0] build and test python --> [10]
-    [o] build and test C# --> [10]
-
 [x] 7. Refactor bitset_dynamic to use full register width instead of narrow bytes. Thus we want to use 64bit types on 64bit platform. Consider alignment.
-
 [x] 8. Add visit() function to Row, RowStatic, RowView, RowViewStatic enable fast operations on the data 
-
 [x] 8.b: Exploit visit function to simplify code [EVALUATED - NO ACTION NEEDED]
-        Analysis completed 2026-02-07. See Implementation_Visit()_Function.MD for details.
-        Conclusions:
-        - visit on single column? 
-          ❌ NOT RECOMMENDED: Current get<T>() is more efficient and clearer
-        - visit on column range? 
-          ⏸️ DEFER TO PHASE 2+: Useful feature but wait for user demand
-          Simple to add later: visit(start_col, end_col, visitor)
-        - Implement get/set via visit()? 
-          ❌ NOT RECOMMENDED: Performance & clarity > DRY principle
-          Switch/case duplication is acceptable for hot-path operations
-        
-        Decision: Keep current implementation. The switch/case in get(), set(), 
-        and visit() serves different performance/API requirements. No changes needed.
-
 [x] 8.c: Refeactoring Row, Layout relation ship. 
-    Currently Layout is member (owned by) Row. However we typically have multiple rows that share the same Layout. 
-    This leads to a waste of memory, but also enforces us to check if layouts match between rows, hence slowing down operation between rows, which we most likley need when we do more complex delta encoding.
-    Therefore I would prefere to have row just having a pointer to Layout. Such it would be easy to check if two rows share the same layout and reduces the amount of memory required (hot-cache).
-    However we need to ensure that Layout does not change, as long as rows are alive or that they follow relevant changes to the layout structure i.e. setColumnType, addColumn, removeColumn. Name changes are irrelevant.
-    I still like the current API of the BCSV library and would like to maintain the workflow, see examples and benchmark.
 [x] 8.d: Finalize Row::onAddColumn, Row::onChangeColumnType, Row::onRemoveColumn
 [x] 8.e: debug large column count bools
 [x] 8.f: Add test for bitset insert
 [x] 8.g: Improve bcsv::bitset:
-        Optimize memory allocation and layout for dynamic bcsv::bitset<> using (Small Object Optimization). 
-        Goal: avoid heap allocations and improve cache locality in the most commone use cases of having small bit counts.
-        Requirments: maintain current API and performance level. Try to avoid significant code growth, try to maintain commonality between static and dynamic bitsets bcsv::bitset<N> and bcsv::bitset<>
-        Concept: 
-            Make bcsv::bitset<> to have exactly 2 member variables, which are defined as: size_t size_; and uintptr_t data_;
-            size_: is going to hold the number of bits (N) currently managed by this bitset. Therefore: We don't store capacity. We don't store number of words. These need to be calculated on the fly as required. See notes.
-            data_: content of data_ deppends on size_. 
-                    If N is small enough to be stored within one word (N<=sizeof(uintptr_t)*8):
-                        bits are stored directly within data_ on the stack. 
-                    else if N grows bejond the capacity of a single word. 
-                        We need to allocate the required amount of words on the heap and data_ holds a pointer to that memory.
-
-            Note: implement a private function bitset::wordCount()const; That returns the number of words available within data_. it ca be easily calculatey on the fly from bitset::size_ e.g. divide by 64 on 64bit platforms (shift by 6) or devide by 32 on 32bit platforms (shift by 5). No need to make it a persitent member of bitset<>. 
-                implement a public function bitset::capacity(); We expect the layout of bitset to be quite stable. Thus we are not tracking capacity as an independent member. Therefore when a reduction of N causes a reduction of word count, we need to reallocate and move to a smaller chunk of memory to not lose track of the upper part of memory. 
-                the return of bitset.capacity() can only be slighly larger than bitset.size(), e.g: return capacity = wordCount() * sizeof(word) * 8;
 [x] 8.h Make change tracking for Row and RowStatic a compile time decision.
-            Issue: currently we have a lot of branching depending on change tracking beeing enabled or disabled. But in normal operations, this decision only needs to be done once. For instence when the User decides to Write using ZoH, this basically requiers change tracking enabled.
-            Goal: With minimum impact to the API make changeTracking a compile time decision. Propably using a template parameter
 [x] 8.h: Restructure Row object to not use ptr_. 
-            Delivered: 
-                - Three-container storage: bits_ (bitset<>), data_ (vector<byte>), strg_ (vector<string>). Removed ptr_.
-                - Moved offsets_ to Layout::Data. Added Layout::Data::computeOffsets() / rebuildOffsets().
-                - Added bool_mask_ and tracked_mask_ (bitset<>) to Layout::Data for O(1) mask-based operations.
-                - Incremental addColumn optimization: O(1) for BOOL append, O(n) for STRING/scalar or mid-insert. Avoids full rebuildOffsets().
-                - Sequential serializeToZoH: writes bits_ directly to buffer (memcpy), early exit if no tracked changes.
-                - get<T>/ref<T>() return by value. Removed bool_cache_. Supports string_view and span<const char> for zero-copy reads.
-                - Removed ref<T>() const (was duplicate of get<T>). Kept mutable ref<T>() for both Row and RowStatic.
-                - changesSet/changesReset use bitwise mask ops (|= trackedMask, &= boolMask) instead of loops.
-                - Internal tracking predicate uses bits_.any() — intentionally includes bool values (any true bit = data to serialize).
-                - Fixed thread_local bool aliasing in raw get(size_t): alternating 2-slot buffer.
-            Note: Raw get(size_t) returning const void* is a legacy API, not called externally. Pointer to bool
-                  columns is only valid until the next get(size_t) call for a bool column on the same thread.
-            Tested: 299/299 tests pass (debug + release). All examples and benchmarks verified.
-
 [x] 9. Improve benchmark suite
-    [x] Phase 1 — MVP: Fair CSV + Key Datasets + JSON Output + Basic Report
-        - fair CSV baseline using Row::visitConst() + std::to_chars() (no ostream overhead)  
-        - CsvReader using std::from_chars() for all types including float/double
-        - 4 dataset profiles: mixed_generic, sparse_events, sensor_noisy, string_heavy
-        - bench_macro_datasets: CSV / BCSV Flexible / BCSV ZoH, round-trip validation, JSON output
-        - bench_micro_types: Google Benchmark per-type Get/Set/Visit/Serialize
-        - Python orchestrator (benchmark/run_benchmarks.py) + report generator
-        - Files: tests/bench_common.hpp, bench_datasets.hpp, bench_macro_datasets.cpp, bench_micro_types.cpp
-    [x] Phase 2 — Full Dataset Coverage + CLI Tool Benchmarks + Persistence
-        - add 5 dataset profiles: bool_heavy, arithmetic_wide, simulation_smooth, weather_timeseries, high_cardinality_string
-        - add --size=S|M|L|XL flag (10K/100K/500K/2M rows)
-        - add --benchmark flag to bcsv2csv and csv2bcsv CLI tools
-        - integrate CLI tool benchmarks into orchestrator (csv→bcsv→csv round-trip)
-        - persistent result storage in benchmark/runs/<hostname>/<timestamp>/, cleanup temp files
-    [x] Phase 3 — External Comparison, Reporting, Regression Detection
-        - optional external CSV lib benchmark (vincentlaucsb/csv-parser via FetchContent)
-        - enhanced Python reporting: bar charts, speedup tables, compression ratios
-        - benchmark/compare_runs.py: regression detection, persistent leaderboard
-    [x] Phase 4 — Polish, CI Integration, Documentation
-        - GitHub Actions workflow: sweep on PR, full on release
-        - update README.md and tests/README.md with benchmark docs
-        - deprecate legacy benchmark_large.cpp and benchmark_performance.cpp
-    Follow-ups (from Phase 2 analysis):
-        [ ] Multi-repetition support: add --repeat=N flag to bench_macro_datasets with mean ± stddev reporting
-        [x] CPU pinning: taskset -c 0 wrapper in run_benchmarks.py (--no-pin to disable)
-        [x] Warm-up run: 100-row warmup iteration runs automatically before measurement
-
 [x] 9.b Do improve efficency on AI Co-development create persitent information about the project, supports AI-agents to quickly onboard and understand the goals, codes and infrastrutcure.
-    - build skill
-    - test skill
-    - benchmark skill
-    - project goals
-    - project constrains
-    - code formation rules & preferences
-    - project structure / file structure
-    DONE — Created:
-        SKILLS.md (root)        — master AI onboarding doc (build, test, API, naming, priming prompt)
-        tests/SKILLS.md         — test build/run/sanitizer commands, test file inventory
-        examples/SKILLS.md      — example targets, CLI tools quick reference
-        python/SKILLS.md        — Python build/install/test, header sync, API
-        unity/SKILLS.md         — Unity/C# architecture, P/Invoke, memory management
-        .clang-format           — project formatting rules (LLVM base, indent 4, braces Attach)
-    Naming convention enforcement (snake_case_ private members, snake_case public struct members, lowerCamelCase functions, UpperCamelCase classes, CAPITAL_SNAKE_CASE constants):
-        Wave 1: definitions.h (ALWAYS_FALSE, GetTypeT), vle.hpp (all functions+constants), bitset (class Bitset, DYNAMIC_EXTENT, Reference, SliceView)
-        Wave 2: binary struct members (FileHeader/PacketHeader/FileFooter ConstSection, PacketIndexEntry)
-        Wave 3: layout.h (ColumnDefinition, Change, Callbacks members; LayoutStatic COLUMN_TYPES)
-        Wave 4: row.h (COLUMN_COUNT, COLUMN_LENGTHS, COLUMN_OFFSETS, OFFSET_VAR)
-        Wave 5: reader/writer members (~15 camelCase_ → snake_case_), constSection_ → const_section_, is_open() → isOpen()
-        Wave 6: C API bcsv_layout_isCompatible → bcsv_layout_is_compatible
-    Public struct member refinement: removed trailing underscores from public struct members (snake_case, not snake_case_).
-        Affected: FileHeader::ConstSection (8), PacketHeader (3), FileFooter::ConstSection (4), PacketIndexEntry (2), ColumnDefinition (2), Change (3), Callbacks (1).
-        Private members (const_section_, packet_index_, callbacks_, etc.) correctly retain trailing underscore.
-        Updated SKILLS.md naming table to distinguish public vs private member convention.
-    All 327 GTest + 76 C API + Row API tests pass on both debug and release builds.
-
 [x] 10. Change "flat" (none-ZoH) wire format to optimize compression and read & write performance
-        Porpoposal new format should look like this: 
-            - bits_ (directly write Bitset to buffer, using Bitset.writeTo() and Bitset.readFrom() functions. Aligns to single byte boundary.
-            - data_ (all primivites / arithmetics, but remove padding, no alignment)
-            - strg_lengths [vector(sequenc) of uint16_t] (as many entries as string columns defined in layout
-            - strg_data [vector of const char*, strings payload]
-        - faster serializatzion / deserialization as wire format is closer to Row format, no need to calculate strAddr.
-        - small footprint (bool to be stored as bits), no strAddr no offsets stored and calculated
-        Delivered:
-            - Four-section wire format: [bits_][data_][strg_lengths][strg_data]
-            - Bit-packed bools (ceil(bool_count/8) bytes), packed scalars (no alignment gaps),
-              uint16_t string lengths, concatenated string payloads
-            - Wire metadata (wireBitsSize, wireDataSize, wireStrgCount, wireFixedSize) now owned by
-              RowCodecFlat001/RowCodecZoH001 (moved from Layout::Data in item 11).
-            - Updated: RowImpl, RowStaticImpl, RowView, RowViewStatic (get, set, visit, validate)
-            - Removed StringAddr from flat wire path; COLUMN_OFFSETS/COLUMN_LENGTHS/OFFSET_VAR replaced
-              with WIRE_OFFSETS/WIRE_BITS_SIZE/WIRE_DATA_SIZE/WIRE_STRG_COUNT/WIRE_FIXED_SIZE
-            - RowView/RowViewStatic: bool_scratch_ for single-bit extraction, string cursor scanning
-            - Mask refactoring: removed bool_mask_ from Layout::Data, kept tracked_mask_,
-              boolMask() derived via ~tracked_mask_ (returned by value)
-            - Bitset::erase() and pushBack() added; removeColumn() made incremental via erase()
-            - Single-loop serialize/deserialize rewrite: -15% serialize, -25.5% deserialize, -16.5% visit
-            - Layout::Data copy constructor fixed to copy wire metadata (wire_bits_size_, wire_data_size_, wire_strg_size_)
-            - Bounds checking: all visit/visitConst overloads check endIndex > columnCount (was startIndex-only in RowView/RowViewStatic)
-            - Defensive std::min(str.size(), MAX_STRING_LENGTH) in all flat serializeTo paths
-    All 339 GTest + 76 C API + Row API tests pass on both debug and release builds.
-
-
 [x] 10 (Fix). Harden Item 10 implementation (flat wire format)
-        Critical findings (brief):
-        - RowView mutable scalar access uses reinterpret_cast on packed (potentially unaligned) wire data.
-        - Multiple RowView paths read string-length/scalar bytes without consistent pre-checks for buffer bounds.
-        - RowView vectorized get/set contract is inconsistent (bool-return API but may still throw via range/type path).
-        - setColumns(columnNames, columnTypes) observer notification path required verification.
-        - Keep behavior/API unchanged while fixing safety and consistency; validate with focused RowView/Layout tests.
-
-    Lean Checklist Summary (Item 10 closeout)
-    - Scope fit: PASS (changes limited to flat wire safety/consistency + warning cleanup in benchmark harness)
-    - Ownership clarity: PASS (fixed section size checks centralized per API entry point; payload checks remain local)
-    - Layering: PASS (no API layering expansion; Reader/Writer unchanged)
-    - Duplication budget: PASS (aligned similar RowView/RowViewStatic paths)
-    - Complexity budget: PASS (targeted edits, no new abstraction layer)
-    - Safety guardrails: PASS (unaligned scalar access hardened, bounds checks consolidated, tests green)
-    - Compatibility impact: PASS (public API/ABI unchanged; behavior preserved)
-
-    Validation (2026-02-14):
-    - Clean Release rebuild from scratch: PASS
-    - Full gtest suite: 343/343 PASS
-    - C API suite: 76/76 PASS
-    - Row API executable: PASS
-    - Example executables built + smoke run: example, example_static, example_zoh, example_zoh_static, visitor_examples, c_api_vectorized_example (all exit 0)
-    - Benchmark validation:
-        - Focused micro: BM_RowViewVisit_Int8UInt8_Aligned/Misaligned in expected ~4.1-4.3 ns range
-        - Suite smoke: benchmark/run_benchmarks.py --size=S --no-build --no-report PASS
-
-
 [x] 11. Restructure Interaction between Row(classes) and Reader/Writer. Proposal: Introduce a Serializer / Deserializier layer within the API that is going to allow us to support different Encoding schemas, limiting the impact on Row, Reader and Writer classes.
-        Issue: Currently serializer and deserailizer functionalities are tightly integrated with row, this:
-            - makes row heavier (memory) and more complex than required, as it stores data required for serilization/deserialization, e.g. (wire)offsets_ within RowView and offset_var_ in all Row classes.
-              which in many use cases may not be needed and limits rows ability to be used as lightweight facility to collect and transfer information within an application.
-            - duplication and distribution of offset_ and offset_var_ over multiple Row instances, which reduces cache-locality and increases cache-misses and potentially causing a performance penaltiy
-            - For upcoming delta encoding schedmal, we are going to have multiple rows active during serialization/deserialization, as we need to calculate deltas between them or rebuild from deltas.
-            - For ZoH or upcoming more complex delta encoding, a persitent context between subsequent rows is required. Currently Writer/Reader provideds this context.
-            - However as we intend to support different Serialization/Deserialization schemas, to match specific application environments (embedded, sequential, radnom-access, high through-put, high compression). Reader&Writer might grow in complexity quickly.
-            - Reader & Writer are API relevant interaction points, that should be kept stable, there fore Serilaization/Deserialization 
-            - Row implementation grows complex --> currently ~3500 lines of code in row.hpp, we should split for maintain ability. --> Take serialization/deserilization out.
-            - In order to provide backward compatibility to support older file formats, Reader/Writter should be able to switch the serialization/deserialiozation engine
-        Note from item 10: Wire metadata (wireBitsSize_, wireDataSize_, wireStrgCount_ and derived
-            wireFixedSize()) currently lives in Layout::Data. This should move to the Serializer class
-            as part of this restructuring. Similarly, WIRE_OFFSETS[] and related constexpr in
-            RowStaticImpl/RowViewStatic should become Serializer template parameters.
-        Proposal: Implement a Serializer and Deserailizier layer providing a stable interface towards Reader/Writer and Row(s) to enable different encoding schemas (i.e. flat (ToDo 12.), ZoH, delta (ToDo 13.)), with little to now impact on Row(s), Writers and Readers.
-            Ideas:
-                A. Serializer/Deserializer to operate on uncompressed data. Thus, it is callers job to manage compression and packkage structure. --> Still a considerable amount of complexity remains within Reader/Writer
-                B. Serializer/Deserializer operate on a single row (per call). Thus, it is callers job to manage packets. 
-                    Does it make sense to seperate:
-                        RowSerializers/Deserializers for encoding/decoding rows from/to uncompressed data, can have knowledge about multiple rows (delta encoding)
-                        FileSerializers, manages header, packet structure and compression.
-        Goals:
-        Constrains:
-        Tasks:
-            proposal:
-                Serializer<Layout, Row> {
-                    bool do(const Row& row, ByteBuffer &buffer);
-                    setup?
-                    reset?
-                    stats?
-                }
-                Deserializer<Layout, Row> {
-                    bool do(Row& row, std::span<std::byte> buffer);
-                    setup?
-                    reset?
-                    stats?
-                }
-        - Create Serilizer/Deserializer for Flat and ZoH encoding --> dense columns (Row, RowStatic)
-        - Create Serilizer/Deserializer for Flat and ZoH encoding --> sparse columns (RowView, RowViewStatic)
-            NOTE: RowView/RowViewStatic removed from active API (archived to row_view.h/row_view.hpp).
-                  Sparse codec path (readColumn, visitSparse*) also removed. See commit 8575319.
-        - Transfer Row, RowStatic serializer and deserializer functions to the new Classes
-        - Modify Reader/Writer to use the new serializer
-        - Check that we have maintained current bcsv API
-            - run&pass tests
-            - run&pass benchmarks
-            - build examples and CLI tools
-
-        Lean Checklist Summary (Item 11 baseline, before implementation)
-        - Scope fit: PASS (item explicitly targets serializer/deserializer extraction)
-        - Ownership clarity: FAIL (wire metadata and offsets currently duplicated across Layout/Row/Views)
-        - Layering: FAIL (Reader/Writer still own encoding-path branching)
-        - Duplication budget: FAIL (flat/ZoH logic duplicated across Row, RowStatic, RowView, RowViewStatic)
-        - Complexity budget: FAIL (row.hpp monolith, mixed responsibilities)
-        - Safety guardrails: PARTIAL (tests pass; buffer-boundary and unaligned-access hardening still open)
-        - Compatibility impact: PARTIAL (C API / Unity / Python impact must be checked for serializer boundary changes)
-
-        High risks:
-        1) Serializer extraction introduces regressions if flat/ZoH behavior diverges between dynamic/static/view paths.
-        2) Ownership migration of wire metadata causes stale caches / inconsistent offsets across types.
-
-        Mitigations / follow-ups:
-        1) Introduce serializer interfaces first, then migrate one encoding path at a time with parity tests.
-        2) Establish single source of truth for wire metadata and validate with focused row/view roundtrip tests.
-
-        Implementation completed: 2026-02-15
-
-        Deliverables:
-        - New files: row_codec_flat001.h/hpp (555 lines), row_codec_zoh001.h/hpp (478 lines),
-          row_codec_detail.h (58 lines), row_codec_variant.h (51 lines),
-          row_codec_flat001_test.cpp (677 lines), row_codec_zoh001_test.cpp (631 lines)
-        - Removed from Row: serializeTo, deserializeFrom, serializeToZoH, deserializeFromZoH
-          (~520 lines of implementations + declarations)
-        - Removed from RowStatic: WIRE_* constexpr block, serialize/deserialize helpers
-          (~240 lines of implementations + declarations)
-        - Removed from Layout: wire_bits_size_, wire_data_size_, wire_strg_size_ members,
-          wireBitsSize/wireDataSize/wireStrgCount/wireFixedSize accessors (~56 lines)
-        - row.hpp reduced from ~3818 to ~3297 lines (-14%)
-        - Net codebase change: 18 files, +294 / -855 lines (net -561)
-        - Reader/Writer use std::variant<RowCodecFlat001, RowCodecZoH001> dispatch via std::visit
-        - RowView/RowViewStatic use embedded codec for zero-copy column access
-        - Wire metadata owned exclusively by codec classes (single source of truth)
-
-        Validation (2026-02-15):
-        - Full gtest suite: 391/391 PASS
-        - C API suite: 76/76 PASS
-        - Row API executable: PASS
-        - All example executables built + smoke run: example, example_static, example_zoh,
-          example_zoh_static, visitor_examples, c_api_vectorized_example, bcsv2csv, csv2bcsv,
-          bcsvHead, bcsvTail, bcsvHeader (all exit 0)
-        - Benchmark validation: bench_micro_types BM_SerializeTo_12col ~25 ns (no regression)
-
-        Lean Checklist Summary (Item 11, post-implementation)
-        - Scope fit: PASS (codec extraction as specified; no speculative abstractions)
-        - Ownership clarity: PASS (wire metadata single source of truth in codec classes;
-          Layout no longer caches wire sizes; Row no longer owns serialization)
-        - Layering: PASS (Row = state/access, Codec = wire format, Reader/Writer = stream lifecycle)
-        - Duplication budget: PASS (serialize/deserialize logic exists once per format in codec;
-          no duplication across Row/RowStatic/RowView/RowViewStatic)
-        - Complexity budget: PASS (row.hpp reduced by 14%; new codec files are focused single-purpose)
-        - Safety guardrails: PASS (all existing tests pass; buffer-boundary checks preserved in codec)
-        - Compatibility impact: PASS (public API unchanged; C API / Python / Unity unaffected;
-          76/76 C API tests pass; all examples build and run)
-
-11.B Clean-up, performance, hardening
-    [x] ensure correctness and test coverage (404 GTest + 76 C API + Row API — all pass)
-    [x] remove 3 redundant scalar caches from RowView (wire_data_off_, wire_lens_off_, wire_fixed_size_)
-        - saved 12 bytes per RowView instance, simplified ctors and assignment operators
-        - only offsets_ptr_ (per-iteration inner-loop pointer, 8 call sites) retained
-    [x] fix const_cast in deserializeElementsZoH — signature changed to RowType&
-    [x] pre-fetch layout accessor optimization (11 visit/get functions)
-        - replaced per-iteration layout_.columnType(i) / layout_.columnOffset(i)
-          (shared_ptr chase → checkRange → array[i]) with pre-fetched raw pointers
-        - added missing out_of_range bounds check in RowImpl::get(span)
-    [x] update ARCHITECTURE.md with RowView ↔ Codec relationship
-    [x] update ITEM_11_PLAN.md with post-implementation assessment
-    [x] clean up (dead code), i.e. remove StringAddr
-    [x] clean up includes (regain compile speed, avoid cyclic dependencies, keep clangd happy)
-
+[x] 11.B Clean-up, performance, hardening
 [x] 11.C Benchmark — Reduce Complexity
-    DONE (2026-02):
-    1. Benchmarks reduced to MICRO, MACRO-SMALL, MACRO-LARGE ✓
-    2. run.py has streamlined CLI: --type=MICRO,MACRO-SMALL,MACRO-LARGE, subcommands wip/baseline/compare/interleaved ✓
-    3. report.py produces comparison reports ✓
-    4. leaderboard.json removed, report_latest.md removed ✓
-    5. benchmark/README.md is the unified doc (386 lines) ✓
-    Additionally: bench_codec_compare.cpp added for file-codec matrix (all 5 codecs × Flat/ZoH × 14 profiles)
-
-[x] 11.B Benchmarks:
-    DONE (2026-02):
-    - reference workloads: benchmark/reference_workloads.json + REFERENCE_WORKLOADS.md ✓
-    - python benchmarks: python/benchmarks/run_pybcsv_benchmarks.py (357 lines, S/M/L, plain/numpy/pandas) ✓
-    - C# benchmarks: csharp/benchmarks/Program.cs (376 lines, P/Invoke) ✓
-
+[x] 11.D Benchmarks:
 [x] 11.E Rework/optimize ZoH Codec, serialize and deserialize
-    DONE (2026-02):
-    - bits_prev_ removed; bool previous values stored in head_[0..bool_count_) via equalRange/assignRange ✓
-    - single-pass serialize: writes head_ + changed data in one buffer pass ✓
-
 [x] 11.F Add File Codec and Backward Compatibility
-    DONE (2026-02, committed 13fb4b9):
-    - FileCodecPacket001 (packet-uncompressed) ✓
-    - FileCodecPacketLZ4001 (packet-lz4) ✓
-    - FileCodecStream001 (stream-uncompressed) ✓
-    - FileCodecStreamLZ4001 (stream-lz4) ✓
-    - FileCodecPacketLZ4Batch001 (async double-buffered lz4) ✓
-    - FileCodecDispatch (runtime dispatch from FileFlags) ✓
-    - FileCodecConcept (concept/interface) ✓
-    - Reader/Writer use FileCodecDispatch — all codecs auto-selected from file header flags
-    - Comprehensive codec comparison benchmark completed (14 profiles × 11 candidates × 2 sizes)
-    - Recommendation: BatchLZ4+ZoH as default (11× write, 4× read, 48× compression vs CSV)
-
 [x] 11.G bitset, add encode() and decode() functions for dense unaligned encoding of small integer values.
-    Status: DEFERRED — prerequisite for Item 14 (advanced row encoding), not needed until then.
-    readFrom()/writeTo() cover current codec needs. encode()/decode() for sub-byte integer packing
-    only required when implementing VLE-based row codec.
-    Idea: For the upcoming new row encoding schema, we need to store many small numbers (0 to 8) to preserve the amount of bytes required to encode a certain column using VLE. Storing the size information with the actual payload (default VLE) is known to be slow, thus blck encoding is prefered. However reseving a single byte for the size information is a wast of storgae space. Thus we want to store size(byteCount) informaton for each column, within the rowheader, which is of type bcsv::bitset. We need a way to store and load these small number to/from bitset.
-    Approach: add function bitset::encode(firstBitPos, bitCnt, value). Value can be of any uint type. Encode function should check if the actual value (not type!) fits into the bit range defined. i.e. 3 bits required to store a 7 and throw if it does fit. 
-              add function bitset::decode(firstBitPos, bitCnt). To return a value of any uint type. Actual type should be the smallest required for the given bit range. i.e. uint8_t for bitCnt <=8, uint16_t for 8 to 16 bits etc.
-              add function bitset::encodeTruncat(firstBitPos, bitCnt, value). Same as encode(...), but does not throw, simply truncats to match the available space. Truncats by applying a bit mask, thus an overflow by one, leads to storing a zero. 
-
 [x] 12. Implement CSV write and read functionality using the BCSV API and infrastructure 
-    Status: COMPLETED
-    Approach C (C++20 Concepts + Standalone CSV classes) — no base classes, purely concept-based API.
-    [x] 12.a: ReaderConcept + WriterConcept (C++20 concepts, open() excluded — format-specific params)
-        - reader_concept.h, writer_concept.h — static_assert verified for Reader, Writer, CsvReader, CsvWriter
-    [x] 12.b: CsvWriter<LayoutType> + CsvReader<LayoutType> — 22 tests
-        - csv_writer.h/.hpp: RFC 4180, to_chars, configurable delimiter/decimalSep, includeHeader param
-        - csv_reader.h/.hpp: state-machine parser, from_chars (with error checking), BOM handling,
-          hasHeader param, iterative readNext (no recursion), fileLine counter for error messages
-        - Tests: round-trip, all integer types, 10K rows, cross-format CSV↔BCSV, delimiters (;, tab),
-          German decimal sep, string whitespace protection, embedded delimiters/quotes/newlines,
-          empty strings, external CSV ingestion, column mismatch, bool columns, generic concept usage,
-          header-less CSV, Windows \r\n line endings, from_chars error detection, fileLine counter
-    [x] 12.c: CLI tools refactored — bcsv2csv (630→465 lines, -26%), csv2bcsv (890→699 lines, -21%)
-        - bcsv2csv: CsvWriter-based output, removed hand-rolled escapeCSVField/valueToString/getRowValueAsString
-        - csv2bcsv: CsvReader for second pass, removed setRowValue/detectDataType
-        - Removed deprecated CLI options: -q/--quote, --quote-all, -p/--precision
-    [x] 12.d: Benchmarks updated — 4 files use bcsv::CsvWriter/CsvReader (bench_macro_datasets,
-        bench_codec_compare, bench_generate_csv, bench_external_csv). All CSV round-trip validations PASS.
-    [x] 12.e: 3rd-party comparison — BCSV CsvReader vs vincentlaucsb/csv-parser (100K rows, 14 profiles)
-        BCSV faster: bool_heavy 1.38x, weather 1.40x, iot_fleet 1.36x, realistic 1.11x, rtl_waveform 1.38x
-        Competitive: sensor_noisy 0.95x, event_log 0.99x
-        External faster: string_heavy 0.70x, high_cardinality_string 0.40x, others 0.78-0.86x
-    [x] 12.f: LEAN review — all criteria PASS/PARTIAL. Fixed: from_chars error checking, recursive
-        readNext→iterative loop, file-line counter for error messages, added 4 missing test cases.
 
 13. Update Tools and Libraries to use new API
     Status: COMPLETED (actionable items done; C#/Unity and CLI→C_API deferred as low-priority)
@@ -484,7 +51,6 @@ Lean checklist gate (for every non-trivial item):
         Large effort, no active customer need. Defer until Unity support becomes a requirement.
     [DEFERRED] Update CLI tools to use C_API — currently use C++ API directly, which is acceptable.
         C API lacks CsvReader/CsvWriter. No functional benefit to porting.
-
 
 [x] 14. Implement new row encoding schema (Delta Encoding), which uses variable length encoding for float and integer values
     Status: COMPLETE — Delta001 committed f48a51d, then optimised to Delta002 and Delta001 removed.
@@ -585,7 +151,77 @@ Lean checklist gate (for every non-trivial item):
         Fix: waitForBgIdle() before setting SHUTDOWN in shutdownBgThread().
     See: docs/BUG_REPORT_DirectAccess.md
 
-17. Update pybcsv to utilize latest bcsv version, supporting all codecs and major API entry points (lets work together to identify which to include, start broad, remove bloat/complexity/internals)
+[x] 17. bcsvValidate — CLI tool to validate BCSV files (structure and content)
+    Status: COMPLETE
+
+    Completed:
+    [x] Step 1: Added `creation_time` (uint64, Unix epoch) to FileHeader ConstSection
+        — 24-byte ConstSection (was 16), format version bumped to v1.4.0
+        — Writer sets creation_time automatically on open()
+        — FileHeader: getCreationTime() / setCreationTime() accessors
+    [x] Step 2: Moved bench_datasets.hpp to src/shared/test_datasets.hpp
+        — Forwarding header left in benchmark/src/ for backward compatibility
+        — 14 deterministic DatasetProfile definitions shared across tools/tests/benchmark
+        — Fixed M_PI → std::numbers::pi (C++20 portable)
+    [x] Step 3: Extracted RoundTripValidator to src/shared/validation.h
+        — namespace bcsv_validation, cell-by-cell comparison with float tolerance
+        — compareRow(), summary(), toJson(), errorCount(), passed()
+    [x] Step 4: Created src/tools/bcsvValidate.cpp (~500 lines)
+        — Mode 1 (Structure): header, version, creation_time, codecs, packet stats, layout
+        — Mode 2 (Pattern): regenerates expected data from 14 benchmark profiles, compares cell-by-cell
+        — Mode 3 (Comparison): bcsv-vs-bcsv and bcsv-vs-csv row-by-row comparison
+        — C++20 std::chrono for timestamp formatting (no POSIX gmtime_r)
+        — --json output, --deep structural walk, --tolerance float comparison
+        — --list to show available profiles, --max-errors to cap mismatch output
+    [x] Step 5: CMake integration (src/tools/CMakeLists.txt, benchmark/CMakeLists.txt, tests/CMakeLists.txt)
+    [x] Step 6: Integration test suite — tests/test_bcsvValidate.sh (52 tests)
+        — Mode 1: text, JSON, --deep, format_version, packet_size, total_packets, avg_rows_per_packet
+        — Mode 2: pass, fail (wrong rowcount), wrong profile, unknown profile
+        — Mode 3: bcsv-vs-bcsv identical, layout mismatch, bcsv-vs-csv round-trip
+        — Error handling: missing file, no input, unknown option
+        — Pipeline: generate → structure → pattern → csv roundtrip
+        — 10/10 stability runs pass
+    [x] Step 7: CTest registration (bcsvValidate_integration)
+    [x] Step 8: Documentation updated
+        — ARCHITECTURE.md: 24-byte ConstSection, creation_time, bcsvValidate in tool list
+        — CLI_TOOLS.md: 8-tool overview table, examples, source structure
+        — SKILLS.md: 8-tool target table, quick reference examples
+    [x] Reader::fileHeader() public accessor added
+    [x] Reader::fileFooter() public accessor (ReaderDirectAccess)
+    [x] All 8 tools build cleanly, 694 GTests + 95 CLI + 39 Sampler + 52 Validate pass
+
+18. project folder cleanup, skill improvement, CI/CD review, cleanup and improvement (LEAN DEVELOPMENT)
+    Observation, build, test, benchmarking is taking longer and longer. I recognize more and more adhoc scripts (multi-line, mutli-command terminal instructions are used.) Quite often these commands are errornouse and need to modified a few tme before it does as intendend.
+    The CI/CD process seems a unstable, unncessarily complex and takes longer than expected. Devlopment speed has droped. 
+
+    Let do a dedicated review of our CI/CD process. Remember we are using cmake, ninja on a c++ roject. We use gtest and google bechmarks. We have also defined that we want to run a scripted sequence of bcsv CLI tools to check these tools perform as expected and compare the results with a predefined outcome (validate).
+    It also seems that the context window seems to be polluted. Perhaps we need to better seperate unit tests, benchmarks, bcsv development, bcsv tools, bcsv file format definitions, documentation.
+    I wonder if your *.md files, documentation files, source codes, source documents and skills are still up-to-date and synchornized? Is our doumentation bloated? Can it be more concise? 
+    Please make a proposal on how we might investigate and solve the issues? Perhaps we need to do this in multiple phases and iterativly in multiple passes. Can we build more stable benchmark or tests calls using skills or MCP definitions, or opposite, should we reduce the number of tools and scripts we use? consider the context window we have? Does it make sense to store tool related documentation in a RAG or some other precomputed format, that makes agentic use easier?
+    Should we add and maintain a claud.md file? How to avoid confusion with other models i.e. codex?
+
+
+19. code cleanup
+    - remove ZOH codec?
+    - updated and condense documentation (remove duplications)
+    - consider refactorings:
+        readability
+        maintainability
+    - API clean up, identifiy functions that can be implemented easily from other functions?
+
+20. multi platform build
+    - linux gcc, clangd
+    - windows MSCV
+    - apple clangd-homebrew?
+
+21. bcsvSampler performance
+    - reduce conditionals
+    - vectorization SIMD
+    - multi-thread pipeline
+
+
+
+22. Update pybcsv to utilize latest bcsv version, supporting all codecs and major API entry points (lets work together to identify which to include, start broad, remove bloat/complexity/internals)
     - full test coverage and validated
     - pypi and github CI/CD pipline is operational
     - pandas and numpy support
@@ -593,32 +229,32 @@ Lean checklist gate (for every non-trivial item):
     - benchmarking in place read to/write from numpy,
     - benchmarking in place read to/write from python (plain)
 
-18. Update C# bindinds, using latest version of bcsv library, supporting all codecs and major API entry points (lets work together to identify which to include, start broad, remove bloat/complexity/internals)
+23. Update C# bindinds, using latest version of bcsv library, supporting all codecs and major API entry points (lets work together to identify which to include, start broad, remove bloat/complexity/internals)
     - full test coverage and validated
     - create and publish nuget package
     - valdiate C# bindings work with unity
 
-16. Compare against (document and benchmarks):
+24 Compare against (document and benchmarks):
         parquet
         csv
         arrow
         influxDb
         excel
 
-17. Write paper and release/submit --> WIKI page on GitHub
+25. Write paper and release/submit --> WIKI page on GitHub
 
 Parking LOT:
-18. Create, demonstarte/validate a concept to maintain backward compatibility (read old BCSV files with new version of the library)
+26. Create, demonstarte/validate a concept to maintain backward compatibility (read old BCSV files with new version of the library)
 
-19. dictionary encoding for strings
+27. dictionary encoding for strings
     For strings a low cardinality is expected (many repetitions of the same string) are expected. Thus a dictionary based compression should be implemented. Exploit similar approach as for numerical values.
     Store string at its first occurens and assign ID (simply increment number, within the current packet)
     Other occurences just to reference that number. Run dedicated dicts per row, to balance speed and compression ratio. Block wide compression may come at a later point.
 
-20. Create sampler function / API to select data based on certain conditions: 
+28. Create sampler function / API to select data based on certain conditions: 
     - Support C++ interface (iterate over individual rows)
     - Support Python interface (iterate over individual rows and block reads (pandas/numpy))
-21. Make BCSV eco system to use piping features CLI, compareable to cat, more, sed
+29. Make BCSV eco system to use piping features CLI, compareable to cat, more, sed
 
 22. CLI tools:
     - Modify CLI tools to utilize direct read functionality to avoid parsing the entire file (when possible):

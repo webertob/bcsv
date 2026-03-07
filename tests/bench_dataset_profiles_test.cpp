@@ -7,7 +7,7 @@
  * for full license information.
  */
 
-#include "bench_datasets.hpp"
+#include "test_datasets.hpp"
 
 #include <gtest/gtest.h>
 

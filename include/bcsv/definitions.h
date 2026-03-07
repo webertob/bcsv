@@ -61,7 +61,7 @@ namespace bcsv {
 
     // File format version (separate from library version)
     constexpr uint8_t BCSV_FORMAT_VERSION_MAJOR = 1;
-    constexpr uint8_t BCSV_FORMAT_VERSION_MINOR = 3;
+    constexpr uint8_t BCSV_FORMAT_VERSION_MINOR = 4;
     constexpr uint8_t BCSV_FORMAT_VERSION_PATCH = 0;
 
     // Constants for the binary file format

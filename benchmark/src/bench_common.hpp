@@ -524,131 +524,15 @@ private:
 };
 
 // ============================================================================
-// RoundTripValidator — compare two rows cell-by-cell
+// RoundTripValidator — now lives in src/shared/validation.h
 // ============================================================================
+} // namespace bench (temporarily close for shared include)
 
-struct ValidationMismatch {
-    size_t row;
-    size_t col;
-    std::string expected;
-    std::string actual;
-    std::string type;
-};
+#include "validation.h"
 
-/**
- * Validates that data read back from a file matches the originally written data.
- * Reports the first N mismatches with detailed diagnostic information.
- */
-class RoundTripValidator {
-public:
-    explicit RoundTripValidator(size_t maxErrors = 10) : maxErrors_(maxErrors) {}
-
-    /// Compare a single cell between two rows. Returns true if match.
-    bool compareCell(size_t rowIdx, size_t colIdx,
-                     const bcsv::Row& expected,
-                     const bcsv::Row& actual,
-                     const bcsv::Layout& layout) 
-    {
-        bool match = false;
-        bcsv::ColumnType type = layout.columnType(colIdx);
-
-        switch (type) {
-            case bcsv::ColumnType::BOOL:
-                match = (expected.template get<bool>(colIdx) == actual.template get<bool>(colIdx));
-                break;
-            case bcsv::ColumnType::INT8:
-                match = (expected.template get<int8_t>(colIdx) == actual.template get<int8_t>(colIdx));
-                break;
-            case bcsv::ColumnType::INT16:
-                match = (expected.template get<int16_t>(colIdx) == actual.template get<int16_t>(colIdx));
-                break;
-            case bcsv::ColumnType::INT32:
-                match = (expected.template get<int32_t>(colIdx) == actual.template get<int32_t>(colIdx));
-                break;
-            case bcsv::ColumnType::INT64:
-                match = (expected.template get<int64_t>(colIdx) == actual.template get<int64_t>(colIdx));
-                break;
-            case bcsv::ColumnType::UINT8:
-                match = (expected.template get<uint8_t>(colIdx) == actual.template get<uint8_t>(colIdx));
-                break;
-            case bcsv::ColumnType::UINT16:
-                match = (expected.template get<uint16_t>(colIdx) == actual.template get<uint16_t>(colIdx));
-                break;
-            case bcsv::ColumnType::UINT32:
-                match = (expected.template get<uint32_t>(colIdx) == actual.template get<uint32_t>(colIdx));
-                break;
-            case bcsv::ColumnType::UINT64:
-                match = (expected.template get<uint64_t>(colIdx) == actual.template get<uint64_t>(colIdx));
-                break;
-            case bcsv::ColumnType::FLOAT:
-                match = (expected.template get<float>(colIdx) == actual.template get<float>(colIdx));
-                break;
-            case bcsv::ColumnType::DOUBLE:
-                match = (expected.template get<double>(colIdx) == actual.template get<double>(colIdx));
-                break;
-            case bcsv::ColumnType::STRING:
-                match = (expected.template get<std::string>(colIdx) == actual.template get<std::string>(colIdx));
-                break;
-            default:
-                break;
-        }
-
-        if (!match && mismatches_.size() < maxErrors_) {
-            // Record the mismatch details
-            ValidationMismatch m;
-            m.row = rowIdx;
-            m.col = colIdx;
-            m.type = bcsv::toString(type);
-            // Stringify values via visitConst for genericity
-            expected.visitConst(colIdx, [&](size_t, const auto& v) {
-                std::ostringstream ss;
-                using VT = std::decay_t<decltype(v)>;
-                if constexpr (std::is_same_v<VT, int8_t> || std::is_same_v<VT, uint8_t>)
-                    ss << static_cast<int>(v);
-                else if constexpr (std::is_same_v<VT, bool>)
-                    ss << (v ? "true" : "false");
-                else
-                    ss << v;
-                m.expected = ss.str();
-            });
-            actual.visitConst(colIdx, [&](size_t, const auto& v) {
-                std::ostringstream ss;
-                using VT = std::decay_t<decltype(v)>;
-                if constexpr (std::is_same_v<VT, int8_t> || std::is_same_v<VT, uint8_t>)
-                    ss << static_cast<int>(v);
-                else if constexpr (std::is_same_v<VT, bool>)
-                    ss << (v ? "true" : "false");
-                else
-                    ss << v;
-                m.actual = ss.str();
-            });
-            mismatches_.push_back(std::move(m));
-        }
-        return match;
-    }
-
-    bool passed() const { return mismatches_.empty(); }
-    size_t errorCount() const { return mismatches_.size(); }
-    const std::vector<ValidationMismatch>& mismatches() const { return mismatches_; }
-
-    std::string summary() const {
-        if (mismatches_.empty()) return "PASSED";
-        std::ostringstream ss;
-        ss << "FAILED (" << mismatches_.size() << " mismatches)\n";
-        for (const auto& m : mismatches_) {
-            ss << "  Row " << m.row << " Col " << m.col 
-               << " [" << m.type << "]: expected=" << m.expected 
-               << " actual=" << m.actual << "\n";
-        }
-        return ss.str();
-    }
-
-    void reset() { mismatches_.clear(); }
-
-private:
-    size_t maxErrors_;
-    std::vector<ValidationMismatch> mismatches_;
-};
+namespace bench {
+using bcsv_validation::ValidationMismatch;
+using bcsv_validation::RoundTripValidator;
 
 // ============================================================================
 // Utility functions

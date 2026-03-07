@@ -79,6 +79,12 @@ add_test(NAME bcsvSampler_integration
 )
 set_tests_properties(bcsvSampler_integration PROPERTIES TIMEOUT 300)
 
+add_test(NAME bcsvValidate_integration
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/test_bcsvValidate.sh"
+    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
+set_tests_properties(bcsvValidate_integration PROPERTIES TIMEOUT 300)
+
 # Set output directory
 set_target_properties(bcsv_gtest PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
@@ -87,7 +93,7 @@ set_target_properties(bcsv_gtest PROPERTIES
 # Enable C++20 standard
 target_compile_features(bcsv_gtest PRIVATE cxx_std_20)
 
-# bench_dataset_profiles_test.cpp includes benchmark/src/bench_datasets.hpp
+# bench_dataset_profiles_test.cpp includes src/shared/test_datasets.hpp
 target_include_directories(bcsv_gtest PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../benchmark/src
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/shared
 )

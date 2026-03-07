@@ -14,6 +14,7 @@ All tools are built from `src/tools/` and output to `build/bin/`.
 | **[bcsvTail](bcsvTail.md)** | Display last N rows | BCSV | CSV |
 | **[bcsvSampler](bcsvSampler.md)** | Filter & project rows | BCSV | BCSV |
 | **[bcsvGenerator](bcsvGenerator.md)** | Generate synthetic datasets | — | BCSV |
+| **[bcsvValidate](bcsvValidate.md)** | Validate structure & content | BCSV (+CSV) | Report |
 
 ## Quick Start
 
@@ -36,6 +37,12 @@ bcsvSampler -c 'X[0][0] > 100' data.bcsv filtered.bcsv
 
 # Generate a test dataset
 bcsvGenerator -p sensor_noisy -n 100000 -o sensor.bcsv
+
+# Validate a BCSV file
+bcsvValidate -i data.bcsv
+
+# Validate against a source CSV
+bcsvValidate -i data.bcsv --compare source.csv
 ```
 
 ## Pipeline Examples
@@ -104,8 +111,9 @@ All CLI tool source code lives in `src/tools/`:
 | `bcsvHeader.cpp` | Schema display |
 | `bcsvSampler.cpp` | Expression-based filter & project |
 | `bcsvGenerator.cpp` | Synthetic dataset generator |
+| `bcsvValidate.cpp` | Structure & content validation |
 | `cli_common.h` | Shared CLI utilities (codec dispatch, validation, formatting) |
-| `CMakeLists.txt` | Build definitions for all 7 tools |
+| `CMakeLists.txt` | Build definitions for all 8 tools |
 | `*.md` | Per-tool documentation |
 
 ## Related Documentation

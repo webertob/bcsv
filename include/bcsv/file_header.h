@@ -33,23 +33,24 @@ namespace bcsv {
      * @section binary_layout Complete Binary File Layout
      * 
      * The file consists of three main sections:
-     * 1. Fixed Header (16 bytes) - Core file metadata
+     * 1. Fixed Header (24 bytes) - Core file metadata
      * 2. Variable Schema (varies) - Column definitions  
      * 3. Data Records (varies) - Actual row data
      * 
-     * @subsection fixed_header Fixed Header Section (16 bytes)
+     * @subsection fixed_header Fixed Header Section (24 bytes)
      * 
      * ```
      * Offset | Size | Type    | Description
      * -------|------|---------|------------------------------------------
      *   0    |  4   | uint32  | Magic number: 0x56534342 ("BCSV")
-     *   4    |  1   | uint8   | Major version number
-     *   5    |  1   | uint8   | Minor version number  
-     *   6    |  1   | uint8   | Patch version number
-     *   7    |  1   | uint8   | Compression level (0-9, 0=none)
-     *   8    |  2   | uint16  | Feature flags (bitfield)
-     *  10    |  2   | uint16  | Number of columns (N)
-     *  12    |  4   | uint32  | Packet size in bytes
+     *   4    |  8   | uint64  | Creation time (Unix epoch seconds)
+     *  12    |  1   | uint8   | Major version number
+     *  13    |  1   | uint8   | Minor version number  
+     *  14    |  1   | uint8   | Patch version number
+     *  15    |  1   | uint8   | Compression level (0-9, 0=none)
+     *  16    |  2   | uint16  | Feature flags (bitfield)
+     *  18    |  2   | uint16  | Number of columns (N)
+     *  20    |  4   | uint32  | Packet size in bytes
      * ```
      * 
      * @subsection variable_schema Variable Schema Section
@@ -72,11 +73,17 @@ namespace bcsv {
      * ```
      * Byte    0    1    2    3    4    5    6    7    8    9   10   11
      *      ┌────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┐
-     *      │    Magic Number   │Maj │Min │Pat │Cmp │  Flags  │ Cols=3  │
-     *      │   0x56534342      │ 1  │ 0  │ 0  │ 0  │  0x00   │  0x03   │
+     *      │    Magic Number   │         Creation Time (uint64)        │
+     *      │   0x56534342      │           Unix epoch seconds          │
      *      └────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┘
      * 
-     * Byte   12   13   14   15   16   17   18   19   20   21
+     * Byte   12   13   14   15   16   17   18   19   20   21   22   23
+     *      ┌────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┬────┐
+     *      │Maj │Min │Pat │Cmp │  Flags  │ Cols=3  │   Packet Size     │
+     *      │ 1  │ 0  │ 0  │ 0  │  0x00   │  0x03   │   0x00800000      │
+     *      └────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┴────┘
+     * 
+     * Byte   24   25   26   27   28   29   30   31   32   33
      *      ┌────┬────┬────┬────┬────┬────┬────┬────┬────┐
      *      │str │i64 │dbl │ len=4   │ len=3   │ len=6   │
      *      │0x0B│0x08│0x0A│ 0x04    │ 0x03    │ 0x06    │
@@ -120,16 +127,17 @@ namespace bcsv {
         /**
          * @brief Fixed-size header structure with controlled memory layout
          * 
-         * This structure represents the first 16 bytes of every BCSV file.
+         * This structure represents the first 24 bytes of every BCSV file.
          * The #pragma pack directive ensures no padding is inserted between
          * fields, guaranteeing consistent binary layout across platforms.
          * 
-         * @note The structure is exactly 16 bytes as verified by static_assert
+         * @note The structure is exactly 24 bytes as verified by static_assert
          * @note All multi-byte fields use little-endian byte ordering
          */
         #pragma pack(push, 1)
         struct ConstSection {
             uint32_t magic;             ///< Magic number: 0x56534342 ("BCSV" in ASCII)
+            uint64_t creation_time;     ///< File creation time (Unix epoch seconds, 0 = unknown)
             uint8_t  version_major;     ///< Major version number (0-255)
             uint8_t  version_minor;     ///< Minor version number (0-255)
             uint8_t  version_patch;     ///< Patch version number (0-255)
@@ -139,12 +147,12 @@ namespace bcsv {
             uint32_t packet_size;       ///< Packet size in bytes used for compression
         };
         #pragma pack(pop)
-        static_assert(sizeof(ConstSection) == 16, "BinaryHeader must be exactly 16 bytes");
+        static_assert(sizeof(ConstSection) == 24, "BinaryHeader must be exactly 24 bytes");
 
         /**
          * @brief File format constants and limits
          */
-        static constexpr size_t FIXED_HEADER_SIZE  = sizeof(ConstSection);  ///< Size of fixed header: 16 bytes
+        static constexpr size_t FIXED_HEADER_SIZE  = sizeof(ConstSection);  ///< Size of fixed header: 24 bytes
         static constexpr size_t COLUMN_TYPE_SIZE   = sizeof(uint8_t);       ///< Size per column type: 1 byte  
         static constexpr size_t COLUMN_LENGTH_SIZE = sizeof(uint16_t);      ///< Size per name length: 2 bytes
         
@@ -163,6 +171,10 @@ namespace bcsv {
         uint8_t     versionMajor() const                { return const_section_.version_major; }
         uint8_t     versionMinor() const                { return const_section_.version_minor; }
         uint8_t     versionPatch() const                { return const_section_.version_patch; }
+
+        // Creation time management
+        void        setCreationTime(uint64_t epochSeconds) { const_section_.creation_time = epochSeconds; }
+        uint64_t    getCreationTime() const             { return const_section_.creation_time; }
 
         // Compression management
         void        setCompressionLevel(size_t level)   { const_section_.compression_level = (level > 9) ? 9 : static_cast<uint8_t>(level); }

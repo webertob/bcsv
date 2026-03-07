@@ -28,7 +28,7 @@
 #include <stdexcept>
 #include <bcsv/bcsv.h>
 #include "cli_common.h"
-#include "bench_datasets.hpp"   // benchmark/src/ — added via target_include_directories
+#include "test_datasets.hpp"   // src/shared/ — dataset profiles for generation
 
 // ── Configuration ───────────────────────────────────────────────────
 

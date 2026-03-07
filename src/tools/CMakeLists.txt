@@ -49,9 +49,14 @@ target_link_libraries(bcsvSampler PRIVATE bcsv)
 # Synthetic dataset generator
 add_executable(bcsvGenerator bcsvGenerator.cpp)
 target_link_libraries(bcsvGenerator PRIVATE bcsv)
-target_include_directories(bcsvGenerator PRIVATE ${CMAKE_SOURCE_DIR}/benchmark/src)
+target_include_directories(bcsvGenerator PRIVATE ${CMAKE_SOURCE_DIR}/src/shared)
+
+# Validation tool
+add_executable(bcsvValidate bcsvValidate.cpp)
+target_link_libraries(bcsvValidate PRIVATE bcsv)
+target_include_directories(bcsvValidate PRIVATE ${CMAKE_SOURCE_DIR}/src/shared)
 
 # Set output directory for all tools
-set_target_properties(csv2bcsv bcsv2csv bcsvHead bcsvTail bcsvHeader bcsvSampler bcsvGenerator PROPERTIES
+set_target_properties(csv2bcsv bcsv2csv bcsvHead bcsvTail bcsvHeader bcsvSampler bcsvGenerator bcsvValidate PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
