@@ -221,6 +221,41 @@ inline std::string encodingDescription(const std::string& row_codec,
          + " (level " + std::to_string(compression_level) + ")";
 }
 
+/// Reverse-map FileFlags + compression level back to human-readable codec names.
+struct CodecNames {
+    std::string row_codec;
+    std::string file_codec;
+};
+
+inline CodecNames codecNamesFromFlags(bcsv::FileFlags flags, uint8_t comp_level) {
+    CodecNames names;
+
+    // Row codec
+    const bool has_delta = (flags & bcsv::FileFlags::DELTA_ENCODING) != bcsv::FileFlags::NONE;
+    const bool has_zoh   = (flags & bcsv::FileFlags::ZERO_ORDER_HOLD) != bcsv::FileFlags::NONE;
+    if (has_delta)
+        names.row_codec = "delta";
+    else if (has_zoh)
+        names.row_codec = "zoh";
+    else
+        names.row_codec = "flat";
+
+    // File codec — mirrors resolveFileCodecId() logic
+    const bool stream    = (flags & bcsv::FileFlags::STREAM_MODE) != bcsv::FileFlags::NONE;
+    const bool batch     = (flags & bcsv::FileFlags::BATCH_COMPRESS) != bcsv::FileFlags::NONE;
+    const bool compressed = comp_level > 0;
+
+    if (stream) {
+        names.file_codec = compressed ? "stream_lz4" : "stream";
+    } else if (batch && compressed) {
+        names.file_codec = "packet_lz4_batch";
+    } else {
+        names.file_codec = compressed ? "packet_lz4" : "packet";
+    }
+
+    return names;
+}
+
 // ── Writer dispatch helper ────────────────────────────────────────
 
 /// Open the appropriate Writer type (delta/zoh/flat) based on row_codec

@@ -303,6 +303,11 @@ private:
     void shutdownBgThread() {
         if (!bg_thread_.joinable()) return;
 
+        // Wait for any in-flight task to finish before requesting shutdown.
+        // Without this, the bg thread's post-task "bg_task_ = IDLE" can
+        // overwrite our SHUTDOWN, causing a deadlock.
+        waitForBgIdle();
+
         {
             std::lock_guard<std::mutex> lk(mutex_);
             bg_task_ = BgTask::SHUTDOWN;

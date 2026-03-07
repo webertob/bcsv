@@ -358,7 +358,7 @@ void printUsage(const char* program_name) {
     std::cout << "  -v, --verbose           Enable verbose output\n";
     std::cout << "  -f, --overwrite         Overwrite output file if it exists\n";
     std::cout << "  --benchmark             Print timing stats (wall clock, rows/s, MB/s) to stderr\n";
-    std::cout << "  --json                  With --benchmark: emit JSON timing blob to stdout\n";
+    std::cout << "  --json                  With --benchmark: emit JSON timing blob to stderr\n";
     std::cout << "  -h, --help              Show this help message\n\n";
     std::cout << "Encoding (defaults: packet_lz4_batch + delta):\n";
     std::cout << "  --row-codec CODEC       Row codec: delta (default), zoh, flat\n";
@@ -484,11 +484,11 @@ int main(int argc, char* argv[]) {
         }
         
         if (config.verbose) {
-            std::cout << "Converting: " << config.input_file << " -> " << config.output_file << std::endl;
-            std::cout << "Delimiter: '" << config.delimiter << "'" << std::endl;
-            std::cout << "Header: " << (config.has_header ? "yes" : "no") << std::endl;
-            std::cout << "Decimal separator: '" << config.decimal_separator << "'" << std::endl;
-            std::cout << "Encoding: " << bcsv_cli::encodingDescription(
+            std::cerr << "Converting: " << config.input_file << " -> " << config.output_file << std::endl;
+            std::cerr << "Delimiter: '" << config.delimiter << "'" << std::endl;
+            std::cerr << "Header: " << (config.has_header ? "yes" : "no") << std::endl;
+            std::cerr << "Decimal separator: '" << config.decimal_separator << "'" << std::endl;
+            std::cerr << "Encoding: " << bcsv_cli::encodingDescription(
                 config.row_codec, config.file_codec, config.compression_level) << std::endl;
         }
         
@@ -532,9 +532,9 @@ int main(int argc, char* argv[]) {
         }
         
         if (config.verbose) {
-            std::cout << "Converting: " << config.input_file << " -> " << config.output_file << std::endl;
-            std::cout << "Delimiter: '" << config.delimiter << "'" << std::endl;
-            std::cout << "Header: " << (config.has_header ? "yes" : "no") << std::endl;
+            std::cerr << "Converting: " << config.input_file << " -> " << config.output_file << std::endl;
+            std::cerr << "Delimiter: '" << config.delimiter << "'" << std::endl;
+            std::cerr << "Header: " << (config.has_header ? "yes" : "no") << std::endl;
         }
         
         std::vector<std::string> first_row = parseCSVLine(line, config.delimiter, '"');
@@ -613,9 +613,9 @@ int main(int argc, char* argv[]) {
         }
         
         if (config.verbose) {
-            std::cout << "Detected " << headers.size() << " columns:" << std::endl;
+            std::cerr << "Detected " << headers.size() << " columns:" << std::endl;
             for (size_t i = 0; i < headers.size(); ++i) {
-                std::cout << "  " << headers[i] << " -> " << column_types[i] << std::endl;
+                std::cerr << "  " << headers[i] << " -> " << column_types[i] << std::endl;
             }
         }
         
@@ -654,7 +654,7 @@ int main(int argc, char* argv[]) {
                 ++row_count;
 
                 if (config.verbose && (row_count & 0x3FFF) == 0) {
-                    std::cout << "Processed " << row_count << " rows..." << std::endl;
+                    std::cerr << "Processed " << row_count << " rows..." << std::endl;
                 }
             }
 
@@ -680,34 +680,34 @@ int main(int argc, char* argv[]) {
         double rows_per_sec = static_cast<double>(row_count) / duration_seconds;
         
         // Display comprehensive conversion statistics
-        std::cout << "\n=== Conversion Complete ==="<< std::endl;
-        std::cout << "Successfully converted " << row_count << " rows to " << config.output_file << std::endl;
-        std::cout << "Columns detected: " << headers.size() << std::endl;
-        std::cout << layout << std::endl;
-        std::cout << "Performance Statistics:" << std::endl;
-        std::cout << "  Conversion time: " << duration.count() << " ms" << std::endl;
-        std::cout << "  Throughput: " << std::fixed << std::setprecision(2) << throughput_mb_s << " MB/s" << std::endl;
-        std::cout << "  Rows/second: " << std::fixed << std::setprecision(0) << rows_per_sec << " rows/s" << std::endl;
-        std::cout << "\nCompression Statistics:" << std::endl;
-        std::cout << "  Input CSV size: " << input_file_size << " bytes (" << std::fixed << std::setprecision(2) << (input_file_size / 1024.0) << " KB)" << std::endl;
-        std::cout << "  Output BCSV size: " << output_file_size << " bytes (" << std::fixed << std::setprecision(2) << (output_file_size / 1024.0) << " KB)" << std::endl;
+        std::cerr << "\n=== Conversion Complete ==="<< std::endl;
+        std::cerr << "Successfully converted " << row_count << " rows to " << config.output_file << std::endl;
+        std::cerr << "Columns detected: " << headers.size() << std::endl;
+        std::cerr << layout << std::endl;
+        std::cerr << "Performance Statistics:" << std::endl;
+        std::cerr << "  Conversion time: " << duration.count() << " ms" << std::endl;
+        std::cerr << "  Throughput: " << std::fixed << std::setprecision(2) << throughput_mb_s << " MB/s" << std::endl;
+        std::cerr << "  Rows/second: " << std::fixed << std::setprecision(0) << rows_per_sec << " rows/s" << std::endl;
+        std::cerr << "\nCompression Statistics:" << std::endl;
+        std::cerr << "  Input CSV size: " << input_file_size << " bytes (" << std::fixed << std::setprecision(2) << (input_file_size / 1024.0) << " KB)" << std::endl;
+        std::cerr << "  Output BCSV size: " << output_file_size << " bytes (" << std::fixed << std::setprecision(2) << (output_file_size / 1024.0) << " KB)" << std::endl;
         
         if (output_file_size <= input_file_size) {
-            std::cout << "  Compression ratio: " << std::fixed << std::setprecision(1) << compression_ratio << "%" << std::endl;
-            std::cout << "  Space saved: " << (input_file_size - output_file_size) << " bytes" << std::endl;
+            std::cerr << "  Compression ratio: " << std::fixed << std::setprecision(1) << compression_ratio << "%" << std::endl;
+            std::cerr << "  Space saved: " << (input_file_size - output_file_size) << " bytes" << std::endl;
         } else {
             double size_increase_ratio = (static_cast<double>(output_file_size - input_file_size) / input_file_size) * 100.0;
-            std::cout << "  File size increase: " << std::fixed << std::setprecision(1) << size_increase_ratio << "% (overhead from binary format and metadata)" << std::endl;
-            std::cout << "  Additional space used: " << (output_file_size - input_file_size) << " bytes" << std::endl;
+            std::cerr << "  File size increase: " << std::fixed << std::setprecision(1) << size_increase_ratio << "% (overhead from binary format and metadata)" << std::endl;
+            std::cerr << "  Additional space used: " << (output_file_size - input_file_size) << " bytes" << std::endl;
         }
-        std::cout << "  Compression mode: " << bcsv_cli::encodingDescription(
+        std::cerr << "  Compression mode: " << bcsv_cli::encodingDescription(
             config.row_codec, config.file_codec, config.compression_level) << std::endl;
 
         // --benchmark: structured timing output
         if (config.benchmark) {
             if (config.json_output) {
-                // JSON blob to stdout
-                std::cout << "{\"tool\":\"csv2bcsv\""
+                // JSON blob to stderr (keeps stdout clean for piping)
+                std::cerr << "{\"tool\":\"csv2bcsv\""
                           << ",\"input_file\":\"" << config.input_file << "\""
                           << ",\"output_file\":\"" << config.output_file << "\""
                           << ",\"rows\":" << row_count

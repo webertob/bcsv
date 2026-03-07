@@ -25,6 +25,7 @@ Deferred / remaining:
   14b. dictionary encoding for strings
   [LIB-1] FIXED — ReaderDirectAccess: delta + random access → watermark-based sequential decode
   [LIB-2] FIXED — ReaderDirectAccess: packet_lz4_batch → seekToPacket() added
+  [LIB-3] FIXED — FileCodecPacketLZ4Batch001: shutdownBgThread() race condition (deadlock)
   See: docs/BUG_REPORT_DirectAccess.md
 ===
 
@@ -543,8 +544,8 @@ Lean checklist gate (for every non-trivial item):
     - Ensure benchmarks are in place for C_API include vectorized access (i.e. 3D double vectors, coordinates)
     - Ensure documentation of C_API is complete
 
-16. Update CLI Tools to use latest BCSV API version [WIP]
-    Status: Work in progress — core implementation done, test suite operational
+[x] 16. Update CLI Tools to use latest BCSV API version [DONE]
+    Status: Complete — all tools modernised, tested, CTest-integrated
 
     Completed:
     [x] Modernised all 7 CLI tools to latest BCSV API (shared cli_common.h)
@@ -557,24 +558,31 @@ Lean checklist gate (for every non-trivial item):
         A2: bcsvGenerator uses resolveCodecFlags() instead of manual flag building
         D1: CLI_TOOLS.md and SKILLS.md updated (csv_format_utils.h → cli_common.h)
         S1: Consistent arg.starts_with("-") in bcsvHead, bcsvTail, bcsvHeader
-    [x] Integration test script: tests/test_cli_tools.sh (71 tests, all passing)
+    [x] csv2bcsv: all verbose/summary/benchmark output → stderr (stdout now clean CSV-only)
+    [x] bcsvHeader -v: displays Row codec and File codec names (codecNamesFromFlags)
+    [x] Reader::fileFlags() public accessor added
+    [x] cli_common.h: CodecNames struct + codecNamesFromFlags() reverse mapping
+    [x] Integration test: tests/test_cli_tools.sh (95 tests, all passing)
         Covers: csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvGenerator
-        Includes: pipeline tests, edge cases, B1/B3/B4/B5 regression tests
+        Includes: pipeline tests, B1-B5 regression, 3×5 codec matrix round-trip,
+        bcsvTail direct-access delta/ZoH, bcsvHeader codec name validation,
+        edge cases (special chars, single-row, empty file, precision/negative)
+        Semantic CSV comparison via csv_normalize()/csv_equal() helpers
+    [x] Integration test: tests/test_bcsvSampler.sh (23 tests, all passing)
+        Fixed: --no-zoh → --row-codec delta; harmonised set -uo pipefail
+    [x] CTest registration for both shell integration tests (tests/CMakeLists.txt)
+    [x] Workarounds removed: test scripts now use library-default codecs
+        (delta + packet_lz4_batch); LIB-1/LIB-2 fixes verified
     [x] Documentation of library bugs: docs/BUG_REPORT_DirectAccess.md
-    [x] All 7 tools build cleanly, 662 unit tests pass
+    [x] All 7 tools build cleanly, 694 GTest + 87 C-API + 824 C-API-full pass
 
-    Remaining:
-    [ ] Integrate test_cli_tools.sh into CTest (add_test in tests/CMakeLists.txt)
-    [ ] Also register test_bcsvSampler.sh in CTest while at it
-    [ ] Final full build + ctest verification (662 unit tests + 2 shell scripts)
-    [ ] Review: csv2bcsv still prints conversion summary to stdout — should go
-        to stderr for consistency with other tools (low priority)
-    [ ] Review: consider adding --row-codec / --file-codec display in bcsvHeader -v
-
-    Known issues (library-level, NOT caused by Item 16):
+    Known issues (library-level, found during Item 16 testing):
     [LIB-1] FIXED — ReaderDirectAccess + delta row-codec (watermark decode)
     [LIB-2] FIXED — ReaderDirectAccess + packet_lz4_batch (seekToPacket added)
-    Test script workaround (--row-codec flat --file-codec packet_lz4) no longer needed.
+    [LIB-3] FIXED — FileCodecPacketLZ4Batch001::shutdownBgThread() race condition
+        The background decompression thread's post-task "bg_task_ = IDLE" could
+        overwrite the main thread's "bg_task_ = SHUTDOWN", causing a deadlock.
+        Fix: waitForBgIdle() before setting SHUTDOWN in shutdownBgThread().
     See: docs/BUG_REPORT_DirectAccess.md
 
 17. Update pybcsv to utilize latest bcsv version, supporting all codecs and major API entry points (lets work together to identify which to include, start broad, remove bloat/complexity/internals)
@@ -673,19 +681,3 @@ Parking LOT:
 - consider multithreading for complex filters to build a pipleine like:
         load -> uncompress -> deserialization -> sampling -> serialization -> compression -> save running on multiple CPUs connected through FIFOs. 
         Consider throughput (rows/sec) and efficency (watt/row)
-
-=== RESOLVED BUGS ===
-
-[LIB-1] FIXED — ReaderDirectAccess: delta row-codec produces corrupt numeric data
-    Root cause: deserializeCachedRow() decoded the target row in isolation.
-    Delta/ZoH codecs require sequential state from preceding rows.
-    Fix: Watermark-based sequential decode within cached packet.
-    Files: reader.h (cached_decode_pos_), reader.hpp (deserializeCachedRow rewrite)
-    29 new tests covering all codec combinations, random access, boundary cases.
-    See: docs/BUG_REPORT_DirectAccess.md § Resolution
-
-[LIB-2] FIXED — ReaderDirectAccess: packet_lz4_batch file-codec — read() failed
-    Root cause: FileCodecPacketLZ4Batch001 lacked seekToPacket() method.
-    Fix: Added seekToPacket() — stops BG thread, decompresses target packet synchronously.
-    File: codec_file/file_codec_packet_lz4_batch001.h
-    See: docs/BUG_REPORT_DirectAccess.md § Resolution

@@ -66,6 +66,19 @@ target_link_libraries(bcsv_gtest PRIVATE
 include(GoogleTest)
 gtest_discover_tests(bcsv_gtest DISCOVERY_TIMEOUT 60)
 
+# Register shell-based integration tests (CLI tools + sampler)
+add_test(NAME cli_tools_integration
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/test_cli_tools.sh"
+    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
+set_tests_properties(cli_tools_integration PROPERTIES TIMEOUT 300)
+
+add_test(NAME bcsvSampler_integration
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/test_bcsvSampler.sh"
+    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
+set_tests_properties(bcsvSampler_integration PROPERTIES TIMEOUT 300)
+
 # Set output directory
 set_target_properties(bcsv_gtest PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin

@@ -72,6 +72,23 @@ expect_fail() {
     return 0
 }
 
+# Normalize a CSV for semantic comparison: strip quotes, trim trailing
+# ".0" on numeric fields (31.0 → 31 is valid BCSV round-trip behaviour).
+csv_normalize() {
+    sed 's/"//g' "$1" | awk -F, '{
+        for (i=1; i<=NF; i++) {
+            if ($i ~ /^-?[0-9]+\.0$/) sub(/\.0$/, "", $i)
+            printf "%s%s", $i, (i<NF ? "," : "")
+        }
+        print ""
+    }'
+}
+
+# Semantic diff: returns 0 when two CSVs are equivalent after normalization.
+csv_equal() {
+    diff <(csv_normalize "$1") <(csv_normalize "$2") >/dev/null 2>&1
+}
+
 # ══════════════════════════════════════════════════════════════════════
 # 1. Create canonical CSV dataset  (20 rows × 4 columns)
 # ══════════════════════════════════════════════════════════════════════
@@ -108,12 +125,10 @@ EOF
 CANON_ROWS=20
 echo "Created canonical CSV: $CANON_ROWS rows × 4 columns"
 
-# Create a BCSV file with flat row-codec and packet_lz4 file-codec for
-# tests that need ReaderDirectAccess::read().
-# - batch file-codec has a known direct-access issue (tracked separately)
-# - delta row-codec corrupts numerics under random-access (tracked separately)
+# Create a BCSV file with the library defaults (delta + packet_lz4_batch)
+# so that every downstream tool is tested against the default encoding.
 BCSV_DEFAULT="$TESTDIR/default.bcsv"
-if ! "$CSV2BCSV" --row-codec flat --file-codec packet_lz4 -f "$CANON_CSV" "$BCSV_DEFAULT" >/dev/null 2>&1; then
+if ! "$CSV2BCSV" -f "$CANON_CSV" "$BCSV_DEFAULT" >/dev/null 2>&1; then
     echo "FATAL: Cannot create default BCSV test file" >&2
     exit 1
 fi
@@ -138,9 +153,16 @@ RT_CSV="$TESTDIR/roundtrip_default.csv"
 "$BCSV2CSV" "$BCSV_DEFAULT" -o "$RT_CSV" 2>/dev/null
 RT_ROWS=$(csv_rows "$RT_CSV")
 if [[ "$RT_ROWS" == "$CANON_ROWS" ]]; then
-    pass "csv2bcsv: round-trip preserves $CANON_ROWS rows (delta)"
+    pass "csv2bcsv: round-trip preserves $CANON_ROWS rows (default)"
 else
     fail "csv2bcsv: round-trip row count mismatch: expected $CANON_ROWS, got $RT_ROWS"
+fi
+
+# Verify data parity: round-tripped CSV must match canonical CSV
+if csv_equal "$CANON_CSV" "$RT_CSV"; then
+    pass "csv2bcsv: round-trip data matches canonical CSV (default)"
+else
+    fail "csv2bcsv: round-trip data differs from canonical CSV (default)"
 fi
 
 # Verify header preserved
@@ -165,8 +187,8 @@ for RCODEC in flat zoh delta; do
     fi
 done
 
-# 2d. Explicit file codecs: stream, packet, packet_lz4
-for FCODEC in stream packet packet_lz4; do
+# 2d. Explicit file codecs: all five variants
+for FCODEC in stream stream_lz4 packet packet_lz4 packet_lz4_batch; do
     BCSV_FC="$TESTDIR/fc_${FCODEC}.bcsv"
     RT_FC_CSV="$TESTDIR/rt_${FCODEC}.csv"
     "$CSV2BCSV" --file-codec "$FCODEC" -f "$CANON_CSV" "$BCSV_FC" >/dev/null 2>&1
@@ -177,6 +199,23 @@ for FCODEC in stream packet packet_lz4; do
     else
         fail "csv2bcsv: file-codec=$FCODEC round-trip failed (expected $CANON_ROWS, got $GOT)"
     fi
+done
+
+# 2d2. Full 3×5 codec matrix — round-trip + data-parity diff
+for RCODEC in flat zoh delta; do
+    for FCODEC in stream stream_lz4 packet packet_lz4 packet_lz4_batch; do
+        TAG="matrix_${RCODEC}_${FCODEC}"
+        BCSV_M="$TESTDIR/${TAG}.bcsv"
+        RT_M_CSV="$TESTDIR/rt_${TAG}.csv"
+        "$CSV2BCSV" --row-codec "$RCODEC" --file-codec "$FCODEC" -f "$CANON_CSV" "$BCSV_M" >/dev/null 2>&1
+        "$BCSV2CSV" "$BCSV_M" -o "$RT_M_CSV" 2>/dev/null
+        if csv_equal "$CANON_CSV" "$RT_M_CSV"; then
+            pass "csv2bcsv: codec-matrix $RCODEC+$FCODEC data-parity OK"
+        else
+            GOT=$(csv_rows "$RT_M_CSV" 2>/dev/null || echo "N/A")
+            fail "csv2bcsv: codec-matrix $RCODEC+$FCODEC data differs (rows: $GOT)"
+        fi
+    done
 done
 
 # 2e. --no-zoh deprecated alias maps to delta (B5 fix validation)
@@ -536,6 +575,30 @@ else
     fail "bcsvTail: unknown option was not rejected"
 fi
 
+# 5m. Direct-access with delta codec — verify last row
+BCSV_DA_DELTA="$TESTDIR/da_delta.bcsv"
+"$CSV2BCSV" --row-codec delta --file-codec packet_lz4 -f "$CANON_CSV" "$BCSV_DA_DELTA" >/dev/null 2>&1
+TAIL_DA_DELTA="$TESTDIR/tail_da_delta.csv"
+"$BCSVTAIL" -n 1 "$BCSV_DA_DELTA" > "$TAIL_DA_DELTA" 2>/dev/null
+DA_DELTA_ID=$(csv_cell "$TAIL_DA_DELTA" 1 1)
+if [[ "$DA_DELTA_ID" == "20" ]]; then
+    pass "bcsvTail: direct-access delta last row id=20"
+else
+    fail "bcsvTail: direct-access delta last row: expected 20, got '$DA_DELTA_ID'"
+fi
+
+# 5n. Direct-access with ZoH codec — verify last row
+BCSV_DA_ZOH="$TESTDIR/da_zoh.bcsv"
+"$CSV2BCSV" --row-codec zoh --file-codec packet_lz4 -f "$CANON_CSV" "$BCSV_DA_ZOH" >/dev/null 2>&1
+TAIL_DA_ZOH="$TESTDIR/tail_da_zoh.csv"
+"$BCSVTAIL" -n 1 "$BCSV_DA_ZOH" > "$TAIL_DA_ZOH" 2>/dev/null
+DA_ZOH_ID=$(csv_cell "$TAIL_DA_ZOH" 1 1)
+if [[ "$DA_ZOH_ID" == "20" ]]; then
+    pass "bcsvTail: direct-access ZoH last row id=20"
+else
+    fail "bcsvTail: direct-access ZoH last row: expected 20, got '$DA_ZOH_ID'"
+fi
+
 
 # ══════════════════════════════════════════════════════════════════════
 # 6. bcsvHeader — schema display tests
@@ -566,6 +629,23 @@ if echo "$HEADER_V" | grep -qi "row\|rows"; then
     pass "bcsvHeader: verbose shows row info"
 else
     fail "bcsvHeader: verbose missing row info"
+fi
+
+# 6c2. -v shows codec names (default file uses delta + packet_lz4_batch)
+if echo "$HEADER_V" | grep -q "Row codec: delta" && echo "$HEADER_V" | grep -q "File codec: packet_lz4_batch"; then
+    pass "bcsvHeader: verbose shows codec names (delta + packet_lz4_batch)"
+else
+    fail "bcsvHeader: verbose missing codec names"
+fi
+
+# 6c3. -v on stream-mode file shows correct codecs
+BCSV_STREAM_HDR="$TESTDIR/hdr_stream.bcsv"
+"$CSV2BCSV" --row-codec flat --file-codec stream -f "$CANON_CSV" "$BCSV_STREAM_HDR" >/dev/null 2>&1
+HEADER_STREAM=$("$BCSVHEADER" -v "$BCSV_STREAM_HDR" 2>&1)
+if echo "$HEADER_STREAM" | grep -q "Row codec: flat" && echo "$HEADER_STREAM" | grep -q "File codec: stream"; then
+    pass "bcsvHeader: verbose shows codec names (flat + stream)"
+else
+    fail "bcsvHeader: verbose wrong codecs for flat+stream file"
 fi
 
 # 6d. --help exits 0
@@ -762,7 +842,7 @@ cat > "$SPECIAL_CSV" <<'CSVEOF'
 CSVEOF
 
 SPECIAL_BCSV="$TESTDIR/special_cols.bcsv"
-"$CSV2BCSV" --row-codec flat --file-codec packet_lz4 -f "$SPECIAL_CSV" "$SPECIAL_BCSV" >/dev/null 2>&1
+"$CSV2BCSV" -f "$SPECIAL_CSV" "$SPECIAL_BCSV" >/dev/null 2>&1
 
 # Head path (direct-access uses CsvWriter)
 SPECIAL_HEAD=$("$BCSVHEAD" -n 1 "$SPECIAL_BCSV" 2>/dev/null)
@@ -789,7 +869,7 @@ SINGLE_CSV="$TESTDIR/single.csv"
 echo "x,y" > "$SINGLE_CSV"
 echo "42,99" >> "$SINGLE_CSV"
 SINGLE_BCSV="$TESTDIR/single.bcsv"
-"$CSV2BCSV" --row-codec flat --file-codec packet_lz4 -f "$SINGLE_CSV" "$SINGLE_BCSV" >/dev/null 2>&1
+"$CSV2BCSV" -f "$SINGLE_CSV" "$SINGLE_BCSV" >/dev/null 2>&1
 
 SINGLE_HEAD=$("$BCSVHEAD" -n 10 "$SINGLE_BCSV" 2>/dev/null)
 SINGLE_HEAD_ROWS=$(echo "$SINGLE_HEAD" | tail -n +2 | wc -l | tr -d ' ')
@@ -805,6 +885,37 @@ if [[ "$SINGLE_TAIL_ROWS" == "1" ]]; then
     pass "Edge: single-row file bcsvTail shows 1 row"
 else
     fail "Edge: single-row file bcsvTail: expected 1, got $SINGLE_TAIL_ROWS"
+fi
+
+# 9c. Empty file (header only, 0 data rows) — csv2bcsv rejects this
+EMPTY_CSV="$TESTDIR/empty.csv"
+echo "a,b,c" > "$EMPTY_CSV"
+EMPTY_BCSV="$TESTDIR/empty.bcsv"
+if expect_fail "$CSV2BCSV" -f "$EMPTY_CSV" "$EMPTY_BCSV"; then
+    pass "Edge: empty file (0 rows) correctly rejected by csv2bcsv"
+else
+    fail "Edge: empty file was not rejected by csv2bcsv"
+fi
+
+# 9d. Negative/precision values survive round-trip
+PREC_CSV="$TESTDIR/precision.csv"
+cat > "$PREC_CSV" <<'EOF'
+val
+-42
+-3.14
+0.001
+12345678
+0.1
+0.3
+EOF
+PREC_BCSV="$TESTDIR/precision.bcsv"
+PREC_RT="$TESTDIR/precision_rt.csv"
+"$CSV2BCSV" -f "$PREC_CSV" "$PREC_BCSV" >/dev/null 2>&1
+"$BCSV2CSV" "$PREC_BCSV" -o "$PREC_RT" 2>/dev/null
+if csv_equal "$PREC_CSV" "$PREC_RT"; then
+    pass "Edge: negative/precision values survive round-trip"
+else
+    fail "Edge: negative/precision values differ after round-trip"
 fi
 
 

@@ -61,6 +61,7 @@ namespace bcsv {
 
         void                    close();
         uint8_t                 compressionLevel() const    { return file_header_.getCompressionLevel(); }
+        FileFlags               fileFlags() const               { return file_header_.getFlags(); }
         const FilePath&         filePath() const            { return file_path_; }
         const LayoutType&       layout() const              { return row_.layout(); }
         const std::string&      getErrorMsg() const         { return err_msg_; }

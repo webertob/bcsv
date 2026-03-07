@@ -8,7 +8,11 @@
 #           + 8 value-level spot checks + 5 encoding variants
 #           + 1 disassembly smoke test
 # ─────────────────────────────────────────────────────────────────────
-set -euo pipefail
+set -uo pipefail
+# Note: we intentionally do NOT use set -e. Individual test steps check
+# exit codes explicitly and log PASS/FAIL. Crashing tools (e.g. segfault)
+# should not abort the entire suite — the failure will be captured by the
+# test that invoked the tool.
 
 # ── Locate binaries ──────────────────────────────────────────────────
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -78,7 +82,7 @@ echo ""
 # ══════════════════════════════════════════════════════════════════════
 CANON_BCSV="$TMPDIR/canonical.bcsv"
 echo "=== csv2bcsv ==="
-"$CSV2BCSV" --no-zoh "$CANON_CSV" "$CANON_BCSV" 2>&1 | grep -E "rows|Columns|Layout" || true
+"$CSV2BCSV" --row-codec delta "$CANON_CSV" "$CANON_BCSV" 2>&1 | grep -E "rows|Columns|Layout" || true
 echo ""
 
 echo "=== Header of canonical.bcsv ==="
@@ -107,7 +111,7 @@ run_tv() {
     local out_bcsv="$TMPDIR/${label}.bcsv"
     local out_csv="$TMPDIR/${label}.csv"
 
-    if "$BCSVSAMPLER" "$@" -f "$CANON_BCSV" "$out_bcsv" 2>/dev/null; then
+    if timeout 10 "$BCSVSAMPLER" "$@" -f "$CANON_BCSV" "$out_bcsv" 2>/dev/null; then
         "$BCSV2CSV" "$out_bcsv" "$out_csv" 2>/dev/null
         local got
         got=$(csv_rows "$out_csv")
@@ -142,7 +146,7 @@ run_tv_expect_fail() {
     local label="$1"; shift
     local out_bcsv="$TMPDIR/${label}.bcsv"
 
-    if "$BCSVSAMPLER" "$@" "$CANON_BCSV" "$out_bcsv" 2>/dev/null; then
+    if timeout 10 "$BCSVSAMPLER" "$@" "$CANON_BCSV" "$out_bcsv" 2>/dev/null; then
         fail "$label: expected compile error, but succeeded"
     else
         pass "$label: compile error detected"
@@ -340,7 +344,7 @@ for variant in "default" "no-delta" "no-batch" "no-lz4" "flat"; do
         no-lz4)   extra_args+=(--no-lz4) ;;
         flat)     extra_args+=(--no-delta --no-lz4 --no-batch) ;;
     esac
-    "$BCSVSAMPLER" -c 'X[0][1] > 50.0' "${extra_args[@]}" -f \
+    timeout 10 "$BCSVSAMPLER" -c 'X[0][1] > 50.0' "${extra_args[@]}" -f \
         "$CANON_BCSV" "$out_bcsv" 2>/dev/null
     "$BCSV2CSV" "$out_bcsv" "$out_csv" 2>/dev/null
     got=$(csv_rows "$out_csv")
@@ -359,7 +363,7 @@ echo "════════════════════════�
 echo "  Disassembly smoke test"
 echo "═══════════════════════════════════════════════════════════"
 
-DISASM=$("$BCSVSAMPLER" --disassemble -c 'X[0][1] > 50.0' -s 'X[0][0], X[0][1]' "$CANON_BCSV" 2>/dev/null)
+DISASM=$(timeout 10 "$BCSVSAMPLER" --disassemble -c 'X[0][1] > 50.0' -s 'X[0][0], X[0][1]' "$CANON_BCSV" 2>/dev/null)
 if echo "$DISASM" | grep -q "HALT_COND" && echo "$DISASM" | grep -q "HALT_SEL"; then
     pass "Disassembly contains HALT_COND and HALT_SEL"
 else
@@ -374,7 +378,7 @@ echo "════════════════════════�
 echo "  Summary output smoke test"
 echo "═══════════════════════════════════════════════════════════"
 
-SUMMARY=$("$BCSVSAMPLER" -v -c 'X[0][1] > 50.0' -f "$CANON_BCSV" "$TMPDIR/summary_test.bcsv" 2>&1)
+SUMMARY=$(timeout 10 "$BCSVSAMPLER" -v -c 'X[0][1] > 50.0' -f "$CANON_BCSV" "$TMPDIR/summary_test.bcsv" 2>&1)
 if echo "$SUMMARY" | grep -q "Pass rate" && echo "$SUMMARY" | grep -q "Rows written" && echo "$SUMMARY" | grep -q "Encoding"; then
     pass "Summary output contains expected sections"
 else

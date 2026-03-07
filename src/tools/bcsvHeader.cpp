@@ -114,6 +114,10 @@ int main(int argc, char* argv[]) {
                 auto file_size = std::filesystem::file_size(config.input_file);
                 std::cout << "File size: " << bcsv_cli::formatBytes(file_size) << std::endl;
                 std::cout << "Compression level: " << (int)plain_reader.compressionLevel() << std::endl;
+                auto codecs = bcsv_cli::codecNamesFromFlags(
+                    plain_reader.fileFlags(), plain_reader.compressionLevel());
+                std::cout << "Row codec: " << codecs.row_codec << std::endl;
+                std::cout << "File codec: " << codecs.file_codec << std::endl;
                 std::cout << "Row count: (unavailable – no file footer)" << std::endl;
             }
             std::cout << std::endl;
@@ -132,6 +136,10 @@ int main(int argc, char* argv[]) {
             auto file_size = std::filesystem::file_size(config.input_file);
             std::cout << "File size: " << bcsv_cli::formatBytes(file_size) << std::endl;
             std::cout << "Compression level: " << (int)reader.compressionLevel() << std::endl;
+            auto codecs = bcsv_cli::codecNamesFromFlags(
+                reader.fileFlags(), reader.compressionLevel());
+            std::cout << "Row codec: " << codecs.row_codec << std::endl;
+            std::cout << "File codec: " << codecs.file_codec << std::endl;
             std::cout << "Row count: " << reader.rowCount() << std::endl;
         }
         std::cout << std::endl;
