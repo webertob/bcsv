@@ -244,6 +244,8 @@ namespace bcsv {
         cached_packet_idx_ = SIZE_MAX;
         cached_first_row_ = 0;
         cached_row_count_ = 0;
+        cached_decode_pos_ = SIZE_MAX;
+        da_row_pos_ = SIZE_MAX;
     }
 
     template<LayoutConcept LayoutType>
@@ -402,6 +404,7 @@ namespace bcsv {
         cached_packet_idx_ = packetIdx;
         cached_first_row_ = static_cast<size_t>(pktEntry.first_row);
         cached_row_count_ = cached_rows_.size();
+        cached_decode_pos_ = SIZE_MAX;  // No rows decoded yet in this packet
 
         return true;
     }
@@ -409,8 +412,12 @@ namespace bcsv {
     /**
      * @brief Deserialize a row from the in-memory packet cache.
      *
-     * Handles ZoH repeat sentinels (empty vector) and bounds checks.
-     * Shared by both compressed and uncompressed cache paths.
+     * For stateless codecs (Flat001): directly deserializes the target row.
+     * For stateful codecs (ZoH001/Delta002): maintains a decode watermark
+     * within the packet.  Forward reads continue from the watermark;
+     * backward reads (or first access) reset the codec and decode from
+     * the beginning of the packet.  Same-row re-reads return the cached
+     * row_ without re-decoding.
      */
     template<LayoutConcept LayoutType>
     bool ReaderDirectAccess<LayoutType>::deserializeCachedRow(size_t rowInPacket, size_t index) {
@@ -419,20 +426,73 @@ namespace bcsv {
             return false;
         }
 
-        const auto& rawRow = cached_rows_[rowInPacket];
-
-        if (rawRow.empty()) {
-            // ZoH repeat: row_ retains previous value
-            if (rowInPacket == 0) {
-                Base::err_msg_ = "Error: ZoH repeat on first row of packet";
-                return false;
-            }
-        } else {
-            auto rowSpan = std::span<const std::byte>(rawRow.data(), rawRow.size());
-            da_row_codec_.deserialize(rowSpan, Base::row_);
+        // Detect readNext() interleaving: if row_pos_ was modified by
+        // readNext() since our last read(), row_ no longer matches the
+        // watermark state.  Invalidate so we re-decode from packet start.
+        if (da_row_pos_ != Base::row_pos_) {
+            cached_decode_pos_ = SIZE_MAX;
         }
 
+        // ── Stateless codec fast path (Flat001) ─────────────────────────
+        if (da_row_codec_.isFlat()) {
+            const auto& rawRow = cached_rows_[rowInPacket];
+            if (rawRow.empty()) {
+                // Flat codec never produces ZoH sentinels — this indicates a
+                // corrupt/mismatched file.  Return error rather than silently
+                // returning stale row_ data.
+                Base::err_msg_ = "Error: Unexpected empty row in flat-codec packet at position " +
+                                 std::to_string(rowInPacket);
+                return false;
+            }
+            auto rowSpan = std::span<const std::byte>(rawRow.data(), rawRow.size());
+            da_row_codec_.deserialize(rowSpan, Base::row_);
+            Base::row_pos_ = index;
+            da_row_pos_ = index;
+            return true;
+        }
+
+        // ── Stateful codec path (ZoH001 / Delta002) ────────────────────
+        // Same-row re-read: return cached row_ unchanged
+        if (rowInPacket == cached_decode_pos_) {
+            Base::row_pos_ = index;
+            da_row_pos_ = index;
+            return true;
+        }
+
+        // Determine decode start position
+        size_t decodeFrom = 0;
+        if (cached_decode_pos_ != SIZE_MAX && rowInPacket > cached_decode_pos_) {
+            // Forward read: continue from watermark
+            decodeFrom = cached_decode_pos_ + 1;
+        } else {
+            // Backward read or first access: reset and decode from packet start
+            da_row_codec_.reset();
+            decodeFrom = 0;
+        }
+
+        // Sequential decode from decodeFrom through rowInPacket.
+        // ZoH repeats (empty rows) are skipped — row_ retains its previous
+        // values, which is the correct ZoH semantic.  The row codec's
+        // deserialize() is NOT called for repeats, so codec-internal state
+        // (e.g. Delta002::rows_seen_) is not incremented — matching the
+        // sequential Reader::readNext() path which also skips the codec.
+        for (size_t r = decodeFrom; r <= rowInPacket; ++r) {
+            const auto& rawRow = cached_rows_[r];
+            if (rawRow.empty()) {
+                if (r == 0) {
+                    Base::err_msg_ = "Error: ZoH repeat on first row of packet";
+                    return false;
+                }
+                // row_ retains previous values (ZoH hold)
+            } else {
+                auto rowSpan = std::span<const std::byte>(rawRow.data(), rawRow.size());
+                da_row_codec_.deserialize(rowSpan, Base::row_);
+            }
+        }
+
+        cached_decode_pos_ = rowInPacket;
         Base::row_pos_ = index;
+        da_row_pos_ = index;
         return true;
     }
 

@@ -199,3 +199,81 @@ default codec combination (`delta + packet_lz4_batch`).
 Combined: **the default codec combination (`delta + packet_lz4_batch`)
 fails in both ways simultaneously**, making `ReaderDirectAccess`
 effectively broken for files created with default settings.
+
+---
+
+## Resolution
+
+**Status:** Fixed  
+**Date:** 2026-03-02
+
+### LIB-1 Fix: Forward-Watermark Sequential Decode
+
+**Files changed:** `include/bcsv/reader.h`, `include/bcsv/reader.hpp`
+
+The fix adds a watermark-based sequential decode strategy to
+`deserializeCachedRow()`:
+
+- **Flat codec (stateless):** Unchanged — direct single-row deserialize,
+  O(1) per read.
+- **Stateful codecs (ZoH, Delta):** The reader tracks
+  `cached_decode_pos_`, the last decoded row position within the cached
+  packet. Three cases:
+  - **Same row re-read** (`rowInPacket == cached_decode_pos_`): Return
+    cached `row_` unchanged.
+  - **Forward read** (`rowInPacket > cached_decode_pos_`): Continue
+    sequential decode from watermark+1 to target.
+  - **Backward read** (`rowInPacket < cached_decode_pos_`): Reset row
+    codec, decode sequentially from packet start to target.
+
+The watermark is reset to `SIZE_MAX` on `close()` and whenever a new
+packet is loaded via `loadPacket()`.
+
+### LIB-2 Fix: `seekToPacket()` for Batch File-Codec
+
+**File changed:** `include/bcsv/codec_file/file_codec_packet_lz4_batch001.h`
+
+Added `seekToPacket(std::istream&, std::streamoff)` method to
+`FileCodecPacketLZ4Batch001`. The method:
+
+1. Stops the background decompression thread (`shutdownBgThread()`).
+2. Seeks the input stream to the target packet offset.
+3. Synchronously reads and decompresses the packet via the existing
+   `readAndDecompressPacket()` into the current read buffer.
+4. Resets the read cursor to 0.
+
+`FileCodecDispatch` automatically detects `seekToPacket` via SFINAE and
+wires it into `ReaderDirectAccess::loadPacket()`.
+
+### Test Coverage
+
+29 new tests added to `tests/direct_access_test.cpp` (53 total):
+
+| Category | Tests | Coverage |
+|----------|-------|----------|
+| Codec matrix | 9 | flat/zoh/delta × packet/packet_lz4/packet_lz4_batch |
+| Sequential parity | 3 | Full row-by-row comparison: readNext() vs read(i) |
+| Central 1/3 slice | 3 | Rows [N/3..2N/3) with each row codec |
+| Random access | 3 | 1000 random indices per row codec |
+| Intra-packet | 3 | 5th and 16th row within each packet |
+| Edge: first/last row | 2 | Packet boundary rows with delta codec |
+| Edge: backward read | 1 | Forward then backward within packet |
+| Edge: re-read | 1 | Same row read multiple times |
+| Edge: boundary cross | 1 | Last→first row across adjacent packets |
+| Edge: jump pattern | 1 | Alternating near-start/near-end |
+| Edge: default combo | 1 | Delta + batch LZ4, every row verified |
+| Perf: central slice | 1 | DA central 30% vs full sequential |
+
+### Verified Codec Matrix (post-fix)
+
+| Row-codec | File-codec | Direct access | Random access | Sequential parity |
+|-----------|------------|:------------:|:-------------:|:-----------------:|
+| flat      | packet            | ✅ | ✅ | ✅ |
+| flat      | packet_lz4        | ✅ | ✅ | ✅ |
+| flat      | packet_lz4_batch  | ✅ | ✅ | ✅ |
+| zoh       | packet            | ✅ | ✅ | ✅ |
+| zoh       | packet_lz4        | ✅ | ✅ | ✅ |
+| zoh       | packet_lz4_batch  | ✅ | ✅ | ✅ |
+| delta     | packet            | ✅ | ✅ | ✅ |
+| delta     | packet_lz4        | ✅ | ✅ | ✅ |
+| delta     | packet_lz4_batch  | ✅ | ✅ | ✅ |

@@ -23,8 +23,8 @@ Items 0–14: DONE (all committed)
 Deferred / remaining:
   11.B open items (perf regression, memory footprint, minor refactorings)
   14b. dictionary encoding for strings
-  [LIB-1] ReaderDirectAccess: delta + random access → silent corruption (CRITICAL)
-  [LIB-2] ReaderDirectAccess: packet_lz4_batch + random access → read() fails (HIGH)
+  [LIB-1] FIXED — ReaderDirectAccess: delta + random access → watermark-based sequential decode
+  [LIB-2] FIXED — ReaderDirectAccess: packet_lz4_batch → seekToPacket() added
   See: docs/BUG_REPORT_DirectAccess.md
 ===
 
@@ -572,9 +572,9 @@ Lean checklist gate (for every non-trivial item):
     [ ] Review: consider adding --row-codec / --file-codec display in bcsvHeader -v
 
     Known issues (library-level, NOT caused by Item 16):
-    [LIB-1] ReaderDirectAccess + delta row-codec → silent numeric corruption
-    [LIB-2] ReaderDirectAccess + packet_lz4_batch → read() fails for all rows
-    Test script uses --row-codec flat --file-codec packet_lz4 to work around both.
+    [LIB-1] FIXED — ReaderDirectAccess + delta row-codec (watermark decode)
+    [LIB-2] FIXED — ReaderDirectAccess + packet_lz4_batch (seekToPacket added)
+    Test script workaround (--row-codec flat --file-codec packet_lz4) no longer needed.
     See: docs/BUG_REPORT_DirectAccess.md
 
 17. Update pybcsv to utilize latest bcsv version, supporting all codecs and major API entry points (lets work together to identify which to include, start broad, remove bloat/complexity/internals)
@@ -674,30 +674,18 @@ Parking LOT:
         load -> uncompress -> deserialization -> sampling -> serialization -> compression -> save running on multiple CPUs connected through FIFOs. 
         Consider throughput (rows/sec) and efficency (watt/row)
 
-=== KNOWN BUGS ===
+=== RESOLVED BUGS ===
 
-[LIB-1] ReaderDirectAccess: delta row-codec produces corrupt numeric data (CRITICAL)
-    ReaderDirectAccess::read(index) with delta-encoded files silently returns
-    wrong values for numeric columns.  Delta decoding requires previous-row state
-    which is absent during random access — numerics decode against an implicit
-    zero baseline.  Strings are unaffected.
-    Affects: delta + packet, delta + packet_lz4, delta + packet_lz4_batch
-    Since delta is the default row-codec, most files created with default
-    settings are affected.
-    Sequential reads (Reader::readNext) are correct.
-    See: docs/BUG_REPORT_DirectAccess.md
+[LIB-1] FIXED — ReaderDirectAccess: delta row-codec produces corrupt numeric data
+    Root cause: deserializeCachedRow() decoded the target row in isolation.
+    Delta/ZoH codecs require sequential state from preceding rows.
+    Fix: Watermark-based sequential decode within cached packet.
+    Files: reader.h (cached_decode_pos_), reader.hpp (deserializeCachedRow rewrite)
+    29 new tests covering all codec combinations, random access, boundary cases.
+    See: docs/BUG_REPORT_DirectAccess.md § Resolution
 
-[LIB-2] ReaderDirectAccess: packet_lz4_batch file-codec — read() fails for all rows (HIGH)
-    ReaderDirectAccess::open() succeeds and rowCount() returns the correct total,
-    but every call to read(index) returns false.  No data can be retrieved.
-    Affects: any row-codec + packet_lz4_batch
-    Since packet_lz4_batch is the default file-codec, most files created with
-    default settings are affected.
-    Sequential reads (Reader::readNext) are correct.
-    See: docs/BUG_REPORT_DirectAccess.md
-
-    Combined: the default codec combination (delta + packet_lz4_batch) triggers
-    BOTH bugs, making ReaderDirectAccess effectively non-functional for files
-    created with default settings.
-
-    Working combinations for direct access: flat/zoh + packet/packet_lz4
+[LIB-2] FIXED — ReaderDirectAccess: packet_lz4_batch file-codec — read() failed
+    Root cause: FileCodecPacketLZ4Batch001 lacked seekToPacket() method.
+    Fix: Added seekToPacket() — stops BG thread, decompresses target packet synchronously.
+    File: codec_file/file_codec_packet_lz4_batch001.h
+    See: docs/BUG_REPORT_DirectAccess.md § Resolution

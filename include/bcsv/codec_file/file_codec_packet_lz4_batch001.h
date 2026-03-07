@@ -260,6 +260,30 @@ public:
         // Individual packet checksums are handled per-packet in the BG thread.
     }
 
+    /// Seek to a specific packet by absolute file offset and prepare for reading.
+    /// Stops the background thread, decompresses the target packet synchronously,
+    /// and sets up read_current_ for subsequent readRow() calls.
+    bool seekToPacket(std::istream& is, std::streamoff offset) {
+        // Stop BG thread — direct access controls seeking explicitly
+        shutdownBgThread();
+
+        // Seek to the target packet
+        is.clear();
+        is.seekg(offset, std::ios::beg);
+        if (!is.good()) {
+            return false;
+        }
+
+        // Read and decompress the target packet synchronously
+        read_current_ = &read_a_;
+        read_next_    = &read_b_;
+        read_cursor_  = 0;
+        packet_boundary_crossed_ = true;
+
+        packet_open_ = readAndDecompressPacket(is, *read_current_);
+        return packet_open_;
+    }
+
 private:
 
     // ── Background task types ───────────────────────────────────────────

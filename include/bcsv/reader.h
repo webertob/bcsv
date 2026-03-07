@@ -109,6 +109,17 @@ namespace bcsv {
         // Row codec for direct-access deserialization (separate from sequential)
         RowCodeDisptch                  da_row_codec_;
 
+        // ── Watermark decode position (LIB-1 fix) ───────────────────────
+        // For stateful codecs (ZoH/Delta), tracks the last row within the
+        // cached packet that has been fed through the codec sequentially.
+        // Forward reads continue from the watermark; backward reads reset.
+        size_t                          cached_decode_pos_{SIZE_MAX};  ///< Last decoded row index within packet (SIZE_MAX = none)
+
+        // Tracks the row_pos_ value set by the last successful read().
+        // If Base::row_pos_ differs, readNext() was called in between
+        // and the watermark is no longer valid (row_ was overwritten).
+        size_t                          da_row_pos_{SIZE_MAX};
+
     public:
         void    close();
         bool    open(const FilePath& filepath, bool rebuildFooter = false);
