@@ -354,18 +354,13 @@ background:
         694/694 GTest, 87/87 C API basic, 824/824 C API full — all pass.
 
     Remaining:
-    [ ] Phase 5b: Regression check — verify GCC and Clang still build clean
-        and all tests pass after the MSVC portability changes. Key areas to
-        watch on GCC/Clang:
-        - if constexpr else branches in bitset.hpp, layout.hpp, vle.hpp
-          (Clang evaluates discarded branches in generic lambdas — verified
-          clean in Phase 2b but re-verify after these structural changes)
-        - row.hpp arithmetic guards (std::is_arithmetic_v constraints)
-        - [[unlikely]] attribute in bcsv_c_api.cpp (standard C++20)
-        - volatile barrier in vectorized_access_test.cpp (replaces asm)
-        - toUlong() ceiling division (was already correct on LP64, verify
-          no behaviour change)
-        - delta002 empty string guard (new if-len>0, should be safe)
+    [x] Phase 5b: Regression check — GCC and Clang clean after MSVC changes
+        GCC 13 (ninja-debug): 0 warnings -Werror, 694/694 GTest, 174/174 pytest
+        Clang 18 (clang-debug): 0 warnings -Werror, 694/694 GTest, 174/174 pytest
+        Fix applied: bitset.hpp operator<</>> needed if constexpr (N==0) early
+        returns for Bitset<0> to suppress Clang -Wnonnull on memmove (same class
+        of issue as Phase 2b; the MSVC changes didn't break it but also didn't
+        carry the existing fix — guard was runtime wc==0, Clang needs compile-time).
     [ ] Phase 5c: Push to GitHub, verify CI passes on all 4 platforms
     [ ] Phase 5d: Run Python integration tests on Windows (not yet executed)
     [ ] Tag Item 20 complete once all platforms green

@@ -1671,6 +1671,9 @@ Bitset<N>& Bitset<N>::operator^=(const Bitset& other) noexcept {
 
 template<size_t N>
 Bitset<N> Bitset<N>::operator<<(size_t shift_amount) const noexcept {
+    // Bitset<0> has no words; avoid instantiating memmove on null pointers.
+    if constexpr (N == 0) { return *this; }
+
     // Early exits
     if (shift_amount == 0) {
         return *this;
@@ -1725,6 +1728,9 @@ Bitset<N> Bitset<N>::operator<<(size_t shift_amount) const noexcept {
 
 template<size_t N>
 Bitset<N> Bitset<N>::operator>>(size_t shift_amount) const noexcept {
+    // Bitset<0> has no words; avoid instantiating memmove on null pointers.
+    if constexpr (N == 0) { return *this; }
+
     // Early exits
     if (shift_amount >= size()) {
         if constexpr (IS_FIXED) {
