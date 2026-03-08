@@ -8,7 +8,7 @@ PyBCSV provides Python bindings for the high-performance BCSV (Binary CSV) libra
 - **Pandas Integration**: Direct DataFrame read/write support
 - **Type Safety**: Preserves column types and data integrity
 - **Cross-platform**: Works on Linux, macOS, and Windows
-- **Memory Efficient**: Streaming support for large datasets
+- **Memory Efficient**: Columnar I/O with numpy zero-copy for numeric data
 
 ## Installation
 
@@ -154,15 +154,14 @@ The binary format provides significant advantages:
 1. **Faster I/O**: Binary format is faster to read/write than text CSV
 2. **Type Safety**: Preserves exact data types without parsing
 3. **Compression**: Optional LZ4 compression reduces file size
-4. **Memory Efficiency**: Streaming support for large datasets
+4. **Memory Efficiency**: Columnar I/O with numpy zero-copy for numeric data
 
 ## Testing
 
 Run the included test scripts to verify functionality:
 
 ```bash
-python test_basic.py      # Basic BCSV operations
-python test_pandas.py     # Pandas integration tests
+python -m pytest tests/ -v    # All tests
 ```
 
 ## Python Benchmark Lane (Item 11.B)
@@ -211,7 +210,7 @@ Based on testing with sample data:
 - **DataFrame I/O**: Perfect data fidelity with type preservation
 - **File Size**: Efficient binary encoding (varies by data and compression)
 - **Speed**: Significantly faster than CSV for repeated I/O operations
-- **Memory**: Streaming support for large datasets
+- **Memory**: Columnar I/O with numpy zero-copy for numeric data
 
 The Python wrapper successfully bridges the high-performance C++ BCSV library with Python's data science ecosystem, providing both convenience and performance for data processing workflows.
 

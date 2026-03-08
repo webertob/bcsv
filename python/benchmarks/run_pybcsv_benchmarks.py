@@ -32,6 +32,7 @@ MODE_LABELS = {
     "plain": "PYBCSV Plain",
     "numpy": "PYBCSV NumPy",
     "pandas": "PYBCSV Pandas",
+    "columnar": "PYBCSV Columnar",
 }
 
 
@@ -225,8 +226,8 @@ def build_pandas_rows(workload: str, num_rows: int, seed: int) -> list[list]:
     return frame.values.tolist()
 
 
-def write_rows(file_path: Path, layout, rows: list[list]) -> float:
-    writer = pybcsv.Writer(layout)
+def write_rows(file_path: Path, layout, rows: list[list], row_codec: str = "delta") -> float:
+    writer = pybcsv.Writer(layout, row_codec=row_codec)
     start = time.perf_counter()
     writer.open(str(file_path), True, 1, 64, pybcsv.FileFlags.NONE)
     writer.write_rows(rows)
@@ -235,14 +236,43 @@ def write_rows(file_path: Path, layout, rows: list[list]) -> float:
 
 
 def read_rows(file_path: Path) -> tuple[float, int]:
+    """Read all rows, materializing Python objects (comparable to columnar reads)."""
     reader = pybcsv.Reader()
     start = time.perf_counter()
     reader.open(str(file_path))
-    count = 0
-    while reader.read_next():
-        count += 1
+    data = reader.read_all()
     reader.close()
     elapsed_ms = (time.perf_counter() - start) * 1000.0
+    return elapsed_ms, len(data)
+
+
+def write_columnar(file_path: Path, columns_spec, rows: list[list], row_codec: str = "delta") -> float:
+    """Write using the C++ columnar path (write_columns)."""
+    col_names = [name for name, _ in columns_spec]
+    col_types = [ct for _, ct in columns_spec]
+    num_rows = len(rows)
+
+    col_dict = {}
+    for ci, (name, ct) in enumerate(columns_spec):
+        if ct == pybcsv.ColumnType.STRING:
+            col_dict[name] = [rows[r][ci] for r in range(num_rows)]
+        else:
+            col_dict[name] = np.array([rows[r][ci] for r in range(num_rows)])
+
+    start = time.perf_counter()
+    pybcsv.write_columns(str(file_path), col_dict, col_names, col_types,
+                         row_codec=row_codec, compression_level=1)
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    return elapsed_ms
+
+
+def read_columnar(file_path: Path) -> tuple[float, int]:
+    """Read using the C++ columnar path (read_columns)."""
+    start = time.perf_counter()
+    result = pybcsv.read_columns(str(file_path))
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    first_col = next(iter(result.values()))
+    count = len(first_col)
     return elapsed_ms, count
 
 
@@ -261,13 +291,17 @@ def stable_seed_offset(token: str, modulus: int) -> int:
     return int(digest[:12], 16) % modulus
 
 
-def run_one(mode: str, workload: str, columns: list[tuple[str, object]], num_rows: int, work_dir: Path, seed: int) -> dict:
+def run_one(mode: str, workload: str, columns: list[tuple[str, object]], num_rows: int, work_dir: Path, seed: int, row_codec: str = "delta") -> dict:
     layout = build_layout(columns)
-    rows = mode_rows(mode, workload, num_rows, seed)
-    file_path = work_dir / f"{workload}_{mode}.bcsv"
+    rows = mode_rows(mode if mode != "columnar" else "numpy", workload, num_rows, seed)
+    file_path = work_dir / f"{workload}_{mode}_{row_codec}.bcsv"
 
-    write_ms = write_rows(file_path, layout, rows)
-    read_ms, counted_rows = read_rows(file_path)
+    if mode == "columnar":
+        write_ms = write_columnar(file_path, columns, rows, row_codec)
+        read_ms, counted_rows = read_columnar(file_path)
+    else:
+        write_ms = write_rows(file_path, layout, rows, row_codec)
+        read_ms, counted_rows = read_rows(file_path)
     col_count = len(columns)
 
     return {
@@ -289,8 +323,9 @@ def run_one(mode: str, workload: str, columns: list[tuple[str, object]], num_row
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run dedicated pybcsv macro-style benchmarks")
     parser.add_argument("--size", default="S", choices=list(SIZE_TO_ROWS.keys()))
-    parser.add_argument("--modes", default="plain,numpy,pandas")
+    parser.add_argument("--modes", default="plain,numpy,pandas,columnar")
     parser.add_argument("--workloads", default="weather_timeseries,iot_fleet,financial_orders")
+    parser.add_argument("--codecs", default="delta", help="Comma-separated: flat,zoh,delta")
     parser.add_argument("--output", default="")
     parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
@@ -300,6 +335,7 @@ def main() -> int:
 
     selected_modes = parse_csv_arg(args.modes)
     selected_workloads = parse_csv_arg(args.workloads)
+    selected_codecs = parse_csv_arg(args.codecs)
 
     unknown_modes = [mode for mode in selected_modes if mode not in MODE_LABELS]
     if unknown_modes:
@@ -316,6 +352,9 @@ def main() -> int:
             continue
         if mode == "pandas" and pd is None:
             print("[skip] pandas mode requested but pandas is not available")
+            continue
+        if mode == "columnar" and np is None:
+            print("[skip] columnar mode requires numpy")
             continue
         available_modes.append(mode)
 
@@ -335,10 +374,12 @@ def main() -> int:
     results = []
     for workload in selected_workloads:
         for mode in available_modes:
-            seed = args.seed + stable_seed_offset(workload, 10_000) + stable_seed_offset(mode, 1_000)
-            print(f"[run] workload={workload} mode={mode} rows={num_rows}")
-            result = run_one(mode, workload, specs[workload]["columns"], num_rows, work_dir, seed)
-            results.append(result)
+            for codec in selected_codecs:
+                seed = args.seed + stable_seed_offset(workload, 10_000) + stable_seed_offset(mode, 1_000)
+                print(f"[run] workload={workload} mode={mode} codec={codec} rows={num_rows}")
+                result = run_one(mode, workload, specs[workload]["columns"], num_rows, work_dir, seed, codec)
+                result["row_codec"] = codec
+                results.append(result)
 
     payload = {
         "run_type": "PYTHON-MACRO",

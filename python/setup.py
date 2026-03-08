@@ -220,7 +220,9 @@ compile_args = [
     "-O3",
     "-Wall",
     "-Wextra",
-    "-fPIC"
+    "-fPIC",
+    "-DBCSV_HAS_BATCH_CODEC=1",
+    "-pthread",
 ]
 
 # If building with MSVC, translate or remove GCC/Clang-only flags
@@ -251,6 +253,13 @@ if compiler_type and 'msvc' in compiler_type.lower():
             else:
                 msvc_args.append(arg)
             continue
+        # Translate -D defines to /D
+        if arg.startswith('-D'):
+            msvc_args.append('/' + arg[1:])
+            continue
+        # Skip -pthread (MSVC threads work without explicit flag)
+        if arg == '-pthread':
+            continue
         # Otherwise ignore unknown flags
     compile_args = msvc_args
 
@@ -264,6 +273,7 @@ if PYBIND11_AVAILABLE:
             language="c++",
             cxx_std=20,
             extra_compile_args=compile_args,
+            extra_link_args=["-pthread"],
         )
     ]
     cmdclass = {"build_ext": CustomBuildExt}
@@ -274,6 +284,7 @@ else:
             source_files,
             include_dirs=include_dirs,
             extra_compile_args=compile_args,
+            extra_link_args=["-pthread"],
             language="c++",
         )
     ]
@@ -297,7 +308,7 @@ if __name__ == "__main__":
         ext_modules=ext_modules,
         cmdclass=cmdclass,
         zip_safe=False,
-        python_requires=">=3.12",
+        python_requires=">=3.11",
         classifiers=[
             "Development Status :: 4 - Beta",
             "Intended Audience :: Developers",

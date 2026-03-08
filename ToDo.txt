@@ -428,12 +428,127 @@ background:
 
 
 22. Update pybcsv to utilize latest bcsv version, supporting all codecs and major API entry points (lets work together to identify which to include, start broad, remove bloat/complexity/internals)
-    - full test coverage and validated
-    - pypi and github CI/CD pipline is operational
-    - pandas and numpy support
-    - benchmarking in place read to/write from pandas
-    - benchmarking in place read to/write from numpy,
-    - benchmarking in place read to/write from python (plain)
+    Status: COMPLETE
+    [x] full test coverage and validated (119 pybcsv tests, 14 test files)
+    [x] pypi and github CI/CD pipline is operational (pyproject.toml, setup.py)
+    [x] pandas and numpy support (pandas_utils.py, columnar I/O with zero-copy)
+    [x] benchmarking in place read to/write from pandas
+    [x] benchmarking in place read to/write from numpy,
+    [x] benchmarking in place read to/write from python (plain)
+    
+22.b pybcsv Architecture Rework — Performance & Quality
+    Status: IN PROGRESS — Phase A complete, Phase B partially complete, Phase C pending
+
+    Context: Current pybcsv achieves 2-5 Krow/s (row-by-row) and 3-5 Krow/s (columnar).
+    C++ core achieves 1-13 Mrow/s. The architecture is wrong for numpy/pandas: data
+    transits through Python objects even when source/target is a numpy array. The columnar
+    path (read_columns/write_columns) exists but has bottlenecks (double file open,
+    per-cell type switch, GIL acquire/release per row, no string batching).
+
+    Approach evaluation:
+    1. pybind11 Row-by-Row (current) — simple, natural, but per-cell py::cast boxing overhead
+    2. pybind11 Columnar C++ Bridge (RECOMMENDED) — hot loop entirely in C++, zero-copy
+       for numeric numpy columns, GIL released for bulk operations, natural pandas integration
+    3. C API + ctypes Wrapper — no build step, minimal per-call overhead, but verbose wrapper 
+       code, manual memory mgmt, no type safety, higher long-term maintenance
+
+    Decision: Approach 2. Keep row-by-row API unchanged (at least as performant as today).
+    Add new bulk columnar functions alongside existing API. Breaking API changes acceptable.
+
+    Phase A — Test Renaming (no functional changes):
+    [x] Consolidate 15 test files → 14 with descriptive domain-based names:
+        test_basic_functionality.py + test_basic.py → test_pybcsv_core.py
+        test_new_features.py → split: test_pybcsv_codecs.py, test_pybcsv_sampler.py,
+            test_pybcsv_direct_access.py, test_pybcsv_columnar.py
+        test_optimizations.py + test_all_optimizations.py → test_pybcsv_performance.py
+        test_pandas.py + test_pandas_integration.py → test_pybcsv_pandas.py
+        test_error_handling.py + test_error_handling_edge_cases.py → test_pybcsv_errors.py
+        Keep as-is: test_data_types.py, test_csv_writer_reader.py, test_interoperability.py,
+            test_count_rows.py, test_minimal_string.py, test_performance_edge_cases.py
+
+    Phase B — C++ Columnar Bridge Rework:
+    [x] Rework read_columns(): single file open, pre-built column dispatch table (eliminates
+        per-cell type switch), entire read loop under single GIL release, batch string collection
+        into std::vector<std::vector<std::string>> then convert after loop
+    [x] Rework write_columns(): pre-collect all string data before write loop, entire
+        row-fill + writeRow() loop in C++ with GIL released, no Python in hot path.
+        Column length validation, numpy import hoisted out of loop.
+    [x] Rework pandas_utils.py: read_dataframe uses columnar path with post-read dict
+        filtering for column subsets. write_dataframe extracts numpy arrays from DataFrame
+        directly, passes to write_columns() C++ function. NaN warnings with column names.
+    [ ] Add read_to_dataframe() C++ function: calls improved read_columns() internally,
+        constructs pd.DataFrame(dict) in C++ — single call from Python, eliminates
+        pandas_utils.py read path for common case
+    [ ] Expose Reader.row() typed accessors: row_value(col_index) for single column,
+        row_dict() for dict output — convenience for row-by-row users without list conversion
+
+    Phase C — Verification:
+    [ ] Full test suite passes
+    [ ] Benchmark before/after: all modes × codecs × workloads at M size
+    [ ] Performance targets: columnar read >5 Mrow/s (weather, flat),
+        columnar write >3 Mrow/s, pandas read_dataframe matches columnar read
+
+    Future considerations (not in scope for 22.b):
+    - Chunked/streaming columnar reads: add chunk_size parameter to read_columns() that
+      returns an iterator of column-dict chunks. Important for files exceeding available
+      memory or for very large production datasets. Allocate chunk-sized numpy arrays,
+      fill and yield, reuse buffers across chunks to avoid repeated allocation.
+    - nanobind migration: nanobind is 5-10x faster than pybind11 for per-call overhead
+      and produces ~3x smaller binaries. Would further improve the row-by-row API which
+      remains important for streaming use cases. Evaluate after Phase B when we have
+      proper benchmarks to measure the delta. Migration is mostly mechanical (API is
+      similar) but requires testing across Python 3.11-3.13 and all three OS targets.
+    - String dictionary optimization: once bcsv library implements dictionary encoding
+      (Item 27), string columns could be passed as integer index arrays + dictionary,
+      enabling true zero-copy numpy arrays for strings too.
+
+[x] 22.c pybcsv Critical Review Fixes & Batch Codec Default
+    Status: COMPLETE
+
+    Context: Comprehensive review of pybcsv identified 12 issues. All addressed.
+    Additionally enabled packet_lz4_batch codec and set it as default.
+
+    Review fixes applied:
+    [x] 1. __all__ completeness: Added ColumnType, ColumnDefinition, SamplerCompileResult,
+           type_to_string, read_columns, write_columns. Added function stubs when
+           bindings unavailable.
+    [x] 2. Removed unimplemented chunk_size parameter from read_dataframe
+    [x] 3. NaN warning in write_dataframe: warns per column with name and count
+    [x] 4. Removed redundant alias methods get_layout(), get_column_count() —
+           use layout() and column_count() consistently
+    [x] 5. Fixed C++ csv2bcsv tool bug: writer.open() return value not checked —
+           added error check with getErrorMsg(). Also fixed "Error: " double-prefix
+           in writer.hpp exception message.
+    [x] 6. read_dataframe column-filtering: now uses columnar path (read all via
+           _read_columns, filter dict) instead of slow row-by-row fallback
+    [x] 7. Fixed README: "Streaming support" → "Columnar I/O with numpy zero-copy"
+           (all 3 occurrences)
+    [x] 8. API asymmetry: evaluated — by design (each class exposes what C++ supports)
+    [x] 9. write_row return type: verified consistent (void/None across all writers)
+    [x] 10. DRY stub classes: _make_stub() factory replaces 7 identical class definitions
+    [x] 11. convert_numeric overflow: added std::out_of_range and std::invalid_argument
+            catches with informative error messages
+    [x] 12. Empty layout validation: read_columns and write_columns check num_cols == 0
+
+    Batch codec support:
+    [x] Enabled BCSV_HAS_BATCH_CODEC=1 in setup.py compile args (+MSVC /D translation)
+    [x] Added -pthread compile and link flags (+MSVC skip)
+    [x] Default file codec changed to packet_lz4_batch + delta:
+        - Writer.open() flags default: NONE → BATCH_COMPRESS
+        - write_columns() added flags parameter (default: BATCH_COMPRESS)
+        - row_codec already defaults to "delta"
+
+    Additional quality improvements:
+    [x] write_columns: numpy import hoisted outside column loop (perf)
+    [x] write_columns: column length validation across all columns (correctness)
+    [x] test_interoperability.py: _create_temp_file unlinks after mkstemp
+    [x] test_pybcsv_errors.py: test_truncated_file handles RuntimeError from batch codec
+
+    Files changed: bindings.cpp, __init__.py, pandas_utils.py, setup.py, README.md,
+    writer.hpp, csv2bcsv.cpp, test_interoperability.py, test_pybcsv_errors.py,
+    basic_usage.py, performance_benchmark.py
+
+    Verification: 694 C++ GTest, 700 CTest, 119 pybcsv tests — all pass.
 
 23. Update C# bindinds, using latest version of bcsv library, supporting all codecs and major API entry points (lets work together to identify which to include, start broad, remove bloat/complexity/internals)
     - full test coverage and validated

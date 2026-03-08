@@ -42,9 +42,10 @@ class TestInteroperability(unittest.TestCase):
                 os.unlink(filepath)
 
     def _create_temp_file(self, suffix='.bcsv') -> str:
-        """Create a temporary file and track it for cleanup."""
+        """Create a temporary file path and track it for cleanup."""
         fd, filepath = tempfile.mkstemp(suffix=suffix)
         os.close(fd)
+        os.unlink(filepath)  # Remove so tools can create fresh
         self.temp_files.append(filepath)
         return filepath
 

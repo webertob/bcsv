@@ -67,3 +67,19 @@ pybcsv = ["py.typed"]
 include-package-data = true
 zip-safe = false
 license-files = []
+
+[tool.cibuildwheel]
+build = "cp311-* cp312-* cp313-*"
+skip = "*-musllinux_i686 *-win32 *-manylinux_i686"
+
+[tool.cibuildwheel.linux]
+before-build = "pip install pybind11 numpy"
+
+[tool.cibuildwheel.macos]
+before-build = "pip install pybind11 numpy"
+
+[tool.cibuildwheel.windows]
+before-build = "pip install pybind11 numpy"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

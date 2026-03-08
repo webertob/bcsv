@@ -217,7 +217,7 @@ def demonstrate_streaming():
     
     with pybcsv.Reader() as reader:
         reader.open("benchmark_compressed.bcsv")
-        layout = reader.get_layout()
+        layout = reader.layout()
         print(f"File layout: {layout}")
         
         for row in reader:

@@ -59,8 +59,8 @@ class TestCsvRoundTrip:
         ]
 
         # Write
-        writer = pybcsv.CsvWriter()
-        writer.open(path, layout)
+        writer = pybcsv.CsvWriter(layout)
+        writer.open(path)
         for r in rows:
             writer.write_row(r)
         writer.close()
@@ -78,8 +78,8 @@ class TestCsvRoundTrip:
         path = str(tmp_path / "ctx.csv")
         layout = _make_layout(("x", pybcsv.ColumnType.INT32))
 
-        with pybcsv.CsvWriter() as w:
-            w.open(path, layout)
+        with pybcsv.CsvWriter(layout) as w:
+            w.open(path)
             w.write_row([42])
 
         # file should exist and have data
@@ -92,8 +92,8 @@ class TestCsvRoundTrip:
         path = str(tmp_path / "count.csv")
         layout = _make_layout(("v", pybcsv.ColumnType.DOUBLE))
 
-        writer = pybcsv.CsvWriter()
-        writer.open(path, layout)
+        writer = pybcsv.CsvWriter(layout)
+        writer.open(path)
         assert writer.row_count() == 0
         writer.write_row([1.0])
         writer.write_row([2.0])
@@ -104,8 +104,8 @@ class TestCsvRoundTrip:
         path = str(tmp_path / "batch.csv")
         layout = _make_layout(("a", pybcsv.ColumnType.INT32))
 
-        writer = pybcsv.CsvWriter()
-        writer.open(path, layout)
+        writer = pybcsv.CsvWriter(layout)
+        writer.open(path)
         writer.write_rows([[i] for i in range(100)])
         assert writer.row_count() == 100
         writer.close()
@@ -117,8 +117,8 @@ class TestCsvRoundTrip:
             ("b", pybcsv.ColumnType.STRING),
         )
 
-        writer = pybcsv.CsvWriter()
-        writer.open(path, layout, ";")
+        writer = pybcsv.CsvWriter(layout, delimiter=';')
+        writer.open(path)
         writer.write_row([1, "hello"])
         writer.close()
 
@@ -148,11 +148,13 @@ class TestCsvReader:
             ("y", pybcsv.ColumnType.INT32),
         )
 
-        reader = pybcsv.CsvReader()
-        reader.open(path, layout)
+        reader = pybcsv.CsvReader(layout)
+        reader.open(path)
         rows = []
-        while reader.read_next():
-            rows.append(reader.read_row())
+        row = reader.read_row()
+        while row is not None:
+            rows.append(row)
+            row = reader.read_row()
         reader.close()
         assert len(rows) == 2
 
@@ -160,6 +162,6 @@ class TestCsvReader:
         path = str(tmp_path / "does_not_exist.csv")
         layout = _make_layout(("x", pybcsv.ColumnType.INT32))
 
-        reader = pybcsv.CsvReader()
-        result = reader.open(path, layout)
-        assert result is False or result is None  # expect failure
+        reader = pybcsv.CsvReader(layout)
+        with pytest.raises(RuntimeError):
+            reader.open(path)

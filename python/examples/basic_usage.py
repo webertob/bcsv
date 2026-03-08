@@ -58,7 +58,7 @@ def main():
         print("\n3. Reading data back...")
         with pybcsv.Reader() as reader:
             reader.open(filename)
-            read_layout = reader.get_layout()
+            read_layout = reader.layout()
             print(f"File layout: {read_layout}")
             
             print("\nData rows:")

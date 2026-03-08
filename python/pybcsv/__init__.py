@@ -17,25 +17,26 @@ except ImportError:
     _BINDINGS_AVAILABLE = False
     
     # Create stub classes that raise ImportError
-    class Layout:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("BCSV bindings are not available. Please compile the extension module.")
-    
-    class Writer:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("BCSV bindings are not available. Please compile the extension module.")
-    
-    class Reader:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("BCSV bindings are not available. Please compile the extension module.")
-    
-    class CsvWriter:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("BCSV bindings are not available. Please compile the extension module.")
-    
-    class CsvReader:
-        def __init__(self, *args, **kwargs):
-            raise ImportError("BCSV bindings are not available. Please compile the extension module.")
+    _STUB_MSG = "BCSV bindings are not available. Please compile the extension module."
+    def _make_stub(name):
+        def _init(self, *args, **kwargs):
+            raise ImportError(_STUB_MSG)
+        return type(name, (), {"__init__": _init})
+
+    Layout = _make_stub("Layout")
+    Writer = _make_stub("Writer")
+    Reader = _make_stub("Reader")
+    ReaderDirectAccess = _make_stub("ReaderDirectAccess")
+    Sampler = _make_stub("Sampler")
+    CsvWriter = _make_stub("CsvWriter")
+    CsvReader = _make_stub("CsvReader")
+
+    def read_columns(*args, **kwargs):
+        raise ImportError(_STUB_MSG)
+    def write_columns(*args, **kwargs):
+        raise ImportError(_STUB_MSG)
+    def type_to_string(*args, **kwargs):
+        raise ImportError(_STUB_MSG)
 
 # Try to import pandas utilities if pandas is available
 try:
@@ -63,11 +64,24 @@ __all__ = [
     "Layout",
     "Writer",
     "Reader",
+    "ReaderDirectAccess",
+    "Sampler",
     "CsvWriter",
     "CsvReader",
+    # Enums and types
+    "ColumnType",
+    "ColumnDefinition",
+    "FileFlags",
+    "SamplerMode",
+    "SamplerErrorPolicy",
+    "SamplerCompileResult",
+    # Columnar I/O
+    "read_columns",
+    "write_columns",
     # Utility functions
+    "type_to_string",
     "write_dataframe",
-    "read_dataframe", 
+    "read_dataframe",
     "to_csv",
     "from_csv",
 ]

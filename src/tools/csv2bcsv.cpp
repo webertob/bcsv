@@ -634,9 +634,12 @@ int main(int argc, char* argv[]) {
             config.file_codec, config.row_codec, config.compression_level);
         size_t row_count = 0;
         auto write_rows = [&](auto& writer) {
-            writer.open(config.output_file, config.overwrite,
+            if (!writer.open(config.output_file, config.overwrite,
                         codec_settings.comp_level, config.block_size_kb,
-                        codec_settings.flags);
+                        codec_settings.flags)) {
+                throw std::runtime_error("Cannot open output file: " + config.output_file +
+                    " (" + writer.getErrorMsg() + ")");
+            }
 
             // Use CsvReader with the detected layout for type-safe CSV parsing
             bcsv::CsvReader<bcsv::Layout> csv_reader(layout, config.delimiter, config.decimal_separator);

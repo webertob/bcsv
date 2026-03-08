@@ -202,7 +202,7 @@ namespace bcsv {
     template<LayoutConcept LayoutType, typename CodecType>
     void Writer<LayoutType, CodecType>::writeRow() {
         if (!stream_.is_open()) {
-            throw std::runtime_error("Error: File is not open");
+            throw std::runtime_error("File is not open");
         }
 
         // Packet lifecycle: beginWrite handles close-if-full → open-if-needed.

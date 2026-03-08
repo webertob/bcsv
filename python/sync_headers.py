@@ -21,10 +21,14 @@ from pathlib import Path
 
 
 def _copy_bcsv_headers(src_dir, dst_dir, exclude):
-    """Copy BCSV headers, skipping archived files in the exclude set."""
+    """Copy BCSV headers recursively, preserving subdirectory structure."""
     dst_dir.mkdir(exist_ok=True)
     for item in src_dir.iterdir():
-        if item.is_file() and item.name not in exclude:
+        if item.name in exclude:
+            continue
+        if item.is_dir():
+            _copy_bcsv_headers(item, dst_dir / item.name, exclude)
+        elif item.is_file():
             shutil.copy2(item, dst_dir / item.name)
 
 
@@ -72,11 +76,11 @@ def sync_headers(project_root=None, force=False, verbose=False):
             print("Syncing BCSV headers...")
         
         if target_bcsv_dir.exists() and not force:
-            # Check if we need to update
+            # Check if we need to update (recursive check)
             source_newer = any(
-                not (target_bcsv_dir / f.name).exists() or 
-                f.stat().st_mtime > (target_bcsv_dir / f.name).stat().st_mtime
-                for f in source_bcsv_dir.glob("*")
+                not (target_bcsv_dir / f.relative_to(source_bcsv_dir)).exists() or 
+                f.stat().st_mtime > (target_bcsv_dir / f.relative_to(source_bcsv_dir)).stat().st_mtime
+                for f in source_bcsv_dir.rglob("*")
                 if f.is_file() and f.name not in EXCLUDE_PATTERNS
             )
             

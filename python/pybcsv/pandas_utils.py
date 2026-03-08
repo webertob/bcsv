@@ -20,6 +20,13 @@ except ImportError:
 
 from . import Layout, ColumnType, Writer, Reader, FileFlags
 
+# Import columnar I/O if available (requires numpy headers in bindings)
+try:
+    from _bcsv import read_columns as _read_columns, write_columns as _write_columns
+    _COLUMNAR_AVAILABLE = True
+except ImportError:
+    _COLUMNAR_AVAILABLE = False
+
 
 def _get_bcsv_type_from_pandas_dtype(dtype) -> ColumnType:
     """Convert pandas dtype to BCSV ColumnType."""
@@ -77,208 +84,69 @@ def _get_pandas_dtype_from_bcsv_type(col_type: ColumnType) -> Union[str, np.dtyp
     return type_mapping.get(col_type, str)
 
 
-def write_dataframe_optimized(df, 
-                            filename: str, 
-                            compression_level: int = 1,
-                            type_hints: Optional[Dict[str, ColumnType]] = None,
-                            batch_size: int = 10000) -> None:
+def write_dataframe(df, 
+                    filename: str, 
+                    compression_level: int = 1,
+                    row_codec: str = "delta",
+                    type_hints: Optional[Dict[str, ColumnType]] = None) -> None:
     """
-    Write a pandas DataFrame to a BCSV file using optimized vectorized operations.
+    Write a pandas DataFrame to a BCSV file via the C++ columnar path.
+    
+    All data is converted to numpy arrays/string lists in Python, then passed
+    to C++ write_columns which runs the entire write loop under GIL release.
     
     Args:
         df: The pandas DataFrame to write
         filename: Output BCSV filename
         compression_level: Compression level (0=no compression, 1-9=LZ4 compression level, default: 1)
-        type_hints: Optional dictionary mapping column names to specific BCSV types
-        batch_size: Number of rows to process in each batch (default: 10000)
-    """
-    if not PANDAS_AVAILABLE:
-        raise ImportError("pandas is not available. Please install pandas to use this function.")
-    
-    # Create layout
-    layout = Layout()
-    column_types = []
-    
-    for col_name in df.columns:
-        if type_hints and col_name in type_hints:
-            col_type = type_hints[col_name]
-        else:
-            col_type = _get_bcsv_type_from_pandas_dtype(df[col_name].dtype)
-        
-        layout.add_column(str(col_name), col_type)
-        column_types.append(col_type)
-    
-    # Write data
-    writer = Writer(layout)
-    try:
-        if not writer.open(filename, True, compression_level):
-            raise RuntimeError(f"Failed to open file for writing: {filename}")
-        
-        # Process data in batches for memory efficiency
-        total_rows = len(df)
-        
-        for start_idx in range(0, total_rows, batch_size):
-            end_idx = min(start_idx + batch_size, total_rows)
-            batch_df = df.iloc[start_idx:end_idx]
-            
-            # Convert entire batch to numpy arrays for vectorized processing
-            batch_data = []
-            
-            for i, (col_name, col_type) in enumerate(zip(df.columns, column_types)):
-                col_data = batch_df.iloc[:, i]
-                
-                # Handle NaN values vectorized
-                if col_data.isna().any():
-                    if col_type == ColumnType.STRING:
-                        col_data = col_data.fillna("")
-                    elif col_type in [ColumnType.FLOAT, ColumnType.DOUBLE]:
-                        col_data = col_data.fillna(0.0)
-                    elif col_type in [ColumnType.INT8, ColumnType.INT16, ColumnType.INT32, ColumnType.INT64,
-                                    ColumnType.UINT8, ColumnType.UINT16, ColumnType.UINT32, ColumnType.UINT64]:
-                        col_data = col_data.fillna(0)
-                    elif col_type == ColumnType.BOOL:
-                        col_data = col_data.fillna(False)
-                    else:
-                        col_data = col_data.fillna("")
-                
-                # Convert to appropriate numpy array with proper dtype
-                if col_type == ColumnType.BOOL:
-                    array_data = col_data.astype(bool).values
-                elif col_type in [ColumnType.INT8, ColumnType.INT16, ColumnType.INT32, ColumnType.INT64,
-                                ColumnType.UINT8, ColumnType.UINT16, ColumnType.UINT32, ColumnType.UINT64]:
-                    array_data = col_data.astype(int).values
-                elif col_type in [ColumnType.FLOAT, ColumnType.DOUBLE]:
-                    array_data = col_data.astype(float).values
-                else:
-                    array_data = col_data.astype(str).values
-                
-                batch_data.append(array_data)
-            
-            # Write batch using vectorized operations - convert to row-major format
-            batch_rows = len(batch_df)
-            for row_idx in range(batch_rows):
-                row_values = [batch_data[col_idx][row_idx] for col_idx in range(len(batch_data))]
-                writer.write_row(row_values)
-    
-    finally:
-        writer.close()
-
-
-def write_dataframe_ultra_optimized(df, 
-                                   filename: str, 
-                                   compression_level: int = 1,
-                                   type_hints: Optional[Dict[str, ColumnType]] = None) -> None:
-    """
-    Write a pandas DataFrame to a BCSV file using ultra-optimized operations.
-    
-    This version minimizes Python/C++ boundary crossings and eliminates
-    temporary object creation by preparing all data in numpy arrays.
-    
-    Args:
-        df: The pandas DataFrame to write
-        filename: Output BCSV filename
-        compression_level: Compression level (0=no compression, 1-9=LZ4 compression level, default: 1)
+        row_codec: Row codec to use ('flat', 'zoh', or 'delta', default: 'delta')
         type_hints: Optional dictionary mapping column names to specific BCSV types
     """
     if not PANDAS_AVAILABLE:
         raise ImportError("pandas is not available. Please install pandas to use this function.")
-    
-    # Create layout
-    layout = Layout()
-    column_types = []
-    
-    for col_name in df.columns:
+    if not _COLUMNAR_AVAILABLE:
+        raise ImportError("Columnar I/O is not available in this build. "
+                          "Rebuild pybcsv with numpy headers available.")
+
+    col_order = [str(c) for c in df.columns]
+    col_types = []
+    columns: Dict[str, Any] = {}
+
+    for col_name in col_order:
         if type_hints and col_name in type_hints:
-            col_type = type_hints[col_name]
+            ct = type_hints[col_name]
         else:
-            col_type = _get_bcsv_type_from_pandas_dtype(df[col_name].dtype)
-        
-        layout.add_column(str(col_name), col_type)
-        column_types.append(col_type)
-    
-    # Pre-process all data into optimized numpy arrays with exact dtypes
-    # This eliminates type conversion overhead during writing
-    processed_columns = []
-    
-    for i, (col_name, col_type) in enumerate(zip(df.columns, column_types)):
-        col_data = df.iloc[:, i]
-        
-        # Handle NaN values vectorized - use fillna with optimal values
-        if col_data.isna().any():
-            if col_type == ColumnType.STRING:
-                col_data = col_data.fillna("")
-            elif col_type in [ColumnType.FLOAT, ColumnType.DOUBLE]:
-                col_data = col_data.fillna(0.0)
-            elif col_type in [ColumnType.INT8, ColumnType.INT16, ColumnType.INT32, ColumnType.INT64,
-                            ColumnType.UINT8, ColumnType.UINT16, ColumnType.UINT32, ColumnType.UINT64]:
-                col_data = col_data.fillna(0)
-            elif col_type == ColumnType.BOOL:
-                col_data = col_data.fillna(False)
+            ct = _get_bcsv_type_from_pandas_dtype(df[col_name].dtype)
+        col_types.append(ct)
+
+        col = df[col_name]
+        if col.isna().any():
+            nan_cols = col.isna().sum()
+            warnings.warn(
+                f"Column '{col_name}' contains {nan_cols} NaN/None values. "
+                f"These will be replaced with zero/False/empty-string since BCSV has no null type.",
+                UserWarning, stacklevel=2)
+            if ct == ColumnType.STRING:
+                col = col.fillna("")
+            elif ct in (ColumnType.FLOAT, ColumnType.DOUBLE):
+                col = col.fillna(0.0)
+            elif ct == ColumnType.BOOL:
+                col = col.fillna(False)
             else:
-                col_data = col_data.fillna("")
-        
-        # Convert to numpy array with exact target dtype to avoid repeated conversions
-        if col_type == ColumnType.BOOL:
-            array_data = col_data.astype(bool, copy=False)  # copy=False avoids unnecessary copying
-        elif col_type == ColumnType.INT8:
-            array_data = col_data.astype(np.int8, copy=False)
-        elif col_type == ColumnType.INT16:
-            array_data = col_data.astype(np.int16, copy=False)
-        elif col_type == ColumnType.INT32:
-            array_data = col_data.astype(np.int32, copy=False)
-        elif col_type == ColumnType.INT64:
-            array_data = col_data.astype(np.int64, copy=False)
-        elif col_type == ColumnType.UINT8:
-            array_data = col_data.astype(np.uint8, copy=False)
-        elif col_type == ColumnType.UINT16:
-            array_data = col_data.astype(np.uint16, copy=False)
-        elif col_type == ColumnType.UINT32:
-            array_data = col_data.astype(np.uint32, copy=False)
-        elif col_type == ColumnType.UINT64:
-            array_data = col_data.astype(np.uint64, copy=False)
-        elif col_type == ColumnType.FLOAT:
-            array_data = col_data.astype(np.float32, copy=False)
-        elif col_type == ColumnType.DOUBLE:
-            array_data = col_data.astype(np.float64, copy=False)
-        else:  # STRING
-            array_data = col_data.astype(str, copy=False)
-        
-        # Store raw numpy array values for direct indexing (eliminates pandas Series overhead)
-        processed_columns.append(array_data.values)
-    
-    # Write data using C++ optimized batch writer
-    writer = Writer(layout)
-    try:
-        if not writer.open(filename, True, compression_level):
-            raise RuntimeError(f"Failed to open file for writing: {filename}")
-        
-        # Convert to list of lists for batch writing (eliminates row-by-row overhead)
-        num_rows = len(df)
-        num_cols = len(processed_columns)
-        
-        # Pre-allocate list with exact size to avoid growth overhead
-        all_rows = [None] * num_rows
-        
-        # Vectorized row creation using numpy advanced indexing
-        for row_idx in range(num_rows):
-            # Use list comprehension with direct numpy array access (fastest Python approach)
-            all_rows[row_idx] = [processed_columns[col_idx][row_idx] for col_idx in range(num_cols)]
-        
-        # Use optimized batch writer
-        writer.write_rows(all_rows)
-    
-    finally:
-        writer.close()
+                col = col.fillna(0)
 
+        if ct == ColumnType.STRING:
+            columns[col_name] = col.astype(str).tolist()
+        else:
+            columns[col_name] = np.ascontiguousarray(col.values)
 
-# Keep the original function for compatibility
-write_dataframe = write_dataframe_ultra_optimized
+    _write_columns(filename, columns, col_order, col_types,
+                   row_codec, compression_level)
 
 
 def read_dataframe(filename: str, 
                   columns: Optional[list] = None,
-                  optimize_dtypes: bool = True,
-                  chunk_size: Optional[int] = None):
+                  optimize_dtypes: bool = True):
     """
     Read a BCSV file into a pandas DataFrame with optimized memory usage.
     
@@ -286,13 +154,24 @@ def read_dataframe(filename: str,
         filename: BCSV file to read
         columns: Optional list of column names to read (default: all columns)
         optimize_dtypes: Whether to optimize pandas dtypes based on BCSV types
-        chunk_size: If specified, read data in chunks (for large files)
         
     Returns:
         pandas DataFrame containing the data
     """
     if not PANDAS_AVAILABLE:
         raise ImportError("pandas is not available. Please install pandas to use this function.")
+
+    # Fast path: columnar I/O (handles both all-columns and column-subset)
+    if _COLUMNAR_AVAILABLE:
+        col_dict = _read_columns(filename)
+        if columns is not None:
+            available = set(col_dict.keys())
+            missing = set(columns) - available
+            if missing:
+                warnings.warn(f"Columns not found in BCSV file: {missing}", UserWarning)
+            col_dict = {k: col_dict[k] for k in columns if k in available}
+        df = pd.DataFrame(col_dict)
+        return df
     
     reader = Reader()
     try:
@@ -311,7 +190,6 @@ def read_dataframe(filename: str,
             filtered_names = []
             filtered_types = []
             
-            # Use set for faster lookup
             column_set = set(columns)
             for idx, col_name in enumerate(all_column_names):
                 if col_name in column_set:
@@ -319,7 +197,6 @@ def read_dataframe(filename: str,
                     filtered_names.append(col_name)
                     filtered_types.append(all_column_types[idx])
             
-            # Warn about missing columns
             missing_cols = column_set - set(filtered_names)
             if missing_cols:
                 warnings.warn(f"Columns not found in BCSV file: {missing_cols}", UserWarning)
