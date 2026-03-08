@@ -32,9 +32,9 @@ namespace bcsv {
         const_section_.version_major = major;
         const_section_.version_minor = minor;
         const_section_.version_patch = patch;
-        const_section_.compression_level = static_cast<uint8_t>( std::min(compressionLevel, size_t(9)) ); // Clamp to 0-9
+        const_section_.compression_level = static_cast<uint8_t>(compressionLevel <= 9 ? compressionLevel : 9); // Clamp to 0-9
         const_section_.flags = 0;             // All flags reserved for future use
-        const_section_.column_count = static_cast<uint16_t>( std::min(columnCount, MAX_COLUMN_COUNT));
+        const_section_.column_count = static_cast<uint16_t>(columnCount <= MAX_COLUMN_COUNT ? columnCount : MAX_COLUMN_COUNT);
         const_section_.packet_size  = 8 * 1024 * 1024;  // Default 8MB packet size
     }          
 

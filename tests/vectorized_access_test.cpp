@@ -20,7 +20,8 @@ namespace {
 // Lightweight optimization barrier (no dependency on benchmark library)
 template<typename T>
 void doNotOptimize(T const& val) {
-    asm volatile("" : : "r,m"(val) : "memory");
+    volatile auto copy = val;
+    (void)copy;
 }
 } // namespace
 

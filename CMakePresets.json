@@ -92,6 +92,30 @@
             }
         },
         {
+            "name": "ninja-msvc-debug",
+            "displayName": "Ninja + MSVC Debug",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/ninja-msvc-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_C_COMPILER": "cl",
+                "CMAKE_CXX_COMPILER": "cl",
+                "BCSV_WERROR": "ON"
+            }
+        },
+        {
+            "name": "ninja-msvc-release",
+            "displayName": "Ninja + MSVC Release",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/ninja-msvc-release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_COMPILER": "cl",
+                "CMAKE_CXX_COMPILER": "cl",
+                "BCSV_WERROR": "ON"
+            }
+        },
+        {
             "name": "ninja-release-min",
             "displayName": "Ninja Release (Minimal)",
             "generator": "Ninja",
@@ -138,6 +162,14 @@
         {
             "name": "ninja-release-build",
             "configurePreset": "ninja-release"
+        },
+        {
+            "name": "ninja-msvc-debug-build",
+            "configurePreset": "ninja-msvc-debug"
+        },
+        {
+            "name": "ninja-msvc-release-build",
+            "configurePreset": "ninja-msvc-release"
         },
         {
             "name": "ninja-release-min-build",

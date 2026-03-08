@@ -218,7 +218,7 @@ void RunParityForSize() {
     ExpectParityFixed(~fixed_a, ~std_a);
 
     std::vector<size_t> shifts = {0, 1, 2, 3, 7, 8, 15, 31, 63, 64, 65};
-    if (N > 0) {
+    if constexpr (N > 0) {
         shifts.push_back(N - 1);
     }
     shifts.push_back(N);
@@ -607,15 +607,15 @@ TEST_F(FixedBitsetTest, IO_DataAccess) {
 }
 
 TEST_F(FixedBitsetTest, IO_ReadWrite) {
-    Bitset<64> bs1(0xABCDEF0123456789ULL);
-    std::vector<std::byte> buffer(bs1.sizeBytes());
+    Bitset<64> src(0xABCDEF0123456789ULL);
+    std::vector<std::byte> buffer(src.sizeBytes());
     
-    bs1.writeTo(buffer.data(), buffer.size());
+    src.writeTo(buffer.data(), buffer.size());
     
     Bitset<64> bs2;
     bs2.readFrom(buffer.data(), buffer.size());
     
-    EXPECT_EQ(bs1, bs2);
+    EXPECT_EQ(src, bs2);
     EXPECT_EQ(bs2.toUllong(), 0xABCDEF0123456789ULL);
 }
 

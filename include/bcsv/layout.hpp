@@ -516,8 +516,9 @@ namespace bcsv {
                 return false;
             } 
             return memcmp(columnTypes().data(), other.columnTypes().data(), columnTypes().size() * sizeof(ColumnType)) == 0;   
+        } else {
+            return false;
         }
-        return false;
     }
 
     /**

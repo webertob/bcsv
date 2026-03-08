@@ -262,15 +262,6 @@ background:
 
     [BUG] Intermittent SIGSEGV with packet_lz4_batch file codec — see [LIB-4] below
 
-    Remaining:
-    [ ] Phase 5: Push to GitHub, verify CI passes on all 4 platforms
-    [ ] Fix MSVC / Apple Clang warnings discovered by CI
-    [ ] Fix [LIB-4] SIGSEGV — FIXED (see changes below)
-    [ ] Regression check: verify GTest suite (694 tests) passes on both GCC and Clang
-        after all portability changes (warning fixes, dead-branch removal, fold-expression
-        casts, Bitset<0> guards). Run full CTest on both compilers before merging.
-    [ ] Tag Item 20 complete once all platforms green and [LIB-4] resolved
-
     [x] [LIB-4] SIGSEGV fix — Two root causes identified and fixed:
         (A) Reader::close() called stream_.close() BEFORE file_codec_.destroy(),
             so BG thread could read from a closed stream. Fixed by reordering:
@@ -283,14 +274,101 @@ background:
         test_sampler.py, test_validate.py). Verified: 694/694 GTest, 174/174 pytest,
         0/1000 bcsv2csv crashes, 0/500 bcsvHeader crashes.
 
-    Next steps for MSVC (can be done on a Windows machine independently):
-    [ ] Build with msvc-debug preset (Visual Studio 17 2022 or Ninja + MSVC)
-    [ ] Fix MSVC-specific warnings until /W4 /WX clean
-    [ ] Run GTest suite + Python integration tests on Windows
-    [ ] Common MSVC issues to expect: C4244 (narrowing), C4267 (size_t→int),
-        C4100 (unused param), C4324 (struct padding), C4458 (member hiding),
-        pragma once (should be fine), std::numbers::pi (needs <numbers>),
-        [[maybe_unused]] placement differences, ssize_t (not standard in MSVC)
+    [x] Phase 5a: MSVC /W4 /WX clean build (Ninja + MSVC 2022 v143, x64)
+        23 files changed, 200 insertions, 108 deletions.
+        Design principle: standard C++20 over compiler-specific pragmas/ifdefs.
+        Only use compiler-specific code when no portable alternative exists.
+
+        CMake / build system:
+        - CMakePresets.json: added ninja-msvc-debug + ninja-msvc-release presets
+          (Generator=Ninja, compiler=cl, BCSV_WERROR=ON)
+        - CMakeLists.txt: libm link conditional — $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:m>
+          (libm is CRT-integrated on MSVC, separate on GCC/Clang)
+        - tests/CMakeLists.txt: /bigobj for bcsv_gtest (MSVC template depth limit)
+        - benchmark/CMakeLists.txt: /bigobj for bench_macro_datasets (same reason)
+
+        Library fixes (standard C++20, no pragmas):
+        - bitset.h: added #include <bit> for std::popcount
+        - bitset.hpp: wordCount() / operator>>() — added else branches to
+          if constexpr chains so MSVC doesn't warn about unreachable code after
+          a constexpr-true return (C4702). All compilers accept this form.
+        - bitset.hpp [BUG FIX]: toUlong() used floor division
+          sizeof(unsigned long)/WORD_SIZE which gives 0 on Windows LLP64
+          (unsigned long=4 bytes, word_t=uint64_t=8 bytes). Fixed with ceiling
+          division: (sizeof(unsigned long) + WORD_SIZE - 1) / WORD_SIZE.
+          This was a real bug — silent on Linux LP64 where unsigned long=8.
+        - layout.hpp: isCompatible() — moved final return false into else
+          branch of if constexpr (same C4702 pattern as bitset)
+        - row.hpp: Row::get<T>() and RowStatic::set() — added arithmetic type
+          guards around static_cast<T>(value) to prevent implicit int→string
+          conversion via std::string::operator=(char). Guard uses
+          std::is_arithmetic_v<T> && std::is_arithmetic_v<SourceType>.
+          Without this, MSVC C4244 fires on the narrowing path for ALL T
+          instantiations including string types. GCC/Clang also benefit from
+          the cleaner type safety.
+        - vle.hpp: removed all 4 #pragma warning(disable:4702) blocks and
+          their #ifdef _MSC_VER guards. Restructured vleEncode()/vleDecode()
+          with proper else branches on if constexpr (sizeof(T)==1) so the
+          multi-byte code paths are syntactically unreachable only inside
+          discarded constexpr branches. Portable across all compilers.
+        - file_header.hpp: replaced std::min with ternary for size_t→uint8_t
+          and size_t→uint16_t narrowing (C4244)
+        - lz4_stream.hpp: static_cast<int> for size_t→int (C4244)
+        - row_codec_delta002.hpp [BUG FIX]: empty string deserialization —
+          guarded buffer[dataOff] access with if (len > 0) to prevent
+          out-of-bounds span access when len==0 at buffer boundary. MSVC debug
+          iterator checking caught this; it was latent UB on all platforms.
+
+        C API / tools:
+        - bcsv_c_api.cpp: removed BCSV_UNLIKELY macro (#ifdef __GNUC__
+          __builtin_expect), replaced all 3 usages with C++20 [[unlikely]]
+          attribute. Portable across GCC 9+, Clang 12+, MSVC 19.26+.
+        - bcsvValidate.cpp: ::tolower int→char narrowing in std::transform —
+          replaced with lambda: [](unsigned char c) { return
+          static_cast<char>(std::tolower(c)); }
+
+        Test fixes:
+        - vectorized_access_test.cpp: replaced #ifdef __GNUC__ asm barrier
+          with portable volatile copy in doNotOptimize()
+        - visit_test.cpp: value /= magnitude → value = static_cast<T>(...)
+          for integral/double division (C4244)
+        - row_parameterized_test.cpp: split is_floating_point_v<T> into
+          is_same_v<T,float> / is_same_v<T,double> to use correct
+          EXPECT_FLOAT_EQ / EXPECT_DOUBLE_EQ macros
+        - bcsv_comprehensive_test.cpp: flattened nested EXPECT_NO_THROW to
+          eliminate MSVC goto-past-initialization with compound literals
+        - bitset_test.cpp: renamed shadowing local bs1→src (C4458);
+          if (N>0) → if constexpr (N>0) in RunParityForSize (C4127)
+        - bcsv_c_api_full_test.c: _CRT_SECURE_NO_WARNINGS, C4127 suppression
+          (justified: C compiler do-while(0) macros, no portable alternative),
+          Windows TMP_DIR / _mkdir / wchar_t filename guards
+
+        Benchmark fixes:
+        - bench_common.hpp: #ifdef _WIN32 guard for <windows.h> with NOMINMAX
+          (platform API, no portable alternative)
+        - bench_macro_datasets.cpp: removed 3 oversized LayoutStatic type
+          aliases (132/200/290 columns) that exceeded MSVC std::tuple
+          recursion depth. These profiles still work in dynamic-layout mode.
+
+        MSVC verification: 0 warnings, 0 errors with /W4 /WX.
+        694/694 GTest, 87/87 C API basic, 824/824 C API full — all pass.
+
+    Remaining:
+    [ ] Phase 5b: Regression check — verify GCC and Clang still build clean
+        and all tests pass after the MSVC portability changes. Key areas to
+        watch on GCC/Clang:
+        - if constexpr else branches in bitset.hpp, layout.hpp, vle.hpp
+          (Clang evaluates discarded branches in generic lambdas — verified
+          clean in Phase 2b but re-verify after these structural changes)
+        - row.hpp arithmetic guards (std::is_arithmetic_v constraints)
+        - [[unlikely]] attribute in bcsv_c_api.cpp (standard C++20)
+        - volatile barrier in vectorized_access_test.cpp (replaces asm)
+        - toUlong() ceiling division (was already correct on LP64, verify
+          no behaviour change)
+        - delta002 empty string guard (new if-len>0, should be safe)
+    [ ] Phase 5c: Push to GitHub, verify CI passes on all 4 platforms
+    [ ] Phase 5d: Run Python integration tests on Windows (not yet executed)
+    [ ] Tag Item 20 complete once all platforms green
 
     Known issues (library-level, found during Item 20 testing):
     [LIB-4] SIGSEGV in FileCodecPacketLZ4Batch001 — RESOLVED

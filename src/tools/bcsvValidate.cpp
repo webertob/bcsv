@@ -484,7 +484,7 @@ static int validatePattern(const Config& cfg) {
 
 static bool isCsvFile(const std::string& path) {
     auto ext = std::filesystem::path(path).extension().string();
-    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return ext == ".csv" || ext == ".tsv";
 }
 

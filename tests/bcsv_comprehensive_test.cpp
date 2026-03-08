@@ -3161,49 +3161,43 @@ TEST_F(BCSVBoundaryTests, ErrorRecovery_CanContinueAfterRowSizeError) {
     bcsv::Layout layout;
     layout.addColumn({"test_string", bcsv::ColumnType::STRING});
     
-    EXPECT_NO_FATAL_FAILURE({
-        bcsv::Writer<bcsv::Layout> writer(layout);
-        ASSERT_TRUE(writer.open(filepath));
-        
-        // First, try to write an oversized string (should succeed but truncate)
-        auto& row = writer.row();
-        std::string oversized_string = createString(bcsv::MAX_STRING_LENGTH + 1, 'G'); // Over string limit
-        
-        // Should not throw - string will be truncated
-        EXPECT_NO_THROW({
-            row.set(0, oversized_string);
-            writer.writeRow();
-        });
-        
-        // Now try to write a normal-sized row (should succeed)
-        std::string normal_string = createString(1000, 'H');
-        ASSERT_NO_THROW({
-            row.set(0, normal_string);
-            writer.writeRow();
-        });
-        
-        writer.close();
-        
-        // Verify we can read both rows
-        bcsv::Reader<bcsv::Layout> reader;
-        ASSERT_TRUE(reader.open(filepath));
-        
-        
-        // First row: Truncated string
-        ASSERT_TRUE(reader.readNext());
-        const auto& read_row1 = reader.row();
-        std::string read_string1 = read_row1.get<std::string>(0);
-        EXPECT_EQ(read_string1.length(), bcsv::MAX_STRING_LENGTH);
-        EXPECT_EQ(read_string1, oversized_string.substr(0, bcsv::MAX_STRING_LENGTH));
+    bcsv::Writer<bcsv::Layout> writer(layout);
+    ASSERT_TRUE(writer.open(filepath));
+    
+    // First, try to write an oversized string (should succeed but truncate)
+    auto& row = writer.row();
+    std::string oversized_string = createString(bcsv::MAX_STRING_LENGTH + 1, 'G'); // Over string limit
+    
+    // Should not throw - string will be truncated
+    EXPECT_NO_THROW(row.set(0, oversized_string));
+    EXPECT_NO_THROW(writer.writeRow());
+    
+    // Now try to write a normal-sized row (should succeed)
+    std::string normal_string = createString(1000, 'H');
+    ASSERT_NO_THROW(row.set(0, normal_string));
+    ASSERT_NO_THROW(writer.writeRow());
+    
+    writer.close();
+    
+    // Verify we can read both rows
+    bcsv::Reader<bcsv::Layout> reader;
+    ASSERT_TRUE(reader.open(filepath));
+    
+    
+    // First row: Truncated string
+    ASSERT_TRUE(reader.readNext());
+    const auto& read_row1 = reader.row();
+    std::string read_string1 = read_row1.get<std::string>(0);
+    EXPECT_EQ(read_string1.length(), bcsv::MAX_STRING_LENGTH);
+    EXPECT_EQ(read_string1, oversized_string.substr(0, bcsv::MAX_STRING_LENGTH));
 
-        // Second row: Normal string
-        ASSERT_TRUE(reader.readNext());
-        const auto& read_row2 = reader.row();
-        std::string read_string2 = read_row2.get<std::string>(0);
-        EXPECT_EQ(read_string2, normal_string);
-        
-        reader.close();
-    });
+    // Second row: Normal string
+    ASSERT_TRUE(reader.readNext());
+    const auto& read_row2 = reader.row();
+    std::string read_string2 = read_row2.get<std::string>(0);
+    EXPECT_EQ(read_string2, normal_string);
+    
+    reader.close();
 }
 
 // ============================================================================

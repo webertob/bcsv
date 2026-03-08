@@ -244,7 +244,7 @@ namespace bcsv {
                 int srcSize = static_cast<int>(src.size());
                 
                 while (true) {
-                    int dictLen = std::min(static_cast<size_t>(pos_), LZ4_DICT_SIZE);
+                    int dictLen = static_cast<int>(std::min(static_cast<size_t>(pos_), LZ4_DICT_SIZE));
                     int decompressedBytes = 0;
 
                     // Attempt 1: Append to Ring Buffer

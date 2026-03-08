@@ -13,11 +13,20 @@
  * Pure C (.c) to verify header compatibility with C compilers.
  */
 
+#ifdef _MSC_VER
+#define _CRT_SECURE_NO_WARNINGS   /* suppress C4996 for strncpy etc. */
+#pragma warning(disable: 4127)  /* conditional expression is constant (do-while(0) macros) */
+#endif
+
 #include "../include/bcsv/bcsv_c_api.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#ifdef _WIN32
+#include <wchar.h>
+#include <direct.h>  /* _mkdir */
+#endif
 
 /* ── Test infrastructure ───────────────────────────────────────────── */
 static int tests_run    = 0;
@@ -34,15 +43,25 @@ static int tests_passed = 0;
 #define TEST_ASSERT_NEAR(a, b, eps, msg) TEST_ASSERT(fabs((double)(a) - (double)(b)) < (eps), msg)
 #define TEST_START(name) printf("\n--- %s ---\n", name)
 
-static const char* TMP_DIR = "/tmp/bcsv_c_api_test/";
+static const char* TMP_DIR =
+#ifdef _WIN32
+    "tmp\\bcsv_c_api_test\\";
+#else
+    "/tmp/bcsv_c_api_test/";
+#endif
 
 static void ensure_tmp_dir(void) {
-    /* portable enough for Linux */
     char cmd[256];
+#ifdef _WIN32
+    _mkdir("tmp");
+    _mkdir("tmp\\bcsv_c_api_test");
+    (void)cmd;  /* unused on Windows */
+#else
     snprintf(cmd, sizeof(cmd), "mkdir -p %s", TMP_DIR);
     if (system(cmd) != 0) {
         fprintf(stderr, "Warning: failed to create tmp dir: %s\n", TMP_DIR);
     }
+#endif
 }
 
 static void make_path(char* buf, size_t cap, const char* filename) {
@@ -704,9 +723,15 @@ static void test_csv_accessors(void) {
     bcsv_csv_writer_open(cw, filepath, true, true);
 
     /* csv_writer_filename */
+#ifdef _WIN32
+    const wchar_t* wfn = bcsv_csv_writer_filename(cw);
+    TEST_ASSERT(wfn != NULL && wcslen(wfn) > 0, "csv_writer_filename non-empty");
+    TEST_ASSERT(wcsstr(wfn, L"test_csv_accessors.csv") != NULL, "csv_writer_filename contains expected name");
+#else
     const char* wfn = bcsv_csv_writer_filename(cw);
     TEST_ASSERT(wfn != NULL && strlen(wfn) > 0, "csv_writer_filename non-empty");
     TEST_ASSERT(strstr(wfn, "test_csv_accessors.csv") != NULL, "csv_writer_filename contains expected name");
+#endif
 
     /* csv_writer_layout */
     const_bcsv_layout_t wlayout = bcsv_csv_writer_layout(cw);
@@ -731,9 +756,15 @@ static void test_csv_accessors(void) {
     bcsv_csv_reader_open(cr, filepath, true);
 
     /* csv_reader_filename */
+#ifdef _WIN32
+    const wchar_t* rfn = bcsv_csv_reader_filename(cr);
+    TEST_ASSERT(rfn != NULL && wcslen(rfn) > 0, "csv_reader_filename non-empty");
+    TEST_ASSERT(wcsstr(rfn, L"test_csv_accessors.csv") != NULL, "csv_reader_filename contains expected name");
+#else
     const char* rfn = bcsv_csv_reader_filename(cr);
     TEST_ASSERT(rfn != NULL && strlen(rfn) > 0, "csv_reader_filename non-empty");
     TEST_ASSERT(strstr(rfn, "test_csv_accessors.csv") != NULL, "csv_reader_filename contains expected name");
+#endif
 
     /* csv_reader_layout */
     const_bcsv_layout_t rlayout = bcsv_csv_reader_layout(cr);

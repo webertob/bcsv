@@ -18,8 +18,9 @@ template<size_t N>
 constexpr size_t Bitset<N>::wordCount() const noexcept {
     if constexpr (IS_FIXED) {
         return WORD_COUNT_FIXED;
+    } else {
+        return bitsToWords(size());
     }
-    return bitsToWords(size());
 }
 
 template<size_t N>
@@ -1527,7 +1528,7 @@ unsigned long Bitset<N>::toUlong() const {
     
     unsigned long result = 0;
     const size_t words_to_copy = std::min(
-        sizeof(unsigned long) / WORD_SIZE,
+        (sizeof(unsigned long) + WORD_SIZE - 1) / WORD_SIZE,
         wordCount()
     );
     
@@ -1743,10 +1744,6 @@ Bitset<N> Bitset<N>::operator>>(size_t shift_amount) const noexcept {
     const size_t word_shift = shift_amount / WORD_BITS;
     const size_t bit_shift = shift_amount % WORD_BITS;
     const size_t wc = wordCount();
-    
-    if constexpr (IS_FIXED && N == 0) {
-        return result;
-    }
 
     if (wc == 0) return result;
 

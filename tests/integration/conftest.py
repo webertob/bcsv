@@ -13,6 +13,8 @@ def _find_bin_dir() -> Path:
 
     # Check common build directories (preset builds first, then plain cmake)
     candidates = [
+        repo_root / "build" / "ninja-msvc-debug" / "bin",
+        repo_root / "build" / "ninja-msvc-release" / "bin",
         repo_root / "build" / "ninja-debug" / "bin",
         repo_root / "build" / "ninja-release" / "bin",
         repo_root / "build" / "clang-debug" / "bin",
@@ -34,9 +36,13 @@ def _find_bin_dir() -> Path:
         if d.is_dir() and (d / "csv2bcsv.exe").exists():
             return d
 
-    # For multi-config generators (MSVC), binaries may be under Debug/Release
+    # For multi-config generators (MSVC), binaries may be under bin/Debug or bin/Release
     for config in ("Debug", "Release"):
         for base_dir in ("build/msvc-debug", "build/msvc-release", "build"):
+            d = repo_root / base_dir / "bin" / config
+            if d.is_dir() and ((d / "csv2bcsv.exe").exists() or (d / "csv2bcsv").exists()):
+                return d
+            # Also check directly under the build dir (non-bin layout)
             d = repo_root / base_dir / config
             if d.is_dir() and ((d / "csv2bcsv.exe").exists() or (d / "csv2bcsv").exists()):
                 return d

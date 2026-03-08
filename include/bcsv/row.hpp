@@ -279,8 +279,13 @@ namespace bcsv {
             using SrcType = std::decay_t<decltype(value)>;
             
             if constexpr (std::is_assignable_v<T&, SrcType>) {
-                dst = value;
-                success = true;
+                if constexpr (std::is_arithmetic_v<T> && std::is_arithmetic_v<SrcType>) {
+                    dst = static_cast<T>(value);
+                    success = true;
+                } else if constexpr (!std::is_arithmetic_v<SrcType>) {
+                    dst = value;
+                    success = true;
+                }
             } else if constexpr (std::is_same_v<SrcType, std::string>) {
                 if constexpr (std::is_same_v<T, std::string>) {
                     dst = value;
@@ -1027,7 +1032,13 @@ namespace bcsv {
             if constexpr (std::is_assignable_v<ColType&, const DecayedT&> || 
                           std::is_same_v<DecayedT, std::span<char>> ||
                           std::is_same_v<DecayedT, std::span<const char>>) {
-                colValue = value;
+                if constexpr (std::is_arithmetic_v<ColType> && std::is_arithmetic_v<DecayedT>) {
+                    colValue = static_cast<ColType>(value);
+                } else if constexpr (!std::is_arithmetic_v<DecayedT> || std::is_arithmetic_v<ColType>) {
+                    colValue = value;
+                } else {
+                    throw std::runtime_error("RowStatic::set: Type mismatch or unsupported conversion");
+                }
             } else {
                 throw std::runtime_error("RowStatic::set: Type mismatch or unsupported conversion");
             }

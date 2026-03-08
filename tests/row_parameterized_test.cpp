@@ -162,12 +162,19 @@ TYPED_TEST(RowTypedTest, GetSetScalar) {
     row.set(2, val3);
     
     // Get and verify values
-    if constexpr (std::is_floating_point_v<T>) {
+    if constexpr (std::is_same_v<T, float>) {
         EXPECT_FLOAT_EQ(val1, row.get<T>(0))
             << "Column 0 value mismatch for type " << this->GetTypeName();
         EXPECT_FLOAT_EQ(val2, row.get<T>(1))
             << "Column 1 value mismatch for type " << this->GetTypeName();
         EXPECT_FLOAT_EQ(val3, row.get<T>(2))
+            << "Column 2 value mismatch for type " << this->GetTypeName();
+    } else if constexpr (std::is_same_v<T, double>) {
+        EXPECT_DOUBLE_EQ(val1, row.get<T>(0))
+            << "Column 0 value mismatch for type " << this->GetTypeName();
+        EXPECT_DOUBLE_EQ(val2, row.get<T>(1))
+            << "Column 1 value mismatch for type " << this->GetTypeName();
+        EXPECT_DOUBLE_EQ(val3, row.get<T>(2))
             << "Column 2 value mismatch for type " << this->GetTypeName();
     } else {
         EXPECT_EQ(val1, row.get<T>(0))
@@ -201,8 +208,12 @@ TYPED_TEST(RowTypedTest, VectorizedGetSet) {
     
     // Verify values
     for (size_t i = 0; i < 3; ++i) {
-        if constexpr (std::is_floating_point_v<T>) {
+        if constexpr (std::is_same_v<T, float>) {
             EXPECT_FLOAT_EQ(values[i], result[i])
+                << "Vectorized value mismatch at index " << i 
+                << " for type " << this->GetTypeName();
+        } else if constexpr (std::is_same_v<T, double>) {
+            EXPECT_DOUBLE_EQ(values[i], result[i])
                 << "Vectorized value mismatch at index " << i 
                 << " for type " << this->GetTypeName();
         } else {
@@ -239,12 +250,19 @@ TYPED_TEST(RowTypedTest, Serialization) {
         << "Deserialization failed for type " << this->GetTypeName();
     
     // Verify round-trip
-    if constexpr (std::is_floating_point_v<T>) {
+    if constexpr (std::is_same_v<T, float>) {
         EXPECT_FLOAT_EQ(val1, row2.get<T>(0))
             << "Round-trip failed for column 0, type " << this->GetTypeName();
         EXPECT_FLOAT_EQ(val2, row2.get<T>(1))
             << "Round-trip failed for column 1, type " << this->GetTypeName();
         EXPECT_FLOAT_EQ(val3, row2.get<T>(2))
+            << "Round-trip failed for column 2, type " << this->GetTypeName();
+    } else if constexpr (std::is_same_v<T, double>) {
+        EXPECT_DOUBLE_EQ(val1, row2.get<T>(0))
+            << "Round-trip failed for column 0, type " << this->GetTypeName();
+        EXPECT_DOUBLE_EQ(val2, row2.get<T>(1))
+            << "Round-trip failed for column 1, type " << this->GetTypeName();
+        EXPECT_DOUBLE_EQ(val3, row2.get<T>(2))
             << "Round-trip failed for column 2, type " << this->GetTypeName();
     } else {
         EXPECT_EQ(val1, row2.get<T>(0))

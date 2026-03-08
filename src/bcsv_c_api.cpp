@@ -41,7 +41,7 @@ void set_last_error_unknown(const char* where) noexcept {
 
 /// Returns true (and sets error) when @p h is nullptr.
 static bool null_handle(const char* where, const void* h) noexcept {
-    if (__builtin_expect(!h, 0)) {
+    if (!h) [[unlikely]] {
         g_has_error = true;
         g_last_error = std::string(where) + ": NULL handle";
         return true;
@@ -374,7 +374,7 @@ bool bcsv_reader_next(bcsv_reader_t reader) {
     try {
         auto* r = static_cast<bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader);
         bool ok = r->readNext();
-        if (__builtin_expect(!ok, 0)) {
+        if (!ok) [[unlikely]] {
             const auto& msg = r->getErrorMsg();
             if (!msg.empty()) { g_has_error = true; g_last_error = msg; }
             // lean: no clear_last_error on success or empty-error EOF
@@ -904,7 +904,7 @@ void bcsv_row_set_double(bcsv_row_t row, int col, double value) {
     BCSV_ROW_SET(static_cast<bcsv::Row*>(row)->set(col, value))
 }
 void bcsv_row_set_string(bcsv_row_t row, int col, const char* value) {
-    if (__builtin_expect(!value, 0)) { g_has_error = true; g_last_error = "bcsv_row_set_string: value is NULL"; return; }
+    if (!value) [[unlikely]] { g_has_error = true; g_last_error = "bcsv_row_set_string: value is NULL"; return; }
     BCSV_ROW_SET(static_cast<bcsv::Row*>(row)->set(col, std::string(value)))
 }
 

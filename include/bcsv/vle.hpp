@@ -43,7 +43,7 @@ namespace bcsv {
         requires std::unsigned_integral<T>
     constexpr auto zigzagDecode(T value) noexcept {
         using S = std::make_signed_t<T>;
-        return static_cast<S>((value >> 1) ^ -(value & 1));
+        return static_cast<S>((value >> 1) ^ (~(value & 1) + 1));
     }
 
     // Helper to calculate VLE limits
@@ -155,7 +155,7 @@ namespace bcsv {
         if constexpr (sizeof(T) == 1) {
             static_cast<uint8_t*>(dst)[0] = static_cast<uint8_t>(value);
             return 1;
-        }
+        } else {
 
         constexpr size_t LEN_BITS = VLETraits<T, Truncated>::LENGTH_BITS;
         constexpr bool FITS_IN_REGISTER = VLETraits<T, Truncated>::FITS_IN_REGISTER;
@@ -194,7 +194,7 @@ namespace bcsv {
         }
 
         if constexpr (FITS_IN_REGISTER) {
-            PacketType packet = (static_cast<PacketType>(uval) << LEN_BITS) | (numBytes - 1);
+            PacketType packet = (static_cast<PacketType>(uval) << LEN_BITS) | static_cast<PacketType>(numBytes - 1);
             
             // Fast path: if capacity allows, write fully into buffer (overwriting potentially tail bytes, which is safe if sequential write)
             if (dst_capacity >= sizeof(PacketType)) {
@@ -208,7 +208,7 @@ namespace bcsv {
         } else {
             // uint64 full mode (up to 9 bytes)
             // Low part (8 bytes)
-            uint64_t packet_low = (static_cast<uint64_t>(uval) << LEN_BITS) | (numBytes - 1);
+            uint64_t packet_low = (static_cast<uint64_t>(uval) << LEN_BITS) | static_cast<uint64_t>(numBytes - 1);
             
             if (numBytes <= 8) {
                 std::memcpy(dst, &packet_low, numBytes);
@@ -225,6 +225,7 @@ namespace bcsv {
         }
 
         return numBytes;
+        } // else sizeof(T) > 1
     }
 
      // Appends the bytes to the ByteBuffer increasing its size
@@ -264,7 +265,7 @@ namespace bcsv {
             const T* bytes = static_cast<const T*>(src);
             value = bytes[0];
             return 1;
-        }
+        } else {
         
         constexpr size_t LEN_BITS = VLETraits<T, Truncated>::LENGTH_BITS;
         constexpr size_t LEN_MASK = (1 << LEN_BITS) - 1;
@@ -329,6 +330,7 @@ namespace bcsv {
         }
 
         return numBytes;
+        } // else sizeof(T) > 1
     }
 
     // Span gets updated

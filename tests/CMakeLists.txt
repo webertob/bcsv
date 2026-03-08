@@ -112,3 +112,8 @@ target_compile_features(bcsv_gtest PRIVATE cxx_std_20)
 target_include_directories(bcsv_gtest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/shared
 )
+
+# MSVC: heavy template instantiation in bitset_test.cpp exceeds default section limit
+if(MSVC)
+    target_compile_options(bcsv_gtest PRIVATE /bigobj)
+endif()

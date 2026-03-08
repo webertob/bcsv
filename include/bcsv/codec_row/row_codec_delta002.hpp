@@ -487,12 +487,16 @@ void RowCodecDelta002<LayoutType>::deserialize(
             std::memcpy(&len, &buffer[dataOff], 2);
             dataOff += 2;
 
-            if (dataOff + len > buffer.size())
-                throw std::runtime_error(
-                    "RowCodecDelta002::deserialize() failed! Buffer too small for string payload.");
-            row.strg_[strIdx].assign(reinterpret_cast<const char*>(&buffer[dataOff]), len);
+            if (len > 0) {
+                if (dataOff + len > buffer.size())
+                    throw std::runtime_error(
+                        "RowCodecDelta002::deserialize() failed! Buffer too small for string payload.");
+                row.strg_[strIdx].assign(reinterpret_cast<const char*>(&buffer[dataOff]), len);
+                dataOff += len;
+            } else {
+                row.strg_[strIdx].clear();
+            }
             prev_strg_[strIdx] = row.strg_[strIdx];
-            dataOff += len;
         }
     }
 

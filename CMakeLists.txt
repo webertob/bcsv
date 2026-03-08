@@ -237,7 +237,7 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTS)
     add_test(NAME test_c_api COMMAND $<TARGET_FILE:test_c_api>)
 
     add_executable(test_c_api_full tests/bcsv_c_api_full_test.c)
-    target_link_libraries(test_c_api_full bcsv_c_api m)
+    target_link_libraries(test_c_api_full bcsv_c_api $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:m>)
     target_include_directories(test_c_api_full PRIVATE ${CMAKE_SOURCE_DIR})
     add_test(NAME test_c_api_full COMMAND $<TARGET_FILE:test_c_api_full>)
 endif()

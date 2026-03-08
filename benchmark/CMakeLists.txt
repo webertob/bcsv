@@ -32,6 +32,9 @@ if(BCSV_BUILD_BENCHMARKS)
     set_target_properties(bench_macro_datasets PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     )
+    if(MSVC)
+        target_compile_options(bench_macro_datasets PRIVATE /bigobj)
+    endif()
 
     # --- CSV generator for CLI-tool round-trip benchmarks ---
     add_executable(bench_generate_csv src/bench_generate_csv.cpp)

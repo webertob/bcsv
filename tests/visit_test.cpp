@@ -394,7 +394,7 @@ TEST(VisitTest, MutableVisitNormalization) {
     row.visit([&](size_t, auto& value) {
         using T = std::decay_t<decltype(value)>;
         if constexpr (std::is_arithmetic_v<T> && !std::is_same_v<T, bool>) {
-            value /= magnitude;
+            value = static_cast<T>(value / magnitude);
         }
     });
     

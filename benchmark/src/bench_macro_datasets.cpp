@@ -176,27 +176,10 @@ using RealisticMeasurementLayoutStatic = LayoutFromTypeList_t<ConcatTypeLists<
     RepeatAsTypeList<bool, 4>, TypeList<uint32_t, uint32_t, uint32_t, uint32_t>
 >>;
 
-using BoolHeavyLayoutStatic = LayoutFromTypeList_t<ConcatTypeLists<
-    RepeatAsTypeList<bool, 128>,
-    TypeList<uint32_t, uint32_t, int64_t, int64_t>
->>;
-
-using ArithmeticWideLayoutStatic = LayoutFromTypeList_t<ConcatTypeLists<
-    RepeatAsTypeList<int32_t, 40>,
-    RepeatAsTypeList<int64_t, 40>,
-    RepeatAsTypeList<uint32_t, 40>,
-    RepeatAsTypeList<float, 40>,
-    RepeatAsTypeList<double, 40>
->>;
-
-using RtlWaveformLayoutStatic = LayoutFromTypeList_t<ConcatTypeLists<
-    TypeList<uint64_t, uint64_t>,
-    RepeatAsTypeList<bool, 256>,
-    RepeatAsTypeList<uint8_t, 16>,
-    RepeatAsTypeList<uint16_t, 8>,
-    RepeatAsTypeList<uint32_t, 4>,
-    RepeatAsTypeList<uint64_t, 4>
->>;
+// BoolHeavyLayoutStatic (132 cols), ArithmeticWideLayoutStatic (200 cols),
+// and RtlWaveformLayoutStatic (290 cols) omitted: column counts exceed
+// portable template-recursion limits for std::tuple on MSVC.
+// These profiles benchmark in dynamic-layout mode only.
 
 enum class TrackingSelection { Both, Enabled, Disabled };
 enum class StorageSelection { Both, Flexible, Static };
@@ -286,9 +269,7 @@ bool dispatchStaticLayoutForProfile(const bench::DatasetProfile& profile, Fn&& f
     if (profile.name == "iot_fleet") { fn.template operator()<IotFleetLayoutStatic>(); return true; }
     if (profile.name == "financial_orders") { fn.template operator()<FinancialOrdersLayoutStatic>(); return true; }
     if (profile.name == "realistic_measurement") { fn.template operator()<RealisticMeasurementLayoutStatic>(); return true; }
-    if (profile.name == "bool_heavy") { fn.template operator()<BoolHeavyLayoutStatic>(); return true; }
-    if (profile.name == "arithmetic_wide") { fn.template operator()<ArithmeticWideLayoutStatic>(); return true; }
-    if (profile.name == "rtl_waveform") { fn.template operator()<RtlWaveformLayoutStatic>(); return true; }
+    // bool_heavy (132), arithmetic_wide (200), rtl_waveform (290) — dynamic only
     return false;
 }
 
