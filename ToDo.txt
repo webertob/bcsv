@@ -265,11 +265,23 @@ background:
     Remaining:
     [ ] Phase 5: Push to GitHub, verify CI passes on all 4 platforms
     [ ] Fix MSVC / Apple Clang warnings discovered by CI
-    [ ] Fix [LIB-4] SIGSEGV (blocking: intermittent crashes affect CI reliability)
+    [ ] Fix [LIB-4] SIGSEGV — FIXED (see changes below)
     [ ] Regression check: verify GTest suite (694 tests) passes on both GCC and Clang
         after all portability changes (warning fixes, dead-branch removal, fold-expression
         casts, Bitset<0> guards). Run full CTest on both compilers before merging.
     [ ] Tag Item 20 complete once all platforms green and [LIB-4] resolved
+
+    [x] [LIB-4] SIGSEGV fix — Two root causes identified and fixed:
+        (A) Reader::close() called stream_.close() BEFORE file_codec_.destroy(),
+            so BG thread could read from a closed stream. Fixed by reordering:
+            file_codec_.destroy() → row_codec_.destroy() → stream_.close() in reader.hpp.
+        (B) setupRead() started BG thread immediately (pre-reading next packet),
+            racing with ReaderDirectAccess footer reads on the same stream.
+            Fixed by deferring BG thread start to first packet boundary in decodeNextRow().
+            Also eliminates unnecessary thread for header-only reads (bcsvHeader).
+        All LIB-4 workarounds removed from tests/integration/ (test_cli_tools.py,
+        test_sampler.py, test_validate.py). Verified: 694/694 GTest, 174/174 pytest,
+        0/1000 bcsv2csv crashes, 0/500 bcsvHeader crashes.
 
     Next steps for MSVC (can be done on a Windows machine independently):
     [ ] Build with msvc-debug preset (Visual Studio 17 2022 or Ninja + MSVC)
@@ -281,40 +293,19 @@ background:
         [[maybe_unused]] placement differences, ssize_t (not standard in MSVC)
 
     Known issues (library-level, found during Item 20 testing):
-    [LIB-4] SIGSEGV in FileCodecPacketLZ4Batch001 background thread lifecycle
-        Symptom: ~5% of CLI tool invocations crash with SIGSEGV when reading files
-        encoded with packet_lz4_batch. Affects ALL tools (bcsvHeader, bcsvValidate,
-        bcsvSampler, bcsv2csv, etc.) — any tool that opens a packet_lz4_batch file.
-        Does NOT affect: stream, stream_lz4, packet, packet_lz4 (no bg thread).
-        Does NOT trigger under AddressSanitizer (ASan) — likely timing-dependent.
-        Root cause: suspected race condition in background decompression thread
-        startup/shutdown in FileCodecPacketLZ4Batch001. Related to previously-fixed
-        [LIB-3] (shutdownBgThread() race), but the fix may be incomplete.
-        Notably, bcsvHeader only reads the file header (no data rows), yet still
-        crashes — the thread is created/destroyed even when no rows are read.
-        Reproduction:
-            BIN=build/ninja-debug/bin
-            TMP=$(mktemp -d)
-            $BIN/bcsvGenerator -p sensor_noisy -n 100 --file-codec packet_lz4_batch -o $TMP/s.bcsv
-            for i in $(seq 1 200); do
-                $BIN/bcsvHeader $TMP/s.bcsv > /dev/null 2>&1 || echo "FAIL at $i"
-            done
-        Expected: 0 failures. Actual: ~5-10% SIGSEGV (exit 139).
-        Verified: stream+flat (0/200), packet_lz4+flat (0/200), packet_lz4_batch+flat (~5% crash).
-        Files to investigate: include/bcsv/codec_file/file_codec_packet_lz4_batch001.hpp
-        Priority: HIGH — affects default codec (bcsvGenerator defaults to packet_lz4_batch)
-        Workarounds in place (to be reverted once fixed):
-            - tests/integration/test_cli_tools.py: canon_csv fixture, TestBcsvGenerator tests,
-              TestPipeline tests, TestEdgeCases tests, and test_row_codec_roundtrip/no_zoh
-              all use --file-codec packet_lz4 instead of default. test_verbose_codec_names
-              assertion changed from packet_lz4_batch to packet_lz4.
-            - tests/integration/test_sampler.py: sampler_data fixture uses --file-codec packet_lz4.
-              _run_sampler helper and TestSamplerEncodings/TestSamplerMisc use --no-batch flag.
-            - tests/integration/test_validate.py: validate_data fixture (3 bcsvGenerator calls +
-              csv2bcsv for small.bcsv) and TestValidatePipeline (3 bcsvGenerator calls) all use
-              --file-codec packet_lz4.
-            All workaround sites are marked with "Workaround [LIB-4]" comments in the code.
-            Search for "LIB-4" in tests/integration/ to find all instances.
+    [LIB-4] SIGSEGV in FileCodecPacketLZ4Batch001 — RESOLVED
+        Two root causes: (A) close() ordering race, (B) open()-time BG thread race.
+        See fix details in Item 20 completed notes above.
+        Future: consider std::jthread modernisation (see item 20b below).
+
+20b. std::jthread modernisation for FileCodecPacketLZ4Batch001
+    Status: NOT STARTED
+    Replace std::thread + manual shutdown protocol with std::jthread + stop_token.
+    Benefits: automatic joining on destruction, cleaner cancellation via stop_token,
+    eliminates manual SHUTDOWN state and waitForBgIdle() + join() pattern.
+    Note: This is a code quality improvement, NOT a bug fix — the actual race
+    conditions were fixed in LIB-4 (close ordering + lazy BG thread start).
+    Priority: LOW — do when convenient, no functional impact.
 
 21. bcsvSampler performance
     Status: IN PROGRESS — Phase 1 (dispatch optimisation) complete

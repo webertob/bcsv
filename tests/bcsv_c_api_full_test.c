@@ -40,7 +40,9 @@ static void ensure_tmp_dir(void) {
     /* portable enough for Linux */
     char cmd[256];
     snprintf(cmd, sizeof(cmd), "mkdir -p %s", TMP_DIR);
-    (void)system(cmd);
+    if (system(cmd) != 0) {
+        fprintf(stderr, "Warning: failed to create tmp dir: %s\n", TMP_DIR);
+    }
 }
 
 static void make_path(char* buf, size_t cap, const char* filename) {

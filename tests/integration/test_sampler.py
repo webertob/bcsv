@@ -29,11 +29,8 @@ def sampler_data(tmp_path_factory, tools):
     csv_path.write_text(CANON_CSV_DATA)
 
     bcsv_path = d / "canonical.bcsv"
-    # Workaround [LIB-4]: use packet_lz4 instead of default packet_lz4_batch
-    # to avoid intermittent SIGSEGV in background decompression thread.
-    # Revert to default codec once LIB-4 is fixed.
     run_tool(tools["csv2bcsv"], "--row-codec", "delta",
-             "--file-codec", "packet_lz4", csv_path, bcsv_path)
+             csv_path, bcsv_path)
 
     return {"csv": csv_path, "bcsv": bcsv_path, "dir": d}
 
@@ -43,8 +40,7 @@ def _run_sampler(tools, sampler_data, tmp_path, label, expected_rows,
     """Run bcsvSampler and verify row count. Returns the CSV output path."""
     out_bcsv = tmp_path / f"{label}.bcsv"
     out_csv = tmp_path / f"{label}.csv"
-    # Workaround [LIB-4]: --no-batch avoids default packet_lz4_batch output
-    r = run_tool(tools["bcsvSampler"], *extra_args, "--no-batch", "-f",
+    r = run_tool(tools["bcsvSampler"], *extra_args, "-f",
                  sampler_data["bcsv"], out_bcsv, check=False, timeout=10)
 
     if out_bcsv.exists():

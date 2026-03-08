@@ -67,9 +67,13 @@ namespace bcsv {
         }
 
         file_path_.clear();
-        stream_.close();
-        row_codec_.destroy();  // Deletes inner codec; inner codec's destructor releases the structural lock
+        // Shut down codecs BEFORE closing the stream.  The batch file codec
+        // owns a background thread that may still be reading from stream_;
+        // closing the stream first would cause a use-after-close SIGSEGV.
+        // (Writer::close() already has the correct ordering.)   [LIB-4 fix]
         file_codec_.destroy();
+        row_codec_.destroy();  // Deletes inner codec; inner codec's destructor releases the structural lock
+        stream_.close();
         row_pos_ = 0;
         row_.clear();
     }

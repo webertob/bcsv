@@ -17,25 +17,20 @@ def validate_data(tmp_path_factory, tools):
     """Prepare test files for validation tests."""
     d = tmp_path_factory.mktemp("validate")
 
-    # Workaround [LIB-4]: use packet_lz4 instead of default packet_lz4_batch
-    # to avoid intermittent SIGSEGV in background decompression thread.
-    # Revert to default codec once LIB-4 is fixed.
-    FC = ["--file-codec", "packet_lz4"]
-
     # Generate sensor_noisy (500 rows)
     sensor = d / "sensor.bcsv"
     run_tool(tools["bcsvGenerator"], "-p", "sensor_noisy", "-n", "500",
-             *FC, "-o", sensor)
+             "-o", sensor)
 
     # Copy for identical comparison
     sensor_copy = d / "sensor_copy.bcsv"
     run_tool(tools["bcsvGenerator"], "-p", "sensor_noisy", "-n", "500",
-             *FC, "-o", sensor_copy)
+             "-o", sensor_copy)
 
     # Different profile for mismatch tests
     mixed = d / "mixed.bcsv"
     run_tool(tools["bcsvGenerator"], "-p", "mixed_generic", "-n", "200",
-             *FC, "-o", mixed)
+             "-o", mixed)
 
     # Export sensor to CSV
     sensor_csv = d / "sensor.csv"
@@ -45,8 +40,7 @@ def validate_data(tmp_path_factory, tools):
     small_csv = d / "small.csv"
     small_csv.write_text("time,value,label\n1.0,10.5,foo\n2.0,20.1,bar\n3.0,30.9,baz\n")
     small_bcsv = d / "small.bcsv"
-    run_tool(tools["csv2bcsv"], "--file-codec", "packet_lz4",
-             small_csv, small_bcsv)
+    run_tool(tools["csv2bcsv"], small_csv, small_bcsv)
 
     return {
         "sensor": sensor, "sensor_copy": sensor_copy,
@@ -288,20 +282,18 @@ class TestValidateErrors:
 # ═══════════════════════════════════════════════════════════════════════
 
 class TestValidatePipeline:
-    # Workaround [LIB-4]: --file-codec packet_lz4 avoids default
-    # packet_lz4_batch SIGSEGV. Revert once LIB-4 is fixed.
 
     def test_structure_deep(self, tools, tmp_path):
         bcsv = tmp_path / "pipeline.bcsv"
         run_tool(tools["bcsvGenerator"], "-p", "mixed_generic", "-n", "1000",
-                 "--file-codec", "packet_lz4", "-o", bcsv)
+                 "-o", bcsv)
         r = run_tool(tools["bcsvValidate"], "-i", bcsv, "--deep")
         assert "PASSED" in (r.stdout + r.stderr)
 
     def test_pattern_match(self, tools, tmp_path):
         bcsv = tmp_path / "pipeline.bcsv"
         run_tool(tools["bcsvGenerator"], "-p", "mixed_generic", "-n", "1000",
-                 "--file-codec", "packet_lz4", "-o", bcsv)
+                 "-o", bcsv)
         r = run_tool(tools["bcsvValidate"], "-i", bcsv, "-p", "mixed_generic",
                      "-n", "1000")
         assert "PASSED" in (r.stdout + r.stderr)
@@ -309,7 +301,7 @@ class TestValidatePipeline:
     def test_bcsv_vs_csv_roundtrip(self, tools, tmp_path):
         bcsv = tmp_path / "pipeline.bcsv"
         run_tool(tools["bcsvGenerator"], "-p", "mixed_generic", "-n", "1000",
-                 "--file-codec", "packet_lz4", "-o", bcsv)
+                 "-o", bcsv)
         csv = tmp_path / "pipeline.csv"
         run_tool(tools["bcsv2csv"], bcsv, csv)
         r = run_tool(tools["bcsvValidate"], "-i", bcsv, "--compare", csv)

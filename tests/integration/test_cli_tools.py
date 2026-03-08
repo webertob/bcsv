@@ -47,11 +47,7 @@ def canon_csv(tmp_path_factory, tools):
     csv_path.write_text(CANON_CSV_DATA)
 
     bcsv_path = d / "default.bcsv"
-    # Workaround [LIB-4]: use packet_lz4 instead of default packet_lz4_batch
-    # to avoid intermittent SIGSEGV in background decompression thread.
-    # Revert to default codec once LIB-4 is fixed.
-    run_tool(tools["csv2bcsv"], "-f", "--file-codec", "packet_lz4",
-             csv_path, bcsv_path)
+    run_tool(tools["csv2bcsv"], "-f", csv_path, bcsv_path)
 
     return {"csv": csv_path, "bcsv": bcsv_path, "dir": d}
 
@@ -370,9 +366,7 @@ class TestBcsvHeader:
         r = run_tool(tools["bcsvHeader"], "-v", canon_csv["bcsv"], check=False)
         combined = r.stdout + r.stderr
         assert "Row codec: delta" in combined
-        # Workaround [LIB-4]: canon_csv uses packet_lz4 instead of default
-        # packet_lz4_batch. Revert assertion once LIB-4 is fixed.
-        assert "File codec: packet_lz4" in combined
+        assert "File codec: packet_lz4_batch" in combined
 
     def test_verbose_flat_stream(self, tools, canon_csv, tmp_path):
         bcsv = tmp_path / "flat_stream.bcsv"
@@ -398,20 +392,14 @@ class TestBcsvHeader:
 # ═══════════════════════════════════════════════════════════════════════
 
 class TestBcsvGenerator:
-    # Workaround [LIB-4]: explicit --file-codec packet_lz4 avoids default
-    # packet_lz4_batch which has an intermittent SIGSEGV in its background
-    # thread. Revert to default codec once LIB-4 is fixed.
-
     def test_basic_generation(self, tools, tmp_path):
         out = tmp_path / "gen.bcsv"
-        run_tool(tools["bcsvGenerator"], "-o", out, "-f", "-n", "100",
-                 "--file-codec", "packet_lz4")
+        run_tool(tools["bcsvGenerator"], "-o", out, "-f", "-n", "100")
         assert out.stat().st_size > 0
 
     def test_roundtrip_100_rows(self, tools, tmp_path):
         bcsv = tmp_path / "gen.bcsv"
-        run_tool(tools["bcsvGenerator"], "-o", bcsv, "-f", "-n", "100",
-                 "--file-codec", "packet_lz4")
+        run_tool(tools["bcsvGenerator"], "-o", bcsv, "-f", "-n", "100")
         csv_out = tmp_path / "gen.csv"
         run_tool(tools["bcsv2csv"], bcsv, "-o", csv_out)
         assert csv_rows(csv_out) == 100
@@ -439,7 +427,7 @@ class TestBcsvGenerator:
     def test_random_mode(self, tools, tmp_path):
         bcsv = tmp_path / "gen_random.bcsv"
         run_tool(tools["bcsvGenerator"], "-o", bcsv, "-f", "-n", "30",
-                 "-d", "random", "--file-codec", "packet_lz4")
+                 "-d", "random")
         csv_out = tmp_path / "gen_random.csv"
         run_tool(tools["bcsv2csv"], bcsv, "-o", csv_out)
         assert csv_rows(csv_out) == 30
@@ -457,8 +445,7 @@ class TestBcsvGenerator:
 
     def test_overwrite_protection(self, tools, tmp_path):
         out = tmp_path / "prot.bcsv"
-        run_tool(tools["bcsvGenerator"], "-o", out, "-f", "-n", "10",
-                 "--file-codec", "packet_lz4")
+        run_tool(tools["bcsvGenerator"], "-o", out, "-f", "-n", "10")
         assert expect_fail(tools["bcsvGenerator"], "-o", out, "-n", "10")
 
 

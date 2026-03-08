@@ -115,17 +115,11 @@ public:
         read_cursor_  = 0;
 
         // Read and decompress first packet synchronously on main thread.
+        // BG thread is started lazily on first packet boundary (decodeNextRow).
+        // This avoids races when the caller reads from the stream between
+        // open() and the first decodeNextRow() (e.g. ReaderDirectAccess
+        // reading the file footer).  [LIB-4]
         packet_open_ = readAndDecompressPacket(*is_ptr_, *read_current_);
-
-        if (packet_open_) {
-            // Start BG thread and pre-read next packet.
-            startBgThread();
-            {
-                std::lock_guard<std::mutex> lk(mutex_);
-                bg_task_ = BgTask::READ_DECOMPRESS;
-            }
-            cv_.notify_one();
-        }
     }
 
     // ── Write lifecycle ─────────────────────────────────────────────────
@@ -506,9 +500,15 @@ private:
 
         // Handle PCKT_TERMINATOR → transition to next packet.
         while (rowLen == PCKT_TERMINATOR) {
-            // Wait for BG to finish pre-reading next packet.
-            waitForBgIdle();
-            rethrowBgException();
+            if (bg_thread_.joinable()) {
+                // BG thread running — wait for pre-read to finish.
+                waitForBgIdle();
+                rethrowBgException();
+            } else {
+                // Lazy start: BG thread not yet running (first boundary).
+                // Decompress next packet synchronously.  [LIB-4]
+                bg_has_next_packet_ = readAndDecompressPacket(*is_ptr_, *read_next_);
+            }
 
             if (!bg_has_next_packet_) {
                 packet_open_ = false;
@@ -520,7 +520,10 @@ private:
             read_cursor_ = 0;
             packet_boundary_crossed_ = true;
 
-            // Signal BG to pre-read the next packet.
+            // Start BG thread (first time) or signal it to pre-read next packet.
+            if (!bg_thread_.joinable()) {
+                startBgThread();
+            }
             {
                 std::lock_guard<std::mutex> lk(mutex_);
                 bg_task_ = BgTask::READ_DECOMPRESS;
