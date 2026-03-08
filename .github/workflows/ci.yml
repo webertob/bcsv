@@ -1,0 +1,193 @@
+# C++ multi-platform build & test workflow
+# Ensures BCSV compiles with zero warnings and all tests pass on:
+#   Linux (GCC + Clang), Windows (MSVC), macOS (Apple Clang)
+
+name: C++ CI
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'include/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'benchmark/**'
+      - 'examples/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - '.github/workflows/ci.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'include/**'
+      - 'src/**'
+      - 'tests/**'
+      - 'benchmark/**'
+      - 'examples/**'
+      - 'CMakeLists.txt'
+      - 'CMakePresets.json'
+      - '.github/workflows/ci.yml'
+  schedule:
+    - cron: '0 3 * * 1'   # Weekly Monday 3 AM UTC — Release builds
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ────────────────────────────────────────────────────────────────
+  # Debug builds — every push / PR
+  # ────────────────────────────────────────────────────────────────
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux GCC
+            os: ubuntu-latest
+            compiler: gcc
+            configure-preset: ninja-debug
+            build-preset: ninja-debug-build
+            build-dir: build/ninja-debug
+
+          - name: Linux Clang
+            os: ubuntu-latest
+            compiler: clang
+            configure-preset: clang-debug
+            build-preset: clang-debug-build
+            build-dir: build/clang-debug
+
+          - name: Windows MSVC
+            os: windows-latest
+            compiler: msvc
+            configure-preset: msvc-debug
+            build-preset: msvc-debug-build
+            build-dir: build/msvc-debug
+            cmake-config: Debug
+
+          - name: macOS Apple Clang
+            os: macos-latest
+            compiler: apple-clang
+            configure-preset: ninja-debug
+            build-preset: ninja-debug-build
+            build-dir: build/ninja-debug
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    name: ${{ matrix.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build
+
+      - name: Install Clang (Linux)
+        if: matrix.compiler == 'clang'
+        run: sudo apt-get install -y -q clang
+
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Setup MSVC
+        if: matrix.compiler == 'msvc'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Cache CMake dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ matrix.build-dir }}/_deps
+          key: deps-${{ matrix.os }}-${{ matrix.compiler }}-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.configure-preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.build-preset }} --parallel
+
+      - name: Test
+        run: >-
+          ctest --test-dir ${{ matrix.build-dir }}
+          --output-on-failure
+          ${{ matrix.cmake-config && format('-C {0}', matrix.cmake-config) || '' }}
+
+  # ────────────────────────────────────────────────────────────────
+  # Release builds — weekly schedule + manual dispatch
+  # ────────────────────────────────────────────────────────────────
+  release-build:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux GCC (Release)
+            os: ubuntu-latest
+            compiler: gcc
+            configure-preset: ninja-release
+            build-preset: ninja-release-build
+            build-dir: build/ninja-release
+
+          - name: Linux Clang (Release)
+            os: ubuntu-latest
+            compiler: clang
+            configure-preset: clang-release
+            build-preset: clang-release-build
+            build-dir: build/clang-release
+
+          - name: Windows MSVC (Release)
+            os: windows-latest
+            compiler: msvc
+            configure-preset: msvc-release
+            build-preset: msvc-release-build
+            build-dir: build/msvc-release
+            cmake-config: Release
+
+          - name: macOS Apple Clang (Release)
+            os: macos-latest
+            compiler: apple-clang
+            configure-preset: ninja-release
+            build-preset: ninja-release-build
+            build-dir: build/ninja-release
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    name: ${{ matrix.name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build
+
+      - name: Install Clang (Linux)
+        if: matrix.compiler == 'clang'
+        run: sudo apt-get install -y -q clang
+
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Setup MSVC
+        if: matrix.compiler == 'msvc'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Cache CMake dependencies
+        uses: actions/cache@v4
+        with:
+          path: ${{ matrix.build-dir }}/_deps
+          key: deps-${{ matrix.os }}-${{ matrix.compiler }}-release-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure
+        run: cmake --preset ${{ matrix.configure-preset }}
+
+      - name: Build
+        run: cmake --build --preset ${{ matrix.build-preset }} --parallel
+
+      - name: Test
+        run: >-
+          ctest --test-dir ${{ matrix.build-dir }}
+          --output-on-failure
+          ${{ matrix.cmake-config && format('-C {0}', matrix.cmake-config) || '' }}
