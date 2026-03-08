@@ -214,16 +214,28 @@ source_files = [
 
 import sysconfig
 
-# Define compile arguments
+# Define compile arguments (platform-aware)
 compile_args = [
     "-std=c++20",
     "-O3",
     "-Wall",
     "-Wextra",
     "-fPIC",
-    "-DBCSV_HAS_BATCH_CODEC=1",
-    "-pthread",
 ]
+
+# Platform-specific flags
+# Apple Clang (macOS): no std::jthread support → disable batch codec
+# GCC/Clang on Linux: full C++20 support with batch codec + pthreads
+if sys.platform == "darwin":
+    # Apple Clang lacks std::jthread/stop_token (requires LLVM 17+,
+    # Apple ships LLVM 16-based Clang). Batch codec uses jthread for
+    # background compression thread. Disable it; all other codecs work.
+    pass  # No BCSV_HAS_BATCH_CODEC, no -pthread
+else:
+    compile_args.append("-DBCSV_HAS_BATCH_CODEC=1")
+    compile_args.append("-pthread")
+
+link_args = ["-pthread"] if sys.platform == "linux" else []
 
 # If building with MSVC, translate or remove GCC/Clang-only flags
 from distutils import ccompiler
@@ -273,7 +285,7 @@ if PYBIND11_AVAILABLE:
             language="c++",
             cxx_std=20,
             extra_compile_args=compile_args,
-            extra_link_args=["-pthread"],
+            extra_link_args=link_args,
         )
     ]
     cmdclass = {"build_ext": CustomBuildExt}
@@ -284,7 +296,7 @@ else:
             source_files,
             include_dirs=include_dirs,
             extra_compile_args=compile_args,
-            extra_link_args=["-pthread"],
+            extra_link_args=link_args,
             language="c++",
         )
     ]
