@@ -61,6 +61,7 @@
 #include <istream>
 #include <span>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <thread>
 
@@ -282,7 +283,7 @@ private:
 
     // ── Background task types ───────────────────────────────────────────
 
-    enum class BgTask { IDLE, COMPRESS_WRITE, READ_DECOMPRESS, SHUTDOWN };
+    enum class BgTask { IDLE, COMPRESS_WRITE, READ_DECOMPRESS };
 
     // ── Background thread lifecycle ─────────────────────────────────────
 
@@ -291,34 +292,41 @@ private:
 
         bg_task_ = BgTask::IDLE;
         bg_exception_ = nullptr;
-        bg_thread_ = std::thread([this] { bgLoop(); });
+        bg_thread_ = std::jthread([this](std::stop_token stoken) { bgLoop(stoken); });
     }
 
     void shutdownBgThread() {
         if (!bg_thread_.joinable()) return;
 
-        // Wait for any in-flight task to finish before requesting shutdown.
-        // Without this, the bg thread's post-task "bg_task_ = IDLE" can
-        // overwrite our SHUTDOWN, causing a deadlock.
+        // Wait for any in-flight task to finish before requesting stop.
+        // This ensures the BG thread completes its current compress/decompress
+        // work (prevents data loss on the write side).
         waitForBgIdle();
 
-        {
-            std::lock_guard<std::mutex> lk(mutex_);
-            bg_task_ = BgTask::SHUTDOWN;
-        }
-        cv_.notify_one();
+        // request_stop() sets the stop_token monotonically — unlike the old
+        // SHUTDOWN state, it cannot be overwritten by the BG thread's
+        // post-task "bg_task_ = IDLE".  The stop_callback registered in
+        // bgLoop() automatically calls cv_.notify_all() to wake the BG
+        // thread from its idle wait.  [LIB-3 prevention by design]
+        bg_thread_.request_stop();
         bg_thread_.join();
     }
 
-    void bgLoop() {
-        while (true) {
+    void bgLoop(std::stop_token stoken) {
+        // Auto-wake from CV wait when stop is requested.  The stop_callback
+        // fires cv_.notify_all() when request_stop() is called, ensuring
+        // the BG thread exits its idle wait without a manual CV notification
+        // from the main thread.
+        std::stop_callback wake_on_stop(stoken, [this] { cv_.notify_all(); });
+
+        while (!stoken.stop_requested()) {
             std::unique_lock<std::mutex> lk(mutex_);
-            cv_.wait(lk, [this] { return bg_task_ != BgTask::IDLE; });
+            cv_.wait(lk, [&] { return bg_task_ != BgTask::IDLE || stoken.stop_requested(); });
+
+            if (stoken.stop_requested()) break;
 
             BgTask task = bg_task_;
             lk.unlock();
-
-            if (task == BgTask::SHUTDOWN) break;
 
             try {
                 if (task == BgTask::COMPRESS_WRITE) {
@@ -570,8 +578,15 @@ private:
     //
     // Synchronization protocol
     // ────────────────────────
-    // The BG thread and main thread communicate through the mutex_/cv_
-    // pair using bg_task_ as the sole shared control variable.
+    // The BG thread and main thread communicate through mutex_/cv_ with
+    // bg_task_ as the shared control variable, and std::stop_token for
+    // shutdown signaling.
+    //
+    // Shutdown: std::jthread owns a stop_source; shutdownBgThread() calls
+    // request_stop() which sets the stop_token monotonically (cannot be
+    // overwritten by BG's post-task bg_task_=IDLE write — this eliminates
+    // the LIB-3 race by design).  A stop_callback registered in bgLoop()
+    // auto-notifies the CV, waking the BG thread from idle wait.
     //
     // Variables written by main thread BEFORE signaling BG (via bg_task_
     // store + cv_.notify under mutex) and read by BG AFTER waking
@@ -631,7 +646,7 @@ private:
     bool     packet_boundary_crossed_{false}; ///< Main-thread only.
 
     // Threading.
-    std::thread              bg_thread_;
+    std::jthread             bg_thread_;   ///< Owns stop_source; destructor calls request_stop() + join().
     std::mutex               mutex_;       ///< Protects bg_task_ and provides happens-before edges.
     std::condition_variable  cv_;          ///< Signals bg_task_ transitions.
     BgTask                   bg_task_{BgTask::IDLE};

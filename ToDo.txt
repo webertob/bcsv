@@ -375,16 +375,21 @@ background:
     [LIB-4] SIGSEGV in FileCodecPacketLZ4Batch001 — RESOLVED
         Two root causes: (A) close() ordering race, (B) open()-time BG thread race.
         See fix details in Item 20 completed notes above.
-        Future: consider std::jthread modernisation (see item 20b below).
+        Future: std::jthread modernisation completed (see item 20b).
 
-20b. std::jthread modernisation for FileCodecPacketLZ4Batch001
-    Status: NOT STARTED
-    Replace std::thread + manual shutdown protocol with std::jthread + stop_token.
-    Benefits: automatic joining on destruction, cleaner cancellation via stop_token,
-    eliminates manual SHUTDOWN state and waitForBgIdle() + join() pattern.
-    Note: This is a code quality improvement, NOT a bug fix — the actual race
-    conditions were fixed in LIB-4 (close ordering + lazy BG thread start).
-    Priority: LOW — do when convenient, no functional impact.
+[x] 20b. std::jthread modernisation for FileCodecPacketLZ4Batch001
+    Status: COMPLETE
+    Replaced std::thread + manual SHUTDOWN state machine with std::jthread + stop_token
+    in FileCodecPacketLZ4Batch001 (Approach B: jthread + stop_callback).
+    Changes (single file: file_codec_packet_lz4_batch001.h):
+    - BgTask enum: removed SHUTDOWN state (3 states → 2: IDLE, COMPRESS_WRITE, READ_DECOMPRESS)
+    - std::thread → std::jthread (owns stop_source, auto-join on destruction)
+    - bgLoop() takes std::stop_token, registers std::stop_callback for auto CV wake-up
+    - shutdownBgThread(): request_stop() + join() (callback handles CV notification)
+    - LIB-3 race structurally impossible: stop_token is monotonic, cannot be overwritten
+      by BG thread's post-task bg_task_=IDLE write
+    - Exception-safe: jthread destructor calls request_stop()+join() even on exception unwind
+    Verification: 694/694 GTest, 87+824 C API, 174/174 pytest, 500/500 stress tests pass
 
 21. bcsvSampler performance
     Status: IN PROGRESS — Phase 1 (dispatch optimisation) complete
