@@ -323,7 +323,7 @@ namespace bcsv {
             }, node.kind);
         }
 
-        void compileCellRef(const AstNode& node, const CellRef& cr) {
+        void compileCellRef(const AstNode& /*node*/, const CellRef& cr) {
             ColumnType ct = layout_.columnType(cr.col_index);
             emitLoad(cr.row_offset, cr.col_index, ct);
         }

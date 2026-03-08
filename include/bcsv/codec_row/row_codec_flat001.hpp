@@ -91,7 +91,6 @@ inline std::span<std::byte> RowCodecFlat001<LayoutType>::serialize(
     }
 
     // ── Single-pass: serialize all sections in one column loop ─────
-    size_t bool_idx = 0;
     size_t wire_off = off_row + bits_sz;
     size_t len_off  = off_row + bits_sz + data_sz;
     size_t pay_off  = off_row + fixed_sz;
@@ -101,7 +100,7 @@ inline std::span<std::byte> RowCodecFlat001<LayoutType>::serialize(
         const uint32_t   off  = offsets[i];
 
         if (type == ColumnType::BOOL) {
-            ++bool_idx;
+            // bools already bulk-copied via bits_
         } else if (type == ColumnType::STRING) {
             const std::string& str = row.strg_[off];
             const uint16_t len = static_cast<uint16_t>(std::min(str.size(), MAX_STRING_LENGTH));
@@ -147,7 +146,6 @@ inline void RowCodecFlat001<LayoutType>::deserialize(
         std::memcpy(row.bits_.data(), &buffer[0], bits_sz);
     }
 
-    size_t bool_idx = 0;
     size_t wire_off = bits_sz;
     size_t len_off  = bits_sz + data_sz;
     size_t pay_off  = fixed_sz;
@@ -157,7 +155,7 @@ inline void RowCodecFlat001<LayoutType>::deserialize(
         const uint32_t   off  = offsets[i];
 
         if (type == ColumnType::BOOL) {
-            ++bool_idx;
+            // bools already bulk-copied via bits_
         } else if (type == ColumnType::STRING) {
             uint16_t len = 0;
             std::memcpy(&len, &buffer[len_off], sizeof(uint16_t));

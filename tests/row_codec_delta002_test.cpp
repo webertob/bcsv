@@ -830,7 +830,7 @@ TEST(CodecDelta002Test, WireSize_ZoH_HeaderOnly) {
     Row row(layout);
 
     row.set<int64_t>(0, 42);
-    auto w0 = enc.serialize(row, buf);
+    static_cast<void>(enc.serialize(row, buf));
 
     // Same value → ZoH mode (code=0)
     auto w1 = enc.serialize(row, buf);

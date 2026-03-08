@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include "../include/bcsv/bcsv_c_api.h"
 
-int main() {
+int main(void) {
     // Create a layout with 10 consecutive int32 columns
     bcsv_layout_t layout = bcsv_layout_create();
     for (int i = 0; i < 10; i++) {

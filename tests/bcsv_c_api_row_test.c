@@ -7,7 +7,7 @@
 #include <assert.h>
 #include <string.h>
 
-int main() {
+int main(void) {
     printf("Testing Row C API functions...\n");
     
     // Create a layout for testing

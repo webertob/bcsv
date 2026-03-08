@@ -51,7 +51,7 @@ static int tests_passed = 0;
 #define TEST_START(name) printf("\n--- %s ---\n", name)
 #define TEST_END() do { /* Test section complete */ } while(0)
 
-void test_layout_api() {
+void test_layout_api(void) {
     TEST_START("Layout API Tests");
     
     // Test layout creation
@@ -112,7 +112,7 @@ void test_layout_api() {
     TEST_END();
 }
 
-void test_row_api() {
+void test_row_api(void) {
     TEST_START("Row API Tests");
     
     // Create layout for testing
@@ -210,7 +210,7 @@ void test_row_api() {
     TEST_END();
 }
 
-void test_writer_reader_api() {
+void test_writer_reader_api(void) {
     TEST_START("Writer/Reader API Tests");
     
     const char* test_filename = "c_api_test.bcsv";
@@ -328,7 +328,7 @@ void test_writer_reader_api() {
 }
 
 /* Test ZoH writer via C API (#24) */
-void test_zoh_writer_api() {
+void test_zoh_writer_api(void) {
     TEST_START("ZoH Writer API");
     
     const char* test_filename = "/tmp/bcsv_capi_zoh_test.bcsv";
@@ -398,7 +398,7 @@ void test_zoh_writer_api() {
     TEST_END();
 }
 
-int main() {
+int main(void) {
     printf("BCSV C API Comprehensive Test Suite\n");
     printf("====================================\n");
     

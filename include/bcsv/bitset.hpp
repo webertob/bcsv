@@ -1684,13 +1684,10 @@ Bitset<N> Bitset<N>::operator<<(size_t shift_amount) const noexcept {
     }
     
     // Create zero-initialized result, then copy shifted data into it
-    Bitset result = [this]() {
-        if constexpr (IS_FIXED) {
-            return Bitset();
-        } else {
-            return Bitset(size());
-        }
-    }();
+    Bitset result;
+    if constexpr (!IS_FIXED) {
+        result = Bitset(size());
+    }
     
     const size_t word_shift = shift_amount / WORD_BITS;
     const size_t bit_shift = shift_amount % WORD_BITS;
@@ -1747,6 +1744,12 @@ Bitset<N> Bitset<N>::operator>>(size_t shift_amount) const noexcept {
     const size_t bit_shift = shift_amount % WORD_BITS;
     const size_t wc = wordCount();
     
+    if constexpr (IS_FIXED && N == 0) {
+        return result;
+    }
+
+    if (wc == 0) return result;
+
     if (bit_shift == 0) {
         // Pure word shift - use memmove for efficiency
         if (word_shift < wc) {

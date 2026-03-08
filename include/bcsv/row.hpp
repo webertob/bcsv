@@ -1028,8 +1028,6 @@ namespace bcsv {
                           std::is_same_v<DecayedT, std::span<char>> ||
                           std::is_same_v<DecayedT, std::span<const char>>) {
                 colValue = value;
-            } else if constexpr (std::is_same_v<DecayedT, std::string_view> && std::is_same_v<ColType, std::string>) {
-                colValue = std::string(value);
             } else {
                 throw std::runtime_error("RowStatic::set: Type mismatch or unsupported conversion");
             }
@@ -1085,7 +1083,7 @@ namespace bcsv {
         
         for (size_t i = startIndex; i < endIndex; ++i) {
             [&]<size_t... I>(std::index_sequence<I...>) {
-                ((I == i ? (visitor(I, std::get<I>(data_)), true) : false) || ...);
+                static_cast<void>(((I == i ? (static_cast<void>(visitor(I, std::get<I>(data_))), true) : false) || ...));
             }(std::make_index_sequence<COLUMN_COUNT>{});
         }
     }

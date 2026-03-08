@@ -9,7 +9,8 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
                 "CMAKE_C_COMPILER": "gcc",
-                "CMAKE_CXX_COMPILER": "g++"
+                "CMAKE_CXX_COMPILER": "g++",
+                "BCSV_WERROR": "ON"
             }
         },
         {
@@ -20,8 +21,34 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_C_COMPILER": "gcc",
-                
-                "CMAKE_CXX_COMPILER": "g++"
+                "CMAKE_CXX_COMPILER": "g++",
+                "BCSV_WERROR": "ON"
+            }
+        },
+        {
+            "name": "clang-debug",
+            "displayName": "Clang Debug",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/clang-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_CXX_SCAN_FOR_MODULES": "OFF",
+                "BCSV_WERROR": "ON"
+            }
+        },
+        {
+            "name": "clang-release",
+            "displayName": "Clang Release",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/clang-release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_CXX_SCAN_FOR_MODULES": "OFF",
+                "BCSV_WERROR": "ON"
             }
         },
         {
@@ -30,7 +57,8 @@
             "generator": "Visual Studio 17 2022",
             "binaryDir": "${sourceDir}/build/msvc-debug",
             "cacheVariables": {
-                "CMAKE_GENERATOR_PLATFORM": "x64"
+                "CMAKE_GENERATOR_PLATFORM": "x64",
+                "BCSV_WERROR": "ON"
             }
         },
         {
@@ -39,7 +67,8 @@
             "generator": "Visual Studio 17 2022",
             "binaryDir": "${sourceDir}/build/msvc-release",
             "cacheVariables": {
-                "CMAKE_GENERATOR_PLATFORM": "x64"
+                "CMAKE_GENERATOR_PLATFORM": "x64",
+                "BCSV_WERROR": "ON"
             }
         },
         {
@@ -48,7 +77,8 @@
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/ninja-debug",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug"
+                "CMAKE_BUILD_TYPE": "Debug",
+                "BCSV_WERROR": "ON"
             }
         },
         {
@@ -57,7 +87,8 @@
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/ninja-release",
             "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Release"
+                "CMAKE_BUILD_TYPE": "Release",
+                "BCSV_WERROR": "ON"
             }
         },
         {
@@ -81,6 +112,14 @@
         {
             "name": "gcc-release-build",
             "configurePreset": "gcc-release"
+        },
+        {
+            "name": "clang-debug-build",
+            "configurePreset": "clang-debug"
+        },
+        {
+            "name": "clang-release-build",
+            "configurePreset": "clang-release"
         },
         {
             "name": "msvc-debug-build",

@@ -2829,12 +2829,10 @@ TEST_F(BCSVTestSuite, ZoH_CompressionEffectiveness) {
 // BOUNDARY CONDITION TESTS (Integrated from bcsv_boundary_test.cpp)
 // ============================================================================
 
-// Global verbose flag for boundary tests
-static bool g_boundary_verbose = false;
-
 // Helper function for verbose output in boundary tests
 template<typename... Args>
 void boundary_verbose_output(Args&&... args) {
+    static bool g_boundary_verbose = false;
     if (g_boundary_verbose) {
         (std::cout << ... << args) << std::endl;
     }

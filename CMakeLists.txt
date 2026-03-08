@@ -127,10 +127,21 @@ endif()
 # Compiler requirements
 target_compile_features(bcsv INTERFACE cxx_std_20)
 
+option(BCSV_WERROR "Treat compiler warnings as errors" ON)
+
 if(MSVC)
     target_compile_options(bcsv INTERFACE /W4)
+    if(BCSV_WERROR)
+        target_compile_options(bcsv INTERFACE /WX)
+    endif()
 else()
     target_compile_options(bcsv INTERFACE -Wall -Wextra -Wpedantic)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(bcsv INTERFACE -fbracket-depth=512)
+    endif()
+    if(BCSV_WERROR)
+        target_compile_options(bcsv INTERFACE -Werror)
+    endif()
 endif()
 
 # Enable generation of compile_commands.json

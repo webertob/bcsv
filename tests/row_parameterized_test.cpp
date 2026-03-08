@@ -303,7 +303,8 @@ TEST(RowEdgeCases, SelfAssignment) {
     row.set<int32_t>(0, 42);
     
     // Self-assignment should not crash or corrupt data
-    row = row;
+    auto& ref = row;
+    row = ref;
     
     EXPECT_EQ(42, row.get<int32_t>(0))
         << "Self-assignment corrupted data";

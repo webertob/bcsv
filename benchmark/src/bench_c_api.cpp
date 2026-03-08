@@ -156,11 +156,9 @@ static void BM_CApi_Reader_Sequential(benchmark::State& state) {
     for (auto _ : state) {
         bcsv_reader_t reader = bcsv_reader_create();
         bcsv_reader_open(reader, path.c_str());
-        int64_t count = 0;
         while (bcsv_reader_next(reader)) {
             const_bcsv_row_t row = bcsv_reader_row(reader);
             benchmark::DoNotOptimize(bcsv_row_get_int32(row, 0));
-            ++count;
         }
         benchmark::ClobberMemory();
         bcsv_reader_close(reader);
@@ -344,7 +342,8 @@ static void BM_CppApi_Reader(benchmark::State& state) {
         bcsv::Reader<bcsv::Layout> reader;
         reader.open(path);
         while (reader.readNext()) {
-            benchmark::DoNotOptimize(reader.row().get<int32_t>(0));
+            auto val = reader.row().get<int32_t>(0);
+            benchmark::DoNotOptimize(val);
         }
         benchmark::ClobberMemory();
         reader.close();
@@ -415,10 +414,8 @@ static void BM_CApi_CSV_Roundtrip(benchmark::State& state) {
         // Read CSV
         bcsv_csv_reader_t cr = bcsv_csv_reader_create(layout, ',', '.');
         bcsv_csv_reader_open(cr, path.c_str(), true);
-        int64_t count = 0;
         while (bcsv_csv_reader_next(cr)) {
             benchmark::DoNotOptimize(bcsv_row_get_int32(bcsv_csv_reader_row(cr), 0));
-            ++count;
         }
         benchmark::ClobberMemory();
         bcsv_csv_reader_close(cr);
