@@ -14,6 +14,7 @@ authors = [
     {name = "Tobias Weber", email = "weber.tobias.md@gmail.com"},
 ]
 description = "High-performance Python bindings for the BCSV (Binary CSV) library with pandas integration"
+license = "MIT"
 readme = "README.md"
 requires-python = ">=3.11"
 classifiers = [
@@ -71,6 +72,8 @@ license-files = []
 [tool.cibuildwheel]
 build = "cp311-* cp312-* cp313-*"
 skip = "*-musllinux_i686 *-win32 *-manylinux_i686"
+test-requires = ["pytest", "pandas"]
+test-command = "python -c \"import pybcsv; l = pybcsv.Layout(); l.add_column('x', pybcsv.ColumnType.DOUBLE); print('ok')\""
 
 [tool.cibuildwheel.linux]
 before-build = "pip install pybind11 numpy"

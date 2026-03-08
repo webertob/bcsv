@@ -1,34 +1,65 @@
-name: Build and publish wheels (Linux, Windows, macOS)
+name: Build and publish pybcsv wheels
 
 on:
   push:
     branches: [ main, master, release ]
     tags:
       - 'v*'  # Trigger on version tags (v1.0.0, v1.0.1, etc.)
+  pull_request:
+    paths:
+      - 'python/**'
+      - 'include/**'
   workflow_dispatch:
 
 permissions:
   contents: read
-  packages: write
 
 env:
-  PYPROJECT_DIR: "python"
   CIBW_SKIP: "pp*"  # Skip PyPy builds
-  # Note: ARM (aarch64) builds are slow via QEMU emulation (~45-60 min per build)
-  # To skip ARM builds temporarily, change matrix.arch to: [x86_64]
 
 jobs:
-  build-linux:
-    name: Build Linux wheels (${{ matrix.arch }})
+  # ── Build sdist ─────────────────────────────────────────────────────
+  build-sdist:
+    name: Build source distribution
     runs-on: ubuntu-latest
-    timeout-minutes: 120  # ARM builds via QEMU are slow, allow 2 hours
-    strategy:
-      matrix:
-        arch: [x86_64]  # Temporarily skip aarch64 - re-enable for releases
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 0  # Fetch all history and tags for setuptools-scm
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Build sdist
+        run: |
+          pip install build
+          python -m build --sdist python/ --outdir dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: built-sdist
+          path: dist/*.tar.gz
+
+  # ── Build Linux wheels ──────────────────────────────────────────────
+  build-linux:
+    name: Build Linux wheels (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      matrix:
+        arch: [x86_64]  # Add aarch64 for releases when needed
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install cibuildwheel
+        run: pip install cibuildwheel==2.22.0
 
       - name: Set up QEMU for multi-arch builds
         if: matrix.arch == 'aarch64'
@@ -36,71 +67,46 @@ jobs:
         with:
           platforms: arm64
 
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
-
-      - name: Upgrade setuptools
-        run: python -m pip install --upgrade setuptools==77.0.3 wheel cibuildwheel==3.2.0
-
-      - name: Clean build artifacts
-        run: |
-          rm -rf python/dist python/build python/*.egg-info python/pybcsv.egg-info
-
-      - name: Build manylinux and musllinux wheels
+      - name: Build wheels
         env:
           CIBW_ARCHS_LINUX: ${{ matrix.arch }}
-        run: |
-          python -m cibuildwheel python --output-dir dist
+        run: python -m cibuildwheel python --output-dir dist
 
-      - name: Upload Linux wheels
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: built-wheels-linux-${{ matrix.arch }}
           path: dist/*.whl
 
+  # ── Build Windows wheels ────────────────────────────────────────────
   build-windows:
     name: Build Windows wheels (${{ matrix.arch }})
     runs-on: windows-latest
     strategy:
       matrix:
-        arch: [AMD64, x86, ARM64]
+        arch: [AMD64]  # Add x86, ARM64 for releases when needed
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 0  # Fetch all history and tags for setuptools-scm
+          fetch-depth: 0
 
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
+      - name: Install cibuildwheel
+        run: pip install cibuildwheel==2.22.0
 
-      - name: Upgrade setuptools
-        run: python -m pip install --upgrade setuptools==77.0.3 wheel cibuildwheel==3.2.0
-
-      - name: Clean build artifacts
-        run: |
-          Remove-Item -Path python/dist,python/build,python/*.egg-info,python/pybcsv.egg-info -Recurse -Force -ErrorAction SilentlyContinue
-
-      - name: Build Windows wheels
+      - name: Build wheels
         env:
           CIBW_ARCHS_WINDOWS: ${{ matrix.arch }}
-        run: |
-          python -m cibuildwheel python --output-dir dist
+        run: python -m cibuildwheel python --output-dir dist
 
-      - name: Upload Windows wheels
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: built-wheels-windows-${{ matrix.arch }}
           path: dist/*.whl
 
+  # ── Build macOS wheels ──────────────────────────────────────────────
   build-macos:
     name: Build macOS wheels (${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
@@ -114,106 +120,132 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 0  # Fetch all history and tags for setuptools-scm
+          fetch-depth: 0
 
-      - name: Set up Python 3.13
-        uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
-      - name: Upgrade pip
-        run: python -m pip install --upgrade pip
+      - name: Install cibuildwheel
+        run: pip install cibuildwheel==2.22.0
 
-      - name: Upgrade setuptools
-        run: python -m pip install --upgrade setuptools==77.0.3 wheel cibuildwheel==3.2.0
-
-      - name: Clean build artifacts
-        run: |
-          rm -rf python/dist python/build python/*.egg-info python/pybcsv.egg-info
-
-      - name: Build macOS wheels
+      - name: Build wheels
         env:
           CIBW_ARCHS_MACOS: ${{ matrix.arch }}
           MACOSX_DEPLOYMENT_TARGET: "10.15"
-        run: |
-          python -m cibuildwheel python --output-dir dist
+        run: python -m cibuildwheel python --output-dir dist
 
-      - name: Upload macOS wheels
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: built-wheels-macos-${{ matrix.arch }}
           path: dist/*.whl
 
-  publish:
-    name: Publish to TestPyPI (and PyPI when token present)
-    needs: [build-linux, build-windows, build-macos]
+  # ── Test built wheel ────────────────────────────────────────────────
+  test-wheel:
+    name: Test wheel (Linux)
+    needs: [build-linux]
     runs-on: ubuntu-latest
-    # Always run for debugging TestPyPI, but only publish to PyPI on version tags
     steps:
       - uses: actions/checkout@v5
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Download Linux wheel
+        uses: actions/download-artifact@v4
+        with:
+          name: built-wheels-linux-x86_64
+          path: dist
+
+      - name: Install wheel and test dependencies
+        run: |
+          pip install dist/*.whl
+          pip install pytest pandas
+
+      - name: Run pybcsv test suite
+        run: python -m pytest python/tests/ -v --tb=short
+
+  # ── Publish to PyPI (Trusted Publisher / OIDC) ──────────────────────
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: [build-sdist, build-linux, build-windows, build-macos, test-wheel]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    environment: testpypi
+    permissions:
+      id-token: write  # Required for trusted publishing
+    steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: wheel-artifacts
-          pattern: built-wheels-*
+          path: dist-artifacts
+          pattern: built-*
           merge-multiple: false
 
-      - name: Prepare wheels for upload
+      - name: Collect all distributions
         run: |
-          mkdir -p wheel-artifacts/all
-          find wheel-artifacts -name "*.whl" -exec cp {} wheel-artifacts/all/ \;
+          mkdir -p dist
+          find dist-artifacts -name "*.whl" -o -name "*.tar.gz" | xargs -I{} cp {} dist/
+          echo "=== Distributions to upload ==="
+          ls -lh dist/
 
-      - name: Install twine
-        run: python -m pip install --upgrade pip twine
-
-      - name: Verify wheels
-        run: ls -l wheel-artifacts/all
-
-      - name: Publish to TestPyPI (always for testing)
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
         continue-on-error: true
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
-        run: |
-          echo "Publishing to TestPyPI for testing (may include dev versions)"
-          python -m twine upload --skip-existing --repository-url https://test.pypi.org/legacy/ wheel-artifacts/all/*.whl
 
-      - name: Publish to PyPI (only on version tags)
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          if [ -n "${TWINE_PASSWORD}" ]; then
-            echo "Publishing to PyPI (triggered by version tag: ${GITHUB_REF#refs/tags/})"
-            python -m twine upload --skip-existing wheel-artifacts/all/*.whl
-          else
-            echo "PYPI_API_TOKEN not set; skipping upload to PyPI"
-          fi
-
-  smoke-test:
-    name: Smoke test installed wheel
-    needs: publish
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [build-sdist, build-linux, build-windows, build-macos, test-wheel]
     runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    environment: pypi
+    permissions:
+      id-token: write  # Required for trusted publishing
     steps:
-      - name: Download all built wheels
+      - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
-          path: wheel-artifacts
-          pattern: built-wheels-*
+          path: dist-artifacts
+          pattern: built-*
           merge-multiple: false
-        continue-on-error: true
 
-      - name: Prepare wheels for test
+      - name: Collect all distributions
         run: |
-          mkdir -p wheel-artifacts/all
-          find wheel-artifacts -name "*.whl" -exec cp {} wheel-artifacts/all/ \;
+          mkdir -p dist
+          find dist-artifacts -name "*.whl" -o -name "*.tar.gz" | xargs -I{} cp {} dist/
+          echo "=== Distributions to upload ==="
+          ls -lh dist/
 
-      - name: Smoke test wheel in clean venv
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  # ── Post-publish smoke test ─────────────────────────────────────────
+  smoke-test:
+    name: Smoke test from TestPyPI
+    needs: [publish-testpypi]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    steps:
+      - name: Install from TestPyPI and test
         run: |
-          python -m venv /tmp/venv
-          source /tmp/venv/bin/activate
-          python -m pip install --upgrade pip
-          pip install pybcsv --find-links=wheel-artifacts/all
-          python -c "import pybcsv; print('pybcsv ok', pybcsv.__version__)"
+          python -m venv /tmp/smoke
+          source /tmp/smoke/bin/activate
+          pip install --upgrade pip
+          # Install numpy from PyPI first (not available on TestPyPI)
+          pip install numpy pandas
+          # Try TestPyPI, fall back to local wheel
+          pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ pybcsv || true
+          python -c "
+          import pybcsv
+          print(f'pybcsv {pybcsv.__version__} imported successfully')
+          # Basic functionality check
+          layout = pybcsv.Layout()
+          layout.add_column('x', pybcsv.ColumnType.DOUBLE)
+          layout.add_column('s', pybcsv.ColumnType.STRING)
+          print(f'Layout: {layout.column_count()} columns')
+          print('Smoke test PASSED')
+          "

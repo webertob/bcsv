@@ -23,6 +23,7 @@ from . import Layout, ColumnType, Writer, Reader, FileFlags
 # Import columnar I/O if available (requires numpy headers in bindings)
 try:
     from _bcsv import read_columns as _read_columns, write_columns as _write_columns
+    from _bcsv import read_to_dataframe as _read_to_dataframe
     _COLUMNAR_AVAILABLE = True
 except ImportError:
     _COLUMNAR_AVAILABLE = False
@@ -161,17 +162,9 @@ def read_dataframe(filename: str,
     if not PANDAS_AVAILABLE:
         raise ImportError("pandas is not available. Please install pandas to use this function.")
 
-    # Fast path: columnar I/O (handles both all-columns and column-subset)
+    # Fast path: C++ read_to_dataframe (single call, constructs DataFrame in C++)
     if _COLUMNAR_AVAILABLE:
-        col_dict = _read_columns(filename)
-        if columns is not None:
-            available = set(col_dict.keys())
-            missing = set(columns) - available
-            if missing:
-                warnings.warn(f"Columns not found in BCSV file: {missing}", UserWarning)
-            col_dict = {k: col_dict[k] for k in columns if k in available}
-        df = pd.DataFrame(col_dict)
-        return df
+        return _read_to_dataframe(filename, columns)
     
     reader = Reader()
     try:

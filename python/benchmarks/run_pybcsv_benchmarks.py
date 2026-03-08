@@ -33,6 +33,7 @@ MODE_LABELS = {
     "numpy": "PYBCSV NumPy",
     "pandas": "PYBCSV Pandas",
     "columnar": "PYBCSV Columnar",
+    "dataframe": "PYBCSV DataFrame",
 }
 
 
@@ -276,6 +277,27 @@ def read_columnar(file_path: Path) -> tuple[float, int]:
     return elapsed_ms, count
 
 
+def write_dataframe_mode(file_path: Path, columns_spec, rows: list[list], row_codec: str = "delta") -> float:
+    """Write using pandas DataFrame → write_dataframe."""
+    col_names = [name for name, _ in columns_spec]
+    col_dict = {}
+    for ci, (name, ct) in enumerate(columns_spec):
+        col_dict[name] = [rows[r][ci] for r in range(len(rows))]
+    frame = pd.DataFrame(col_dict)
+    start = time.perf_counter()
+    pybcsv.write_dataframe(frame, str(file_path), row_codec=row_codec)
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    return elapsed_ms
+
+
+def read_dataframe_mode(file_path: Path) -> tuple[float, int]:
+    """Read using C++ read_to_dataframe (single call)."""
+    start = time.perf_counter()
+    df = pybcsv.read_to_dataframe(str(file_path))
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
+    return elapsed_ms, len(df)
+
+
 def mode_rows(mode: str, workload: str, num_rows: int, seed: int) -> list[list]:
     if mode == "plain":
         return build_plain_rows(workload, num_rows, seed)
@@ -293,12 +315,15 @@ def stable_seed_offset(token: str, modulus: int) -> int:
 
 def run_one(mode: str, workload: str, columns: list[tuple[str, object]], num_rows: int, work_dir: Path, seed: int, row_codec: str = "delta") -> dict:
     layout = build_layout(columns)
-    rows = mode_rows(mode if mode != "columnar" else "numpy", workload, num_rows, seed)
+    rows = mode_rows(mode if mode not in ("columnar", "dataframe") else "numpy", workload, num_rows, seed)
     file_path = work_dir / f"{workload}_{mode}_{row_codec}.bcsv"
 
     if mode == "columnar":
         write_ms = write_columnar(file_path, columns, rows, row_codec)
         read_ms, counted_rows = read_columnar(file_path)
+    elif mode == "dataframe":
+        write_ms = write_dataframe_mode(file_path, columns, rows, row_codec)
+        read_ms, counted_rows = read_dataframe_mode(file_path)
     else:
         write_ms = write_rows(file_path, layout, rows, row_codec)
         read_ms, counted_rows = read_rows(file_path)
@@ -323,7 +348,7 @@ def run_one(mode: str, workload: str, columns: list[tuple[str, object]], num_row
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run dedicated pybcsv macro-style benchmarks")
     parser.add_argument("--size", default="S", choices=list(SIZE_TO_ROWS.keys()))
-    parser.add_argument("--modes", default="plain,numpy,pandas,columnar")
+    parser.add_argument("--modes", default="plain,numpy,pandas,columnar,dataframe")
     parser.add_argument("--workloads", default="weather_timeseries,iot_fleet,financial_orders")
     parser.add_argument("--codecs", default="delta", help="Comma-separated: flat,zoh,delta")
     parser.add_argument("--output", default="")
@@ -355,6 +380,9 @@ def main() -> int:
             continue
         if mode == "columnar" and np is None:
             print("[skip] columnar mode requires numpy")
+            continue
+        if mode == "dataframe" and (np is None or pd is None):
+            print("[skip] dataframe mode requires numpy and pandas")
             continue
         available_modes.append(mode)
 

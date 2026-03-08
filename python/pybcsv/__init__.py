@@ -35,6 +35,8 @@ except ImportError:
         raise ImportError(_STUB_MSG)
     def write_columns(*args, **kwargs):
         raise ImportError(_STUB_MSG)
+    def read_to_dataframe(*args, **kwargs):
+        raise ImportError(_STUB_MSG)
     def type_to_string(*args, **kwargs):
         raise ImportError(_STUB_MSG)
 
@@ -78,6 +80,7 @@ __all__ = [
     # Columnar I/O
     "read_columns",
     "write_columns",
+    "read_to_dataframe",
     # Utility functions
     "type_to_string",
     "write_dataframe",

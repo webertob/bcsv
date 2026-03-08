@@ -744,6 +744,99 @@ PYBIND11_MODULE(_bcsv, m) {
     }, py::arg("filename"),
        "Read a BCSV file into a dict of numpy arrays (numeric) and lists (strings)");
 
+    // ── Columnar I/O: read_to_dataframe ────────────────────────────────
+
+    m.def("read_to_dataframe", [](const std::string& filename,
+                                   const std::optional<py::list>& columns) -> py::object {
+        // Phase 1: Open via ReaderDirectAccess
+        bcsv::ReaderDirectAccess<bcsv::Layout> reader;
+        {
+            py::gil_scoped_release release;
+            if (!reader.open(filename, true)) {
+                throw std::runtime_error("Failed to open file: " + filename);
+            }
+        }
+        const size_t num_rows = reader.rowCount();
+        const auto& layout = reader.layout();
+        const size_t num_cols = layout.columnCount();
+        if (num_cols == 0)
+            throw std::runtime_error("File has no columns: " + filename);
+
+        // Cache column metadata
+        std::vector<std::string> col_names(num_cols);
+        std::vector<bcsv::ColumnType> col_types(num_cols);
+        std::vector<bool> is_string(num_cols, false);
+        for (size_t i = 0; i < num_cols; ++i) {
+            col_names[i] = layout.columnName(i);
+            col_types[i] = layout.columnType(i);
+            is_string[i] = (col_types[i] == bcsv::ColumnType::STRING);
+        }
+
+        // Phase 2: Allocate numpy arrays / string vectors
+        std::vector<py::array> arrays(num_cols);
+        std::vector<void*> bufs(num_cols, nullptr);
+        std::vector<std::vector<std::string>> string_cols(num_cols);
+
+        for (size_t c = 0; c < num_cols; ++c) {
+            if (is_string[c]) {
+                string_cols[c].reserve(num_rows);
+            } else {
+                auto shape = std::vector<py::ssize_t>{static_cast<py::ssize_t>(num_rows)};
+                arrays[c] = py::array(bcsv_type_to_numpy_dtype(col_types[c]), shape);
+                bufs[c] = arrays[c].mutable_data();
+            }
+        }
+
+        // Phase 3: Entire read loop under GIL release
+        {
+            py::gil_scoped_release release;
+            size_t row_idx = 0;
+            while (reader.readNext()) {
+                const auto& row = reader.row();
+                for (size_t c = 0; c < num_cols; ++c) {
+                    if (is_string[c]) {
+                        string_cols[c].emplace_back(row.template get<std::string>(c));
+                    } else {
+                        fill_numpy_cell(row, c, col_types[c], bufs[c], row_idx);
+                    }
+                }
+                ++row_idx;
+            }
+            reader.close();
+        }
+
+        // Phase 4: Build column dict
+        py::dict col_dict;
+        for (size_t c = 0; c < num_cols; ++c) {
+            if (is_string[c]) {
+                py::list str_list(string_cols[c].size());
+                for (size_t i = 0; i < string_cols[c].size(); ++i) {
+                    str_list[i] = py::cast(std::move(string_cols[c][i]));
+                }
+                col_dict[py::cast(col_names[c])] = std::move(str_list);
+            } else {
+                col_dict[py::cast(col_names[c])] = std::move(arrays[c]);
+            }
+        }
+
+        // Phase 5: Filter columns if requested
+        if (columns.has_value()) {
+            py::dict filtered;
+            for (auto& col_name : columns.value()) {
+                auto key = col_name.cast<std::string>();
+                if (col_dict.contains(py::cast(key))) {
+                    filtered[col_name] = col_dict[col_name];
+                }
+            }
+            col_dict = std::move(filtered);
+        }
+
+        // Phase 6: Construct pd.DataFrame in C++
+        auto pd = py::module_::import("pandas");
+        return pd.attr("DataFrame")(col_dict);
+    }, py::arg("filename"), py::arg("columns") = py::none(),
+       "Read a BCSV file directly into a pandas DataFrame");
+
     // ── Columnar I/O: write_columns ────────────────────────────────────
 
     m.def("write_columns", [](const std::string& filename, const py::dict& columns,
