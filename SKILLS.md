@@ -283,7 +283,7 @@ cmake --build build_asan -j$(nproc) && ./build_asan/bin/bcsv_gtest
 ```
 
 Test targets: `bcsv_gtest` (25 .cpp), `test_c_api`, `test_row_api`, `test_c_api_full`.
-Shell integration: `test_cli_tools.sh`, `test_bcsvSampler.sh`, `test_bcsvValidate.sh` (CTest-registered, 300s timeout).
+Pytest integration: `tests/integration/test_cli_tools.py`, `test_sampler.py`, `test_validate.py` (CTest-registered, 300s timeout).
 Deep reference: `tests/README.md`.
 
 ### Benchmarks (`benchmark/`)

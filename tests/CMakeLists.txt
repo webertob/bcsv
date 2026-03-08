@@ -66,24 +66,39 @@ target_link_libraries(bcsv_gtest PRIVATE
 include(GoogleTest)
 gtest_discover_tests(bcsv_gtest DISCOVERY_TIMEOUT 60)
 
-# Register shell-based integration tests (CLI tools + sampler)
-add_test(NAME cli_tools_integration
-    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/test_cli_tools.sh"
-    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
-)
-set_tests_properties(cli_tools_integration PROPERTIES TIMEOUT 300)
+# Cross-platform integration tests (pytest)
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_FOUND)
+    add_test(NAME pytest_cli_tools
+        COMMAND ${Python3_EXECUTABLE} -m pytest
+            "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_cli_tools.py" -v
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+    )
+    set_tests_properties(pytest_cli_tools PROPERTIES
+        TIMEOUT 300
+        ENVIRONMENT "BCSV_BUILD_DIR=${CMAKE_BINARY_DIR}"
+    )
 
-add_test(NAME bcsvSampler_integration
-    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/test_bcsvSampler.sh"
-    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
-)
-set_tests_properties(bcsvSampler_integration PROPERTIES TIMEOUT 300)
+    add_test(NAME pytest_sampler
+        COMMAND ${Python3_EXECUTABLE} -m pytest
+            "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_sampler.py" -v
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+    )
+    set_tests_properties(pytest_sampler PROPERTIES
+        TIMEOUT 300
+        ENVIRONMENT "BCSV_BUILD_DIR=${CMAKE_BINARY_DIR}"
+    )
 
-add_test(NAME bcsvValidate_integration
-    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/test_bcsvValidate.sh"
-    WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
-)
-set_tests_properties(bcsvValidate_integration PROPERTIES TIMEOUT 300)
+    add_test(NAME pytest_validate
+        COMMAND ${Python3_EXECUTABLE} -m pytest
+            "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_validate.py" -v
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+    )
+    set_tests_properties(pytest_validate PROPERTIES
+        TIMEOUT 300
+        ENVIRONMENT "BCSV_BUILD_DIR=${CMAKE_BINARY_DIR}"
+    )
+endif()
 
 # Set output directory
 set_target_properties(bcsv_gtest PROPERTIES

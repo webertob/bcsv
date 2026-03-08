@@ -300,19 +300,22 @@ cmake -B build -S . -DCMAKE_CXX_FLAGS="-fsanitize=thread -g"
 valgrind --leak-check=full --show-leak-kinds=all ./build/bin/bcsv_gtest
 ```
 
-### Shell Integration Tests
+### Python Integration Tests
 
-Three bash scripts test CLI tools end-to-end:
+Three pytest modules test CLI tools end-to-end (cross-platform):
 
 ```bash
 # All CLI tools (csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvGenerator)
-bash tests/test_cli_tools.sh
+python3 -m pytest tests/integration/test_cli_tools.py -v
 
 # bcsvSampler conditional sampling
-bash tests/test_bcsvSampler.sh
+python3 -m pytest tests/integration/test_sampler.py -v
 
 # bcsvValidate structure, pattern, and comparison modes
-bash tests/test_bcsvValidate.sh
+python3 -m pytest tests/integration/test_validate.py -v
+
+# Run all integration tests
+python3 -m pytest tests/integration/ -v
 ```
 
 ---
