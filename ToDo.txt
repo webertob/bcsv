@@ -235,9 +235,37 @@ background:
     - apple clangd-homebrew?
 
 21. bcsvSampler performance
-    - reduce conditionals
-    - vectorization SIMD
-    - multi-thread pipeline
+    Status: IN PROGRESS — Phase 1 (dispatch optimisation) complete
+
+    Completed:
+    [x] Baseline benchmarks captured (100K rows, median, release build):
+        Reader_Baseline: 13,349 Krow/s, Sampler_Passthrough: 5,092 Krow/s,
+        FloatFilter: 7,777, Gradient: 4,705, MovingAvg3: 4,776, StringFilter: 6,104
+    [x] Passthrough fast-path: detect trivial conditional ("true") and identity
+        selection ("X[0][*]") at compile time; bypass VM entirely for passthrough.
+        Result: Passthrough 5,092 → 13,059 Krow/s (+156%), matching raw Reader speed.
+        Also activates when no conditional/selection is set (common CLI case).
+        Files: sampler.h (cond_passthrough_, sel_passthrough_ flags, detection decls),
+               sampler.hpp (detectCondPassthrough, detectSelPassthrough, fast-path in next())
+    [x] Computed-goto dispatch (GCC/Clang): replace switch(op) with threaded
+        goto *dispatch_table[op] using labels-as-values extension. MSVC fallback
+        retains original switch. Bounds-checked, -Wpedantic suppressed.
+        Result: ~5-10% improvement on short bytecode programs (StringFilter).
+        File: sampler_vm.hpp (dispatch table, 64 label handlers, VM_DISPATCH macro)
+    [x] Quality assurance: 694 GTests, 39 sampler integration, 95 CLI integration,
+        700/700 CTest — all passing. Zero warnings on GCC release build.
+
+    Next steps:
+    [ ] Profiling: Create perf profiling script to identify actual bottlenecks
+        (VM dispatch vs Row::get vs I/O). Use perf stat / perf record + flamegraph.
+    [ ] Vectorisation: Consider compiler auto-vectorisation for batch row processing
+        (process N rows through same bytecode, form SIMD lanes per column type).
+        User preference: rely on compiler auto-vectorisation, no explicit intrinsics.
+    [ ] Pipeline parallelism: If profiling shows I/O-bound or decode-bound bottleneck,
+        consider multi-thread pipeline (read+decompress → decode → sample → encode → write).
+    [ ] Function-pointer dispatch: Alternative to bytecode — compile expression into
+        vector of std::function or typed function pointers. Higher memory, but eliminates
+        decode overhead. Evaluate after profiling confirms dispatch is bottleneck.
 
 
 

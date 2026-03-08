@@ -13,6 +13,7 @@
 #include "sampler_vm.hpp"
 
 #include <algorithm>
+#include <cstring>
 
 namespace bcsv {
 
@@ -51,6 +52,9 @@ namespace bcsv {
         BytecodeCompiler<LayoutType> compiler(reader_.layout());
         cond_bytecode_ = compiler.compileConditional(*ast);
         has_conditional_ = true;
+
+        // Detect fast-path: conditional is just "true"
+        cond_passthrough_ = detectCondPassthrough(cond_bytecode_);
 
         // Recalculate merged offsets (must be after has_conditional_ = true)
         recalculateOffsets();
@@ -98,6 +102,10 @@ namespace bcsv {
         BytecodeCompiler<LayoutType> compiler(reader_.layout());
         sel_bytecode_ = compiler.compileSelection(sel);
         has_selection_ = true;
+
+        // Detect fast-path: selection copies all columns from X[0]
+        sel_passthrough_ = detectSelPassthrough(
+            sel_bytecode_, reader_.layout().columnCount());
 
         // Recalculate merged offsets (must be after has_selection_ = true)
         recalculateOffsets();
@@ -176,6 +184,44 @@ namespace bcsv {
     bool Sampler<LayoutType>::next() {
         if (eof_) return false;
 
+        // Effective passthrough: no conditional set, or conditional detected as always-true
+        const bool cond_fast = !has_conditional_ || cond_passthrough_;
+        const bool sel_fast  = !has_selection_  || sel_passthrough_;
+
+        // Fast-path: both conditional and selection are passthrough.
+        // Skip VM entirely — just read rows and return them directly.
+        if (cond_fast && sel_fast && !window_) {
+            if (!reader_.readNext()) {
+                eof_ = true;
+                return false;
+            }
+            source_row_pos_ = reader_.rowPos();
+            // output_row_ not used — row() returns reader_.row()
+            return true;
+        }
+
+        // Fast-path: conditional is always true (no filter), but
+        // selection needs VM evaluation. Skip conditional VM call.
+        if (cond_fast && !window_) {
+            while (true) {
+                if (!reader_.readNext()) {
+                    eof_ = true;
+                    return false;
+                }
+                source_row_pos_ = reader_.rowPos();
+
+                if (has_selection_ && output_row_) {
+                    const Row& cr = reader_.row();
+                    auto vm_result = vm_.evalSelection(sel_bytecode_,
+                        [&cr](int16_t) -> const Row& { return cr; },
+                        *output_row_);
+                    if (vm_result.skip_row) continue;
+                    if (!vm_result.success) { eof_ = true; return false; }
+                }
+                return true;
+            }
+        }
+
         while (true) {
             // Handle draining phase (B3: rows after EOF with lookahead)
             if (draining_) {
@@ -225,8 +271,8 @@ namespace bcsv {
         if (min_offset_ == 0 && max_offset_ == 0) {
             window_.reset();
 
-            // Still need output row for selection
-            if (has_selection_ && !output_row_) {
+            // Need output row for selection unless it's a passthrough
+            if (has_selection_ && !sel_passthrough_ && !output_row_) {
                 output_row_ = std::make_unique<Row>(output_layout_);
             }
             return;
@@ -315,6 +361,75 @@ namespace bcsv {
         for (size_t i = 0; i < types.size(); ++i) {
             out_layout.addColumn(ColumnDefinition{names[i], types[i]});
         }
+    }
+
+    // ── detectCondPassthrough ───────────────────────────────────────
+    //
+    // A conditional is passthrough if the bytecode is exactly:
+    //   CONST_BOOL true(1)  HALT_COND
+    // This matches `setConditional("true")`.
+
+    template<LayoutConcept LayoutType>
+    bool Sampler<LayoutType>::detectCondPassthrough(const SamplerBytecode& bc) {
+        if (bc.code.size() != 3) return false;
+        return bc.code[0] == static_cast<uint8_t>(SamplerOpcode::CONST_BOOL)
+            && bc.code[1] == 1
+            && bc.code[2] == static_cast<uint8_t>(SamplerOpcode::HALT_COND);
+    }
+
+    // ── detectSelPassthrough ────────────────────────────────────────
+    //
+    // A selection is passthrough if the bytecode is a sequence of
+    //   (LOAD_xxx row_off=0 col=i  EMIT out_col=i)  for i = 0..col_count-1
+    // followed by HALT_SEL.
+    // This matches `setSelection("X[0][*]")`.
+
+    template<LayoutConcept LayoutType>
+    bool Sampler<LayoutType>::detectSelPassthrough(
+        const SamplerBytecode& bc, size_t col_count)
+    {
+        if (col_count == 0) return false;
+
+        // Each column produces: opcode(1) + row_off(2) + col(2) + EMIT(1) + out_col(2) = 8 bytes
+        // Plus HALT_SEL(1) at the end
+        size_t expected_size = col_count * 8 + 1;
+        if (bc.code.size() != expected_size) return false;
+
+        size_t ip = 0;
+        for (size_t c = 0; c < col_count; ++c) {
+            // Skip the load opcode (we accept any LOAD_xxx)
+            uint8_t op = bc.code[ip++];
+            if (op > static_cast<uint8_t>(SamplerOpcode::LOAD_STRING))
+                return false;
+
+            // row_offset must be 0
+            uint16_t ro_raw = static_cast<uint16_t>(bc.code[ip])
+                            | (static_cast<uint16_t>(bc.code[ip + 1]) << 8);
+            int16_t ro;
+            std::memcpy(&ro, &ro_raw, 2);
+            ip += 2;
+            if (ro != 0) return false;
+
+            // col index must equal c
+            uint16_t col = static_cast<uint16_t>(bc.code[ip])
+                         | (static_cast<uint16_t>(bc.code[ip + 1]) << 8);
+            ip += 2;
+            if (col != static_cast<uint16_t>(c)) return false;
+
+            // EMIT opcode
+            if (bc.code[ip++] != static_cast<uint8_t>(SamplerOpcode::EMIT))
+                return false;
+
+            // out_col must equal c
+            uint16_t out_col = static_cast<uint16_t>(bc.code[ip])
+                             | (static_cast<uint16_t>(bc.code[ip + 1]) << 8);
+            ip += 2;
+            if (out_col != static_cast<uint16_t>(c)) return false;
+        }
+
+        // HALT_SEL at end
+        return ip < bc.code.size()
+            && bc.code[ip] == static_cast<uint8_t>(SamplerOpcode::HALT_SEL);
     }
 
 } // namespace bcsv

@@ -124,6 +124,14 @@ namespace bcsv {
             return result;
         }
 
+        // ── Fast-path queries ────────────────────────────────────────
+
+        /// True if conditional is trivially always-true (e.g. "true")
+        bool isConditionalPassthrough() const { return cond_passthrough_; }
+
+        /// True if selection just copies all columns from current row
+        bool isSelectionPassthrough() const { return sel_passthrough_; }
+
         // ── Diagnostics ─────────────────────────────────────────────
 
         std::string disassemble() const {
@@ -179,6 +187,10 @@ namespace bcsv {
         bool                   eof_;
         bool                   draining_ = false;  // B3: draining phase after EOF
 
+        // Fast-path flags (detected after compilation)
+        bool                   cond_passthrough_ = false;  // conditional always true
+        bool                   sel_passthrough_  = false;  // selection copies all cols from X[0]
+
         // ── Internal helpers ────────────────────────────────────────
 
         void rebuildWindow();
@@ -192,6 +204,11 @@ namespace bcsv {
         BoundaryMode toBoundaryMode() const {
             return (mode_ == SamplerMode::EXPAND) ? BoundaryMode::EXPAND : BoundaryMode::TRUNCATE;
         }
+
+        // Fast-path detection
+        static bool detectCondPassthrough(const SamplerBytecode& bc);
+        static bool detectSelPassthrough(const SamplerBytecode& bc,
+                                         size_t col_count);
     };
 
 } // namespace bcsv
