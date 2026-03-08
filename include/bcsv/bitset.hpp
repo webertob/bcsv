@@ -1672,122 +1672,126 @@ Bitset<N>& Bitset<N>::operator^=(const Bitset& other) noexcept {
 template<size_t N>
 Bitset<N> Bitset<N>::operator<<(size_t shift_amount) const noexcept {
     // Bitset<0> has no words; avoid instantiating memmove on null pointers.
-    if constexpr (N == 0) { return *this; }
-
-    // Early exits
-    if (shift_amount == 0) {
+    if constexpr (N == 0) {
         return *this;
-    }
-    
-    if (shift_amount >= size()) {
-        if constexpr (IS_FIXED) {
-            return Bitset();
-        } else {
-            return Bitset(size());
-        }
-    }
-    
-    // Create zero-initialized result, then copy shifted data into it
-    Bitset result;
-    if constexpr (!IS_FIXED) {
-        result = Bitset(size());
-    }
-    
-    const size_t word_shift = shift_amount / WORD_BITS;
-    const size_t bit_shift = shift_amount % WORD_BITS;
-    const size_t wc = wordCount();
-    
-    if (bit_shift == 0) {
-        // Pure word shift - use memcpy for efficiency (non-overlapping)
-        if (word_shift < wc) {
-            std::memcpy(&result.wordData()[word_shift], 
-                       &wordData()[0],
-                       (wc - word_shift) * sizeof(word_t));
-        }
     } else {
-        // Mixed word + bit shift
-        const size_t inv_shift = WORD_BITS - bit_shift;
-        const size_t limit = wc - word_shift;
-        
-        // Process from low to high
-        size_t i = 0;
-        
-        // First word: only left shift, no combine
-        result.wordData()[word_shift] = wordData()[0] << bit_shift;
-        
-        // Main loop: combine two words
-        for (i = 1; i < limit; ++i) {
-            result.wordData()[i + word_shift] = (wordData()[i] << bit_shift) |
-                                                 (wordData()[i - 1] >> inv_shift);
+        // Early exits
+        if (shift_amount == 0) {
+            return *this;
         }
+        
+        if (shift_amount >= size()) {
+            if constexpr (IS_FIXED) {
+                return Bitset();
+            } else {
+                return Bitset(size());
+            }
+        }
+        
+        // Create zero-initialized result, then copy shifted data into it
+        Bitset result;
+        if constexpr (!IS_FIXED) {
+            result = Bitset(size());
+        }
+        
+        const size_t word_shift = shift_amount / WORD_BITS;
+        const size_t bit_shift = shift_amount % WORD_BITS;
+        const size_t wc = wordCount();
+        
+        if (bit_shift == 0) {
+            // Pure word shift - use memcpy for efficiency (non-overlapping)
+            if (word_shift < wc) {
+                std::memcpy(&result.wordData()[word_shift], 
+                           &wordData()[0],
+                           (wc - word_shift) * sizeof(word_t));
+            }
+        } else {
+            // Mixed word + bit shift
+            const size_t inv_shift = WORD_BITS - bit_shift;
+            const size_t limit = wc - word_shift;
+            
+            // Process from low to high
+            size_t i = 0;
+            
+            // First word: only left shift, no combine
+            result.wordData()[word_shift] = wordData()[0] << bit_shift;
+            
+            // Main loop: combine two words
+            for (i = 1; i < limit; ++i) {
+                result.wordData()[i + word_shift] = (wordData()[i] << bit_shift) |
+                                                     (wordData()[i - 1] >> inv_shift);
+            }
+        }
+        
+        result.clearUnusedBits();
+        return result;
     }
-    
-    result.clearUnusedBits();
-    return result;
 }
 
 template<size_t N>
 Bitset<N> Bitset<N>::operator>>(size_t shift_amount) const noexcept {
     // Bitset<0> has no words; avoid instantiating memmove on null pointers.
-    if constexpr (N == 0) { return *this; }
-
-    // Early exits
-    if (shift_amount >= size()) {
-        if constexpr (IS_FIXED) {
-            return Bitset();
-        } else {
-            return Bitset(size());
-        }
-    }
-    
-    if (shift_amount == 0) {
+    if constexpr (N == 0) {
         return *this;
-    }
-    
-    // Create result and copy data
-    Bitset result = *this;
-    
-    const size_t word_shift = shift_amount / WORD_BITS;
-    const size_t bit_shift = shift_amount % WORD_BITS;
-    const size_t wc = wordCount();
-
-    if (wc == 0) return result;
-
-    if (bit_shift == 0) {
-        // Pure word shift - use memmove for efficiency
-        if (word_shift < wc) {
-            std::memmove(&result.wordData()[0],
-                        &result.wordData()[word_shift],
-                        (wc - word_shift) * sizeof(word_t));
-        }
-        // Zero out upper words
-        std::memset(&result.wordData()[wc - word_shift], 0, word_shift * sizeof(word_t));
     } else {
-        // Mixed word + bit shift
-        const size_t inv_shift = WORD_BITS - bit_shift;
-        const size_t limit = wc - word_shift;
-        
-        // Process from low to high, avoiding branch in inner loop
-        size_t i = 0;
-        
-        // Main loop: can always combine two words
-        for (; i + 1 < limit; ++i) {
-            result.wordData()[i] = (wordData()[i + word_shift] >> bit_shift) |
-                                    (wordData()[i + word_shift + 1] << inv_shift);
+        // Early exits
+        if (shift_amount >= size()) {
+            if constexpr (IS_FIXED) {
+                return Bitset();
+            } else {
+                return Bitset(size());
+            }
         }
         
-        // Last word: only shift, no combine
-        if (i < limit) {
-            result.wordData()[i] = wordData()[i + word_shift] >> bit_shift;
+        if (shift_amount == 0) {
+            return *this;
         }
         
-        // Zero out upper words
-        for (size_t j = limit; j < wc; ++j) {
-            result.wordData()[j] = 0;
+        // Create result and copy data
+        Bitset result = *this;
+        
+        const size_t word_shift = shift_amount / WORD_BITS;
+        const size_t bit_shift = shift_amount % WORD_BITS;
+        const size_t wc = wordCount();
+
+        if (wc == 0) return result;
+
+        if (bit_shift == 0) {
+            // Pure word shift - use memmove for efficiency
+            if (word_shift < wc) {
+                std::memmove(&result.wordData()[0],
+                            &result.wordData()[word_shift],
+                            (wc - word_shift) * sizeof(word_t));
+            }
+            // Zero out upper words
+            std::memset(&result.wordData()[wc - word_shift], 0, word_shift * sizeof(word_t));
+        } else {
+            // Mixed word + bit shift
+            const size_t inv_shift = WORD_BITS - bit_shift;
+            const size_t limit = wc - word_shift;
+            
+            // Process from low to high, avoiding branch in inner loop
+            size_t i = 0;
+            
+            // Main loop: can always combine two words
+            for (; i + 1 < limit; ++i) {
+                result.wordData()[i] = (wordData()[i + word_shift] >> bit_shift) |
+                                        (wordData()[i + word_shift + 1] << inv_shift);
+            }
+            
+            // Last word: only shift, no combine
+            if (i < limit) {
+                result.wordData()[i] = wordData()[i + word_shift] >> bit_shift;
+            }
+            
+            // Zero out upper words
+            for (size_t j = limit; j < wc; ++j) {
+                result.wordData()[j] = 0;
+            }
         }
+        
+        return result;
     }
-    
-    return result;
 }
 
 template<size_t N>
