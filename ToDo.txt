@@ -230,7 +230,7 @@ background:
     - API clean up, identifiy functions that can be implemented easily from other functions?
 
 20. multi platform build
-    Status: IN PROGRESS — Phases 1-4 complete locally; CI awaiting first push
+    Status: COMPLETE — GCC, Clang, MSVC all clean with -Werror / /W4 /WX
 
     Completed:
     [x] Phase 1: CMake BCSV_WERROR option — `-Werror` (GCC/Clang) / `/WX` (MSVC)
@@ -361,9 +361,15 @@ background:
         returns for Bitset<0> to suppress Clang -Wnonnull on memmove (same class
         of issue as Phase 2b; the MSVC changes didn't break it but also didn't
         carry the existing fix — guard was runtime wc==0, Clang needs compile-time).
-    [ ] Phase 5c: Push to GitHub, verify CI passes on all 4 platforms
-    [ ] Phase 5d: Run Python integration tests on Windows (not yet executed)
-    [ ] Tag Item 20 complete once all platforms green
+        Second fix: wrapped operator<</>> bodies in else branch after if constexpr
+        (N==0) to also satisfy MSVC C4702 (unreachable code after constexpr return).
+    [x] Phase 5c: Pushed to GitHub — all changes on master
+    [x] Phase 5d: Python integration tests on Windows — 174/174 pass
+        MSVC ninja-msvc-debug build, pytest 8.x, Python 3.13
+    [x] All platforms verified:
+        MSVC 2022 v143 /W4 /WX: 0 warnings, 694/694 GTest, 911/911 C API, 174/174 pytest
+        GCC 13 -Werror: 0 warnings, 694/694 GTest, 174/174 pytest
+        Clang 18 -Werror: 0 warnings, 694/694 GTest, 174/174 pytest
 
     Known issues (library-level, found during Item 20 testing):
     [LIB-4] SIGSEGV in FileCodecPacketLZ4Batch001 — RESOLVED
