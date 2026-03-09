@@ -14,6 +14,7 @@ Technical design, requirements, and implementation roadmap
 5. [Implementation Roadmap](#implementation-roadmap)
 6. [Design Decisions](#design-decisions)
 7. [Optimization Techniques](#optimization-techniques)
+8. [Platform & Toolchain Requirements](#platform--toolchain-requirements)
 
 ---
 
@@ -746,7 +747,117 @@ PacketHeader (16 B) | uint32_t uncompressed_size | uint32_t compressed_size
 
 ---
 
+## Platform & Toolchain Requirements
+
+### C++20 Library Features Used
+
+BCSV requires a C++20 compiler **and** standard library with the following headers:
+
+| Header | Feature | Usage in BCSV |
+|--------|---------|---------------|
+| `<span>` | `std::span` | Row codecs, file codecs, LZ4, reader/writer interfaces |
+| `<bit>` | `std::popcount`, `std::bit_cast` | Bitset, definitions, packet header, delta codec |
+| `<concepts>` | `concept` keyword | Reader/Writer/FileCodec/Layout concepts, row visitors |
+| `<stop_token>` | `std::jthread`, `std::stop_token` | Background thread in `packet_lz4_batch` file codec |
+| `<thread>`, `<mutex>`, `<condition_variable>` | Threading primitives | Only `packet_lz4_batch` file codec |
+| `<fstream>` | `std::ifstream`, `std::ofstream` | Reader and Writer I/O (core dependency) |
+
+### Desktop / Server Platforms
+
+| Platform | Compiler | Minimum Version | Verified | Flags |
+|----------|----------|-----------------|----------|-------|
+| Linux x86/x64 | GCC | **13.1+** | GCC 13 `-Werror` | `-std=c++20 -pthread` |
+| Linux x86/x64 | Clang + libstdc++ | **Clang 16+**, libstdc++ 13+ | Clang 18 `-Werror` | `-std=c++20 -fbracket-depth=512` |
+| Windows x64 | MSVC | **VS 2022 17.4+** (v19.34+) | MSVC 2022 v143 `/W4 /WX` | `/std:c++20` |
+| macOS x64/ARM | Apple Clang | **Xcode 15.4+** | CI (macos-latest) | `-std=c++20` |
+| macOS x64/ARM | Homebrew LLVM | **17+** | — | Alternative to Apple Clang |
+| macOS x64/ARM | Homebrew GCC | **13+** | — | Alternative to Apple Clang |
+
+**Why GCC 13+ (not 12)?** libstdc++ shipped `<stop_token>` / `std::jthread` starting with
+GCC 13. GCC 12 has `<span>`, `<bit>`, `<concepts>` but lacks `<stop_token>`.
+
+**Why Xcode 15.4+ (not 15.0)?** Apple's libc++ added `std::jthread` / `<stop_token>` in
+Xcode 15.4 (May 2024). Prior Xcode 15.x releases lack these headers entirely.
+
+### Embedded Linux Platforms
+
+| Platform | CPU | Toolchain | Minimum Version | Notes |
+|----------|-----|-----------|-----------------|-------|
+| **STM32MP1/MP2** | Cortex-A7/A35 | Arm GNU + Yocto/Buildroot | GCC 13.2+ (CubeIDE 1.14+) | Full BCSV support |
+| **Zynq-7000** | Dual Cortex-A9 (32-bit) | Vitis / PetaLinux | **2024.1+** (GCC 13+) | Full BCSV support |
+| **ZynqMP / Kria** | Quad Cortex-A53 (64-bit) | Vitis / PetaLinux | **2024.1+** (GCC 13+) | Full BCSV support, typical Kria deployment |
+| **Versal** | Cortex-A72 (64-bit) | Vitis / PetaLinux | **2024.1+** (GCC 13+) | Full BCSV support on A72 cluster |
+| **Raspberry Pi** | Cortex-A53/A72/A76 | Raspberry Pi OS (Debian) | GCC 13+ | Full BCSV support |
+
+On all embedded Linux targets, BCSV is header-only: copy `include/bcsv/` and `include/lz4-1.10.0/`
+to the sysroot, add to the include path, compile with `-std=c++20 -pthread`. No CMake required
+on the target.
+
+### Baremetal / RTOS Targets (Not Currently Supported)
+
+BCSV **does not build** on baremetal or RTOS targets without modifications. The blockers are
+architectural, not compiler-version-related:
+
+| Blocker | Reason | Affected Code |
+|---------|--------|---------------|
+| **`std::fstream`** | No filesystem on baremetal; `newlib`/`newlib-nano` lacks `<fstream>` | Reader, Writer, CsvReader, CsvWriter |
+| **`<iostream>`** | Pulls 60–100 KB code + ~10 KB RAM on Cortex-M | Included in core headers for error output |
+| **C++ exceptions** | Many embedded projects use `-fno-exceptions` | Logic errors throw `std::out_of_range`, `std::runtime_error` |
+| **`<thread>`** | `newlib` has no POSIX threads; no threading on baremetal Cortex-M | `packet_lz4_batch` file codec (single file) |
+| **Dynamic allocation** | `std::vector`, `std::string` throughout; heap fragmentation risk | Row, Layout, codecs |
+
+**Affected targets:**
+
+| Target | CPU | RAM | Status |
+|--------|-----|-----|--------|
+| STM32F4 | 168 MHz Cortex-M4 | 192–320 KB | Not supported (baremetal) |
+| STM32F7 | 216 MHz Cortex-M7 | 320–512 KB | Not supported (baremetal) |
+| STM32H7 | 480 MHz Cortex-M7 | 564 KB–1 MB | Not supported (baremetal) |
+| ZynqMP Cortex-R5F | 600 MHz Cortex-R5F | TCM + DDR | Not supported (baremetal) |
+| Versal Cortex-R5F | Cortex-R5F | TCM + DDR | Not supported (baremetal) |
+
+Note: The `std::jthread` vs `std::thread` choice is irrelevant on these targets — there is
+no threading support at all. The primary blocker is the `std::fstream` I/O dependency.
+
+**Future embedded profile** would require:
+1. Abstract I/O via a stream concept (backed by FatFS, SPI flash, UART, DMA)
+2. Remove or `#ifdef`-guard `<iostream>` includes
+3. Error-code alternative to exceptions (`-fno-exceptions` support)
+4. Optional: static allocation mode (fixed-size buffers, no heap)
+
+### Vitis / STM32CubeIDE Version Mapping
+
+For quick reference when selecting IDE versions:
+
+**STM32CubeIDE → GCC version:**
+
+| CubeIDE | Arm GNU Toolchain | GCC | `std::jthread`? |
+|---------|-------------------|-----|-----------------|
+| 1.12–1.13 (2023) | 12.2–12.3 | GCC 12 | No |
+| **1.14–1.15 (2024)** | **13.2** | **GCC 13** | **Yes** |
+| 1.16+ (2025) | 13.3+ | GCC 13+ | Yes |
+
+**Vitis / PetaLinux → GCC version:**
+
+| Vitis | GCC (aarch64) | `std::jthread`? |
+|-------|---------------|-----------------|
+| 2022.x | GCC 11 | No |
+| 2023.x | GCC 12 | No |
+| **2024.1+** | **GCC 13+** | **Yes** |
+| 2025.x | GCC 13–14 | Yes |
+
+---
+
 ## Future Considerations
+
+### Embedded Portability
+
+BCSV is designed as a header-only C++20 library. On any platform with a conforming C++20
+standard library and a filesystem, adding `include/` to the include path is sufficient.
+
+Baremetal and RTOS targets present specific challenges that are documented in the
+[Platform & Toolchain Requirements](#platform--toolchain-requirements) section. A future
+embedded profile (abstracted I/O, no-exceptions mode) would address these.
 
 ### Potential Features (Post v2.0)
 
@@ -788,6 +899,6 @@ PacketHeader (16 B) | uint32_t uncompressed_size | uint32_t compressed_size
 
 ---
 
-**Last Updated**: 2026-02-28  
-**Version**: 1.3.0  
+**Last Updated**: 2026-03-09  
+**Version**: 1.4.0  
 **Status**: Active Development

@@ -61,7 +61,10 @@ bcsv/
 ## Build Skill
 
 ### Prerequisites
-- CMake ≥ 3.28, Ninja, C++20 compiler (GCC 12+ / Clang 15+ / MSVC 2022)
+- CMake ≥ 3.28, Ninja, C++20 compiler with full library support:
+  - GCC 13+ (Linux), Clang 16+ with libstdc++ 13+ (Linux), MSVC 2022 17.4+ (Windows), Xcode 15.4+ (macOS)
+  - Arm GNU Toolchain 13.2+ / STM32CubeIDE 1.14+ (STM32 with Linux)
+  - Vitis / PetaLinux 2024.1+ (AMD/Xilinx with Linux)
 - Dependencies (bundled): xxHash 0.8.3, LZ4 1.10.0 — no external installs needed
 
 ### Configure & Build

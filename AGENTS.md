@@ -3,6 +3,9 @@
 Binary-CSV (BCSV): C++20 header-only library for fast, compact time-series storage.
 Streaming row-by-row I/O, constant-time writes, crash resilient. Targets STM32 to desktop.
 
+Minimum toolchains: GCC 13+, Clang 16+/libstdc++13, MSVC 2022 17.4+, Xcode 15.4+,
+Arm GNU 13.2+ (STM32 Linux), Vitis/PetaLinux 2024.1+ (AMD/Xilinx Linux).
+
 ## Build & Test Commands
 
 ```bash

@@ -149,6 +149,27 @@ external CSV library comparison. See [benchmark/README.md](benchmark/README.md) 
 
 **All APIs produce identical binary format** — files are 100% cross-compatible. See [docs/INTEROPERABILITY.md](docs/INTEROPERABILITY.md) and [docs/API_OVERVIEW.md](docs/API_OVERVIEW.md) for code examples and comparison matrix.
 
+### Minimum Toolchain Requirements
+
+BCSV requires **C++20** with full library support for `<span>`, `<bit>`, `<concepts>`, and `<stop_token>`.
+
+| Platform | Compiler / Toolchain | Minimum Version | Notes |
+|----------|----------------------|-----------------|-------|
+| **Linux x86/x64** | GCC | **13.1+** | `-std=c++20 -pthread` |
+| **Linux x86/x64** | Clang + libstdc++ | **16+** with libstdc++ 13+ | `-std=c++20 -fbracket-depth=512` |
+| **Windows x64** | MSVC (Visual Studio) | **VS 2022 17.4+** (MSVC 19.34+) | `/std:c++20 /W4` |
+| **macOS x64/ARM** | Apple Clang (Xcode) | **Xcode 15.4+** | `-std=c++20`; Xcode 15.0–15.3 lacks `<stop_token>` |
+| **macOS** | Homebrew Clang/GCC | GCC 13+ or LLVM 17+ | Alternative to Apple Clang |
+| **STM32 (Linux)** | Arm GNU Toolchain | **GCC 13.2+** (CubeIDE 1.14+) | Embedded Linux on STM32MP1/MP2 |
+| **AMD/Xilinx (Linux)** | Vitis / PetaLinux | **2024.1+** (GCC 13+) | Zynq, ZynqMP, Kria, Versal with Linux |
+
+**Build system:** CMake ≥ 3.28, Ninja (recommended) or Make.
+
+> **Embedded baremetal note:** BCSV currently requires `std::fstream` for I/O and uses C++
+> exceptions for logic errors. Baremetal/RTOS targets (STM32 F4/F7/H7, Zynq without Linux)
+> lack filesystem and POSIX threading support, so BCSV does not build on baremetal without
+> an I/O abstraction layer. See [ARCHITECTURE.md](ARCHITECTURE.md#embedded-portability) for details.
+
 ---
 
 ## Project Status
@@ -271,14 +292,15 @@ target_link_libraries(your_target PRIVATE bcsv)
 
 ## Dependencies
 
-- **LZ4** (v1.10.0) - Embedded or system version
-- **xxHash** (v0.8.3) - Embedded
-- **C++20 Standard Library** - No other runtime dependencies
+- **LZ4** (v1.10.0) — bundled in `include/lz4-1.10.0/`
+- **xxHash** (v0.8.3) — bundled in `include/xxHash-0.8.3/`
+- **C++20 Standard Library** — `<span>`, `<bit>`, `<concepts>`, `<stop_token>`, `<thread>`, `<fstream>`
+- **No external runtime dependencies** — header-only, copy `include/` and compile
 
 **Build/test only:**
 
-- Google Test (auto-fetched)
-- pybind11 (auto-fetched for Python)
+- Google Test (auto-fetched via CMake FetchContent)
+- pybind11 (auto-fetched for Python bindings)
 
 ---
 
