@@ -598,10 +598,151 @@ background:
         Default codecs: delta row codec + packet_lz4_batch file codec
 
     Future considerations (not in scope):
-    - nanobind migration: 5-10× lower per-call overhead, ~3× smaller binaries
-      see Item 22.d for evaluation and plan
+    - nanobind migration: see Item 22.d for evaluation and plan
     - chunked/streaming columnar reads for memory-constrained scenarios
     - string dictionary encoding (depends on Item 27)
+
+22.d nanobind Migration (pybind11 → nanobind)
+    Status: PLANNED — Priority LOW
+    
+    Context: nanobind is the successor to pybind11 by the same author (Wenzel Jakob).
+    Ground-up rewrite, not a fork. Targets C++17/20. pybind11 is in maintenance mode.
+    nanobind project: https://github.com/wjakob/nanobind (MIT license)
+    
+    Why consider:
+    - 5-10× lower per-call dispatch overhead (measured: pybind11 ~100-250 ns/call)
+    - ~3× smaller .so binaries (current: 1.7 MB / 1.4 MB stripped / 570 exported symbols)
+    - Active development vs pybind11 maintenance mode
+    - Native nb::ndarray<> with framework-agnostic tensor support (numpy/PyTorch/JAX)
+    - Better error messages, stricter type safety by default
+    
+    Why not urgent:
+    - Columnar I/O hot path already pure C++ with GIL released (3-7 Krow/s)
+    - Row-by-row path bottlenecked by Python object creation, not binding dispatch
+    - Expected row-by-row improvement: 5-15% (not transformative)
+    - pybind11 is stable, no bugs, no missing features for our use case
+
+    pybind11 Baseline Benchmarks (reference for regression check):
+    Machine: A6650444 (AMD Ryzen), Python 3.12, delta codec, 100K rows
+    Date: 2026-03-09
+
+        Workload               Mode               Write Krow/s  Read Krow/s
+        ────────────────────────────────────────────────────────────────────
+        weather_timeseries     Plain                      1,802        1,861
+        weather_timeseries     NumPy                      2,025        1,966
+        weather_timeseries     Pandas                     2,054        2,611
+        weather_timeseries     Columnar                   6,958        8,407
+        weather_timeseries     DataFrame                  3,988        3,596
+        iot_fleet              Plain                      1,629        2,050
+        iot_fleet              NumPy                      1,473        1,150
+        iot_fleet              Pandas                     1,089        1,652
+        iot_fleet              Columnar                   3,535        2,864
+        iot_fleet              DataFrame                  2,136        1,907
+        financial_orders       Plain                      1,322        1,314
+        financial_orders       NumPy                      1,483        1,380
+        financial_orders       Pandas                     1,039        1,457
+        financial_orders       Columnar                   3,000        3,023
+        financial_orders       DataFrame                  1,785        1,087
+
+    Per-call dispatch overhead (pybind11, 1M calls each):
+        column_count():  106 ns/call
+        column_name(0): 114 ns/call
+        column_type(1): 250 ns/call
+        has_column(y):  119 ns/call
+        len(layout):     94 ns/call
+        type_to_string: 102 ns/call
+
+    Binary metrics (pybind11):
+        .so size:        1.7 MB (debug) / 1.4 MB (stripped)
+        Exported symbols: 570
+        
+    Current pybind11 API usage in bindings.cpp (922 lines):
+        py::class_<>              9 classes (Layout, Writer, Reader, ReaderDirectAccess,
+                                  Sampler, CsvWriter, CsvReader, PyWriter, PyReader)
+        py::enum_<>               4 enums (ColumnType, FileFlags, SamplerMode, SamplerErrorPolicy)
+        .def()                   117 method bindings
+        py::arg                   48 argument annotations
+        py::object/list/dict      48 Python type usages
+        py::gil_scoped_release    19 GIL release sites
+        py::cast<>                12 explicit casts
+        py::array / py::dtype      8 numpy array operations
+        py::return_value_policy    6 lifetime annotations
+        py::isinstance             4 type checks
+        py::arithmetic()           1 enum flag (FileFlags bitwise ops)
+        py::keep_alive             1 instance (Sampler → Layout reference)
+        PYBIND11_MODULE            1 module definition
+        
+    Migration plan — Phase by phase:
+
+    Phase 1 — Build system (setup.py, pyproject.toml):
+    [ ] Replace pybind11 dependency with nanobind>=2.0 in pyproject.toml
+    [ ] Replace pybind11.setup_helpers with nanobind build helpers in setup.py
+        nanobind uses cmake-based build by default, but also provides
+        nanobind.cmake_dir() for setup.py integration
+    [ ] Verify MSVC /D translation logic still works (unchanged)
+    [ ] Test: pip install -e . builds successfully on Linux
+
+    Phase 2 — Mechanical namespace rename in bindings.cpp:
+    [ ] #include <pybind11/*> → #include <nanobind/*>
+        pybind11/pybind11.h → nanobind/nanobind.h
+        pybind11/stl.h → nanobind/stl/string.h + nanobind/stl/vector.h + 
+                          nanobind/stl/optional.h (granular includes)
+        pybind11/numpy.h → nanobind/ndarray.h
+        pybind11/iostream.h → REMOVE (unused)
+    [ ] namespace py = pybind11 → namespace nb = nanobind
+    [ ] All py:: → nb::  (regex: s/\bpy::/nb::/g)
+    [ ] PYBIND11_MODULE(_bcsv, m) → NB_MODULE(_bcsv, m)
+    [ ] using namespace pybind11::literals → using namespace nanobind::literals
+    [ ] py::arithmetic() → nb::is_arithmetic()
+    [ ] Test: compiles without errors
+
+    Phase 3 — numpy ndarray API migration (5 call sites):
+    [ ] py::array → nb::ndarray<>
+        nanobind uses nb::ndarray<nb::numpy, T, nb::shape<nb::any>>
+        Buffer access: .data() instead of .mutable_data()
+        Shape: .shape(0) instead of .shape()[0]  
+        Dtype: nb::dtype<T> instead of py::dtype::of<T>()
+    [ ] Audit all 5 py::array usages in read_columns/write_columns
+    [ ] Audit 3 py::dtype usages
+    [ ] Test: columnar I/O round-trip with numpy arrays
+
+    Phase 4 — Semantic differences to verify:
+    [ ] Default holder: nanobind uses raw pointers (pybind11 uses unique_ptr)
+        Our classes use lambda wrappers → likely fine, but verify no double-free
+    [ ] Implicit conversions: nanobind is stricter
+        Check py::cast<int64_t>(value) etc. calls still work
+    [ ] py::cast_error → nb::cast_error (same)
+    [ ] py::stop_iteration → nb::stop_iteration (same)
+    [ ] py::index_error → nb::index_error (same)
+    [ ] py::keep_alive<1, 2>() → nb::keep_alive<1, 2>() (same syntax)
+    [ ] py::return_value_policy::reference → nb::rv_policy::reference (enum rename)
+
+    Phase 5 — Verification:
+    [ ] Run all 128 pybcsv tests across Python 3.11, 3.12, 3.13
+    [ ] Run all 4 examples (basic, pandas, advanced, performance)
+    [ ] Run benchmarks: all 5 modes × 3 workloads, compare against baseline above
+        Acceptance criteria:
+        - Columnar: ≥ pybind11 baseline (no regression)
+        - Row-by-row: ≥ pybind11 baseline (expect 5-15% improvement)
+        - Per-call: < 50 ns/call (expect 10-25 ns)
+    [ ] Measure .so size: expect < 600 KB stripped (3× reduction)
+    [ ] Cross-platform CI: Linux x86_64/ARM64, macOS x86_64/ARM64, Windows AMD64
+
+    Phase 6 — CI/CD update:
+    [ ] Update .github/workflows/build-and-publish.yml if needed
+    [ ] Build wheels with cibuildwheel, verify all 5 platforms
+    [ ] Publish to TestPyPI, smoke test: pip install pybcsv
+
+    Files to modify:
+        python/pybcsv/bindings.cpp  — namespace rename + ndarray API (~50 lines change)
+        python/setup.py             — build system change (~20 lines)
+        python/pyproject.toml       — dependency: pybind11 → nanobind (~2 lines)
+        python/sync_headers.py      — no change (syncs bcsv headers, not binding framework)
+        python/pybcsv/__init__.py   — no change (pure Python layer)
+        python/pybcsv/pandas_utils.py — no change (pure Python layer)
+    
+    Estimated effort: 6-8 hours (including test/debug/CI)
+    Risk: LOW (mechanical migration, well-tested API surface, easy rollback)
 
 23. Update C# bindinds, using latest version of bcsv library, supporting all codecs and major API entry points (lets work together to identify which to include, start broad, remove bloat/complexity/internals)
     - full test coverage and validated
