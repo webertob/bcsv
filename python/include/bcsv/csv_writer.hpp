@@ -16,9 +16,8 @@
 
 #include "csv_writer.h"
 #include "row.hpp"
+#include "std_charconv_compat.h"
 #include <cassert>
-#include <charconv>
-#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -244,20 +243,9 @@ namespace bcsv {
         constexpr size_t kMaxDigits = 32;
         size_t oldSize = buf_.size();
         buf_.resize(oldSize + kMaxDigits);
-#if defined(__APPLE__)
-        if constexpr (std::is_floating_point_v<T>) {
-            int n = std::snprintf(buf_.data() + oldSize, kMaxDigits, "%.17g", static_cast<double>(value));
-            buf_.resize(oldSize + static_cast<size_t>(n > 0 ? n : 0));
-        } else {
-            auto [ptr, ec] = std::to_chars(buf_.data() + oldSize,
-                                            buf_.data() + oldSize + kMaxDigits, value);
-            buf_.resize(static_cast<size_t>(ptr - buf_.data()));
-        }
-#else
-        auto [ptr, ec] = std::to_chars(buf_.data() + oldSize,
-                                        buf_.data() + oldSize + kMaxDigits, value);
+        auto [ptr, ec] = compat::to_chars(buf_.data() + oldSize,
+                                           buf_.data() + oldSize + kMaxDigits, value);
         buf_.resize(static_cast<size_t>(ptr - buf_.data()));
-#endif
     }
 
     /// Append float/double with decimal separator replacement if configured
@@ -267,15 +255,9 @@ namespace bcsv {
         constexpr size_t kMaxDigits = 32;
         size_t oldSize = buf_.size();
         buf_.resize(oldSize + kMaxDigits);
-#if defined(__APPLE__)
-        // Apple libc++ lacks std::to_chars for float/double
-        int n = std::snprintf(buf_.data() + oldSize, kMaxDigits, "%.17g", static_cast<double>(value));
-        size_t newSize = oldSize + static_cast<size_t>(n > 0 ? n : 0);
-#else
-        auto [ptr, ec] = std::to_chars(buf_.data() + oldSize,
-                                        buf_.data() + oldSize + kMaxDigits, value);
+        auto [ptr, ec] = compat::to_chars(buf_.data() + oldSize,
+                                           buf_.data() + oldSize + kMaxDigits, value);
         size_t newSize = static_cast<size_t>(ptr - buf_.data());
-#endif
         buf_.resize(newSize);
 
         // Replace '.' with configured decimal separator if needed
