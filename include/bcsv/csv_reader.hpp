@@ -19,12 +19,43 @@
 #include <algorithm>
 #include <cassert>
 #include <charconv>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
 
 namespace bcsv {
+
+    // ── Apple libc++ lacks std::from_chars for float/double ─────────────
+    namespace detail {
+#if defined(__APPLE__)
+        inline bool fromCharsFloat(const char* first, const char* last, float& value) {
+            std::string s(first, last);
+            char* end = nullptr;
+            errno = 0;
+            float v = std::strtof(s.c_str(), &end);
+            if (end == s.c_str() || errno == ERANGE) return false;
+            value = v;
+            return true;
+        }
+        inline bool fromCharsFloat(const char* first, const char* last, double& value) {
+            std::string s(first, last);
+            char* end = nullptr;
+            errno = 0;
+            double v = std::strtod(s.c_str(), &end);
+            if (end == s.c_str() || errno == ERANGE) return false;
+            value = v;
+            return true;
+        }
+#else
+        template<typename T>
+        inline bool fromCharsFloat(const char* first, const char* last, T& value) {
+            auto [ptr, ec] = std::from_chars(first, last, value);
+            return ec == std::errc{};
+        }
+#endif
+    } // namespace detail
 
     // ── Constructor / Destructor ────────────────────────────────────────
 
@@ -377,19 +408,16 @@ namespace bcsv {
                     float v = 0;
                     std::string cellStr;
                     if (decimal_sep_ != '.') {
-                        // Replace configured decimal separator with '.' for from_chars
                         cellStr.assign(trimmedCell.data(), trimmedCell.size());
                         for (char& c : cellStr) {
                             if (c == decimal_sep_) { c = '.'; break; }
                         }
-                        auto [ptr, ec] = std::from_chars(cellStr.data(), cellStr.data() + cellStr.size(), v);
-                        if (ec != std::errc{} && !trimmedCell.empty()) {
+                        if (!detail::fromCharsFloat(cellStr.data(), cellStr.data() + cellStr.size(), v) && !trimmedCell.empty()) {
                             err_msg_ = "Warning: Invalid FLOAT value at file line " + std::to_string(file_line_) +
                                        ", column " + std::to_string(i);
                         }
                     } else {
-                        auto [ptr, ec] = std::from_chars(trimmedCell.data(), trimmedCell.data() + trimmedCell.size(), v);
-                        if (ec != std::errc{} && !trimmedCell.empty()) {
+                        if (!detail::fromCharsFloat(trimmedCell.data(), trimmedCell.data() + trimmedCell.size(), v) && !trimmedCell.empty()) {
                             err_msg_ = "Warning: Invalid FLOAT value at file line " + std::to_string(file_line_) +
                                        ", column " + std::to_string(i);
                         }
@@ -405,14 +433,12 @@ namespace bcsv {
                         for (char& c : cellStr) {
                             if (c == decimal_sep_) { c = '.'; break; }
                         }
-                        auto [ptr, ec] = std::from_chars(cellStr.data(), cellStr.data() + cellStr.size(), v);
-                        if (ec != std::errc{} && !trimmedCell.empty()) {
+                        if (!detail::fromCharsFloat(cellStr.data(), cellStr.data() + cellStr.size(), v) && !trimmedCell.empty()) {
                             err_msg_ = "Warning: Invalid DOUBLE value at file line " + std::to_string(file_line_) +
                                        ", column " + std::to_string(i);
                         }
                     } else {
-                        auto [ptr, ec] = std::from_chars(trimmedCell.data(), trimmedCell.data() + trimmedCell.size(), v);
-                        if (ec != std::errc{} && !trimmedCell.empty()) {
+                        if (!detail::fromCharsFloat(trimmedCell.data(), trimmedCell.data() + trimmedCell.size(), v) && !trimmedCell.empty()) {
                             err_msg_ = "Warning: Invalid DOUBLE value at file line " + std::to_string(file_line_) +
                                        ", column " + std::to_string(i);
                         }

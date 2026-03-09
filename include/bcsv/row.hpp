@@ -57,6 +57,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <stdexcept>
 #include <string>
@@ -1012,7 +1013,7 @@ namespace bcsv {
                 currentVal.assign(1, value);
             }
             else {
-                static_assert(false, "RowStatic::set<Index>: Unsupported type to assign to string column");
+                static_assert(ALWAYS_FALSE<DecayedT>, "RowStatic::set<Index>: Unsupported type to assign to string column");
             }
         }
 
@@ -1158,10 +1159,19 @@ namespace bcsv {
         /// Write a numeric value using std::to_chars for locale-independent output.
         template<typename T>
         void writeNumeric(std::ostream& os, const T& value) {
-            // 24 bytes is enough for any numeric type including double
             std::array<char, 24> buf;
+#if defined(__APPLE__)
+            if constexpr (std::is_floating_point_v<T>) {
+                int n = std::snprintf(buf.data(), buf.size(), "%.17g", static_cast<double>(value));
+                os.write(buf.data(), n > 0 ? n : 0);
+            } else {
+                auto [ptr, ec] = std::to_chars(buf.data(), buf.data() + buf.size(), value);
+                os.write(buf.data(), ptr - buf.data());
+            }
+#else
             auto [ptr, ec] = std::to_chars(buf.data(), buf.data() + buf.size(), value);
             os.write(buf.data(), ptr - buf.data());
+#endif
         }
 
     } // namespace detail

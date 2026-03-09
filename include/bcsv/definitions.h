@@ -317,7 +317,7 @@ namespace bcsv {
      * @param type The column data type
      * @return Default ValueType for the specified type
      */
-    constexpr ValueType defaultValue(ColumnType type) {
+    inline ValueType defaultValue(ColumnType type) {
         switch (type) {
             case ColumnType::BOOL:   return ValueType{bool{false}};
             case ColumnType::UINT8:  return ValueType{uint8_t{0} };

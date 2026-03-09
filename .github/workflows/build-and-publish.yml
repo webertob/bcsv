@@ -44,11 +44,16 @@ jobs:
   # ── Build Linux wheels ──────────────────────────────────────────────
   build-linux:
     name: Build Linux wheels (${{ matrix.arch }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 120
     strategy:
+      fail-fast: false
       matrix:
-        arch: [x86_64]  # Add aarch64 for releases when needed
+        include:
+          - os: ubuntu-latest
+            arch: x86_64
+          - os: ubuntu-24.04-arm    # Native ARM64 runner (no QEMU)
+            arch: aarch64
     steps:
       - uses: actions/checkout@v5
         with:
@@ -60,12 +65,6 @@ jobs:
 
       - name: Install cibuildwheel
         run: pip install cibuildwheel==2.22.0
-
-      - name: Set up QEMU for multi-arch builds
-        if: matrix.arch == 'aarch64'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
 
       - name: Build wheels
         env:
@@ -146,9 +145,19 @@ jobs:
 
   # ── Test built wheel ────────────────────────────────────────────────
   test-wheel:
-    name: Test wheel (Linux)
+    name: Test wheel (${{ matrix.name }})
     needs: [build-linux]
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-latest
+            artifact: built-wheels-linux-x86_64
+          - name: Linux ARM64
+            os: ubuntu-24.04-arm
+            artifact: built-wheels-linux-aarch64
     steps:
       - uses: actions/checkout@v5
 
@@ -156,10 +165,10 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Download Linux wheel
+      - name: Download wheel
         uses: actions/download-artifact@v4
         with:
-          name: built-wheels-linux-x86_64
+          name: ${{ matrix.artifact }}
           path: dist
 
       - name: Install wheel and test dependencies
