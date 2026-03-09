@@ -1,52 +1,53 @@
-# PyBCSV - Python Bindings for BCSV Library
+# PyBCSV — Python Bindings for BCSV Library
 
-PyBCSV provides Python bindings for the high-performance BCSV (Binary CSV) library, enabling efficient binary CSV file handling with pandas integration.
+High-performance Python bindings for the [BCSV](https://github.com/bcsv/bcsv) (Binary CSV) library — fast, compact time-series storage with pandas integration.
 
 ## Features
 
-- **High Performance**: Binary format with optional LZ4 compression
-- **Pandas Integration**: Direct DataFrame read/write support
-- **Type Safety**: Preserves column types and data integrity
-- **Cross-platform**: Works on Linux, macOS, and Windows
-- **Memory Efficient**: Columnar I/O with numpy zero-copy for numeric data
+- **High Performance**: Binary format with optional LZ4 compression and delta encoding
+- **Pandas Integration**: Columnar DataFrame read/write via numpy zero-copy
+- **Type Safety**: Preserves column types and data integrity (10 numeric types + strings)
+- **Cross-platform**: Linux (x86_64, ARM64), macOS (x86_64, ARM64), Windows (AMD64)
+- **Context Managers**: All readers/writers support `with` statements
+- **Streaming I/O**: Row-by-row read/write, never loads entire file into memory
+- **Direct Access**: Random-access reads by row index via `ReaderDirectAccess`
+- **Sampler**: Bytecode VM for server-side row filtering and column projection
+- **CSV Interop**: Convert between CSV and BCSV via `from_csv()` / `to_csv()`
 
 ## Installation
 
-The Python wrapper has been successfully built and installed. To use it:
-
 ```bash
-cd python
-pip install .
+pip install pybcsv
+
+# With pandas support
+pip install pybcsv[pandas]
 ```
 
-## Basic Usage
+## Quick Start
 
-### Core BCSV Operations
+### Write and Read
 
 ```python
 import pybcsv
 
-# Create a layout
+# Define schema
 layout = pybcsv.Layout()
 layout.add_column("id", pybcsv.INT32)
-layout.add_column("name", pybcsv.STRING) 
+layout.add_column("name", pybcsv.STRING)
 layout.add_column("value", pybcsv.DOUBLE)
 
-# Write data
-writer = pybcsv.Writer(layout)
-writer.open("data.bcsv")
-writer.write_row([1, "Alice", 123.45])
-writer.write_row([2, "Bob", 678.90])
-writer.close()
+# Write rows (context manager auto-closes)
+with pybcsv.Writer(layout) as writer:
+    writer.open("data.bcsv")
+    writer.write_row([1, "Alice", 123.45])
+    writer.write_row([2, "Bob", 678.90])
 
-# Read data
-reader = pybcsv.Reader()
-reader.open("data.bcsv")
-all_rows = reader.read_all()
-reader.close()
-
-print(all_rows)
-# Output: [[1, 'Alice', 123.45], [2, 'Bob', 678.9]]
+# Read all rows
+with pybcsv.Reader() as reader:
+    reader.open("data.bcsv")
+    for row in reader:          # iterator protocol
+        print(row)
+    # or: all_rows = reader.read_all()
 ```
 
 ### Pandas Integration
@@ -55,19 +56,17 @@ print(all_rows)
 import pybcsv
 import pandas as pd
 
-# Create a DataFrame
 df = pd.DataFrame({
     'id': [1, 2, 3],
     'name': ['Alice', 'Bob', 'Charlie'],
     'value': [123.45, 678.90, 111.22]
 })
 
-# Write DataFrame to BCSV
+# Write DataFrame (columnar path, numpy zero-copy for numerics)
 pybcsv.write_dataframe(df, "data.bcsv")
 
 # Read back as DataFrame
 df_read = pybcsv.read_dataframe("data.bcsv")
-print(df_read.equals(df))  # True
 ```
 
 ### CSV Conversion
@@ -75,188 +74,258 @@ print(df_read.equals(df))  # True
 ```python
 import pybcsv
 
-# Convert CSV to BCSV
-pybcsv.from_csv("input.csv", "output.bcsv")
+pybcsv.from_csv("input.csv", "output.bcsv")   # CSV → BCSV
+pybcsv.to_csv("output.bcsv", "output.csv")    # BCSV → CSV
+```
 
-# Convert BCSV to CSV
-pybcsv.to_csv("output.bcsv", "output.csv")
+### Random Access
+
+```python
+import pybcsv
+
+with pybcsv.ReaderDirectAccess() as da:
+    da.open("data.bcsv")
+    print(f"Total rows: {len(da)}")
+    row = da[42]         # read row 42 directly (O(1) seek)
+    print(da.read(100))  # alternative syntax
 ```
 
 ## Available Types
 
-- `pybcsv.BOOL` - Boolean values
-- `pybcsv.INT8` / `pybcsv.UINT8` - 8-bit integers
-- `pybcsv.INT16` / `pybcsv.UINT16` - 16-bit integers  
-- `pybcsv.INT32` / `pybcsv.UINT32` - 32-bit integers
-- `pybcsv.INT64` / `pybcsv.UINT64` - 64-bit integers
-- `pybcsv.FLOAT` - 32-bit floating point
-- `pybcsv.DOUBLE` - 64-bit floating point
-- `pybcsv.STRING` - Variable-length strings
+| Constant | Description |
+|----------|-------------|
+| `pybcsv.BOOL` | Boolean |
+| `pybcsv.INT8` / `pybcsv.UINT8` | 8-bit integers |
+| `pybcsv.INT16` / `pybcsv.UINT16` | 16-bit integers |
+| `pybcsv.INT32` / `pybcsv.UINT32` | 32-bit integers |
+| `pybcsv.INT64` / `pybcsv.UINT64` | 64-bit integers |
+| `pybcsv.FLOAT` | 32-bit float |
+| `pybcsv.DOUBLE` | 64-bit float |
+| `pybcsv.STRING` | Variable-length string |
 
 ## API Reference
 
-### Layout Class
+### Layout
 
 ```python
-layout = pybcsv.Layout()
-layout.add_column(name: str, column_type: ColumnType)
+layout = pybcsv.Layout()                              # empty layout
+layout = pybcsv.Layout([ColumnDefinition("x", INT32)]) # from list
+
+layout.add_column(name: str, type: ColumnType)
+layout.add_column(col: ColumnDefinition)
 layout.column_count() -> int
 layout.column_name(index: int) -> str
 layout.column_type(index: int) -> ColumnType
 layout.has_column(name: str) -> bool
 layout.column_index(name: str) -> int
+layout.get_column_names() -> list[str]
+layout.get_column_types() -> list[ColumnType]
+layout.get_column(index: int) -> ColumnDefinition
+len(layout)           # column count
+layout[i]             # ColumnDefinition at index i
 ```
 
-### Writer Class
+### Writer
 
 ```python
-writer = pybcsv.Writer(layout: Layout)
+writer = pybcsv.Writer(layout: Layout, row_codec: str = "delta")
 writer.open(filename: str, overwrite: bool = True,
             compression_level: int = 1, block_size_kb: int = 64,
-            flags: FileFlags = FileFlags.NONE) -> None  # raises RuntimeError on failure
-writer.write_row(values: list) -> None
-writer.flush() -> None
-writer.close() -> None
+            flags: FileFlags = FileFlags.BATCH_COMPRESS)  # raises RuntimeError on failure
+writer.write_row(values: list)
+writer.write_rows(rows: list[list])     # batch write
+writer.flush()
+writer.close()
 writer.is_open() -> bool
+writer.row_count() -> int
+writer.row_codec() -> str
+writer.compression_level() -> int
+writer.layout() -> Layout
+
+# Context manager
+with pybcsv.Writer(layout) as w:
+    w.open("out.bcsv")
+    w.write_row([...])
 ```
 
-### Reader Class
+Row codec options: `"flat"`, `"zoh"` (zero-order hold), `"delta"` (default).
+
+### Reader
 
 ```python
 reader = pybcsv.Reader()
-reader.open(filename: str) -> None  # raises RuntimeError on failure
-reader.read_next() -> bool
-reader.read_all() -> list[list]
-reader.close() -> None
+reader.open(filename: str)              # raises RuntimeError on failure
+reader.read_next() -> bool              # advance to next row
+reader.read_row() -> list | None        # read+advance, None at EOF
+reader.read_all() -> list[list]         # read remaining rows
+reader.close()
 reader.is_open() -> bool
 reader.layout() -> Layout
+reader.row_pos() -> int                 # current row index
+reader.row_value(column: int) -> Any    # typed value from current row
+reader.row_dict() -> dict               # current row as {name: value}
+reader.file_flags() -> FileFlags
+reader.compression_level() -> int
+reader.version_string() -> str
+reader.creation_time() -> str
+reader.count_rows() -> int              # total row count
+
+# Iterator protocol
+for row in reader:
+    print(row)
+
+# Context manager
+with pybcsv.Reader() as r:
+    r.open("data.bcsv")
+    for row in r:
+        print(row)
+```
+
+### ReaderDirectAccess
+
+Random-access reader — reads any row by index without scanning.
+
+```python
+da = pybcsv.ReaderDirectAccess()
+da.open(filename: str, rebuild_footer: bool = False)
+da.read(index: int) -> list             # read row at index
+da.row_count() -> int
+da.layout() -> Layout
+da.close()
+da.is_open() -> bool
+da.file_flags() -> FileFlags
+da.compression_level() -> int
+da.version_string() -> str
+da.creation_time() -> str
+
+len(da)               # row count
+da[i]                 # read row at index i
+```
+
+### CsvWriter / CsvReader
+
+Native CSV I/O with the same Layout-based schema.
+
+```python
+# Write CSV
+csv_w = pybcsv.CsvWriter(layout, delimiter=',', decimal_sep='.')
+csv_w.open(filename, overwrite=True, include_header=True)
+csv_w.write_row(values)
+csv_w.write_rows(rows)
+csv_w.close()
+
+# Read CSV
+csv_r = pybcsv.CsvReader(layout, delimiter=',', decimal_sep='.')
+csv_r.open(filename, has_header=True)
+for row in csv_r:       # iterator support
+    print(row)
+csv_r.close()
+```
+
+### Sampler
+
+Bytecode VM for filtering and projecting rows from an open Reader.
+
+```python
+reader = pybcsv.Reader()
+reader.open("data.bcsv")
+
+sampler = pybcsv.Sampler(reader)
+sampler.set_conditional("col_a > 10")    # filter expression
+sampler.set_selection("col_a, col_b")    # column projection
+
+result = sampler.output_layout()         # SamplerCompileResult (bool-testable)
+if result:
+    for row in sampler:                  # iterate matching rows
+        print(row)
+```
+
+### FileFlags
+
+```python
+pybcsv.FileFlags.NONE
+pybcsv.FileFlags.ZERO_ORDER_HOLD
+pybcsv.FileFlags.NO_FILE_INDEX
+pybcsv.FileFlags.STREAM_MODE
+pybcsv.FileFlags.BATCH_COMPRESS
+pybcsv.FileFlags.DELTA_ENCODING
+
+# Combinable with | and &
+flags = pybcsv.FileFlags.BATCH_COMPRESS | pybcsv.FileFlags.NO_FILE_INDEX
 ```
 
 ### Utility Functions
 
 ```python
-# Pandas integration
-pybcsv.write_dataframe(df: pd.DataFrame, filename: str, compression: bool = True)
-pybcsv.read_dataframe(filename: str) -> pd.DataFrame
+# Pandas integration (requires pandas)
+pybcsv.write_dataframe(df, filename,
+                       compression_level=1,
+                       row_codec="delta",
+                       type_hints=None)  # dict[str, ColumnType]
+pybcsv.read_dataframe(filename, columns=None)  # -> pd.DataFrame
 
-# CSV conversion
-pybcsv.from_csv(csv_filename: str, bcsv_filename: str, compression: bool = True)
-pybcsv.to_csv(bcsv_filename: str, csv_filename: str)
+# CSV conversion (requires pandas)
+pybcsv.from_csv(csv_file, bcsv_file, compression_level=1, type_hints=None)
+pybcsv.to_csv(bcsv_file, csv_file)
+
+# Columnar I/O (numpy arrays)
+pybcsv.read_columns(filename) -> dict[str, np.ndarray | list[str]]
+pybcsv.write_columns(filename, columns, col_order, col_types,
+                     row_codec="delta", compression_level=1)
+pybcsv.read_to_dataframe(filename, columns=None) -> pd.DataFrame
 
 # Type utilities
-pybcsv.type_to_string(column_type: ColumnType) -> str
+pybcsv.type_to_string(column_type) -> str
 ```
-
-## Performance Benefits
-
-The binary format provides significant advantages:
-
-1. **Faster I/O**: Binary format is faster to read/write than text CSV
-2. **Type Safety**: Preserves exact data types without parsing
-3. **Compression**: Optional LZ4 compression reduces file size
-4. **Memory Efficiency**: Columnar I/O with numpy zero-copy for numeric data
 
 ## Testing
 
-Run the included test scripts to verify functionality:
-
 ```bash
-python -m pytest tests/ -v    # All tests
+pip install pybcsv[test]
+python -m pytest tests/ -v
 ```
-
-## Python Benchmark Lane (Item 11.B)
-
-Dedicated benchmark runner:
-
-```bash
-python3 python/benchmarks/run_pybcsv_benchmarks.py --size=S
-```
-
-See `python/benchmarks/README.md` for workload/mode options and output schema.
 
 ## File Structure
 
 ```text
 python/
 ├── pybcsv/
-│   ├── __init__.py           # Main module interface
-│   ├── __version__.py        # Version information
+│   ├── __init__.py           # Public API and exports
+│   ├── __version__.py        # Version (setuptools-scm)
 │   ├── bindings.cpp          # C++ pybind11 bindings
-│   └── pandas_utils.py       # Pandas integration utilities
+│   └── pandas_utils.py       # Pandas/CSV integration
 ├── examples/
-│   ├── basic_example.py      # Basic usage examples
-│   └── pandas_example.py     # Pandas integration examples
-├── tests/
-│   ├── test_basic.py         # Basic functionality tests
-│   └── test_pandas.py        # Pandas integration tests
-├── setup.py                  # Package build configuration
-├── pyproject.toml           # Modern Python packaging config
-└── README.md                # This documentation
+│   ├── basic_usage.py        # Core BCSV operations
+│   ├── pandas_integration.py # DataFrame examples
+│   └── performance_benchmark.py
+├── tests/                    # 17 test modules (pytest)
+├── benchmarks/               # Python benchmark runner
+├── setup.py
+├── pyproject.toml
+└── README.md
 ```
 
 ## Compatibility
 
-- **Python**: 3.11+ (tested with 3.12)
+- **Python**: 3.11, 3.12, 3.13
+- **Platforms**: Linux (x86_64, ARM64), macOS (x86_64, ARM64), Windows (AMD64)
+- **Compilers**: GCC 13+, Clang 16+, MSVC 2022 17.4+, Apple Clang (Xcode 15.4+)
+- **C++ Standard**: C++20
 - **Dependencies**:
   - numpy >= 1.19.0 (required)
-  - pandas >= 1.3.0 (optional, for DataFrame integration)
-- **Platforms**: Linux, macOS, Windows
-- **Compilers**: GCC 7+, Clang 8+, MSVC 2019+
-
-## Performance Results
-
-Based on testing with sample data:
-
-- **DataFrame I/O**: Perfect data fidelity with type preservation
-- **File Size**: Efficient binary encoding (varies by data and compression)
-- **Speed**: Significantly faster than CSV for repeated I/O operations
-- **Memory**: Columnar I/O with numpy zero-copy for numeric data
-
-The Python wrapper successfully bridges the high-performance C++ BCSV library with Python's data science ecosystem, providing both convenience and performance for data processing workflows.
+  - pandas >= 1.0.0 (optional — `pip install pybcsv[pandas]`)
 
 ## License
 
-MIT License
-
-Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-See the [LICENSE](LICENSE) file for full details.
+MIT — see [LICENSE](LICENSE) for details.
 
 ## Publishing
 
-To publish built wheels to TestPyPI and PyPI you'll need to create API tokens and add them as GitHub repository secrets.
+Wheels are built automatically via GitHub Actions (cibuildwheel) and published using
+[Trusted Publisher (OIDC)](https://docs.pypi.org/trusted-publishers/) — no API tokens required.
 
-1. Create API tokens:
-
-  - TestPyPI: Go to the TestPyPI account page and create an API token. Copy the token: [TestPyPI account page](https://test.pypi.org/manage/account/).
-
-  - PyPI: Go to the PyPI account page and create an API token for the project (or your account). Copy the token: [PyPI account page](https://pypi.org/manage/account/).
-
-2. Add GitHub secrets:
-
-  - In your repository on GitHub, go to Settings → Secrets → Actions.
-
-  - Add a new secret named `TEST_PYPI_API_TOKEN` and paste the TestPyPI token.
-
-  - Optionally add `PYPI_API_TOKEN` with the PyPI token when you're ready to publish to the main index.
+- **TestPyPI**: every push to `main`/`master` or version tags
+- **PyPI**: only on `v*` tags (e.g. `git tag v1.4.0 && git push origin v1.4.0`)
 
 3. Trigger the publish workflow:
 
