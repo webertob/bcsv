@@ -113,7 +113,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: macos-13      # Intel x86_64
+          - os: macos-14      # Cross-compile x86_64 on Apple Silicon
             arch: x86_64
           - os: macos-14      # Apple Silicon arm64
             arch: arm64
@@ -160,7 +160,7 @@ jobs:
 
       - name: Install wheel and test dependencies
         run: |
-          pip install dist/*.whl
+          pip install pybcsv --find-links dist/ --no-index
           pip install pytest pandas
 
       - name: Run pybcsv test suite
