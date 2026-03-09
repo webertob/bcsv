@@ -559,7 +559,7 @@ namespace bcsv {
             Base::stream_.seekg(static_cast<std::streamoff>(lastPacket.byte_offset) + sizeof(PacketHeader));
 
             size_t rowCntLstPkt = 0;
-            size_t rowLen;
+            uint64_t rowLen;
 
             // Count rows within last packet using row lengths
             while (Base::stream_) {

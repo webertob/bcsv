@@ -136,7 +136,7 @@ public:
         }
 
         // Read row length (VLE with checksum update)
-        size_t rowLen = 0;
+        uint64_t rowLen = 0;
         try {
             vleDecode<uint64_t, true>(is, rowLen, &packet_hash_);
         } catch (...) {
@@ -169,7 +169,7 @@ public:
                 + std::to_string(rowLen) + " > " + std::to_string(MAX_ROW_LENGTH) + ")");
         }
 
-        read_buffer_.resize(rowLen);
+        read_buffer_.resize(static_cast<size_t>(rowLen));
         is.read(reinterpret_cast<char*>(read_buffer_.data()),
                 static_cast<std::streamsize>(rowLen));
         if (!is || is.gcount() != static_cast<std::streamsize>(rowLen)) {
@@ -177,7 +177,7 @@ public:
         }
         packet_hash_.update(read_buffer_);
 
-        return std::span<const std::byte>(read_buffer_.data(), rowLen);
+        return std::span<const std::byte>(read_buffer_.data(), static_cast<size_t>(rowLen));
     }
 
     // ── Boundary / state signals ────────────────────────────────────────

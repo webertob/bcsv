@@ -100,7 +100,7 @@ public:
     // ── Read lifecycle ──────────────────────────────────────────────────
 
     std::span<const std::byte> readRow(std::istream& is) {
-        size_t rowLen = 0;
+        uint64_t rowLen = 0;
         try {
             vleDecode<uint64_t, true>(is, rowLen, nullptr);
         } catch (...) {
@@ -119,7 +119,7 @@ public:
                 + std::to_string(rowLen) + " > " + std::to_string(MAX_ROW_LENGTH) + ")");
         }
 
-        read_buffer_.resize(rowLen);
+        read_buffer_.resize(static_cast<size_t>(rowLen));
         is.read(reinterpret_cast<char*>(read_buffer_.data()),
                 static_cast<std::streamsize>(rowLen));
         if (!is || is.gcount() != static_cast<std::streamsize>(rowLen)) {
@@ -132,12 +132,12 @@ public:
         if (!is || is.gcount() != static_cast<std::streamsize>(sizeof(expectedHash))) {
             throw std::runtime_error("FileCodecStream001::readRow: failed to read row checksum");
         }
-        uint32_t actualHash = Checksum::compute32(read_buffer_.data(), rowLen);
+        uint32_t actualHash = Checksum::compute32(read_buffer_.data(), static_cast<size_t>(rowLen));
         if (actualHash != expectedHash) {
             throw std::runtime_error("FileCodecStream001::readRow: row checksum mismatch");
         }
 
-        return std::span<const std::byte>(read_buffer_.data(), rowLen);
+        return std::span<const std::byte>(read_buffer_.data(), static_cast<size_t>(rowLen));
     }
 
     // ── Boundary / state signals ────────────────────────────────────────

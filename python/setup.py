@@ -230,7 +230,9 @@ if sys.platform == "darwin":
     # Apple Clang lacks std::jthread/stop_token (requires LLVM 17+,
     # Apple ships LLVM 16-based Clang). Batch codec uses jthread for
     # background compression thread. Disable it; all other codecs work.
-    pass  # No BCSV_HAS_BATCH_CODEC, no -pthread
+    # Explicit -mmacosx-version-min ensures from_chars/to_chars float/double
+    # availability even when MACOSX_DEPLOYMENT_TARGET env var doesn't propagate.
+    compile_args.append("-mmacosx-version-min=13.3")
 else:
     compile_args.append("-DBCSV_HAS_BATCH_CODEC=1")
     compile_args.append("-pthread")
