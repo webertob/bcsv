@@ -121,14 +121,15 @@ if(MSVC)
     )
     target_compile_definitions(_bcsv PRIVATE BCSV_HAS_BATCH_CODEC=1)
 elseif(APPLE)
-    # Apple Clang (Xcode 15) ships libc++ that compiles std::jthread but
-    # has runtime issues with stop_token on macOS CI runners.  Disable
-    # the batch codec (jthread-based background compressor) on macOS;
-    # all other codecs work fine.  This matches the old setup.py behavior.
+    # Apple Clang ships LLVM 18-era libc++ where jthread/stop_token are
+    # still experimental (guarded by _LIBCPP_HAS_NO_EXPERIMENTAL_STOP_TOKEN).
+    # The -fexperimental-library flag enables these features.
     target_compile_options(_bcsv PRIVATE
         -O3 -Wall -Wextra
+        -fexperimental-library
         -mmacosx-version-min=13.3
     )
+    target_compile_definitions(_bcsv PRIVATE BCSV_HAS_BATCH_CODEC=1)
 else()
     # Linux: full C++20 with batch codec + pthreads
     target_compile_options(_bcsv PRIVATE

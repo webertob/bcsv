@@ -119,9 +119,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14      # Cross-compile x86_64 on Apple Silicon
+          - os: macos-15      # Cross-compile x86_64 on Apple Silicon
             arch: x86_64
-          - os: macos-14      # Apple Silicon arm64
+          - os: macos-15      # Apple Silicon arm64 (Xcode 16.4 / Apple Clang 16)
             arch: arm64
     steps:
       - uses: actions/checkout@v5
@@ -165,10 +165,8 @@ jobs:
           - name: Windows AMD64
             os: windows-latest
             artifact: built-wheels-windows-AMD64
-          # macOS x86_64 test skipped: no Intel macOS runners available
-          # (wheel is cross-compiled on ARM64 and still published)
           - name: macOS ARM64
-            os: macos-14
+            os: macos-15
             artifact: built-wheels-macos-arm64
     steps:
       - uses: actions/checkout@v5
@@ -220,7 +218,6 @@ jobs:
         with:
           repository-url: https://test.pypi.org/legacy/
           skip-existing: true
-        continue-on-error: true
 
   publish-pypi:
     name: Publish to PyPI
@@ -262,8 +259,8 @@ jobs:
           pip install --upgrade pip
           # Install numpy, pandas, pyarrow from PyPI first (not available on TestPyPI)
           pip install numpy pandas pyarrow
-          # Try TestPyPI, fall back to local wheel
-          pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ pybcsv || true
+          # Install pybcsv from TestPyPI (--pre for dev/pre-release versions from non-tag pushes)
+          pip install --pre --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ pybcsv
           python -c "
           import pybcsv
           print(f'pybcsv {pybcsv.__version__} imported successfully')

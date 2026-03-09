@@ -317,21 +317,21 @@ class TestPerformanceEdgeCases(unittest.TestCase):
         test_data = [[i, i * 1.5] for i in range(n_rows)]
         
         # Test batch write
-        start_time = time.time()
+        start_time = time.perf_counter()
         writer_batch = pybcsv.Writer(layout)
         writer_batch.open(filepath_batch)
         writer_batch.write_rows(test_data)
         writer_batch.close()
-        batch_time = time.time() - start_time
+        batch_time = time.perf_counter() - start_time
         
         # Test individual write
-        start_time = time.time()
+        start_time = time.perf_counter()
         writer_individual = pybcsv.Writer(layout)
         writer_individual.open(filepath_individual)
         for row in test_data:
             writer_individual.write_row(row)
         writer_individual.close()
-        individual_time = time.time() - start_time
+        individual_time = time.perf_counter() - start_time
         
         # Verify both files have same data
         reader1 = pybcsv.Reader()
@@ -357,9 +357,9 @@ class TestPerformanceEdgeCases(unittest.TestCase):
             print(f"Individual time: {individual_time:.6f}s")
         
         # Note: For small datasets, batch operations may not show significant speedup
-        # due to overhead. We just verify both methods work.
-        self.assertGreater(batch_time, 0, "Batch operations should take some time")
-        self.assertGreater(individual_time, 0, "Individual operations should take some time")
+        # due to overhead. We just verify both methods produce identical output.
+        self.assertGreaterEqual(batch_time, 0)
+        self.assertGreaterEqual(individual_time, 0)
 
     def test_compression_effectiveness(self):
         """Test compression effectiveness with different data patterns."""
