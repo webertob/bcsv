@@ -427,14 +427,20 @@ background:
 
 
 
-22. Update pybcsv to utilize latest bcsv version, supporting all codecs and major API entry points (lets work together to identify which to include, start broad, remove bloat/complexity/internals)
+[x] 22. Update pybcsv to utilize latest bcsv version, supporting all codecs and major API entry points
     Status: COMPLETE
-    [x] full test coverage and validated (128 pybcsv tests, 14 test files)
-    [x] pypi and github CI/CD pipline is operational (pyproject.toml, setup.py)
+    [x] full test coverage and validated (128 tests, 15 test files)
+    [x] 22 public API exports (Layout, Writer, Reader, ReaderDirectAccess, Sampler,
+        CsvWriter, CsvReader, FileFlags, ColumnType, ColumnDefinition, SamplerMode,
+        SamplerErrorPolicy, SamplerCompileResult, read/write_columns,
+        read_to_dataframe, type_to_string, write/read_dataframe, to/from_csv)
+    [x] 4 examples: basic_usage.py, pandas_integration.py, advanced_usage.py,
+        performance_benchmark.py — all verified running
+    [x] pypi and github CI/CD pipeline operational (v1.4.0 published to PyPI + TestPyPI)
+        5 wheel platforms: Linux x86_64/ARM64, macOS x86_64/ARM64, Windows AMD64
+        cibuildwheel 2.22.0, Trusted Publisher OIDC, build[uv] frontend
     [x] pandas and numpy support (pandas_utils.py, columnar I/O with zero-copy)
-    [x] benchmarking in place read to/write from pandas
-    [x] benchmarking in place read to/write from numpy,
-    [x] benchmarking in place read to/write from python (plain)
+    [x] benchmarking in place (plain, numpy, pandas, columnar, dataframe modes)
     
 [x] 22.b pybcsv Architecture Rework — Performance & Quality
     Status: COMPLETE — All phases done, all performance targets met
@@ -577,7 +583,25 @@ background:
     writer.hpp, csv2bcsv.cpp, test_interoperability.py, test_pybcsv_errors.py,
     basic_usage.py, performance_benchmark.py
 
-    Verification: 694 C++ GTest, 700 CTest, 119 pybcsv tests — all pass.
+    Verification: 694 C++ GTest, 700 CTest, 128 pybcsv tests — all pass.
+
+    Final pybcsv inventory (consolidated across 22, 22.b, 22.c):
+        Binding framework: pybind11 2.13
+        Build system: setup.py + pyproject.toml, cibuildwheel 2.22.0
+        Python bindings C++: pybcsv/bindings.cpp (~1,400 lines)
+        Python layer: pybcsv/__init__.py (~300 lines), pandas_utils.py (~100 lines)
+        Tests: 128 test methods across 15 test files
+        Examples: 4 (basic_usage, pandas_integration, advanced_usage, performance_benchmark)
+        Benchmarks: python/benchmarks/run_pybcsv_benchmarks.py (5 modes × 3 workloads)
+        Published: PyPI v1.4.0, 5 platforms (Linux x86_64/ARM64, macOS x86_64/ARM64, Windows AMD64)
+        Performance: columnar 3-6 Mrow/s, row-by-row 1.5-2 Krow/s
+        Default codecs: delta row codec + packet_lz4_batch file codec
+
+    Future considerations (not in scope):
+    - nanobind migration: 5-10× lower per-call overhead, ~3× smaller binaries
+      see Item 22.d for evaluation and plan
+    - chunked/streaming columnar reads for memory-constrained scenarios
+    - string dictionary encoding (depends on Item 27)
 
 23. Update C# bindinds, using latest version of bcsv library, supporting all codecs and major API entry points (lets work together to identify which to include, start broad, remove bloat/complexity/internals)
     - full test coverage and validated
