@@ -48,7 +48,7 @@ include/bcsv/         # Header-only C++ library (.h = declarations, .hpp = imple
 src/tools/             # 8 CLI tools (csv2bcsv, bcsv2csv, bcsvHead/Tail/Header, bcsvSampler, bcsvGenerator, bcsvValidate)
 tests/                 # GTest suite (25 .cpp) + C API tests (3 .c) + shell integration tests
 benchmark/             # Python orchestrator + Google Benchmark executables
-python/                # pybind11 bindings + pandas integration
+python/                # nanobind bindings + pandas integration
 unity/                 # C# / Unity bindings (P/Invoke)
 examples/              # 7 C++ example programs
 ```

@@ -147,7 +147,7 @@ jobs:
   # ── Test built wheel ────────────────────────────────────────────────
   test-wheel:
     name: Test wheel (${{ matrix.name }})
-    needs: [build-linux]
+    needs: [build-linux, build-windows, build-macos]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -159,6 +159,15 @@ jobs:
           - name: Linux ARM64
             os: ubuntu-24.04-arm
             artifact: built-wheels-linux-aarch64
+          - name: Windows AMD64
+            os: windows-latest
+            artifact: built-wheels-windows-AMD64
+          - name: macOS x86_64
+            os: macos-13
+            artifact: built-wheels-macos-x86_64
+          - name: macOS ARM64
+            os: macos-14
+            artifact: built-wheels-macos-arm64
     steps:
       - uses: actions/checkout@v5
 
@@ -174,7 +183,7 @@ jobs:
 
       - name: Install wheel and test dependencies
         run: |
-          pip install pytest pandas numpy
+          pip install pytest pandas numpy pyarrow
           pip install pybcsv --find-links dist/ --no-index
 
       - name: Run pybcsv test suite
@@ -249,8 +258,8 @@ jobs:
           python -m venv /tmp/smoke
           source /tmp/smoke/bin/activate
           pip install --upgrade pip
-          # Install numpy from PyPI first (not available on TestPyPI)
-          pip install numpy pandas
+          # Install numpy, pandas, pyarrow from PyPI first (not available on TestPyPI)
+          pip install numpy pandas pyarrow
           # Try TestPyPI, fall back to local wheel
           pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ pybcsv || true
           python -c "
@@ -261,5 +270,16 @@ jobs:
           layout.add_column('x', pybcsv.ColumnType.DOUBLE)
           layout.add_column('s', pybcsv.ColumnType.STRING)
           print(f'Layout: {layout.column_count()} columns')
-          print('Smoke test PASSED')
+          # Arrow interop check
+          import tempfile, os
+          with tempfile.NamedTemporaryFile(suffix='.bcsv', delete=False) as f:
+              path = f.name
+          w = pybcsv.Writer(layout)
+          w.open(path)
+          w.write_row([3.14, 'hello'])
+          w.close()
+          table = pybcsv.read_to_arrow(path)
+          assert len(table) == 1
+          os.unlink(path)
+          print('Smoke test PASSED (core + Arrow)')
           "

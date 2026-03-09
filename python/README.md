@@ -292,7 +292,7 @@ python/
 ├── pybcsv/
 │   ├── __init__.py           # Public API and exports
 │   ├── __version__.py        # Version (setuptools-scm)
-│   ├── bindings.cpp          # C++ pybind11 bindings
+│   ├── bindings.cpp          # C++ nanobind bindings
 │   └── pandas_utils.py       # Pandas/CSV integration
 ├── examples/
 │   ├── basic_usage.py        # Core BCSV operations
@@ -301,7 +301,6 @@ python/
 │   └── performance_benchmark.py
 ├── tests/                    # 17 test modules (pytest)
 ├── benchmarks/               # Python benchmark runner
-├── setup.py
 ├── pyproject.toml
 └── README.md
 ```

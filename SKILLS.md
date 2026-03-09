@@ -27,7 +27,7 @@ Optimized for **large time-series data** on platforms from STM32 to desktop.
 
 **Target users:** Anyone running metrology tasks with digital tools.
 
-**Language support:** C++ (primary), C API, Python (pybind11), C# / Unity (P/Invoke)
+**Language support:** C++ (primary), C API, Python (nanobind), C# / Unity (P/Invoke)
 
 ## Repository Structure
 
@@ -41,7 +41,7 @@ bcsv/
 ├── examples/              # Usage examples (7 targets)
 ├── tests/                 # Google Test suite + benchmark executables
 ├── benchmark/             # Python orchestrator, report generator, regression detector
-├── python/                # Python bindings (pybind11) + pandas integration
+├── python/                # Python bindings (nanobind) + pandas integration
 ├── unity/                 # C# / Unity bindings (P/Invoke via bcsv_c_api)
 ├── docs/                  # API overview, error handling, interoperability docs
 ├── cmake/                 # Git-based versioning scripts
@@ -344,7 +344,7 @@ Deep reference: `examples/README.md`.
 ### Python (`python/`)
 
 ```bash
-cd python && pip install -e .       # Editable install (syncs headers, compiles pybind11)
+cd python && pip install -e .       # Editable install (syncs headers, compiles nanobind)
 pytest tests/ -v                    # Run all tests
 python -m build && twine upload dist/*  # Publish
 ```

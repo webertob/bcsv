@@ -11,10 +11,14 @@ from .__version__ import __version__
 
 # Try to import the compiled extension module
 try:
-    from _bcsv import *
+    from ._bcsv import *
     _BINDINGS_AVAILABLE = True
 except ImportError:
-    _BINDINGS_AVAILABLE = False
+    try:
+        from _bcsv import *   # fallback for legacy in-tree builds
+        _BINDINGS_AVAILABLE = True
+    except ImportError:
+        _BINDINGS_AVAILABLE = False
     
     # Create stub classes that raise ImportError
     _STUB_MSG = "BCSV bindings are not available. Please compile the extension module."
@@ -39,6 +43,10 @@ except ImportError:
         raise ImportError(_STUB_MSG)
     def type_to_string(*args, **kwargs):
         raise ImportError(_STUB_MSG)
+    def read_to_arrow(*args, **kwargs):
+        raise ImportError(_STUB_MSG)
+    def write_from_arrow(*args, **kwargs):
+        raise ImportError(_STUB_MSG)
 
 # Try to import pandas utilities if pandas is available
 try:
@@ -59,6 +67,19 @@ except ImportError:
     
     def from_csv(*args, **kwargs):
         raise ImportError("pandas is not available. Please install pandas to use CSV conversion functions.")
+
+# Try to import Polars utilities if polars + pyarrow are available
+try:
+    from .polars_utils import read_polars, write_polars
+    _POLARS_UTILS_AVAILABLE = True
+except ImportError:
+    _POLARS_UTILS_AVAILABLE = False
+
+    def read_polars(*args, **kwargs):
+        raise ImportError("polars and pyarrow are required. Install with: pip install pybcsv[polars,arrow]")
+
+    def write_polars(*args, **kwargs):
+        raise ImportError("polars and pyarrow are required. Install with: pip install pybcsv[polars,arrow]")
 
 __all__ = [
     "__version__",
@@ -81,6 +102,12 @@ __all__ = [
     "read_columns",
     "write_columns",
     "read_to_dataframe",
+    # Arrow interop
+    "read_to_arrow",
+    "write_from_arrow",
+    # Polars interop
+    "read_polars",
+    "write_polars",
     # Utility functions
     "type_to_string",
     "write_dataframe",

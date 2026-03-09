@@ -175,7 +175,7 @@ bcsv_reader_destroy(reader);
 
 **Type:** Pip-installable package with native C++ bindings  
 **Documentation:** [python/README.md](../python/README.md)  
-**Performance:** Fast (native pybind11 bindings, minimal overhead)
+**Performance:** Fast (native nanobind bindings, minimal overhead)
 
 ### Key Features
 
@@ -350,7 +350,7 @@ using (var reader = new BcsvReader())
 | C++ Static | 150ms | 6.7M rows/sec | Compile-time optimization |
 | C++ Flexible | 280ms | 3.6M rows/sec | Runtime schema |
 | C API | 300ms | 3.3M rows/sec | Thin wrapper overhead |
-| Python (native) | 350ms | 2.9M rows/sec | pybind11 bindings |
+| Python (native) | 350ms | 2.9M rows/sec | nanobind bindings |
 | C# (Unity) | 450ms | 2.2M rows/sec | P/Invoke marshaling |
 
 ### Read Performance (1M rows, 10 columns)

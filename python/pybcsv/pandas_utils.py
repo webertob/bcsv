@@ -22,11 +22,29 @@ from . import Layout, ColumnType, Writer, Reader, FileFlags
 
 # Import columnar I/O if available (requires numpy headers in bindings)
 try:
-    from _bcsv import read_columns as _read_columns, write_columns as _write_columns
-    from _bcsv import read_to_dataframe as _read_to_dataframe
+    from ._bcsv import read_columns as _read_columns, write_columns as _write_columns
+    from ._bcsv import read_to_dataframe as _read_to_dataframe
     _COLUMNAR_AVAILABLE = True
 except ImportError:
-    _COLUMNAR_AVAILABLE = False
+    try:
+        from _bcsv import read_columns as _read_columns, write_columns as _write_columns
+        from _bcsv import read_to_dataframe as _read_to_dataframe
+        _COLUMNAR_AVAILABLE = True
+    except ImportError:
+        _COLUMNAR_AVAILABLE = False
+
+# Import Arrow interop if available
+try:
+    from ._bcsv import read_to_arrow as _read_to_arrow
+    import pyarrow  # noqa: F401
+    _ARROW_AVAILABLE = True
+except ImportError:
+    try:
+        from _bcsv import read_to_arrow as _read_to_arrow
+        import pyarrow  # noqa: F401
+        _ARROW_AVAILABLE = True
+    except ImportError:
+        _ARROW_AVAILABLE = False
 
 
 def _get_bcsv_type_from_pandas_dtype(dtype) -> ColumnType:
@@ -161,6 +179,11 @@ def read_dataframe(filename: str,
     """
     if not PANDAS_AVAILABLE:
         raise ImportError("pandas is not available. Please install pandas to use this function.")
+
+    # Fastest path: Arrow C Data Interface → zero-copy to_pandas
+    if _ARROW_AVAILABLE:
+        table = _read_to_arrow(filename, columns=columns)
+        return table.to_pandas()
 
     # Fast path: C++ read_to_dataframe (single call, constructs DataFrame in C++)
     if _COLUMNAR_AVAILABLE:

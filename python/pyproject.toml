@@ -1,12 +1,11 @@
 [build-system]
 requires = [
-    "setuptools>=77.0.3",
+    "scikit-build-core>=0.10",
+    "nanobind>=2.4.0",
     "setuptools-scm>=8.0",
-    "wheel",
-    "pybind11>=2.10.0",
     "numpy>=1.19.0",
 ]
-build-backend = "setuptools.build_meta"
+build-backend = "scikit_build_core.build"
 
 [project]
 name = "pybcsv"
@@ -39,13 +38,23 @@ dependencies = [
 ]
 dynamic = ["version"]
 
+[tool.scikit-build]
+cmake.build-type = "Release"
+wheel.packages = ["pybcsv"]
+
+[tool.scikit-build.metadata.version]
+provider = "scikit_build_core.metadata.setuptools_scm"
+
 [tool.setuptools_scm]
 root = ".."
 version_file = "pybcsv/_version.py"
 tag_regex = "^v(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+)$"
 
 [project.optional-dependencies]
-pandas = ["pandas>=1.0.0"]
+pandas = ["pandas>=2.0.0"]
+arrow = ["pyarrow>=12.0"]
+polars = ["polars>=0.20"]
+ml = ["torch>=2.0"]
 test = ["pytest>=6.0.0", "pytest-cov"]
 dev = ["pytest>=6.0.0", "pytest-cov", "black", "flake8"]
 
@@ -56,36 +65,25 @@ Repository = "https://github.com/webertob/bcsv"
 "Bug Tracker" = "https://github.com/webertob/bcsv/issues"
 "Source Code" = "https://github.com/webertob/bcsv"
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["pybcsv*"]
-exclude = ["tests*", "examples*"]
 
-[tool.setuptools.package-data]
-pybcsv = ["py.typed"]
-
-[tool.setuptools]
-include-package-data = true
-zip-safe = false
-license-files = []
 
 [tool.cibuildwheel]
 build = "cp311-* cp312-* cp313-*"
 skip = "*-musllinux_* *-win32 *-manylinux_i686"
-test-requires = ["pytest", "pandas"]
-test-command = "python -c \"import pybcsv; l = pybcsv.Layout(); l.add_column('x', pybcsv.ColumnType.DOUBLE); print('ok')\""
+test-requires = ["pytest", "pandas", "pyarrow"]
+test-command = "pytest {project}/tests/ -x -q --tb=short"
 
 [tool.cibuildwheel.linux]
-before-build = "pip install pybind11 numpy"
+before-build = "pip install nanobind numpy"
 manylinux-x86_64-image = "manylinux_2_28"
 manylinux-aarch64-image = "manylinux_2_28"
 
 [tool.cibuildwheel.macos]
-before-build = "pip install pybind11 numpy"
+before-build = "pip install nanobind numpy"
 environment = { MACOSX_DEPLOYMENT_TARGET = "13.3" }
 
 [tool.cibuildwheel.windows]
-before-build = "pip install pybind11 numpy"
+before-build = "pip install nanobind numpy"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

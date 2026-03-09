@@ -300,7 +300,7 @@ target_link_libraries(your_target PRIVATE bcsv)
 **Build/test only:**
 
 - Google Test (auto-fetched via CMake FetchContent)
-- pybind11 (auto-fetched for Python bindings)
+- nanobind (auto-fetched for Python bindings)
 
 ---
 

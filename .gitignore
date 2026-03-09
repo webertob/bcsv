@@ -63,6 +63,13 @@ python/dist/
 python/*.egg-info/
 python/.pytest_cache/
 
+# Ignore scikit-build-core build artifacts
+python/.ninja_deps
+python/.ninja_log
+python/.skbuild-info.json
+python/build.ninja
+python/CMakeInit.txt
+
 # Ignore auto-generated version files
 include/bcsv/version_generated.h
 python/pybcsv/_version.py

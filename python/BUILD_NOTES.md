@@ -42,7 +42,7 @@ python/
 │   └── xxHash-0.8.3/ # ← Synced from ../include/xxHash-0.8.3/
 ├── pybcsv/           # ← Python package source
 ├── sync_headers.py   # ← Header synchronization script
-└── setup.py          # ← Build configuration
+└── pyproject.toml    # ← Build configuration (scikit-build-core + nanobind)
 ```
 
 ### Benefits

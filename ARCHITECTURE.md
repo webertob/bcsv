@@ -430,7 +430,7 @@ src/
 examples/               Usage examples (flexible, static, ZoH, visitors, sampler)
 tests/                  GTest suite, C API tests, Row API tests
 benchmark/              Macro/micro benchmarks, Python orchestrator
-python/pybcsv/          pybind11 Python bindings
+python/pybcsv/          nanobind Python bindings
 csharp/                 C# / Unity integration
 ```
 
