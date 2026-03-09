@@ -64,11 +64,12 @@ jobs:
           python-version: '3.13'
 
       - name: Install cibuildwheel
-        run: pip install cibuildwheel==2.22.0
+        run: pip install cibuildwheel==2.22.0 uv
 
       - name: Build wheels
         env:
           CIBW_ARCHS_LINUX: ${{ matrix.arch }}
+          CIBW_BUILD_FRONTEND: "build[uv]"
         run: python -m cibuildwheel python --output-dir dist
 
       - uses: actions/upload-artifact@v4
