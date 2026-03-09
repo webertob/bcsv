@@ -95,11 +95,12 @@ jobs:
           python-version: '3.13'
 
       - name: Install cibuildwheel
-        run: pip install cibuildwheel==2.22.0
+        run: pip install cibuildwheel==2.22.0 uv
 
       - name: Build wheels
         env:
           CIBW_ARCHS_WINDOWS: ${{ matrix.arch }}
+          CIBW_BUILD_FRONTEND: "build[uv]"
         run: python -m cibuildwheel python --output-dir dist
 
       - uses: actions/upload-artifact@v4
@@ -129,11 +130,12 @@ jobs:
           python-version: '3.13'
 
       - name: Install cibuildwheel
-        run: pip install cibuildwheel==2.22.0
+        run: pip install cibuildwheel==2.22.0 uv
 
       - name: Build wheels
         env:
           CIBW_ARCHS_MACOS: ${{ matrix.arch }}
+          CIBW_BUILD_FRONTEND: "build[uv]"
           MACOSX_DEPLOYMENT_TARGET: "13.3"
         run: python -m cibuildwheel python --output-dir dist
 
