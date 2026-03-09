@@ -165,9 +165,8 @@ jobs:
           - name: Windows AMD64
             os: windows-latest
             artifact: built-wheels-windows-AMD64
-          - name: macOS x86_64
-            os: macos-13
-            artifact: built-wheels-macos-x86_64
+          # macOS x86_64 test skipped: no Intel macOS runners available
+          # (wheel is cross-compiled on ARM64 and still published)
           - name: macOS ARM64
             os: macos-14
             artifact: built-wheels-macos-arm64

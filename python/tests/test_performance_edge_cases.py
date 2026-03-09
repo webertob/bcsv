@@ -31,9 +31,10 @@ class TestPerformanceEdgeCases(unittest.TestCase):
                 os.unlink(filepath)
 
     def _create_temp_file(self, suffix='.bcsv') -> str:
-        """Create a temporary file and track it for cleanup."""
+        """Create a temporary file path and track it for cleanup."""
         fd, filepath = tempfile.mkstemp(suffix=suffix)
         os.close(fd)
+        os.unlink(filepath)  # Remove so writer.open() creates fresh
         self.temp_files.append(filepath)
         return filepath
 
@@ -345,11 +346,15 @@ class TestPerformanceEdgeCases(unittest.TestCase):
         
         self.assertEqual(data1, data2)
         
-        # Batch should be faster
-        speedup = individual_time / batch_time
-        print(f"Batch time: {batch_time:.4f}s")
-        print(f"Individual time: {individual_time:.4f}s")
-        print(f"Speedup: {speedup:.2f}x")
+        # Batch should be faster (guard against zero-time on fast CI)
+        if batch_time > 0:
+            speedup = individual_time / batch_time
+            print(f"Batch time: {batch_time:.4f}s")
+            print(f"Individual time: {individual_time:.4f}s")
+            print(f"Speedup: {speedup:.2f}x")
+        else:
+            print(f"Batch time: {batch_time:.6f}s (too fast to measure)")
+            print(f"Individual time: {individual_time:.6f}s")
         
         # Note: For small datasets, batch operations may not show significant speedup
         # due to overhead. We just verify both methods work.

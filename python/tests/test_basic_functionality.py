@@ -33,9 +33,10 @@ class TestBasicFunctionality(unittest.TestCase):
                 os.unlink(filepath)
 
     def _create_temp_file(self, suffix='.bcsv') -> str:
-        """Create a temporary file and track it for cleanup."""
+        """Create a temporary file path and track it for cleanup."""
         fd, filepath = tempfile.mkstemp(suffix=suffix)
-        os.close(fd)  # Close the file descriptor
+        os.close(fd)
+        os.unlink(filepath)  # Remove so writer.open() creates fresh
         self.temp_files.append(filepath)
         return filepath
 
@@ -324,7 +325,7 @@ class TestBasicFunctionality(unittest.TestCase):
         # Test string at MAX_STRING_LENGTH (65535) — should still fit
         max_limit_string = "x" * 65535
         writer = pybcsv.Writer(layout)
-        writer.open(filepath)
+        writer.open(filepath, overwrite=True)
         writer.write_row([max_limit_string])
         writer.close()
         
@@ -337,7 +338,7 @@ class TestBasicFunctionality(unittest.TestCase):
         # Test string that exceeds MAX_STRING_LENGTH (should be rejected)
         with self.assertRaises(RuntimeError) as context:
             writer = pybcsv.Writer(layout)
-            writer.open(filepath)
+            writer.open(filepath, overwrite=True)
             oversized_string = "x" * 65536  # Exceeds uint16_t max string length
             writer.write_row([oversized_string])
             writer.close()
@@ -347,7 +348,7 @@ class TestBasicFunctionality(unittest.TestCase):
         # Test string that is much larger (should be rejected)
         with self.assertRaises(RuntimeError) as context:
             writer = pybcsv.Writer(layout)
-            writer.open(filepath)
+            writer.open(filepath, overwrite=True)
             huge_string = "x" * 100000  # Well beyond MAX_STRING_LENGTH
             writer.write_row([huge_string])
             writer.close()
@@ -357,7 +358,7 @@ class TestBasicFunctionality(unittest.TestCase):
         # Test that excessively large strings are handled gracefully by our Python bindings
         with self.assertRaises(RuntimeError) as context:
             writer = pybcsv.Writer(layout)
-            writer.open(filepath)
+            writer.open(filepath, overwrite=True)
             # Try to write a 200MB string (should fail at Python level)
             huge_string = "x" * (200 * 1024 * 1024)
             writer.write_row([huge_string])

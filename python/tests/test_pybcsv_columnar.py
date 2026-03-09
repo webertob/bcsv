@@ -23,6 +23,7 @@ import pybcsv
 def _tmp(suffix=".bcsv"):
     fd, path = tempfile.mkstemp(suffix=suffix, prefix="pybcsv_test_")
     os.close(fd)
+    os.unlink(path)
     return path
 
 

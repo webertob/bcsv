@@ -15,7 +15,6 @@ and memory efficiency with larger datasets.
 import os
 import tempfile
 import time
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -30,6 +29,7 @@ import pybcsv
 def _tmp(suffix=".bcsv"):
     fd, path = tempfile.mkstemp(suffix=suffix, prefix="pybcsv_perf_")
     os.close(fd)
+    os.unlink(path)
     return path
 
 
@@ -47,10 +47,10 @@ def test_optimized_operations():
         'string_col': ['test', 'data', 'row'] * 1000,
     }
     df = pd.DataFrame(test_data)
-    test_file = Path("/tmp/test_optimized.bcsv")
+    test_file = _tmp()
 
-    pybcsv.write_dataframe(df, str(test_file), compression_level=1)
-    df_read = pybcsv.read_dataframe(str(test_file))
+    pybcsv.write_dataframe(df, test_file, compression_level=1)
+    df_read = pybcsv.read_dataframe(test_file)
 
     assert len(df) == len(df_read)
     assert list(df.columns) == list(df_read.columns)
@@ -60,10 +60,10 @@ def test_optimized_operations():
     layout.add_column("value", pybcsv.ColumnType.DOUBLE)
     layout.add_column("name", pybcsv.ColumnType.STRING)
 
-    batch_file = Path("/tmp/test_batch.bcsv")
+    batch_file = _tmp()
     writer = pybcsv.Writer(layout)
     try:
-        writer.open(str(batch_file))
+        writer.open(batch_file)
         for i in range(1000):
             writer.write_row([i, float(i) * 1.5, f"row_{i}"])
         batch_data = [[i + 1000, float(i + 1000) * 1.5, f"batch_{i}"]
@@ -74,14 +74,16 @@ def test_optimized_operations():
 
     reader = pybcsv.Reader()
     try:
-        reader.open(str(batch_file))
+        reader.open(batch_file)
         all_data = reader.read_all()
         assert len(all_data) == 2000
     finally:
         reader.close()
 
-    test_file.unlink(missing_ok=True)
-    batch_file.unlink(missing_ok=True)
+    if os.path.exists(test_file):
+        os.unlink(test_file)
+    if os.path.exists(batch_file):
+        os.unlink(batch_file)
 
 
 # ---------------------------------------------------------------------------

@@ -174,6 +174,7 @@ class TestErrorHandlingEdgeCases(unittest.TestCase):
     def _tmp(self, suffix='.bcsv'):
         fd, fp = tempfile.mkstemp(suffix=suffix)
         os.close(fd)
+        os.unlink(fp)
         self.temp_files.append(fp)
         return fp
 
@@ -198,8 +199,14 @@ class TestErrorHandlingEdgeCases(unittest.TestCase):
         layout = pybcsv.Layout()
         layout.add_column("test", pybcsv.INT32)
         writer = pybcsv.Writer(layout)
+        # On Windows, Writer::open creates directories, so Unix-style paths
+        # that resolve to C:\ may succeed. Use a non-existent drive instead.
+        if os.name == 'nt':
+            bad_path = "Q:\\nonexistent\\dir\\file.bcsv"
+        else:
+            bad_path = "/path/that/does/not/exist/file.bcsv"
         with self.assertRaises(RuntimeError):
-            writer.open("/path/that/does/not/exist/file.bcsv")
+            writer.open(bad_path)
         self.assertFalse(writer.is_open())
 
     def test_permission_denied(self):

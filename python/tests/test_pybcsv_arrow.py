@@ -36,7 +36,7 @@ def _write_test_file(path, n=50):
     layout.add_column('x', pybcsv.DOUBLE)
     layout.add_column('name', pybcsv.STRING)
     w = pybcsv.Writer(layout)
-    w.open(path)
+    w.open(path, overwrite=True)
     for i in range(n):
         w.write_row([i, i * 1.5, f'row_{i}'])
     w.close()

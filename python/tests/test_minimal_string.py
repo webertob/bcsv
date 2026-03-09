@@ -25,6 +25,7 @@ def test_minimal_string():
         try:
             with tempfile.NamedTemporaryFile(suffix='.bcsv', delete=False) as tmp:
                 filepath = tmp.name
+            os.unlink(filepath)  # Remove so writer.open() creates fresh
             
             print(f"Testing string size: {size} bytes...")
             

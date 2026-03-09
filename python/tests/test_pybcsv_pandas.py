@@ -37,6 +37,7 @@ class TestPandasIntegration(unittest.TestCase):
     def _tmp(self, suffix='.bcsv'):
         fd, fp = tempfile.mkstemp(suffix=suffix)
         os.close(fd)
+        os.unlink(fp)
         self.temp_files.append(fp)
         return fp
 
@@ -236,10 +237,18 @@ class TestPandasIntegration(unittest.TestCase):
 
     def test_dataframe_error_handling(self):
         df = pd.DataFrame({'test': [1, 2, 3]})
+        # On Windows, Writer::open creates directories, so Unix-style paths
+        # may succeed. Use a non-existent drive letter on Windows.
+        if os.name == 'nt':
+            bad_write = "Q:\\nonexistent\\dir\\file.bcsv"
+            bad_read = "Q:\\nonexistent\\nofile.bcsv"
+        else:
+            bad_write = "/invalid/path/file.bcsv"
+            bad_read = "/path/does/not/exist.bcsv"
         with self.assertRaises((IOError, OSError, RuntimeError)):
-            pybcsv.write_dataframe(df, "/invalid/path/file.bcsv")
+            pybcsv.write_dataframe(df, bad_write)
         with self.assertRaises((IOError, OSError, RuntimeError)):
-            pybcsv.read_dataframe("/path/does/not/exist.bcsv")
+            pybcsv.read_dataframe(bad_read)
 
         text_file = self._tmp('.txt')
         with open(text_file, 'w') as f:

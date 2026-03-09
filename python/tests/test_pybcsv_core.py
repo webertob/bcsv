@@ -15,7 +15,6 @@ batch operations, compression, and string limits.
 import unittest
 import tempfile
 import os
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -76,6 +75,7 @@ class TestSimpleWriteRead(unittest.TestCase):
     def _tmp(self, suffix='.bcsv'):
         fd, fp = tempfile.mkstemp(suffix=suffix)
         os.close(fd)
+        os.unlink(fp)
         self.temp_files.append(fp)
         return fp
 
@@ -259,7 +259,7 @@ class TestSimpleWriteRead(unittest.TestCase):
 
         max_limit_string = "x" * 65535
         writer = pybcsv.Writer(layout)
-        writer.open(filepath)
+        writer.open(filepath, overwrite=True)
         writer.write_row([max_limit_string])
         writer.close()
 
@@ -271,21 +271,21 @@ class TestSimpleWriteRead(unittest.TestCase):
 
         with self.assertRaises(RuntimeError) as context:
             writer = pybcsv.Writer(layout)
-            writer.open(filepath)
+            writer.open(filepath, overwrite=True)
             writer.write_row(["x" * 65536])
             writer.close()
         self.assertIn("exceeds maximum length", str(context.exception))
 
         with self.assertRaises(RuntimeError) as context:
             writer = pybcsv.Writer(layout)
-            writer.open(filepath)
+            writer.open(filepath, overwrite=True)
             writer.write_row(["x" * 100000])
             writer.close()
         self.assertIn("exceeds maximum length", str(context.exception))
 
         with self.assertRaises(RuntimeError) as context:
             writer = pybcsv.Writer(layout)
-            writer.open(filepath)
+            writer.open(filepath, overwrite=True)
             writer.write_row(["x" * (200 * 1024 * 1024)])
             writer.close()
         self.assertIn("exceeds maximum length", str(context.exception))
@@ -330,11 +330,13 @@ def test_basic_operations():
     layout.add_column("id", pybcsv.ColumnType.INT32)
     layout.add_column("name", pybcsv.ColumnType.STRING)
 
-    test_file = Path("/tmp/test_basic.bcsv")
+    fd, test_file = tempfile.mkstemp(suffix='.bcsv')
+    os.close(fd)
+    os.unlink(test_file)
 
     writer = pybcsv.Writer(layout)
     try:
-        writer.open(str(test_file))
+        writer.open(test_file)
         writer.write_row([1, "test1"])
         writer.write_row([2, "test2"])
         writer.write_row([3, "test3"])
@@ -343,7 +345,7 @@ def test_basic_operations():
 
     reader = pybcsv.Reader()
     try:
-        reader.open(str(test_file))
+        reader.open(test_file)
         data = reader.read_all()
         assert len(data) == 3
     finally:
@@ -354,13 +356,17 @@ def test_basic_operations():
         'value': [1.1, 2.2, 3.3, 4.4, 5.5],
         'name': ['a', 'b', 'c', 'd', 'e'],
     })
-    df_file = Path("/tmp/test_df.bcsv")
-    pybcsv.write_dataframe(df, str(df_file))
-    df_read = pybcsv.read_dataframe(str(df_file))
+    fd2, df_file = tempfile.mkstemp(suffix='.bcsv')
+    os.close(fd2)
+    os.unlink(df_file)
+    pybcsv.write_dataframe(df, df_file)
+    df_read = pybcsv.read_dataframe(df_file)
     assert len(df_read) == len(df)
 
-    test_file.unlink(missing_ok=True)
-    df_file.unlink(missing_ok=True)
+    if os.path.exists(test_file):
+        os.unlink(test_file)
+    if os.path.exists(df_file):
+        os.unlink(df_file)
 
 
 if __name__ == '__main__':
