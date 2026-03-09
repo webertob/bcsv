@@ -31,6 +31,9 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Sync headers for sdist
+        run: python python/sync_headers.py --verbose
+
       - name: Build sdist
         run: |
           pip install build
