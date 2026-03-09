@@ -297,6 +297,7 @@ python/
 ├── examples/
 │   ├── basic_usage.py        # Core BCSV operations
 │   ├── pandas_integration.py # DataFrame examples
+│   ├── advanced_usage.py     # DirectAccess, Sampler, CSV, columnar I/O
 │   └── performance_benchmark.py
 ├── tests/                    # 17 test modules (pytest)
 ├── benchmarks/               # Python benchmark runner

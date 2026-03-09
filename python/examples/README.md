@@ -33,7 +33,24 @@ Demonstrates pandas DataFrame integration:
 python pandas_integration.py
 ```
 
-### 3. performance_benchmark.py
+### 3. advanced_usage.py
+Demonstrates features beyond basic read/write:
+- ReaderDirectAccess (random-access reads by row index)
+- Sampler (bytecode VM for filtering and column projection)
+- CsvWriter / CsvReader (native CSV I/O with typed layouts)
+- FileFlags and codec selection (flat, zoh, delta + compression)
+- Columnar I/O (read_columns / write_columns with numpy arrays)
+- type_to_string and Layout inspection utilities
+
+**Requirements:**
+- numpy
+
+**Usage:**
+```bash
+python advanced_usage.py
+```
+
+### 4. performance_benchmark.py
 Performance benchmarking with large datasets:
 - Large file handling
 - Compression effectiveness
