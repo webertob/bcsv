@@ -512,6 +512,9 @@ NB_MODULE(_bcsv, m) {
             return static_cast<int>(static_cast<uint16_t>(~a));
         });
 
+    // Default file flags: batch compression (std::jthread available on all supported compilers)
+    constexpr auto DEFAULT_FILE_FLAGS = bcsv::FileFlags::BATCH_COMPRESS;
+
     // Writer class - variant-based, supports runtime codec selection
     nb::class_<PyWriter>(m, "Writer")
         .def(nb::init<const bcsv::Layout&, const std::string&>(),
@@ -522,11 +525,14 @@ NB_MODULE(_bcsv, m) {
             bool success = pw.visit([&](auto& w) {
                 return w.open(filename, overwrite, compression_level, block_size_kb, flags);
             });
-            if (!success)
-                throw std::runtime_error("Failed to open file for writing: " + filename);
+            if (!success) {
+                std::string err = pw.visit([](auto& w) { return w.getErrorMsg(); });
+                throw std::runtime_error("Failed to open file for writing: " + filename +
+                                         (err.empty() ? "" : " (" + err + ")"));
+            }
             return success;
         }, nb::arg("filename"), nb::arg("overwrite") = true, nb::arg("compression_level") = 1,
-           nb::arg("block_size_kb") = 64, nb::arg("flags") = bcsv::FileFlags::BATCH_COMPRESS)
+           nb::arg("block_size_kb") = 64, nb::arg("flags") = DEFAULT_FILE_FLAGS)
         .def("write_row", [](PyWriter& pw, const nb::list& values) {
             const auto& layout = pw.visit([](auto& w) -> const bcsv::Layout& { return w.layout(); });
             if (values.size() != layout.columnCount())
