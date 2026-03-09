@@ -20,11 +20,20 @@ import tempfile
 import pytest
 
 # ---------------------------------------------------------------------------
-# Ensure pybcsv is importable regardless of working directory
+# Ensure pybcsv is importable regardless of working directory.
+# When running against an installed wheel (e.g. CI test-wheel), skip this
+# to avoid shadowing the installed package with the local source tree.
 # ---------------------------------------------------------------------------
-_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if _project_root not in sys.path:
-    sys.path.insert(0, _project_root)
+try:
+    import pybcsv as _probe
+    if _probe._BINDINGS_AVAILABLE:
+        pass  # already installed with compiled extension — use it
+    else:
+        raise ImportError("stub only")
+except (ImportError, AttributeError):
+    _project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if _project_root not in sys.path:
+        sys.path.insert(0, _project_root)
 
 
 # ---------------------------------------------------------------------------
