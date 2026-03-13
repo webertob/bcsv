@@ -139,6 +139,11 @@ else()
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         target_compile_options(bcsv INTERFACE -fbracket-depth=512)
     endif()
+    # Apple Clang ships libc++ where jthread/stop_token are still experimental
+    # (guarded by _LIBCPP_HAS_NO_EXPERIMENTAL_STOP_TOKEN).
+    if(APPLE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_compile_options(bcsv INTERFACE -fexperimental-library)
+    endif()
     if(BCSV_WERROR)
         target_compile_options(bcsv INTERFACE -Werror)
     endif()

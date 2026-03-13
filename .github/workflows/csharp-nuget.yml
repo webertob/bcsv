@@ -13,12 +13,14 @@ on:
       - 'csharp/**'
       - 'include/**'
       - 'src/bcsv_c_api.cpp'
+      - 'CMakeLists.txt'
       - '.github/workflows/csharp-nuget.yml'
   pull_request:
     paths:
       - 'csharp/**'
       - 'include/**'
       - 'src/bcsv_c_api.cpp'
+      - 'CMakeLists.txt'
   workflow_dispatch:
 
 permissions:

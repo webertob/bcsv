@@ -6,7 +6,7 @@ name: C++ CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, master, develop]
     paths:
       - 'include/**'
       - 'src/**'
@@ -17,7 +17,7 @@ on:
       - 'CMakePresets.json'
       - '.github/workflows/ci.yml'
   pull_request:
-    branches: [main, develop]
+    branches: [main, master, develop]
     paths:
       - 'include/**'
       - 'src/**'
