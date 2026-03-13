@@ -271,8 +271,7 @@ jobs:
           print(f'Layout: {layout.column_count()} columns')
           # Arrow interop check
           import tempfile, os
-          with tempfile.NamedTemporaryFile(suffix='.bcsv', delete=False) as f:
-              path = f.name
+          path = os.path.join(tempfile.mkdtemp(), 'smoke.bcsv')
           w = pybcsv.Writer(layout)
           w.open(path)
           w.write_row([3.14, 'hello'])
