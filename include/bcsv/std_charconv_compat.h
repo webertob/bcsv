@@ -113,19 +113,33 @@ namespace bcsv::compat {
         return std::to_chars(first, last, value);
     }
 
-    /// float fallback via snprintf.
+    /// float fallback via snprintf — shortest round-trip representation.
     inline std::to_chars_result to_chars(char* first, char* last, float value) {
         auto bufSize = static_cast<size_t>(last - first);
-        int n = std::snprintf(first, bufSize, "%.9g", value);
+        // Try digits10 first (6 digits); if round-trip fails, use max_digits10 (9).
+        int n = std::snprintf(first, bufSize, "%.6g", value);
+        if (n >= 0 && static_cast<size_t>(n) < bufSize) {
+            float check = std::strtof(first, nullptr);
+            if (check != value) {
+                n = std::snprintf(first, bufSize, "%.9g", value);
+            }
+        }
         if (n < 0 || static_cast<size_t>(n) >= bufSize)
             return {last, std::errc::value_too_large};
         return {first + n, std::errc{}};
     }
 
-    /// double fallback via snprintf.
+    /// double fallback via snprintf — shortest round-trip representation.
     inline std::to_chars_result to_chars(char* first, char* last, double value) {
         auto bufSize = static_cast<size_t>(last - first);
-        int n = std::snprintf(first, bufSize, "%.17g", value);
+        // Try digits10 first (15 digits); if round-trip fails, use max_digits10 (17).
+        int n = std::snprintf(first, bufSize, "%.15g", value);
+        if (n >= 0 && static_cast<size_t>(n) < bufSize) {
+            double check = std::strtod(first, nullptr);
+            if (check != value) {
+                n = std::snprintf(first, bufSize, "%.17g", value);
+            }
+        }
         if (n < 0 || static_cast<size_t>(n) >= bufSize)
             return {last, std::errc::value_too_large};
         return {first + n, std::errc{}};
