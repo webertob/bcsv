@@ -95,6 +95,11 @@ jobs:
         if: matrix.compiler == 'msvc'
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Cache CMake dependencies
         uses: actions/cache@v4
         with:
@@ -176,6 +181,11 @@ jobs:
       - name: Setup MSVC
         if: matrix.compiler == 'msvc'
         uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
       - name: Cache CMake dependencies
         uses: actions/cache@v4
