@@ -26,7 +26,7 @@
 
 #include <algorithm>
 #include <array>
-#include <charconv>
+#include <bcsv/std_charconv_compat.h>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -43,6 +43,8 @@
 #if defined(_WIN32)
 #define NOMINMAX
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
 namespace bench {
@@ -126,7 +128,11 @@ struct PlatformInfo {
 #else
         char buf[256]{};
         if (gethostname(buf, sizeof(buf)) == 0) info.hostname = buf;
-        info.os = "Linux"; // simplified
+#if defined(__APPLE__)
+        info.os = "macOS";
+#else
+        info.os = "Linux";
+#endif
 #endif
 
         // CPU model (Linux)
@@ -469,13 +475,13 @@ public:
                 }
                 case bcsv::ColumnType::FLOAT: {
                     float v = 0;
-                    std::from_chars(first, last, v);
+                    bcsv::compat::from_chars(first, last, v);
                     row.set(i, v);
                     break;
                 }
                 case bcsv::ColumnType::DOUBLE: {
                     double v = 0;
-                    std::from_chars(first, last, v);
+                    bcsv::compat::from_chars(first, last, v);
                     row.set(i, v);
                     break;
                 }
