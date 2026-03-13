@@ -107,6 +107,9 @@ jobs:
       - name: Build
         run: cmake --build --preset ${{ matrix.build-preset }} --parallel
 
+      - name: Install pytest
+        run: pip install pytest
+
       - name: Test
         run: >-
           ctest --test-dir ${{ matrix.build-dir }}
@@ -185,6 +188,9 @@ jobs:
 
       - name: Build
         run: cmake --build --preset ${{ matrix.build-preset }} --parallel
+
+      - name: Install pytest
+        run: pip install pytest
 
       - name: Test
         run: >-
