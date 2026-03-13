@@ -119,7 +119,6 @@ if(MSVC)
         /O2
         /std:c++20
     )
-    target_compile_definitions(_bcsv PRIVATE BCSV_HAS_BATCH_CODEC=1)
 elseif(APPLE)
     # Apple Clang ships LLVM 18-era libc++ where jthread/stop_token are
     # still experimental (guarded by _LIBCPP_HAS_NO_EXPERIMENTAL_STOP_TOKEN).
@@ -129,15 +128,15 @@ elseif(APPLE)
         -fexperimental-library
         -mmacosx-version-min=13.3
     )
-    target_compile_definitions(_bcsv PRIVATE BCSV_HAS_BATCH_CODEC=1)
 else()
-    # Linux: full C++20 with batch codec + pthreads
+    # Linux: full C++20 with pthreads
     target_compile_options(_bcsv PRIVATE
         -O3 -Wall -Wextra
     )
-    target_compile_definitions(_bcsv PRIVATE BCSV_HAS_BATCH_CODEC=1)
     target_link_libraries(_bcsv PRIVATE pthread)
 endif()
+
+target_compile_definitions(_bcsv PRIVATE BCSV_HAS_BATCH_CODEC=1)
 
 # ── Install ─────────────────────────────────────────────────────────────
 install(TARGETS _bcsv LIBRARY DESTINATION pybcsv)

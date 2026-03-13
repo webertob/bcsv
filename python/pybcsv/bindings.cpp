@@ -261,6 +261,40 @@ namespace {
         }
     }
 
+    // ── Shared columnar write loop ────────────────────────────────────
+    // Used by both write_columns and write_from_arrow.
+
+    inline void write_columnar_core(
+            const bcsv::Layout& layout,
+            const std::string& row_codec,
+            const std::string& filename,
+            size_t num_rows, size_t num_cols,
+            const std::vector<const void*>& bufs,
+            const std::vector<std::vector<std::string>>& string_cols,
+            const std::vector<bool>& is_string,
+            const std::vector<bcsv::ColumnType>& col_types,
+            size_t compression_level,
+            bcsv::FileFlags flags) {
+        PyWriter pw(layout, row_codec);
+        pw.visit([&](auto& w) {
+            nb::gil_scoped_release release;
+            if (!w.open(filename, true, compression_level, 64, flags))
+                throw std::runtime_error("Failed to open file for writing: " + filename);
+            for (size_t r = 0; r < num_rows; ++r) {
+                auto& row = w.row();
+                for (size_t c = 0; c < num_cols; ++c) {
+                    if (is_string[c]) {
+                        row.set(c, string_cols[c][r]);
+                    } else {
+                        set_from_numpy(row, c, col_types[c], bufs[c], r);
+                    }
+                }
+                w.writeRow();
+            }
+            w.close();
+        });
+    }
+
     // ── Shared binding helpers for reader-like / writer-like classes ───
     // Attaches read_row, read_all, __enter__, __exit__, __iter__, __next__
     // to any class that has .readNext(), .row(), .layout(), .close().
@@ -908,102 +942,6 @@ NB_MODULE(_bcsv, m) {
     }, nb::arg("filename"),
        "Read a BCSV file into a dict of numpy arrays (numeric) and lists (strings)");
 
-    // ── Columnar I/O: read_to_dataframe ────────────────────────────────
-
-    m.def("read_to_dataframe", [](const std::string& filename,
-                                   const std::optional<nb::list>& columns) -> nb::object {
-        // Phase 1: Open via ReaderDirectAccess
-        bcsv::ReaderDirectAccess<bcsv::Layout> reader;
-        {
-            nb::gil_scoped_release release;
-            if (!reader.open(filename, true)) {
-                throw std::runtime_error("Failed to open file: " + filename);
-            }
-        }
-        const size_t num_rows = reader.rowCount();
-        const auto& layout = reader.layout();
-        const size_t num_cols = layout.columnCount();
-        if (num_cols == 0)
-            throw std::runtime_error("File has no columns: " + filename);
-
-        // Cache column metadata
-        std::vector<std::string> col_names(num_cols);
-        std::vector<bcsv::ColumnType> col_types(num_cols);
-        std::vector<bool> is_string(num_cols, false);
-        for (size_t i = 0; i < num_cols; ++i) {
-            col_names[i] = layout.columnName(i);
-            col_types[i] = layout.columnType(i);
-            is_string[i] = (col_types[i] == bcsv::ColumnType::STRING);
-        }
-
-        // Phase 2: Allocate numpy arrays / string vectors
-        auto np = nb::module_::import_("numpy");
-        std::vector<nb::object> arrays(num_cols);
-        std::vector<void*> bufs(num_cols, nullptr);
-        std::vector<std::vector<std::string>> string_cols(num_cols);
-
-        for (size_t c = 0; c < num_cols; ++c) {
-            if (is_string[c]) {
-                string_cols[c].reserve(num_rows);
-            } else {
-                nb::object shape = nb::make_tuple(static_cast<int64_t>(num_rows));
-                arrays[c] = np.attr("empty")(shape, "dtype"_a = bcsv_type_to_numpy_dtype(col_types[c]));
-                bufs[c] = reinterpret_cast<void*>(nb::cast<intptr_t>(arrays[c].attr("ctypes").attr("data")));
-            }
-        }
-
-        // Phase 3: Entire read loop under GIL release
-        {
-            nb::gil_scoped_release release;
-            size_t row_idx = 0;
-            while (reader.readNext()) {
-                const auto& row = reader.row();
-                for (size_t c = 0; c < num_cols; ++c) {
-                    if (is_string[c]) {
-                        string_cols[c].emplace_back(row.template get<std::string>(c));
-                    } else {
-                        fill_numpy_cell(row, c, col_types[c], bufs[c], row_idx);
-                    }
-                }
-                ++row_idx;
-            }
-            reader.close();
-        }
-
-        // Phase 4: Build column dict
-        nb::dict col_dict;
-        for (size_t c = 0; c < num_cols; ++c) {
-            if (is_string[c]) {
-                nb::list str_list;
-                for (size_t i = 0; i < string_cols[c].size(); ++i) {
-                    str_list.append(nb::cast(std::move(string_cols[c][i])));
-                }
-                col_dict[nb::cast(col_names[c])] = std::move(str_list);
-            } else {
-                col_dict[nb::cast(col_names[c])] = std::move(arrays[c]);
-            }
-        }
-
-        // Phase 5: Filter columns if requested
-        if (columns.has_value()) {
-            nb::dict filtered;
-            const nb::list& cols_list = columns.value();
-            for (size_t i = 0; i < cols_list.size(); ++i) {
-                nb::handle col_name = cols_list[i];
-                auto key = nb::cast<std::string>(col_name);
-                if (col_dict.contains(nb::cast(key))) {
-                    filtered[col_name] = col_dict[col_name];
-                }
-            }
-            col_dict = std::move(filtered);
-        }
-
-        // Phase 6: Construct pd.DataFrame in C++
-        auto pd = nb::module_::import_("pandas");
-        return pd.attr("DataFrame")(col_dict);
-    }, nb::arg("filename"), nb::arg("columns") = nb::none(),
-       "Read a BCSV file directly into a pandas DataFrame");
-
     // ── Columnar I/O: write_columns ────────────────────────────────────
 
     m.def("write_columns", [](const std::string& filename, const nb::dict& columns,
@@ -1063,26 +1001,10 @@ NB_MODULE(_bcsv, m) {
             }
         }
 
-        // Create writer and run entire write loop under GIL release
-        PyWriter pw(layout, row_codec);
-        pw.visit([&](auto& w) {
-            nb::gil_scoped_release release;
-            if (!w.open(filename, true, compression_level, 64, flags)) {
-                throw std::runtime_error("Failed to open file for writing: " + filename);
-            }
-            for (size_t r = 0; r < num_rows; ++r) {
-                auto& row = w.row();
-                for (size_t c = 0; c < num_cols; ++c) {
-                    if (is_string[c]) {
-                        row.set(c, string_cols[c][r]);
-                    } else {
-                        set_from_numpy(row, c, col_types[c], bufs[c], r);
-                    }
-                }
-                w.writeRow();
-            }
-            w.close();
-        });
+        // Write via shared helper
+        write_columnar_core(layout, row_codec, filename, num_rows, num_cols,
+                            bufs, string_cols, is_string, col_types,
+                            compression_level, flags);
     }, nb::arg("filename"), nb::arg("columns"), nb::arg("col_order"),
        nb::arg("col_types"), nb::arg("row_codec") = "delta",
        nb::arg("compression_level") = 1,
@@ -1493,25 +1415,12 @@ NB_MODULE(_bcsv, m) {
             }
         }
 
-        // Write under GIL release
-        PyWriter pw(layout, row_codec);
-        pw.visit([&](auto& w) {
-            nb::gil_scoped_release release;
-            if (!w.open(filename, true, compression_level, 64, flags))
-                throw std::runtime_error("Failed to open file for writing: " + filename);
-            for (int64_t r = 0; r < num_rows; ++r) {
-                auto& row = w.row();
-                for (int64_t c = 0; c < num_cols; ++c) {
-                    if (is_string[c]) {
-                        row.set(c, string_cols[c][r]);
-                    } else {
-                        set_from_numpy(row, c, col_types[c], bufs[c], static_cast<size_t>(r));
-                    }
-                }
-                w.writeRow();
-            }
-            w.close();
-        });
+        // Write via shared helper
+        write_columnar_core(layout, row_codec, filename,
+                            static_cast<size_t>(num_rows),
+                            static_cast<size_t>(num_cols),
+                            bufs, string_cols, is_string, col_types,
+                            compression_level, flags);
     }, nb::arg("filename"), nb::arg("table"),
        nb::arg("row_codec") = "delta",
        nb::arg("compression_level") = 1,

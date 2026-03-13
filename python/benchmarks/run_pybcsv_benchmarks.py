@@ -291,9 +291,9 @@ def write_dataframe_mode(file_path: Path, columns_spec, rows: list[list], row_co
 
 
 def read_dataframe_mode(file_path: Path) -> tuple[float, int]:
-    """Read using C++ read_to_dataframe (single call)."""
+    """Read using pybcsv.read_dataframe (Arrow fast-path)."""
     start = time.perf_counter()
-    df = pybcsv.read_to_dataframe(str(file_path))
+    df = pybcsv.read_dataframe(str(file_path))
     elapsed_ms = (time.perf_counter() - start) * 1000.0
     return elapsed_ms, len(df)
 

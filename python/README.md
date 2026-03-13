@@ -272,8 +272,6 @@ pybcsv.to_csv(bcsv_file, csv_file)
 pybcsv.read_columns(filename) -> dict[str, np.ndarray | list[str]]
 pybcsv.write_columns(filename, columns, col_order, col_types,
                      row_codec="delta", compression_level=1)
-pybcsv.read_to_dataframe(filename, columns=None) -> pd.DataFrame
-
 # Type utilities
 pybcsv.type_to_string(column_type) -> str
 ```

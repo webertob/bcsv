@@ -23,12 +23,10 @@ from . import Layout, ColumnType, Writer, Reader, FileFlags
 # Import columnar I/O if available (requires numpy headers in bindings)
 try:
     from ._bcsv import read_columns as _read_columns, write_columns as _write_columns
-    from ._bcsv import read_to_dataframe as _read_to_dataframe
     _COLUMNAR_AVAILABLE = True
 except ImportError:
     try:
         from _bcsv import read_columns as _read_columns, write_columns as _write_columns
-        from _bcsv import read_to_dataframe as _read_to_dataframe
         _COLUMNAR_AVAILABLE = True
     except ImportError:
         _COLUMNAR_AVAILABLE = False
@@ -185,10 +183,6 @@ def read_dataframe(filename: str,
         table = _read_to_arrow(filename, columns=columns)
         return table.to_pandas()
 
-    # Fast path: C++ read_to_dataframe (single call, constructs DataFrame in C++)
-    if _COLUMNAR_AVAILABLE:
-        return _read_to_dataframe(filename, columns)
-    
     reader = Reader()
     try:
         if not reader.open(filename):
