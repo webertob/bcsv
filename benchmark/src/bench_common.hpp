@@ -99,6 +99,32 @@ private:
 };
 
 // ============================================================================
+// JSON helpers
+// ============================================================================
+
+/// Escape a string for safe embedding in a JSON value.
+inline std::string jsonEscape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20)
+                    { char buf[8]; std::snprintf(buf, sizeof(buf), "\\u%04x", c); out += buf; }
+                else
+                    out += c;
+                break;
+        }
+    }
+    return out;
+}
+
+// ============================================================================
 // PlatformInfo — captures host and build environment
 // ============================================================================
 
@@ -252,7 +278,7 @@ struct BenchmarkResult {
            << "      \"compression_ratio\": " << std::setprecision(4) << compression_ratio << ",\n"
            << "      \"validation_passed\": " << (validation_passed ? "true" : "false");
         if (!validation_error.empty()) {
-            ss << ",\n      \"validation_error\": \"" << validation_error << "\"";
+            ss << ",\n      \"validation_error\": \"" << jsonEscape(validation_error) << "\"";
         }
         ss << "\n    }";
         return ss.str();
