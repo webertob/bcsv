@@ -359,6 +359,14 @@ Build: `cmake --build build --target bcsv_c_api -j$(nproc)` → copy to `Assets/
 Key files: `Scripts/BcsvNative.cs` (P/Invoke), `BcsvLayout.cs`, `BcsvReader.cs`, `BcsvWriter.cs`, `BcsvRow.cs`.
 Deep reference: `unity/README.md`, `unity/OWNERSHIP_SEMANTICS.md`.
 
+### C# / NuGet (`csharp/`)
+
+Architecture: `C# → P/Invoke → libbcsv_c_api.so/.dll/.dylib → C++ bcsv`.
+NuGet package: `Bcsv` — multi-target net8.0 + net10.0, native binaries for 5 RIDs (win-x64, linux-x64, linux-arm64, osx-x64, osx-arm64).
+Key files: `csharp/src/Bcsv/NativeMethods.cs` (P/Invoke), `BcsvReader.cs`, `BcsvWriter.cs`, `BcsvColumns.cs`, `BcsvSampler.cs`, `BcsvRow.cs`.
+CI/CD: `.github/workflows/csharp-nuget.yml` — builds native libs per platform, packs .nupkg, tests, publishes to NuGet.org + GitHub Packages on version tags.
+Deep reference: `csharp/README.md`.
+
 ## Lean Architecture Gate
 
 Use `docs/LEAN_CHECKLIST.md` for every non-trivial item (especially wire format, serialization, Reader/Writer, and API changes).

@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -13,7 +13,26 @@
     <Description>C# bindings for the BCSV (Binary CSV) library — fast, compact time-series storage with streaming row-by-row and columnar bulk I/O.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>bcsv;binary-csv;time-series;columnar;streaming;interop</PackageTags>
-    <RepositoryUrl>https://github.com/tobiasweberdev/bcsv</RepositoryUrl>
+    <RepositoryUrl>https://github.com/webertob/bcsv</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
+    <PackageProjectUrl>https://github.com/webertob/bcsv</PackageProjectUrl>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <Copyright>Copyright (c) 2025-2026 Tobias Weber</Copyright>
   </PropertyGroup>
+
+  <!-- Include NuGet README -->
+  <ItemGroup>
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <!-- Native library runtime assets (populated by CI/CD or local build) -->
+  <ItemGroup>
+    <Content Include="runtimes\**\*" PackagePath="runtimes" CopyToOutputDirectory="PreserveNewest" Condition="Exists('runtimes')" />
+  </ItemGroup>
+
+  <!-- MSBuild targets for consumers to copy native libs at build time -->
+  <ItemGroup>
+    <None Include="build\Bcsv.targets" Pack="true" PackagePath="build" Condition="Exists('build\Bcsv.targets')" />
+    <None Include="build\Bcsv.targets" Pack="true" PackagePath="buildTransitive" Condition="Exists('build\Bcsv.targets')" />
+  </ItemGroup>
 </Project>

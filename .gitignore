@@ -4,6 +4,7 @@ build_debug/
 build-release/
 build-debug/
 build/
+!csharp/src/Bcsv/build/
 bin/
 /lib/
 obj/
@@ -103,3 +104,6 @@ bcsv_test_files/
 leaderboard.json
 benchmark/results/
 benchmark/runs/
+
+# NuGet native staging (populated by CI/CD, not committed)
+csharp/src/Bcsv/runtimes/

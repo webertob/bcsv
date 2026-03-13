@@ -1,0 +1,289 @@
+# Build, test, and publish Bcsv NuGet package
+# Produces a multi-platform .nupkg with native bcsv_c_api binaries for:
+#   win-x64, linux-x64, linux-arm64, osx-x64, osx-arm64
+
+name: C# NuGet
+
+on:
+  push:
+    branches: [main, master]
+    tags:
+      - 'v*'
+    paths:
+      - 'csharp/**'
+      - 'include/**'
+      - 'src/bcsv_c_api.cpp'
+      - '.github/workflows/csharp-nuget.yml'
+  pull_request:
+    paths:
+      - 'csharp/**'
+      - 'include/**'
+      - 'src/bcsv_c_api.cpp'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Build native shared library per platform ────────────────────────
+  build-native:
+    name: Native ${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-x64
+            os: ubuntu-latest
+            lib-name: libbcsv_c_api.so
+
+          - rid: linux-arm64
+            os: ubuntu-24.04-arm
+            lib-name: libbcsv_c_api.so
+
+          - rid: win-x64
+            os: windows-latest
+            lib-name: bcsv_c_api.dll
+
+          - rid: osx-x64
+            os: macos-15
+            lib-name: libbcsv_c_api.dylib
+
+          - rid: osx-arm64
+            os: macos-15
+            lib-name: libbcsv_c_api.dylib
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build
+
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Setup MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Cache CMake dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: native-deps-${{ matrix.rid }}-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure & Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -G Ninja -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBCSV_WERROR=ON \
+            -DBUILD_TESTS=OFF
+          cmake --build build --target bcsv_c_api --parallel
+
+      - name: Configure & Build (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cmake -G Ninja -B build `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DBCSV_WERROR=ON `
+            -DBUILD_TESTS=OFF
+          cmake --build build --target bcsv_c_api --parallel
+
+      - name: Upload native library
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.rid }}
+          path: build/${{ matrix.lib-name }}
+          retention-days: 7
+
+  # ── Pack NuGet package ──────────────────────────────────────────────
+  pack:
+    name: Pack .nupkg
+    needs: build-native
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Download all native artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: native-artifacts
+          pattern: native-*
+
+      - name: Stage native libraries into runtimes structure
+        run: |
+          for rid in linux-x64 linux-arm64 win-x64 osx-x64 osx-arm64; do
+            mkdir -p csharp/src/Bcsv/runtimes/${rid}/native
+            cp native-artifacts/native-${rid}/* csharp/src/Bcsv/runtimes/${rid}/native/
+          done
+          echo "=== Staged native libraries ==="
+          find csharp/src/Bcsv/runtimes -type f
+
+      - name: Extract version from tag or set dev version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="0.0.0-dev.$(date +%Y%m%d%H%M%S)"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Package version: $VERSION"
+
+      - name: Pack
+        run: |
+          dotnet pack csharp/src/Bcsv/Bcsv.csproj \
+            -c Release \
+            -o nupkg \
+            /p:Version=${{ steps.version.outputs.version }}
+
+      - name: Inspect package
+        run: |
+          ls -lh nupkg/
+          # Verify native libs are inside the package
+          unzip -l nupkg/*.nupkg | grep -E "runtimes|\.dll|\.so|\.dylib|README"
+
+      - name: Upload .nupkg
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-package
+          path: nupkg/*.nupkg
+          retention-days: 30
+
+  # ── Test the packed NuGet package ───────────────────────────────────
+  test:
+    name: Test ${{ matrix.os }}
+    needs: pack
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: windows-latest
+          - os: macos-15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Download .nupkg
+        uses: actions/download-artifact@v4
+        with:
+          name: nuget-package
+          path: nupkg
+
+      - name: Extract native library from .nupkg
+        shell: bash
+        run: |
+          mkdir -p native-lib
+          cd native-lib
+          # .nupkg is a ZIP — extract runtimes
+          python3 -c "
+          import zipfile, glob, os
+          pkg = glob.glob('../nupkg/*.nupkg')[0]
+          with zipfile.ZipFile(pkg) as z:
+              for f in z.namelist():
+                  if 'runtimes/' in f and not f.endswith('/'):
+                      z.extract(f)
+          "
+          find . -type f
+
+      - name: Run tests against packaged library (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          # Find the native lib directory for this platform
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            RID="linux-x64"
+          else
+            RID="osx-arm64"
+          fi
+          NATIVE_DIR="${{ github.workspace }}/native-lib/runtimes/${RID}/native"
+          LD_LIBRARY_PATH="${NATIVE_DIR}:${LD_LIBRARY_PATH:-}" \
+          DYLD_LIBRARY_PATH="${NATIVE_DIR}:${DYLD_LIBRARY_PATH:-}" \
+          dotnet test csharp/tests/Bcsv.Tests/Bcsv.Tests.csproj \
+            -c Release \
+            --logger "console;verbosity=detailed"
+
+      - name: Run tests against packaged library (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $nativeDir = "${{ github.workspace }}\native-lib\runtimes\win-x64\native"
+          $env:PATH = "$nativeDir;$env:PATH"
+          dotnet test csharp/tests/Bcsv.Tests/Bcsv.Tests.csproj `
+            -c Release `
+            --logger "console;verbosity=detailed"
+
+  # ── Publish to GitHub Packages ──────────────────────────────────────
+  publish-github:
+    name: Publish to GitHub Packages
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      packages: write
+    steps:
+      - name: Download .nupkg
+        uses: actions/download-artifact@v4
+        with:
+          name: nuget-package
+          path: nupkg
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Push to GitHub Packages
+        run: |
+          dotnet nuget push nupkg/*.nupkg \
+            --api-key ${{ secrets.GITHUB_TOKEN }} \
+            --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+            --skip-duplicate
+
+  # ── Publish to NuGet.org ────────────────────────────────────────────
+  publish-nuget:
+    name: Publish to NuGet.org
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    environment: nuget
+    permissions:
+      id-token: write  # For future Trusted Publishing
+    steps:
+      - name: Download .nupkg
+        uses: actions/download-artifact@v4
+        with:
+          name: nuget-package
+          path: nupkg
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Push to NuGet.org
+        run: |
+          dotnet nuget push nupkg/*.nupkg \
+            --api-key ${{ secrets.NUGET_API_KEY }} \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate
