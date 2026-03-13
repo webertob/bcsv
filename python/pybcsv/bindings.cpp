@@ -309,8 +309,18 @@ namespace {
         .def("read_all", [](ReaderT& r) -> nb::list {
             nb::list result;
             const auto& layout = r.layout();
-            while (r.readNext())
-                result.append(row_to_list(r.row(), layout));
+            const size_t n = layout.columnCount();
+            // Cache column types to avoid per-row layout lookups
+            std::vector<bcsv::ColumnType> col_types(n);
+            for (size_t i = 0; i < n; ++i)
+                col_types[i] = layout.columnType(i);
+            while (r.readNext()) {
+                const auto& row = r.row();
+                nb::list row_list;
+                for (size_t i = 0; i < n; ++i)
+                    row_list.append(extract_column_value(row, i, col_types[i]));
+                result.append(std::move(row_list));
+            }
             return result;
         })
         .def("__enter__", [](ReaderT& r) -> ReaderT& { return r; }, nb::rv_policy::reference)
@@ -636,7 +646,10 @@ NB_MODULE(_bcsv, m) {
             return success;
         }, nb::arg("filename"))
         .def("layout", &ReaderT::layout, nb::rv_policy::reference_internal)
-        .def("read_next", &ReaderT::readNext)
+        .def("read_next", [](ReaderT& r) {
+            nb::gil_scoped_release release;
+            return r.readNext();
+        })
         .def("close", [](ReaderT& reader) { nb::gil_scoped_release release; reader.close(); })
         .def("is_open", &ReaderT::isOpen)
         .def("file_flags", [](ReaderT& r) -> int { return static_cast<int>(r.fileFlags()); })
@@ -672,7 +685,81 @@ NB_MODULE(_bcsv, m) {
                 result[nb::cast(layout.columnName(i))] =
                     extract_column_value(row, i, layout.columnType(i));
             return result;
-        }, "Get the current row as a dict {column_name: value}");
+        }, "Get the current row as a dict {column_name: value}")
+        .def("read_batch", [](ReaderT& r, size_t batch_size) -> nb::object {
+            const auto& layout = r.layout();
+            const size_t num_cols = layout.columnCount();
+            if (num_cols == 0)
+                throw std::runtime_error("Reader has no columns");
+
+            // Cache column metadata
+            std::vector<bcsv::ColumnType> col_types(num_cols);
+            std::vector<std::string> col_names(num_cols);
+            std::vector<bool> is_str(num_cols, false);
+            for (size_t c = 0; c < num_cols; ++c) {
+                col_types[c] = layout.columnType(c);
+                col_names[c] = layout.columnName(c);
+                is_str[c] = (col_types[c] == bcsv::ColumnType::STRING);
+            }
+
+            // Allocate numpy arrays (numeric) and C++ string vectors (strings)
+            auto np = nb::module_::import_("numpy");
+            std::vector<nb::object> arrays(num_cols);
+            std::vector<void*> bufs(num_cols, nullptr);
+            std::vector<std::vector<std::string>> string_cols(num_cols);
+
+            for (size_t c = 0; c < num_cols; ++c) {
+                if (is_str[c]) {
+                    string_cols[c].reserve(batch_size);
+                } else {
+                    nb::object shape = nb::make_tuple(static_cast<int64_t>(batch_size));
+                    arrays[c] = np.attr("empty")(shape,
+                        "dtype"_a = bcsv_type_to_numpy_dtype(col_types[c]));
+                    bufs[c] = reinterpret_cast<void*>(
+                        nb::cast<intptr_t>(arrays[c].attr("ctypes").attr("data")));
+                }
+            }
+
+            // Read loop under GIL release
+            size_t rows_read = 0;
+            {
+                nb::gil_scoped_release release;
+                while (rows_read < batch_size && r.readNext()) {
+                    const auto& row = r.row();
+                    for (size_t c = 0; c < num_cols; ++c) {
+                        if (is_str[c]) {
+                            string_cols[c].emplace_back(row.template get<std::string>(c));
+                        } else {
+                            fill_numpy_cell(row, c, col_types[c], bufs[c], rows_read);
+                        }
+                    }
+                    ++rows_read;
+                }
+            }
+
+            if (rows_read == 0) return nb::none();
+
+            // Build result dict
+            nb::dict result;
+            for (size_t c = 0; c < num_cols; ++c) {
+                if (is_str[c]) {
+                    nb::list str_list;
+                    for (auto& s : string_cols[c])
+                        str_list.append(nb::cast(std::move(s)));
+                    result[nb::cast(col_names[c])] = std::move(str_list);
+                } else {
+                    if (rows_read < batch_size) {
+                        // Slice to actual row count
+                        auto stop = nb::int_(static_cast<int64_t>(rows_read));
+                        auto sl = nb::steal(PySlice_New(Py_None, stop.ptr(), Py_None));
+                        arrays[c] = arrays[c][sl];
+                    }
+                    result[nb::cast(col_names[c])] = std::move(arrays[c]);
+                }
+            }
+            return result;
+        }, nb::arg("batch_size") = 10000,
+           "Read up to batch_size rows into a dict of numpy arrays/lists. Returns None at EOF.");
     bind_reader_iteration<ReaderT>(reader_cls);
 
     // Utility functions

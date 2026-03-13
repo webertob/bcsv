@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <LangVersion>12</LangVersion>
+
+    <!-- NuGet package metadata -->
+    <PackageId>Bcsv</PackageId>
+    <Version>1.4.0</Version>
+    <Authors>Tobias Weber</Authors>
+    <Description>C# bindings for the BCSV (Binary CSV) library — fast, compact time-series storage with streaming row-by-row and columnar bulk I/O.</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageTags>bcsv;binary-csv;time-series;columnar;streaming;interop</PackageTags>
+    <RepositoryUrl>https://github.com/tobiasweberdev/bcsv</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+</Project>

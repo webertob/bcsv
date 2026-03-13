@@ -339,6 +339,47 @@ size_t              bcsv_sampler_source_row_pos (const_bcsv_sampler_t sampler);
 // Last error/compile-error message (empty if no error)
 const char*         bcsv_sampler_error_msg      (const_bcsv_sampler_t sampler);
 
+// ============================================================================
+// Columnar Bulk I/O API
+// ============================================================================
+// Read up to max_rows rows from an opened reader into column-oriented buffers.
+// bufs is an array of num_cols pointers. For numeric columns, each pointer must
+// point to a pre-allocated buffer of element type matching the column type.
+// For string columns, the pointer is ignored (strings are stored internally
+// and retrieved via bcsv_reader_column_string).
+// Returns the number of rows actually read (may be less than max_rows at EOF).
+size_t              bcsv_reader_read_columns    (bcsv_reader_t reader, void** bufs,
+                                                 size_t num_cols, size_t max_rows);
+
+// Retrieve a string from the internal buffer after bcsv_reader_read_columns.
+// col is the column index, row is the row index (0-based within the batch).
+// Returns empty string if indices are out of range.
+const char*         bcsv_reader_column_string   (bcsv_reader_t reader, size_t col, size_t row);
+
+// Number of strings stored for a given column after bcsv_reader_read_columns.
+size_t              bcsv_reader_column_string_count(bcsv_reader_t reader, size_t col);
+
+// Pack all strings for a column into a contiguous null-terminated buffer.
+// Returns total bytes needed (including null terminators).
+// If out_buf is NULL or buf_size is 0, returns required size without writing.
+size_t              bcsv_reader_column_strings_packed(bcsv_reader_t reader, size_t col,
+                                                      char* out_buf, size_t buf_size);
+
+// Write num_rows rows from column-oriented buffers through an opened writer.
+// bufs is an array of num_cols pointers. For numeric columns, each pointer
+// must point to a buffer of element type matching the column type.
+// For string columns, bufs[c] must be a const char** (array of C string
+// pointers, one per row). Returns true on success.
+bool                bcsv_writer_write_columns   (bcsv_writer_t writer, const void** bufs,
+                                                 size_t num_cols, size_t num_rows);
+
+// Return the compact data size in bytes for a single row (sum of fixed-size
+// column widths — excludes strings).  Useful for buffer pre-allocation.
+size_t              bcsv_layout_row_data_size   (const_bcsv_layout_t layout);
+
+// Retrieve file flags as reported by the reader (only valid after open).
+int                 bcsv_reader_file_flags      (const_bcsv_reader_t reader);
+
 #ifdef __cplusplus
 }
 #endif

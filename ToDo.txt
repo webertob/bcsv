@@ -792,10 +792,48 @@ background:
         Arrow types we support. Switch to Arrow type_id comparison if/when adding
         nested types (list, struct, dictionary).
 
-23. Update C# bindinds, using latest version of bcsv library, supporting all codecs and major API entry points (lets work together to identify which to include, start broad, remove bloat/complexity/internals)
-    - full test coverage and validated
-    - create and publish nuget package
-    - valdiate C# bindings work with unity
+23. Update C# bindings, to use latest bcsv library, supporting all codecs and major API entry points available at C/C++ versions.
+    Status: IN PROGRESS — Library & benchmarks complete, CI/CD & NuGet remaining
+
+    Design goals:
+    - operate on files larger than memory (stream or chunks), not require entire file in RAM
+    - even call-time profile (low jitter, real-time capable)
+    - exploit layout knowledge (column count, types defined at file open) — index/position based access, no repetitive type checks
+    - zero-copy approach: bulk work on C/C++ side, reuse rows/buffers, P/Invoke to libbcsv_c_api
+    - downsampling on bcsv side (Sampler), only transfer/map results
+
+    Completed:
+    [x] C# library (15 source files, csharp/src/Bcsv/):
+        BcsvReader (sequential + IEnumerable<BcsvRow>), BcsvWriter,
+        BcsvColumns (columnar bulk I/O with pinned arrays + single P/Invoke),
+        BcsvSampler, BcsvCsvReader, BcsvCsvWriter, BcsvRow (readonly struct),
+        BcsvLayout, BcsvVersion, BcsvException, NativeMethods (P/Invoke),
+        ColumnDefinition, ColumnType, FileFlags, SamplerMode
+    [x] C API extensions (bcsv_c_api.h / bcsv_c_api.cpp):
+        bcsv_reader_read_columns, bcsv_writer_write_columns,
+        bcsv_reader_column_strings_packed — columnar bulk access for C#/Python
+    [x] Python bindings updated (bindings.cpp) — columnar read/write exposed
+    [x] Test suite — 38 unit tests (csharp/tests/Bcsv.Tests/BcsvTests.cs):
+        Row read/write, columnar read/write, sampler, CSV round-trip,
+        version API, error handling, all codecs (flat/zoh/delta × stream/packet/lz4_batch)
+    [x] Benchmark suite (csharp/benchmarks/Program.cs, ~650 lines):
+        5 workloads × 3 codecs × 4 modes (row_write, row_read, columnar_write, columnar_read)
+        + direct_access mode, S/M/L/XL sizes
+        Performance (10K rows, delta codec, weather_timeseries):
+            row_write: 1.8 Mrow/s, row_read: 6.9 Mrow/s,
+            columnar_write: 1.7 Mrow/s, columnar_read: 2.4 Mrow/s
+    [x] Compaction — 3 refactoring proposals applied:
+        1. ReadColumnsFromHandle shared helper (BcsvColumns.cs ↔ BcsvReader.ReadBatch)
+        2. ThrowWithError pattern (NativeMethods.cs, consolidated 11 error sites across 5 files)
+        3. Unified GenerateData in benchmarks (merged SetRow + FillColumnarRow)
+    [x] Quality assurance — full test matrix passed:
+        682/682 C++ GTest, 87/87 C API basic, 824/824 C API full,
+        38/38 C# tests, 143/143 Python tests, benchmark smoke test OK
+
+    Remaining:
+    [ ] Create and publish NuGet package
+    [ ] Setup GitHub CI/CD to build, test, and publish C# NuGet package
+    
 
 24 Compare against (document and benchmarks):
         parquet

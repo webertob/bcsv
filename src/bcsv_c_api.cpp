@@ -11,6 +11,8 @@
 #include <string>
 #include <sstream>
 #include <exception>
+#include <unordered_map>
+#include <vector>
 
 // Include full implementations (headers + .hpp files)
 #include "bcsv/bcsv.h"  // This includes all implementations
@@ -107,6 +109,17 @@ struct SamplerHandle {
     bcsv::Sampler<bcsv::Layout>* sampler;
     std::string                  error_msg;  // cached error message
 };
+
+// ---- Columnar read state (per reader, reused across calls) -----------------
+struct ColumnarReadState {
+    std::vector<std::vector<std::string>> string_cols;  // [col][row]
+    void clear() { for (auto& v : string_cols) v.clear(); }
+    void resize(size_t num_cols) { string_cols.resize(num_cols); }
+};
+
+// Attach columnar state to each reader via a side map (avoids changing
+// the Reader class — we use the opaque handle address as key).
+thread_local std::unordered_map<const void*, ColumnarReadState> g_columnar_state;
 
 } // namespace
 
@@ -302,11 +315,13 @@ bcsv_reader_t bcsv_reader_create(void) {
 
 void bcsv_reader_destroy(bcsv_reader_t reader) {
     if (!reader) return;
+    g_columnar_state.erase(reader);
     BCSV_CAPI_TRY_VOID("bcsv_reader_destroy", delete static_cast<bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader))
 }
 
 void bcsv_reader_close(bcsv_reader_t reader) {
     if (null_handle("bcsv_reader_close", reader)) return;
+    g_columnar_state.erase(reader);
     BCSV_CAPI_TRY_VOID("bcsv_reader_close", static_cast<bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader)->close())
 }
 
@@ -1202,4 +1217,233 @@ void bcsv_clear_last_error() {
     g_has_error = false;
 }
 
-} // extern "C"
+} // extern "C" (main)
+
+// ============================================================================
+// Columnar Bulk I/O — helpers (outside extern "C", internal linkage)
+// ============================================================================
+
+namespace {
+
+// Helper: fill one cell from row into a column-oriented typed buffer at offset row_idx.
+inline void fill_column_cell(const bcsv::Row& row, size_t col,
+                             bcsv::ColumnType type, void* buf, size_t row_idx) {
+    switch (type) {
+    case bcsv::ColumnType::BOOL:   static_cast<bool*>(buf)[row_idx]     = row.get<bool>(col);     break;
+    case bcsv::ColumnType::UINT8:  static_cast<uint8_t*>(buf)[row_idx]  = row.get<uint8_t>(col);  break;
+    case bcsv::ColumnType::UINT16: static_cast<uint16_t*>(buf)[row_idx] = row.get<uint16_t>(col); break;
+    case bcsv::ColumnType::UINT32: static_cast<uint32_t*>(buf)[row_idx] = row.get<uint32_t>(col); break;
+    case bcsv::ColumnType::UINT64: static_cast<uint64_t*>(buf)[row_idx] = row.get<uint64_t>(col); break;
+    case bcsv::ColumnType::INT8:   static_cast<int8_t*>(buf)[row_idx]   = row.get<int8_t>(col);   break;
+    case bcsv::ColumnType::INT16:  static_cast<int16_t*>(buf)[row_idx]  = row.get<int16_t>(col);  break;
+    case bcsv::ColumnType::INT32:  static_cast<int32_t*>(buf)[row_idx]  = row.get<int32_t>(col);  break;
+    case bcsv::ColumnType::INT64:  static_cast<int64_t*>(buf)[row_idx]  = row.get<int64_t>(col);  break;
+    case bcsv::ColumnType::FLOAT:  static_cast<float*>(buf)[row_idx]    = row.get<float>(col);    break;
+    case bcsv::ColumnType::DOUBLE: static_cast<double*>(buf)[row_idx]   = row.get<double>(col);   break;
+    default: break; // STRING handled separately
+    }
+}
+
+// Helper: fill one cell from column-oriented typed buffer at row_idx into a row.
+inline void fill_row_cell(bcsv::Row& row, size_t col,
+                          bcsv::ColumnType type, const void* buf, size_t row_idx) {
+    switch (type) {
+    case bcsv::ColumnType::BOOL:   row.set(col, static_cast<const bool*>(buf)[row_idx]);     break;
+    case bcsv::ColumnType::UINT8:  row.set(col, static_cast<const uint8_t*>(buf)[row_idx]);  break;
+    case bcsv::ColumnType::UINT16: row.set(col, static_cast<const uint16_t*>(buf)[row_idx]); break;
+    case bcsv::ColumnType::UINT32: row.set(col, static_cast<const uint32_t*>(buf)[row_idx]); break;
+    case bcsv::ColumnType::UINT64: row.set(col, static_cast<const uint64_t*>(buf)[row_idx]); break;
+    case bcsv::ColumnType::INT8:   row.set(col, static_cast<const int8_t*>(buf)[row_idx]);   break;
+    case bcsv::ColumnType::INT16:  row.set(col, static_cast<const int16_t*>(buf)[row_idx]);  break;
+    case bcsv::ColumnType::INT32:  row.set(col, static_cast<const int32_t*>(buf)[row_idx]);  break;
+    case bcsv::ColumnType::INT64:  row.set(col, static_cast<const int64_t*>(buf)[row_idx]);  break;
+    case bcsv::ColumnType::FLOAT:  row.set(col, static_cast<const float*>(buf)[row_idx]);    break;
+    case bcsv::ColumnType::DOUBLE: row.set(col, static_cast<const double*>(buf)[row_idx]);   break;
+    default: break; // STRING handled separately
+    }
+}
+
+} // namespace
+
+extern "C" {
+
+// ============================================================================
+// Columnar Bulk I/O API
+// ============================================================================
+
+size_t bcsv_reader_read_columns(bcsv_reader_t reader, void** bufs,
+                                size_t num_cols, size_t max_rows) {
+    if (null_handle("bcsv_reader_read_columns", reader)) return 0;
+    try {
+        clear_last_error();
+        auto* r = static_cast<bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader);
+        const auto& layout = r->layout();
+        const size_t actual_cols = layout.columnCount();
+        if (num_cols != actual_cols) {
+            g_has_error = true;
+            g_last_error = "bcsv_reader_read_columns: num_cols (" +
+                           std::to_string(num_cols) + ") != layout column count (" +
+                           std::to_string(actual_cols) + ")";
+            return 0;
+        }
+
+        // Cache column types and detect string columns
+        std::vector<bcsv::ColumnType> col_types(num_cols);
+        std::vector<bool> is_string(num_cols, false);
+        for (size_t c = 0; c < num_cols; ++c) {
+            col_types[c] = layout.columnType(c);
+            is_string[c] = (col_types[c] == bcsv::ColumnType::STRING);
+        }
+
+        // Prepare columnar string storage
+        auto& state = g_columnar_state[reader];
+        state.resize(num_cols);
+        state.clear();
+        for (size_t c = 0; c < num_cols; ++c) {
+            if (is_string[c]) state.string_cols[c].reserve(max_rows > 1024 ? 1024 : max_rows);
+        }
+
+        // Read loop — hot path
+        size_t row_idx = 0;
+        while (row_idx < max_rows && r->readNext()) {
+            const auto& row = r->row();
+            for (size_t c = 0; c < num_cols; ++c) {
+                if (is_string[c]) {
+                    state.string_cols[c].emplace_back(row.get<std::string>(c));
+                } else {
+                    fill_column_cell(row, c, col_types[c], bufs[c], row_idx);
+                }
+            }
+            ++row_idx;
+        }
+        return row_idx;
+    } catch (const std::exception& ex) {
+        set_last_error("bcsv_reader_read_columns", ex);
+        return 0;
+    } catch (...) {
+        set_last_error_unknown("bcsv_reader_read_columns");
+        return 0;
+    }
+}
+
+const char* bcsv_reader_column_string(bcsv_reader_t reader, size_t col, size_t row) {
+    auto it = g_columnar_state.find(reader);
+    if (it == g_columnar_state.end()) return "";
+    const auto& state = it->second;
+    if (col >= state.string_cols.size()) return "";
+    if (row >= state.string_cols[col].size()) return "";
+    return state.string_cols[col][row].c_str();
+}
+
+size_t bcsv_reader_column_string_count(bcsv_reader_t reader, size_t col) {
+    auto it = g_columnar_state.find(reader);
+    if (it == g_columnar_state.end()) return 0;
+    const auto& state = it->second;
+    if (col >= state.string_cols.size()) return 0;
+    return state.string_cols[col].size();
+}
+
+size_t bcsv_reader_column_strings_packed(bcsv_reader_t reader, size_t col,
+                                          char* out_buf, size_t buf_size) {
+    auto it = g_columnar_state.find(reader);
+    if (it == g_columnar_state.end()) return 0;
+    const auto& state = it->second;
+    if (col >= state.string_cols.size()) return 0;
+    const auto& strings = state.string_cols[col];
+
+    // Calculate total size needed (each string null-terminated)
+    size_t total = 0;
+    for (const auto& s : strings)
+        total += s.size() + 1;
+
+    if (out_buf == nullptr || buf_size == 0)
+        return total;
+
+    // Fill buffer with concatenated null-terminated strings
+    size_t offset = 0;
+    for (const auto& s : strings) {
+        size_t needed = s.size() + 1;
+        if (offset + needed > buf_size) break;
+        std::memcpy(out_buf + offset, s.data(), s.size());
+        out_buf[offset + s.size()] = '\0';
+        offset += needed;
+    }
+    return offset;
+}
+
+bool bcsv_writer_write_columns(bcsv_writer_t writer, const void** bufs,
+                               size_t num_cols, size_t num_rows) {
+    if (null_handle("bcsv_writer_write_columns", writer)) return false;
+    try {
+        clear_last_error();
+        auto* h = static_cast<WriterHandle*>(writer);
+        const auto* layout = h->layout_fn(h->ptr);
+        const size_t actual_cols = layout->columnCount();
+        if (num_cols != actual_cols) {
+            g_has_error = true;
+            g_last_error = "bcsv_writer_write_columns: num_cols (" +
+                           std::to_string(num_cols) + ") != layout column count (" +
+                           std::to_string(actual_cols) + ")";
+            return false;
+        }
+
+        // Cache column types
+        std::vector<bcsv::ColumnType> col_types(num_cols);
+        std::vector<bool> is_string(num_cols, false);
+        for (size_t c = 0; c < num_cols; ++c) {
+            col_types[c] = layout->columnType(c);
+            is_string[c] = (col_types[c] == bcsv::ColumnType::STRING);
+        }
+
+        // Write loop
+        auto* row = h->cached_row;
+        for (size_t r = 0; r < num_rows; ++r) {
+            for (size_t c = 0; c < num_cols; ++c) {
+                if (is_string[c]) {
+                    const char* const* str_array = static_cast<const char* const*>(bufs[c]);
+                    row->set(c, std::string(str_array[r] ? str_array[r] : ""));
+                } else {
+                    fill_row_cell(*row, c, col_types[c], bufs[c], r);
+                }
+            }
+            h->writeRow_fn(h->ptr);
+        }
+        return true;
+    } catch (const std::exception& ex) {
+        set_last_error("bcsv_writer_write_columns", ex);
+        return false;
+    } catch (...) {
+        set_last_error_unknown("bcsv_writer_write_columns");
+        return false;
+    }
+}
+
+size_t bcsv_layout_row_data_size(const_bcsv_layout_t layout) {
+    if (null_handle("bcsv_layout_row_data_size", layout)) return 0;
+    try {
+        clear_last_error();
+        const auto* l = static_cast<const bcsv::Layout*>(layout);
+        size_t total = 0;
+        for (size_t c = 0; c < l->columnCount(); ++c) {
+            auto t = l->columnType(c);
+            if (t != bcsv::ColumnType::STRING) {
+                total += bcsv::sizeOf(t);
+            }
+        }
+        return total;
+    } catch (const std::exception& ex) {
+        set_last_error("bcsv_layout_row_data_size", ex);
+        return 0;
+    } catch (...) {
+        set_last_error_unknown("bcsv_layout_row_data_size");
+        return 0;
+    }
+}
+
+int bcsv_reader_file_flags(const_bcsv_reader_t reader) {
+    if (null_handle("bcsv_reader_file_flags", reader)) return 0;
+    BCSV_CAPI_TRY_RETURN("bcsv_reader_file_flags", 0,
+        static_cast<int>(static_cast<const bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader)->fileFlags()))
+}
+
+} // extern "C" (columnar)
