@@ -11,8 +11,6 @@ on:
   push:
     tags:
       - 'v*.*.*'  # Triggers on version tags like v1.0.4, v2.1.0, etc.
-    branches-ignore:
-      - '**'  # Never trigger on branch pushes — tags only
 
 permissions:
   contents: write
