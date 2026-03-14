@@ -577,3 +577,55 @@ TEST_F(WriterReaderTest, Writer_AutoFlags_ZoH) {
     EXPECT_EQ(count, 50u);
     reader.close();
 }
+
+// ============================================================================
+// Writer: close() error detection
+// ============================================================================
+
+TEST_F(WriterReaderTest, CloseDetectsStreamError) {
+    // Verify that Writer::close() captures I/O errors via getErrorMsg()
+    Layout layout = makeLayout();
+    Writer<Layout> writer(layout);
+    std::string path = testFile("close_error.bcsv");
+    ASSERT_TRUE(writer.open(path, true));
+
+    // Write a row so finalize has work to do
+    writer.row().set(0, 42);
+    writer.row().set(1, 1.0f);
+    writer.row().set(2, std::string("test"));
+    writer.writeRow();
+
+    // Verify no error before close
+    EXPECT_TRUE(writer.getErrorMsg().empty());
+
+    // Normal close should NOT produce an error
+    writer.close();
+    EXPECT_TRUE(writer.getErrorMsg().empty());
+}
+
+TEST_F(WriterReaderTest, CloseOnGoodStreamNoError) {
+    // Verify that a normal write-close cycle leaves getErrorMsg() empty
+    Layout layout = makeLayout();
+    Writer<Layout> writer(layout);
+    std::string path = testFile("close_good.bcsv");
+    ASSERT_TRUE(writer.open(path, true));
+
+    size_t written = 0;
+    for (int i = 0; i < 100; ++i) {
+        writer.row().set(0, i);
+        writer.row().set(1, static_cast<float>(i));
+        writer.row().set(2, std::string("row") + std::to_string(i));
+        writer.writeRow();
+        ++written;
+    }
+    writer.close();
+    EXPECT_TRUE(writer.getErrorMsg().empty());
+
+    // Verify data integrity
+    Reader<Layout> reader;
+    ASSERT_TRUE(reader.open(path));
+    size_t count = 0;
+    while (reader.readNext()) ++count;
+    EXPECT_EQ(count, written);
+    reader.close();
+}

@@ -382,7 +382,13 @@ namespace bcsv {
         std::string& str = strg_[offset];
         str = value;
         if (str.size() > MAX_STRING_LENGTH) {
-            str.resize(MAX_STRING_LENGTH);
+            if constexpr (STRING_OVERFLOW_THROWS) {
+                throw std::length_error("String exceeds MAX_STRING_LENGTH ("
+                    + std::to_string(MAX_STRING_LENGTH) + " bytes): got "
+                    + std::to_string(str.size()) + " bytes");
+            } else {
+                str.resize(MAX_STRING_LENGTH);
+            }
         }
     } else {
         // Use memcpy to write the scalar value into the byte buffer.
@@ -537,7 +543,13 @@ namespace bcsv {
                 std::string& str = strg_[offset];
                 visitor(i, str);
                 if (str.size() > MAX_STRING_LENGTH) {
-                    str.resize(MAX_STRING_LENGTH);
+                    if constexpr (STRING_OVERFLOW_THROWS) {
+                        throw std::length_error("String exceeds MAX_STRING_LENGTH ("
+                            + std::to_string(MAX_STRING_LENGTH) + " bytes): got "
+                            + std::to_string(str.size()) + " bytes");
+                    } else {
+                        str.resize(MAX_STRING_LENGTH);
+                    }
                 }
             } else {
                 auto dispatch = [&](auto& value) {
@@ -620,7 +632,13 @@ namespace bcsv {
                 std::string& str = strg_[offset];
                 visitor(i, str);
                 if (str.size() > MAX_STRING_LENGTH) {
-                    str.resize(MAX_STRING_LENGTH);
+                    if constexpr (STRING_OVERFLOW_THROWS) {
+                        throw std::length_error("String exceeds MAX_STRING_LENGTH ("
+                            + std::to_string(MAX_STRING_LENGTH) + " bytes): got "
+                            + std::to_string(str.size()) + " bytes");
+                    } else {
+                        str.resize(MAX_STRING_LENGTH);
+                    }
                 }
             } else {
                 T& value = *reinterpret_cast<T*>(&data_[offset]);
@@ -1001,7 +1019,13 @@ namespace bcsv {
             if constexpr (std::is_convertible_v<T, std::string_view>) {
                 std::string_view sv = value;
                 if (sv.size() > MAX_STRING_LENGTH) {
-                    sv = sv.substr(0, MAX_STRING_LENGTH);
+                    if constexpr (STRING_OVERFLOW_THROWS) {
+                        throw std::length_error("String exceeds MAX_STRING_LENGTH ("
+                            + std::to_string(MAX_STRING_LENGTH) + " bytes): got "
+                            + std::to_string(sv.size()) + " bytes");
+                    } else {
+                        sv = sv.substr(0, MAX_STRING_LENGTH);
+                    }
                 }
                 currentVal.assign(sv);
             } 

@@ -44,6 +44,8 @@ namespace bcsv {
     
     // Configuration
     constexpr bool RANGE_CHECKING = true;
+    constexpr bool STRING_OVERFLOW_THROWS = true;  // true = throw std::length_error on string > MAX_STRING_LENGTH
+                                                    // false = silently truncate (legacy behavior)
 #ifndef NDEBUG
     constexpr bool DEBUG_OUTPUTS  = true;       // sends information to std::cerr and std::cout to support development and debugging
 #else

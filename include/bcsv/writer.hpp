@@ -61,6 +61,10 @@ namespace bcsv {
         if (file_codec_.isSetup()) {
             file_codec_.finalize(stream_, row_cnt_);
         }
+
+        if (!stream_.good()) {
+            err_msg_ = "Error: I/O failure during file close/footer write";
+        }
         
         stream_.close();
         row_codec_ = CodecType();  // Move-assign default; old codec's destructor releases the structural lock

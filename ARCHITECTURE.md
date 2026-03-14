@@ -192,8 +192,8 @@ Technical design, requirements, and implementation roadmap
 │ │ Flags: FileFlags bitfield            2 bytes        │ │
 │ │ Column count: N                      2 bytes        │ │
 │ │ Packet size (bytes)                  4 bytes        │ │
-│ │ ─── ConstSection (24 bytes) ───────────────────── │ │
-│ │ Column types: [UINT8] × N                          │ │
+│ │ ─── ConstSection (24 bytes) ─────────────────────── │ │
+│ │ Column types: [UINT8] × N                           │ │
 │ │ Column name lengths: [UINT16] × N                   │ │
 │ │ Column names: concatenated UTF-8 strings            │ │
 │ └─────────────────────────────────────────────────────┘ │
@@ -217,7 +217,7 @@ Technical design, requirements, and implementation roadmap
 │ │  │  PCKT_TERMINATOR (0x3FFFFFFF)                 │  │ │
 │ │  └───────────────────────────────────────────────┘  │ │
 │ │  Each row: [bits_][data_][strg_lengths][strg_data]  │ │
-│ │  ZoH rows: length = 0 (repeat previous)            │ │
+│ │  ZoH rows: length = 0 (repeat previous)             │ │
 │ └─────────────────────────────────────────────────────┘ │
 └─────────────────────────────────────────────────────────┘
 [Packet 2 ... N — same structure]
@@ -228,7 +228,7 @@ Technical design, requirements, and implementation roadmap
 │ │ PacketIndexEntry × N:                               │ │
 │ │   byte_offset (UINT64)              8 bytes each    │ │
 │ │   first_row_index (UINT64)          8 bytes each    │ │
-│ │ ─── ConstSection (24 bytes) ───────────────────── │ │
+│ │ ─── ConstSection (24 bytes) ─────────────────────── │ │
 │ │ "EIDX" magic                         4 bytes        │ │
 │ │ start_offset (UINT32)                4 bytes        │ │
 │ │ row_count (UINT64)                   8 bytes        │ │

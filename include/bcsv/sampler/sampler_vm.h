@@ -128,7 +128,11 @@ namespace bcsv {
                 throw std::runtime_error("Sampler: stack overflow (depth exceeds 32)");
             stack_[sp_++] = v;
         }
-        SamplerValue pop() { return stack_[--sp_]; }
+        SamplerValue pop() {
+            if (sp_ == 0) [[unlikely]]
+                throw std::runtime_error("Sampler VM: stack underflow");
+            return stack_[--sp_];
+        }
         SamplerValue& top() { return stack_[sp_ - 1]; }
         const SamplerValue& top() const { return stack_[sp_ - 1]; }
 
@@ -170,6 +174,8 @@ namespace bcsv {
             auto it = string_dedup_.find(s);
             if (it != string_dedup_.end())
                 return it->second;
+            if (strings_.size() >= std::numeric_limits<uint16_t>::max()) [[unlikely]]
+                throw std::runtime_error("Sampler VM: runtime string pool overflow");
             uint16_t idx = static_cast<uint16_t>(strings_.size());
             strings_.push_back(s);
             string_dedup_[s] = idx;

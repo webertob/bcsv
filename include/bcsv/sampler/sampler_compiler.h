@@ -345,6 +345,8 @@ namespace bcsv {
                     emit(SamplerOpcode::CONST_FLOAT);
                     emitF64(val);
                 } else if constexpr (std::is_same_v<V, std::string>) {
+                    if (bc_.string_pool.size() >= std::numeric_limits<uint16_t>::max())
+                        throw std::runtime_error("Sampler: string pool overflow (exceeds 65535 entries)");
                     uint16_t idx = static_cast<uint16_t>(bc_.string_pool.size());
                     bc_.string_pool.push_back(val);
                     emit(SamplerOpcode::CONST_STRING);
