@@ -131,6 +131,90 @@ public readonly struct BcsvRow
             NativeMethods.bcsv_row_set_int64_array(Handle, startCol, (IntPtr)p, (nuint)src.Length);
     }
 
+    public unsafe void GetBools(int startCol, Span<bool> dst)
+    {
+        fixed (bool* p = dst)
+            NativeMethods.bcsv_row_get_bool_array(Handle, startCol, (IntPtr)p, (nuint)dst.Length);
+    }
+
+    public unsafe void SetBools(int startCol, ReadOnlySpan<bool> src)
+    {
+        fixed (bool* p = src)
+            NativeMethods.bcsv_row_set_bool_array(Handle, startCol, (IntPtr)p, (nuint)src.Length);
+    }
+
+    public unsafe void GetUInt8s(int startCol, Span<byte> dst)
+    {
+        fixed (byte* p = dst)
+            NativeMethods.bcsv_row_get_uint8_array(Handle, startCol, (IntPtr)p, (nuint)dst.Length);
+    }
+
+    public unsafe void SetUInt8s(int startCol, ReadOnlySpan<byte> src)
+    {
+        fixed (byte* p = src)
+            NativeMethods.bcsv_row_set_uint8_array(Handle, startCol, (IntPtr)p, (nuint)src.Length);
+    }
+
+    public unsafe void GetUInt16s(int startCol, Span<ushort> dst)
+    {
+        fixed (ushort* p = dst)
+            NativeMethods.bcsv_row_get_uint16_array(Handle, startCol, (IntPtr)p, (nuint)dst.Length);
+    }
+
+    public unsafe void SetUInt16s(int startCol, ReadOnlySpan<ushort> src)
+    {
+        fixed (ushort* p = src)
+            NativeMethods.bcsv_row_set_uint16_array(Handle, startCol, (IntPtr)p, (nuint)src.Length);
+    }
+
+    public unsafe void GetUInt32s(int startCol, Span<uint> dst)
+    {
+        fixed (uint* p = dst)
+            NativeMethods.bcsv_row_get_uint32_array(Handle, startCol, (IntPtr)p, (nuint)dst.Length);
+    }
+
+    public unsafe void SetUInt32s(int startCol, ReadOnlySpan<uint> src)
+    {
+        fixed (uint* p = src)
+            NativeMethods.bcsv_row_set_uint32_array(Handle, startCol, (IntPtr)p, (nuint)src.Length);
+    }
+
+    public unsafe void GetUInt64s(int startCol, Span<ulong> dst)
+    {
+        fixed (ulong* p = dst)
+            NativeMethods.bcsv_row_get_uint64_array(Handle, startCol, (IntPtr)p, (nuint)dst.Length);
+    }
+
+    public unsafe void SetUInt64s(int startCol, ReadOnlySpan<ulong> src)
+    {
+        fixed (ulong* p = src)
+            NativeMethods.bcsv_row_set_uint64_array(Handle, startCol, (IntPtr)p, (nuint)src.Length);
+    }
+
+    public unsafe void GetInt8s(int startCol, Span<sbyte> dst)
+    {
+        fixed (sbyte* p = dst)
+            NativeMethods.bcsv_row_get_int8_array(Handle, startCol, (IntPtr)p, (nuint)dst.Length);
+    }
+
+    public unsafe void SetInt8s(int startCol, ReadOnlySpan<sbyte> src)
+    {
+        fixed (sbyte* p = src)
+            NativeMethods.bcsv_row_set_int8_array(Handle, startCol, (IntPtr)p, (nuint)src.Length);
+    }
+
+    public unsafe void GetInt16s(int startCol, Span<short> dst)
+    {
+        fixed (short* p = dst)
+            NativeMethods.bcsv_row_get_int16_array(Handle, startCol, (IntPtr)p, (nuint)dst.Length);
+    }
+
+    public unsafe void SetInt16s(int startCol, ReadOnlySpan<short> src)
+    {
+        fixed (short* p = src)
+            NativeMethods.bcsv_row_set_int16_array(Handle, startCol, (IntPtr)p, (nuint)src.Length);
+    }
+
     public void Clear() => NativeMethods.bcsv_row_clear(Handle);
 
     public override string ToString()

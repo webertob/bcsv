@@ -934,4 +934,270 @@ public class BcsvTests : IDisposable
                 Assert.Equal(labels[i], readLabels[i]);
         }
     }
+
+    // ── Cycle 3: Finalizer & Dispose safety ─────────────────────────────
+
+    [Fact]
+    public void Layout_Finalizer_Prevents_Leak()
+    {
+        WeakReference CreateAndAbandon()
+        {
+            var layout = new BcsvLayout();
+            layout.AddColumn("test", ColumnType.Int32);
+            return new WeakReference(layout);
+        }
+        var weakRef = CreateAndAbandon();
+        GC.Collect();
+        GC.WaitForPendingFinalizers();
+        GC.Collect();
+        Assert.False(weakRef.IsAlive);
+    }
+
+    [Fact]
+    public void Reader_DoubleDispose_NoThrow()
+    {
+        var reader = new BcsvReader();
+        reader.Dispose();
+        reader.Dispose(); // must not throw
+    }
+
+    [Fact]
+    public void Writer_DoubleDispose_NoThrow()
+    {
+        using var layout = new BcsvLayout();
+        layout.AddColumn("x", ColumnType.Int32);
+        var writer = new BcsvWriter(layout);
+        writer.Dispose();
+        writer.Dispose();
+    }
+
+    [Fact]
+    public void Layout_DoubleDispose_NoThrow()
+    {
+        var layout = new BcsvLayout();
+        layout.Dispose();
+        layout.Dispose();
+    }
+
+    [Fact]
+    public void Sampler_DoubleDispose_NoThrow()
+    {
+        using var layout = new BcsvLayout();
+        layout.AddColumn("x", ColumnType.Int32);
+        var path = TmpFile("sampler_dd.bcsv");
+        using var writer = new BcsvWriter(layout);
+        writer.Open(path, true);
+        writer.Row.SetInt32(0, 1);
+        writer.WriteRow();
+        writer.Close();
+        using var reader = new BcsvReader();
+        reader.Open(path);
+        var sampler = new BcsvSampler(reader);
+        sampler.Dispose();
+        sampler.Dispose();
+    }
+
+    [Fact]
+    public void CsvReader_DoubleDispose_NoThrow()
+    {
+        using var layout = new BcsvLayout();
+        layout.AddColumn("x", ColumnType.Int32);
+        var csvReader = new BcsvCsvReader(layout);
+        csvReader.Dispose();
+        csvReader.Dispose();
+    }
+
+    [Fact]
+    public void CsvWriter_DoubleDispose_NoThrow()
+    {
+        using var layout = new BcsvLayout();
+        layout.AddColumn("x", ColumnType.Int32);
+        var csvWriter = new BcsvCsvWriter(layout);
+        csvWriter.Dispose();
+        csvWriter.Dispose();
+    }
+
+    [Fact]
+    public void Layout_NonOwning_DoubleDispose_NoThrow()
+    {
+        using var layout = new BcsvLayout();
+        layout.AddColumn("x", ColumnType.Int32);
+        var path = TmpFile("nonowning.bcsv");
+        using var writer = new BcsvWriter(layout);
+        writer.Open(path, true);
+        writer.Row.SetInt32(0, 42);
+        writer.WriteRow();
+        writer.Close();
+        using var reader = new BcsvReader();
+        reader.Open(path);
+        // Reader.Layout returns a non-owning layout
+        var borrowed = reader.Layout;
+        Assert.True(borrowed.ColumnCount > 0);
+        borrowed.Dispose(); // non-owning — should be a no-op
+        borrowed.Dispose(); // double dispose of non-owning — also safe
+    }
+
+    // ── Cycle 3: Array round-trip tests for new P/Invoke types ──────────
+
+    [Fact]
+    public void Row_ArrayAccess_Bool()
+    {
+        var path = TmpFile("bool_arr.bcsv");
+        using var layout = new BcsvLayout();
+        for (int i = 0; i < 4; i++)
+            layout.AddColumn($"b{i}", ColumnType.Bool);
+
+        using var writer = new BcsvWriter(layout, "flat");
+        writer.Open(path, true);
+        Span<bool> src = stackalloc bool[] { true, false, true, false };
+        writer.Row.SetBools(0, src);
+        writer.WriteRow();
+        writer.Close();
+
+        using var reader = new BcsvReader();
+        reader.Open(path);
+        Assert.True(reader.ReadNext());
+        Span<bool> dst = stackalloc bool[4];
+        reader.Row.GetBools(0, dst);
+        for (int i = 0; i < 4; i++)
+            Assert.Equal(src[i], dst[i]);
+    }
+
+    [Fact]
+    public void Row_ArrayAccess_UInt8()
+    {
+        var path = TmpFile("uint8_arr.bcsv");
+        using var layout = new BcsvLayout();
+        for (int i = 0; i < 4; i++)
+            layout.AddColumn($"u8_{i}", ColumnType.UInt8);
+
+        using var writer = new BcsvWriter(layout, "flat");
+        writer.Open(path, true);
+        Span<byte> src = stackalloc byte[] { 0, 127, 255, 42 };
+        writer.Row.SetUInt8s(0, src);
+        writer.WriteRow();
+        writer.Close();
+
+        using var reader = new BcsvReader();
+        reader.Open(path);
+        Assert.True(reader.ReadNext());
+        Span<byte> dst = stackalloc byte[4];
+        reader.Row.GetUInt8s(0, dst);
+        Assert.Equal(src.ToArray(), dst.ToArray());
+    }
+
+    [Fact]
+    public void Row_ArrayAccess_UInt16()
+    {
+        var path = TmpFile("uint16_arr.bcsv");
+        using var layout = new BcsvLayout();
+        for (int i = 0; i < 4; i++)
+            layout.AddColumn($"u16_{i}", ColumnType.UInt16);
+
+        using var writer = new BcsvWriter(layout, "flat");
+        writer.Open(path, true);
+        Span<ushort> src = stackalloc ushort[] { 0, 1000, 65535, 42 };
+        writer.Row.SetUInt16s(0, src);
+        writer.WriteRow();
+        writer.Close();
+
+        using var reader = new BcsvReader();
+        reader.Open(path);
+        Assert.True(reader.ReadNext());
+        Span<ushort> dst = stackalloc ushort[4];
+        reader.Row.GetUInt16s(0, dst);
+        Assert.Equal(src.ToArray(), dst.ToArray());
+    }
+
+    [Fact]
+    public void Row_ArrayAccess_UInt32()
+    {
+        var path = TmpFile("uint32_arr.bcsv");
+        using var layout = new BcsvLayout();
+        for (int i = 0; i < 3; i++)
+            layout.AddColumn($"u32_{i}", ColumnType.UInt32);
+
+        using var writer = new BcsvWriter(layout, "flat");
+        writer.Open(path, true);
+        Span<uint> src = stackalloc uint[] { 0, 2_000_000_000, 4_294_967_295 };
+        writer.Row.SetUInt32s(0, src);
+        writer.WriteRow();
+        writer.Close();
+
+        using var reader = new BcsvReader();
+        reader.Open(path);
+        Assert.True(reader.ReadNext());
+        Span<uint> dst = stackalloc uint[3];
+        reader.Row.GetUInt32s(0, dst);
+        Assert.Equal(src.ToArray(), dst.ToArray());
+    }
+
+    [Fact]
+    public void Row_ArrayAccess_UInt64()
+    {
+        var path = TmpFile("uint64_arr.bcsv");
+        using var layout = new BcsvLayout();
+        for (int i = 0; i < 3; i++)
+            layout.AddColumn($"u64_{i}", ColumnType.UInt64);
+
+        using var writer = new BcsvWriter(layout, "flat");
+        writer.Open(path, true);
+        Span<ulong> src = stackalloc ulong[] { 0, 9_999_999_999, ulong.MaxValue };
+        writer.Row.SetUInt64s(0, src);
+        writer.WriteRow();
+        writer.Close();
+
+        using var reader = new BcsvReader();
+        reader.Open(path);
+        Assert.True(reader.ReadNext());
+        Span<ulong> dst = stackalloc ulong[3];
+        reader.Row.GetUInt64s(0, dst);
+        Assert.Equal(src.ToArray(), dst.ToArray());
+    }
+
+    [Fact]
+    public void Row_ArrayAccess_Int8()
+    {
+        var path = TmpFile("int8_arr.bcsv");
+        using var layout = new BcsvLayout();
+        for (int i = 0; i < 4; i++)
+            layout.AddColumn($"i8_{i}", ColumnType.Int8);
+
+        using var writer = new BcsvWriter(layout, "flat");
+        writer.Open(path, true);
+        Span<sbyte> src = stackalloc sbyte[] { -128, -1, 0, 127 };
+        writer.Row.SetInt8s(0, src);
+        writer.WriteRow();
+        writer.Close();
+
+        using var reader = new BcsvReader();
+        reader.Open(path);
+        Assert.True(reader.ReadNext());
+        Span<sbyte> dst = stackalloc sbyte[4];
+        reader.Row.GetInt8s(0, dst);
+        Assert.Equal(src.ToArray(), dst.ToArray());
+    }
+
+    [Fact]
+    public void Row_ArrayAccess_Int16()
+    {
+        var path = TmpFile("int16_arr.bcsv");
+        using var layout = new BcsvLayout();
+        for (int i = 0; i < 4; i++)
+            layout.AddColumn($"i16_{i}", ColumnType.Int16);
+
+        using var writer = new BcsvWriter(layout, "flat");
+        writer.Open(path, true);
+        Span<short> src = stackalloc short[] { short.MinValue, -1, 0, short.MaxValue };
+        writer.Row.SetInt16s(0, src);
+        writer.WriteRow();
+        writer.Close();
+
+        using var reader = new BcsvReader();
+        reader.Open(path);
+        Assert.True(reader.ReadNext());
+        Span<short> dst = stackalloc short[4];
+        reader.Row.GetInt16s(0, dst);
+        Assert.Equal(src.ToArray(), dst.ToArray());
+    }
 }

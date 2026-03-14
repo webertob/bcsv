@@ -26,7 +26,15 @@ public sealed class BcsvWriter : IDisposable
         _row = new BcsvRow(NativeMethods.bcsv_writer_row(_handle));
     }
 
+    ~BcsvWriter() => Dispose(false);
+
     public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    private void Dispose(bool disposing)
     {
         if (_handle != 0)
         {

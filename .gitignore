@@ -96,7 +96,9 @@ bcsv_review.md
 # Ignore experimental scratch directory
 .cache/
 scratch/
+scratch/*
 tmp/
+tmp/*
 
 # Ignore test/benchmark temporaries
 Testing/

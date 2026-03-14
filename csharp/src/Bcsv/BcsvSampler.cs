@@ -21,7 +21,15 @@ public sealed class BcsvSampler : IDisposable, IEnumerable<BcsvRow>
             throw new BcsvException("Failed to create sampler");
     }
 
+    ~BcsvSampler() => Dispose(false);
+
     public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    private void Dispose(bool disposing)
     {
         if (_handle != 0)
         {

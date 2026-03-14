@@ -284,7 +284,7 @@ namespace BCSV
         public static string GetLastError()
         {
             var ptr = NativeMethods.bcsv_last_error();
-            return ptr == IntPtr.Zero ? null : Marshal.PtrToStringAnsi(ptr);
+            return NativeMethods.PtrToStringUtf8(ptr);
         }
 
         public void Dispose()

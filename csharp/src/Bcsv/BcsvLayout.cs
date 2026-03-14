@@ -27,7 +27,15 @@ public sealed class BcsvLayout : IDisposable, IReadOnlyList<ColumnDefinition>
         _ownsHandle = ownsHandle;
     }
 
+    ~BcsvLayout() => Dispose(false);
+
     public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    private void Dispose(bool disposing)
     {
         if (_ownsHandle && Handle != 0)
         {

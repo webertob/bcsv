@@ -41,7 +41,7 @@ The following items appeared in earlier drafts but were **verified as false or a
 |-------|-------|----------|---------------|--------|
 | 1 | Critical Documentation Fixes | CRITICAL | 4 files | ✅ Done (0538feb) |
 | 2 | Core C++ Correctness | CRITICAL+HIGH | 5 files + tests | ✅ Done |
-| 3 | C# / Unity Safety | CRITICAL+HIGH | 8 files + tests | |
+| 3 | C# / Unity Safety | CRITICAL+HIGH | 8 files + tests | ✅ Done |
 | 4 | Python Hardening | HIGH | 4 files + tests | |
 | 5 | Test Coverage Gaps | HIGH | 8 test files | |
 | 6 | Documentation Consolidation | MEDIUM | 10 files | |
