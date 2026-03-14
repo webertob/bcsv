@@ -800,6 +800,46 @@ TEST(CodecDelta002Test, Float_NaN_Inf_RoundTrip) {
     EXPECT_DOUBLE_EQ(out.get<double>(1), 2.0);
 }
 
+TEST(CodecDelta002Test, Float_Subnormal_RoundTrip) {
+    Layout layout({
+        {"f", ColumnType::FLOAT},
+        {"d", ColumnType::DOUBLE},
+    });
+    RowCodecDelta002<Layout> enc, dec;
+    enc.setup(layout);
+    dec.setup(layout);
+
+    ByteBuffer buf;
+    Row row(layout), out(layout);
+
+    // Subnormal (denormalized) values — smallest non-zero magnitudes
+    float  sub_f = std::numeric_limits<float>::denorm_min();
+    double sub_d = std::numeric_limits<double>::denorm_min();
+
+    row.set<float>(0, sub_f);
+    row.set<double>(1, sub_d);
+    auto w0 = enc.serialize(row, buf);
+    dec.deserialize(w0, out);
+    EXPECT_EQ(out.get<float>(0), sub_f);
+    EXPECT_EQ(out.get<double>(1), sub_d);
+
+    // Subnormal → normal transition
+    row.set<float>(0, 1.0f);
+    row.set<double>(1, 1.0);
+    auto w1 = enc.serialize(row, buf);
+    dec.deserialize(w1, out);
+    EXPECT_FLOAT_EQ(out.get<float>(0), 1.0f);
+    EXPECT_DOUBLE_EQ(out.get<double>(1), 1.0);
+
+    // Normal → subnormal transition
+    row.set<float>(0, sub_f);
+    row.set<double>(1, sub_d);
+    auto w2 = enc.serialize(row, buf);
+    dec.deserialize(w2, out);
+    EXPECT_EQ(out.get<float>(0), sub_f);
+    EXPECT_EQ(out.get<double>(1), sub_d);
+}
+
 TEST(CodecDelta002Test, WireSize_DeltaSmallerThanFirstRow) {
     Layout layout({{"val", ColumnType::INT32}});
     RowCodecDelta002<Layout> enc;

@@ -262,6 +262,36 @@ TEST(VLETest, DecodeInvalidEncoding) {
     EXPECT_THROW(vleDecode(buffer, value), std::runtime_error);
 }
 
+// Test error handling: truncated multi-byte encoding (Cycle 5)
+TEST(VLETest, DecodeTruncatedMultiByte) {
+    // Encode a 2-byte value (300), then truncate to 1 byte
+    std::vector<uint8_t> buffer(10);
+    size_t encoded_size = vleEncode(300, buffer);
+    ASSERT_GE(encoded_size, 2u) << "300 should require 2+ bytes";
+
+    // Truncate: present only the first byte (continuation bit set, incomplete)
+    std::vector<uint8_t> truncated(buffer.begin(), buffer.begin() + 1);
+    size_t value;
+    // Decoding a single continuation byte will fail (no terminating byte)
+    // The peek should report a size larger than the buffer
+    size_t required = vle_peek_size(truncated);
+    EXPECT_GT(required, truncated.size()) << "peeked size should exceed truncated buffer";
+}
+
+// Test error handling: truncated 4-byte encoding (Cycle 5)
+TEST(VLETest, DecodeTruncated4Byte) {
+    // Encode a value needing 4 bytes, truncate to 2
+    std::vector<uint8_t> buffer(10);
+    size_t val = 8ULL * 1024 * 1024;  // 8MB → 4 bytes
+    size_t encoded_size = vleEncode(val, buffer);
+    ASSERT_GE(encoded_size, 4u);
+
+    // Truncate to 2 bytes
+    std::vector<uint8_t> truncated(buffer.begin(), buffer.begin() + 2);
+    // Peek should detect incomplete encoding
+    EXPECT_THROW(vle_peek_size(truncated), std::runtime_error);
+}
+
 // Test error handling: incomplete encoding in peek
 TEST(VLETest, PeekIncompleteEncoding) {
     std::vector<uint8_t> buffer = {0x80, 0x80};  // Continuation bits set, but incomplete
