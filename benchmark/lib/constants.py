@@ -76,16 +76,20 @@ _TRK_SUFFIX = re.compile(r"\s*\[trk=[^\]]*\]$")
 
 
 def mode_base(raw_mode: str) -> str:
-    """Strip tracking suffix from a mode string.
+    """Strip legacy tracking suffix from a mode string (backward compat).
 
     ``"BCSV Flexible [trk=off]"`` → ``"BCSV Flexible"``
+    ``"BCSV Flexible"``           → ``"BCSV Flexible"``
     ``"CSV"``                     → ``"CSV"``
+
+    Note: New labels no longer include ``[trk=...]`` suffixes. This function
+    is kept for backward compatibility with older result files.
     """
     return _TRK_SUFFIX.sub("", raw_mode)
 
 
 def mode_matches(raw_mode: str, aliases: list[str]) -> bool:
-    """Return *True* if *raw_mode* (possibly with tracking suffix) matches any alias."""
+    """Return *True* if *raw_mode* (possibly with legacy tracking suffix) matches any alias."""
     base = mode_base(raw_mode)
     return base in aliases
 

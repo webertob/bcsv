@@ -126,6 +126,31 @@
                 "BUILD_EXAMPLES": "ON",
                 "BCSV_ENABLE_LEGACY_BENCHMARKS": "OFF"
             }
+        },
+        {
+            "name": "ninja-asan",
+            "displayName": "Ninja Debug + ASAN/UBSan",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/ninja-asan",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_C_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
+                "CMAKE_CXX_FLAGS": "-fsanitize=address,undefined -fno-omit-frame-pointer",
+                "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=address,undefined",
+                "BCSV_WERROR": "ON"
+            }
+        },
+        {
+            "name": "ninja-coverage",
+            "displayName": "Ninja Debug + Coverage",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/ninja-coverage",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_C_FLAGS": "--coverage",
+                "CMAKE_CXX_FLAGS": "--coverage",
+                "CMAKE_EXE_LINKER_FLAGS": "--coverage"
+            }
         }
     ],
     "buildPresets": [
@@ -174,6 +199,14 @@
         {
             "name": "ninja-release-min-build",
             "configurePreset": "ninja-release-min"
+        },
+        {
+            "name": "ninja-asan-build",
+            "configurePreset": "ninja-asan"
+        },
+        {
+            "name": "ninja-coverage-build",
+            "configurePreset": "ninja-coverage"
         }
     ]
 }

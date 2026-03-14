@@ -246,4 +246,17 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTS)
     target_link_libraries(test_c_api_full bcsv_c_api $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:m>)
     target_include_directories(test_c_api_full PRIVATE ${CMAKE_SOURCE_DIR})
     add_test(NAME test_c_api_full COMMAND $<TARGET_FILE:test_c_api_full>)
+
+    # Register examples as CTest tests (self-validating)
+    if(BUILD_EXAMPLES)
+        set(_EXAMPLE_TARGETS
+            quickstart example example_static example_zoh example_zoh_static
+            example_delta example_direct_access example_error_handling
+            c_api_vectorized_example visitor_examples example_sampler
+        )
+        foreach(ex IN LISTS _EXAMPLE_TARGETS)
+            add_test(NAME "example_${ex}" COMMAND $<TARGET_FILE:${ex}>
+                     WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+        endforeach()
+    endif()
 endif()

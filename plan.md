@@ -45,7 +45,13 @@ The following items appeared in earlier drafts but were **verified as false or a
 | 4 | Python Hardening | HIGH | 4 files + tests | ✅ Done (0f35c35) |
 | 5 | Test Coverage Gaps | HIGH | 5 test files | ✅ Done (efab8b4) |
 | 6 | Documentation Consolidation | MEDIUM | 9 files | ✅ Done |
-| 7 | Benchmark, Build & Examples | MEDIUM | 10 files | |
+| 7 | Benchmark, Build & Examples | MEDIUM | 10 files | ✅ Done |
+
+### Further Considerations
+
+- **Delta002 benchmark gap** — no macro benchmark uses Delta002. Consider adding in a follow-up.
+- **Full `--tracking` removal** — ~100 lines across C++/Python. Deprecated in this cycle; full removal in a follow-up.
+- **Benchmark README.md** — currently documents `--tracking`. Low priority documentation-only update.
 
 ---
 

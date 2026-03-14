@@ -50,7 +50,7 @@ tests/                 # GTest suite (25 .cpp) + C API tests (3 .c) + shell inte
 benchmark/             # Python orchestrator + Google Benchmark executables
 python/                # nanobind bindings + pandas integration
 unity/                 # C# / Unity bindings (P/Invoke)
-examples/              # 7 C++ example programs
+examples/              # 11 C++ example programs
 ```
 
 ## Naming Conventions
@@ -81,7 +81,7 @@ examples/              # 7 C++ example programs
 
 - **Streaming I/O**: never load entire file — row-by-row read/write
 - **Observer pattern**: `Layout` notifies attached `Row` objects of schema changes
-- **Policy-based design**: `TrackingPolicy::Enabled/Disabled` template parameter
+- **Codec-based design**: row encoding (Flat/ZoH/Delta) and file codec (stream/packet) are orthogonal template axes
 - **Three-container Row**: `bits_` (Bitset), `data_` (byte vector), `strg_` (string vector)
 - **Codec separation**: wire-format lives in codec classes, not in Row
 - **LayoutGuard**: RAII lock prevents layout mutation while a codec is active

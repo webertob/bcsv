@@ -56,6 +56,7 @@ cmake --build build -j
 
 ```cpp
 #include <bcsv/bcsv.h>
+#include <iostream>
 
 int main() {
     // Define schema
@@ -63,22 +64,27 @@ int main() {
     layout.addColumn({"timestamp", bcsv::ColumnType::DOUBLE});
     layout.addColumn({"temperature", bcsv::ColumnType::FLOAT});
     layout.addColumn({"sensor_id", bcsv::ColumnType::UINT16});
-    
+
     // Write data
     bcsv::Writer<bcsv::Layout> writer(layout);
-    writer.open("measurements.bcsv", true);
-    
+    if (!writer.open("measurements.bcsv", true)) {
+        std::cerr << writer.getErrorMsg() << "\n";
+        return 1;
+    }
+
     writer.row().set(0, 1234567890.0);
     writer.row().set(1, 23.5f);
     writer.row().set(2, uint16_t{42});
     writer.writeRow();
-    
     writer.close();
-    
+
     // Read data
     bcsv::Reader<bcsv::Layout> reader;
-    reader.open("measurements.bcsv");
-    
+    if (!reader.open("measurements.bcsv")) {
+        std::cerr << reader.getErrorMsg() << "\n";
+        return 1;
+    }
+
     while (reader.readNext()) {
         auto timestamp = reader.row().get<double>(0);
         auto temp = reader.row().get<float>(1);
@@ -87,6 +93,9 @@ int main() {
     }
 }
 ```
+
+> See [examples/quickstart.cpp](examples/quickstart.cpp) for a self-contained runnable version.
+> For delta encoding, direct access, and error handling examples, see [examples/](examples/README.md).
 
 **Result:** 84% size reduction (105MB CSV → 16.3MB BCSV) with full type safety.
 

@@ -130,19 +130,20 @@ Users interact with these types (declared in `include/bcsv/`):
 |-------|------|------|
 | `Layout` | layout.h | Dynamic column schema (names, types). Observer pattern syncs attached Rows. |
 | `LayoutStatic<Types...>` | layout.h | Compile-time fixed schema, variadic template. |
-| `Row` | row.h | In-memory row for read/write. Alias for `RowImpl<TrackingPolicy::Disabled>`. |
-| `RowTracked<Policy>` | row.h | Policy-based row alias for advanced use (e.g., `TrackingPolicy::Enabled` with ZoH codec). |
-| `RowStatic<Types...>` | row.h | Compile-time typed row (tracking disabled). |
-| `RowStaticTracked<Policy, Types...>` | row.h | Policy-based static row alias for advanced use. |
-| `Reader<LayoutType, Policy>` | reader.h | Stream-based BCSV file reader with LZ4 decompression. |
-| `Writer<LayoutType, Policy>` | writer.h | Stream-based BCSV file writer with LZ4 compression, optional ZoH. |
-| `RowCodecFlat001<Layout, Policy>` | codec_row/row_codec_flat001.h | Dense flat row codec — serialize, deserialize. |
-| `RowCodecZoH001<Layout, Policy>` | codec_row/row_codec_zoh001.h | Zero-Order-Hold codec — delta-encodes unchanged columns. |
-| `RowCodecDelta002<Layout>` | codec_row/row_codec_delta002.h | Delta + VLE encoding — type-grouped loops, FoC/ZoH per column. |
+| `Row` | row.h | In-memory row for read/write (dynamic layout). |
+| `RowStatic<Types...>` | row.h | Compile-time typed row. |
+| `Reader<LayoutType>` | reader.h | Stream-based BCSV file reader with LZ4 decompression. |
+| `ReaderDirectAccess<LayoutType>` | reader.h | Random-access reader with O(log N) seek via FileFooter. |
+| `Writer<LayoutType, RowCodec>` | writer.h | Stream-based BCSV file writer with LZ4 compression. |
+| `WriterFlat<LayoutType>` | writer.h | Alias for `Writer<LayoutType, RowCodecFlat001<LayoutType>>`. |
+| `WriterZoH<LayoutType>` | writer.h | Alias for `Writer<LayoutType, RowCodecZoH001<LayoutType>>`. |
+| `WriterDelta<LayoutType>` | writer.h | Alias for `Writer<LayoutType, RowCodecDelta002<LayoutType>>`. |
+| `RowCodecFlat001<LayoutType>` | codec_row/row_codec_flat001.h | Dense flat row codec — serialize, deserialize. |
+| `RowCodecZoH001<LayoutType>` | codec_row/row_codec_zoh001.h | Zero-Order-Hold codec — delta-encodes unchanged columns. |
+| `RowCodecDelta002<LayoutType>` | codec_row/row_codec_delta002.h | Delta + VLE encoding — type-grouped loops, FoC/ZoH per column. |
 | `Sampler<Layout>` | sampler/sampler.h | Bytecode VM for row filtering and column projection. |
-| `ReaderDirectAccess<Layout>` | reader.h | Random-access reader with O(log N) seek via FileFooter. |
 
-> **Note:** public row change-tracking methods were removed. Tracking is internal-only and consumed by codecs (especially ZoH).
+> **Note:** Change tracking is internal to codecs (ZoH001, Delta002). There is no public tracking API.
 
 ### Core workflow pattern
 
@@ -249,10 +250,10 @@ The table above uses short names; actual paths are `include/bcsv/codec_row/row_c
 
 - **Header-only library**: all C++ code in `include/bcsv/`, `bcsv` is an INTERFACE CMake target
 - **Observer pattern**: `Layout` notifies attached `Row` objects of schema changes (`onAddColumn`, `onChangeColumnType`, `onRemoveColumn`)
-- **Policy-based design**: `TrackingPolicy::Enabled/Disabled` as template parameter for ZoH change tracking (compile-time decision, no runtime branching)
+- **Codec-based design**: Row encoding (Flat001/ZoH001/Delta002) and file codec (stream/packet/packet-batched/LZ4 variants) are orthogonal axes selected via template parameters
 - **CRTP + static dispatch**: `LayoutStatic<Types...>` for zero-overhead compile-time schemas
 - **Three-container Row storage**: `bits_` (Bitset<>), `data_` (vector<byte>), `strg_` (vector<string>) — booleans as bits, scalars packed, strings separate
-- **Codec extraction**: Wire-format serialization/deserialization lives in `RowCodecFlat001`/`RowCodecZoH001`, not in Row classes. Writer uses compile-time `RowCodecType` (`std::conditional_t`); Reader uses runtime `CodecDispatch` (union + function pointers, resolved at file open). TrackingPolicy and file codec are orthogonal axes — all 4 combinations work. Codecs access Row internals via `friend`.
+- **Codec extraction**: Wire-format serialization/deserialization lives in `RowCodecFlat001`/`RowCodecZoH001`/`RowCodecDelta002`, not in Row classes. Writer uses compile-time `RowCodecType` template parameter; Reader uses runtime `CodecDispatch` (union + function pointers, resolved at file open). Row codec and file codec are orthogonal axes. Codecs access Row internals via `friend`.
 - **LayoutGuard (RAII structural lock)**: Codecs acquire a `LayoutGuard` during `setup()`. While held, structural layout mutations throw `std::logic_error`. Automatically released on codec destruction or move-assignment.
 
 ## Current Status

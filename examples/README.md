@@ -1,25 +1,37 @@
 # BCSV Examples
 
-This directory contains seven examples demonstrating different aspects of the BCSV library:
+This directory contains eleven examples demonstrating different aspects of the BCSV library:
 
 ## Examples Overview
 
-### 1. `example.cpp` — Flexible Interface Demo
+### 1. `quickstart.cpp` — Quick Start
+Minimal write-and-read example (~30 lines). Start here.
+
+### 2. `example.cpp` — Flexible Interface Demo
 Demonstrates the runtime flexible `Layout`/`Row` interface for basic BCSV write and read.
 
-### 2. `example_static.cpp` — Static Interface Demo
+### 3. `example_static.cpp` — Static Interface Demo
 Demonstrates the compile-time `LayoutStatic<Types...>`/`RowStatic` interface for type-safe, performance-optimized usage.
 
-### 3. `example_zoh.cpp` / `example_zoh_static.cpp` — Zero-Order Hold Demos
+### 4. `example_zoh.cpp` / `example_zoh_static.cpp` — Zero-Order Hold Demos
 ZoH compression (only stores values that change between rows), for both flexible and static layouts.
 
-### 4. `visitor_examples.cpp` — Visitor Pattern
+### 5. `example_delta.cpp` — Delta Encoding
+`WriterDelta` for time-series data with small consecutive differences. Shows how delta + VLE encoding compresses slow-changing numeric columns.
+
+### 6. `example_direct_access.cpp` — Random-Access Reader
+`ReaderDirectAccess` for O(log P) random row access. Demonstrates `read(index)`, `rowCount()`, and packet metadata.
+
+### 7. `example_error_handling.cpp` — Error Handling
+Illustrates I/O error patterns (bool return + `getErrorMsg()`) and logic-error exceptions.
+
+### 8. `visitor_examples.cpp` — Visitor Pattern
 Demonstrates const and mutable visitor patterns for iterating over row columns without knowing types at compile time.
 
-### 5. `c_api_vectorized_example.c` — C API Vectorized Read
+### 9. `c_api_vectorized_example.c` — C API Vectorized Read
 Shows how to use the C API with vectorized (batch) row access.
 
-### 6. `example_sampler.cpp` — Sampler API
+### 10. `example_sampler.cpp` — Sampler API
 Demonstrates the Sampler API for expression-based row filtering and column projection.
 
 ## Building the Examples
