@@ -78,6 +78,26 @@ pybcsv.from_csv("input.csv", "output.bcsv")   # CSV → BCSV
 pybcsv.to_csv("output.bcsv", "output.csv")    # BCSV → CSV
 ```
 
+### Polars Integration
+
+Zero-copy Polars DataFrame I/O via the Arrow C Data Interface:
+
+```python
+import pybcsv
+
+# Read BCSV → Polars DataFrame (zero-copy via Arrow)
+df = pybcsv.read_polars("data.bcsv")
+
+# Write Polars DataFrame → BCSV
+pybcsv.write_polars(df, "output.bcsv", row_codec="delta")
+```
+
+Install with the optional Polars dependency:
+
+```bash
+pip install pybcsv[polars]
+```
+
 ### Random Access
 
 ```python

@@ -90,6 +90,11 @@ examples/              # 7 C++ example programs
 
 Use `tmp/` under project root for scratch work — it's gitignored.
 
+## Release Workflow
+
+When tagging a release version, update `CHANGELOG.md` with the changes since the last tag.
+Follow [Keep a Changelog](https://keepachangelog.com/) format (Added/Changed/Fixed/Removed sections).
+
 ## Deep Reference
 
 - `SKILLS.md` — full AI skills reference (API classes, source inventory, all conventions)

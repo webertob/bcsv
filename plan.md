@@ -43,8 +43,8 @@ The following items appeared in earlier drafts but were **verified as false or a
 | 2 | Core C++ Correctness | CRITICAL+HIGH | 5 files + tests | ✅ Done |
 | 3 | C# / Unity Safety | CRITICAL+HIGH | 8 files + tests | ✅ Done |
 | 4 | Python Hardening | HIGH | 4 files + tests | ✅ Done (0f35c35) |
-| 5 | Test Coverage Gaps | HIGH | 8 test files | |
-| 6 | Documentation Consolidation | MEDIUM | 10 files | |
+| 5 | Test Coverage Gaps | HIGH | 5 test files | ✅ Done (efab8b4) |
+| 6 | Documentation Consolidation | MEDIUM | 9 files | ✅ Done |
 | 7 | Benchmark, Build & Examples | MEDIUM | 10 files | |
 
 ---
@@ -651,9 +651,9 @@ Update to reflect actual implementation state. Key corrections:
 
 Current ~60 lines does not reflect the 15-file, sampler+CSV+typed-accessor library. Expand to document: all features, NuGet installation, version compatibility.
 
-#### 6.7 Fix OWNERSHIP_SEMANTICS.md phantom types
+#### 6.7 ~~Fix OWNERSHIP_SEMANTICS.md phantom types~~ — DROPPED
 
-Remove references to `BcsvRowRef`/`BcsvRowRefConst` (don't exist). Document the actual ownership model: `_ownsHandle` pattern in BcsvLayout, BcsvRow as non-owning readonly struct.
+**Reason:** `BcsvRowRef`, `BcsvRowRefConst`, and `BcsvRowBase` **do exist** in `unity/Scripts/BcsvRow.cs`. The file is accurate. No changes needed.
 
 #### 6.8 Document Polars integration in python/README.md
 

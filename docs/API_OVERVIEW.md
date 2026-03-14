@@ -8,12 +8,12 @@ This document provides a comprehensive comparison of all BCSV APIs across differ
 
 | Feature | C++ API | C API | Python API | C# API |
 |---------|---------|-------|------------|--------|
-| **Type** | Header-only | Shared library | Pip package | Unity plugin |
+| **Type** | Header-only | Shared library | Pip package | NuGet package |
 | **Performance** | Fastest | Fast | Fast (native bindings) | Fast (P/Invoke) |
 | **Type Safety** | Compile-time (static) / Runtime (flexible) | Runtime | Runtime | Runtime |
 | **Memory Management** | RAII / Manual | Manual | Automatic (GC) | Automatic (GC) |
-| **Pandas Integration** | N/A | N/A | ✅ Native | ❌ |
-| **Best For** | High-performance, embedded systems | C projects, language bindings | Data science, scripting | Unity games, C# apps |
+| **Pandas Integration** | N/A | N/A | ✅ Native | N/A |
+| **Best For** | High-performance, embedded systems | C projects, language bindings | Data science, scripting | .NET applications, data pipelines |
 
 ---
 
@@ -244,68 +244,70 @@ print(df.head())
 
 ---
 
-## C# API (Unity Plugin)
+## C# API (.NET)
 
-**Type:** Unity package with P/Invoke to native library  
-**Documentation:** [unity/README.md](../unity/README.md)  
+**Type:** NuGet package with P/Invoke to native library  
+**Documentation:** [csharp/README.md](../csharp/README.md)  
 **Performance:** Fast (minimal marshaling overhead)
 
 ### Key Features
 
-- **Unity integration**: Drag-and-drop plugin
-- **Minimal GC pressure**: Efficient memory usage
-- **Asset serialization**: Save/load game data
-- **Cross-platform**: Windows, macOS, Linux, consoles
+- **Full BCSV feature set**: Sequential and random-access I/O, Sampler, CSV interop
+- **Columnar bulk I/O**: Read/write entire columns at once with pinned arrays
+- **Typed accessors**: `GetInt32()`, `GetDouble()`, `GetString()`, etc.
+- **Cross-platform**: Windows x64, Linux x64/ARM64, macOS x64/ARM64
+- **Minimal GC pressure**: Efficient P/Invoke with unmanaged memory
 
 ### Installation
 
-1. Copy `bcsv_c_api.dll` to `Assets/Plugins/`
-2. Copy C# scripts to your project
+```bash
+dotnet add package Bcsv
+```
 
 ### Quick Example
 
 ```csharp
-using BCSV;
+using Bcsv;
 
-// Create layout
+// Define schema
 var layout = new BcsvLayout();
-layout.AddColumn("player_id", ColumnType.INT32);
-layout.AddColumn("score", ColumnType.FLOAT);
-layout.AddColumn("name", ColumnType.STRING);
+layout.AddColumn("timestamp", ColumnType.Double);
+layout.AddColumn("temperature", ColumnType.Float);
+layout.AddColumn("label", ColumnType.String);
 
 // Write data
-using (var writer = new BcsvWriter(layout))
-{
-    writer.Open("playerdata.bcsv", overwrite: true);
-    
-    writer.SetInt32(0, 42);
-    writer.SetFloat(1, 1234.5f);
-    writer.SetString(2, "PlayerOne");
-    writer.WriteRow();
-}
+using var writer = new BcsvWriter(layout);
+writer.Open("data.bcsv");
+var row = writer.NewRow();
+row.Set(0, 1.0);
+row.Set(1, 23.5f);
+row.Set(2, "sensor-A");
+writer.WriteRow(row);
+writer.Close();
 
 // Read data
-using (var reader = new BcsvReader())
+using var reader = new BcsvReader("data.bcsv");
+while (reader.ReadNext())
 {
-    reader.Open("playerdata.bcsv");
-    
-    while (reader.ReadNext())
-    {
-        int id = reader.GetInt32(0);
-        float score = reader.GetFloat(1);
-        string name = reader.GetString(2);
-        Debug.Log($"Player {name}: {score}");
-    }
+    double ts = reader.Row.GetDouble(0);
+    float temp = reader.Row.GetFloat(1);
+    string label = reader.Row.GetString(2);
 }
 ```
 
 ### When to Use
 
-- ✅ Unity game development
-- ✅ Game telemetry and analytics
-- ✅ Save game systems
-- ✅ Level data serialization
-- ✅ C# desktop applications
+- ✅ .NET desktop and server applications
+- ✅ Data pipelines and ETL workflows
+- ✅ Time-series storage in C# projects
+- ✅ Cross-platform data exchange
+- ✅ High-throughput columnar bulk I/O
+
+---
+
+## Unity Plugin
+
+For Unity game engine integration, BCSV provides a dedicated set of C# bindings optimized for the Unity runtime. See **[unity/README.md](../unity/README.md)** for installation, usage examples, platform support, and troubleshooting.
 
 ---
 
@@ -333,11 +335,11 @@ using (var reader = new BcsvReader())
 - Building machine learning pipelines
 
 ### Choose C# API when:
-- Developing Unity games
-- Building C# desktop applications
-- Need game data serialization
-- Working with .NET ecosystem
-- Want managed memory with good performance
+- Building .NET desktop or server applications
+- Need high-throughput columnar bulk I/O
+- Working with data pipelines in C#
+- Want Sampler-based filtering and projection
+- Need cross-platform .NET 8/10 support
 
 ---
 
@@ -392,14 +394,15 @@ See [INTEROPERABILITY.md](INTEROPERABILITY.md) for cross-language examples and b
 | Compression (LZ4) | ✅ | ✅ | ✅ | ✅ |
 | Zero-Order Hold | ✅ | ✅ | ✅ | ✅ |
 | Delta encoding | ✅ | ✅ | ✅ | ❌ |
-| CSV read/write | ✅ | ✅ | ✅ | ❌ |
+| CSV read/write | ✅ | ✅ | ✅ | ✅ |
 | Checksums (xxHash64) | ✅ | ✅ | ✅ | ✅ |
 | Crash recovery | ✅ | ✅ | ✅ | ✅ |
-| Sampler (filter/project) | ✅ | ✅ | ❌ | ❌ |
+| Sampler (filter/project) | ✅ | ✅ | ✅ | ✅ |
 | Row visitor | ✅ | ✅ | ❌ | ❌ |
 | Static typing | ✅ | ❌ | ❌ | ❌ |
-| Pandas integration | N/A | N/A | ✅ | ❌ |
-| Unity integration | N/A | N/A | ❌ | ✅ |
+| Columnar bulk I/O | ❌ | ❌ | ❌ | ✅ |
+| Pandas integration | N/A | N/A | ✅ | N/A |
+| Polars integration | N/A | N/A | ✅ | N/A |
 | Header-only | ✅ | ❌ | ❌ | ❌ |
 
 ---
@@ -409,5 +412,6 @@ See [INTEROPERABILITY.md](INTEROPERABILITY.md) for cross-language examples and b
 - **C++ API**: [examples/](../examples/), [tests/](../tests/)
 - **C API**: [include/bcsv/bcsv_c_api.h](../include/bcsv/bcsv_c_api.h)
 - **Python API**: [python/README.md](../python/README.md), [python/examples/](../python/examples/)
-- **C# API**: [unity/README.md](../unity/README.md), [unity/Examples/](../unity/Examples/)
+- **C# API**: [csharp/README.md](../csharp/README.md)
+- **Unity Plugin**: [unity/README.md](../unity/README.md)
 - **Issues**: [GitHub Issues](https://github.com/webertob/bcsv/issues)

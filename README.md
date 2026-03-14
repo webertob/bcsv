@@ -106,8 +106,9 @@ int main() {
 
 - **[examples/](examples/)** - C++ usage examples
 - **[src/tools/CLI_TOOLS.md](src/tools/CLI_TOOLS.md)** - CLI tools documentation (csv2bcsv, bcsv2csv, bcsvSampler, bcsvGenerator, ...)
-- **[python/README.md](python/README.md)** - Python package (pandas integration)
-- **[unity/README.md](unity/README.md)** - C# Unity integration guide
+- **[python/README.md](python/README.md)** - Python package (pandas + Polars integration)
+- **[csharp/README.md](csharp/README.md)** - C# NuGet package (.NET 8/10) with Sampler, CSV, columnar I/O
+- **[unity/README.md](unity/README.md)** - Unity game engine integration
 
 ### 📊 Performance & Benchmarks
 
