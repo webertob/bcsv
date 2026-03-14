@@ -834,6 +834,53 @@ background:
     [ ] Create and publish NuGet package
     [ ] Setup GitHub CI/CD to build, test, and publish C# NuGet package
     
+23.a Refactor Columnar Read/Write — Move from C API to Core C++ Library
+    Status: PLANNED
+
+    Goal: transfer the columnar read/write implementation currently in the C API layer
+    (bcsv_c_api.cpp: bcsv_reader_read_columns, bcsv_writer_write_columns) into the
+    core bcsv C++ library (include/bcsv/), ensuring maximum code reuse and closer
+    integration with bcsv::Writer and bcsv::Reader.
+
+    Currently three independent columnar implementations exist:
+    - C API (src/bcsv_c_api.cpp L1274–1447): row-by-row loop, type-dispatch per column
+    - Python bindings (python/pybcsv/bindings.cpp): write_columnar_core(), read_columns(),
+      read_batch(), read_to_arrow() — independent reimplementation with GIL release
+    - C# bindings (csharp/src/Bcsv/BcsvColumns.cs): delegates to C API via P/Invoke
+
+    Refactoring phases:
+    [ ] Phase 1 — Core columnar API in include/bcsv/
+        Design and implement columnar read/write as template methods on bcsv::Reader
+        and bcsv::Writer (or companion class). Accept column-oriented buffers
+        (typed spans/pointers + row count) instead of individual Row objects.
+        Preserve streaming semantics (no full-file materialization).
+
+    [ ] Phase 2 — LayoutSubset for sparse column access
+        Implement LayoutSubset: a lightweight projection that selects a subset of
+        columns from a Layout. When reading, only decode the selected columns —
+        skip encoding/decoding overhead for columns not requested by the caller.
+        When writing, fill only the specified columns (remaining columns get
+        default/zero values or are omitted if the codec supports it).
+        Key acceleration paths:
+        - Dense rows, sparse columns: iterate all rows, decode only selected columns
+        - Sparse rows, sparse columns: combine with direct access (row index) to
+          skip both unwanted rows and unwanted columns
+        - Sparse rows, dense columns: direct access with full row decode
+
+    [ ] Phase 3 — Migrate C API to use core columnar functions
+        Rewrite bcsv_reader_read_columns and bcsv_writer_write_columns in
+        bcsv_c_api.cpp to delegate to the new core columnar API. Preserve the
+        existing C API signatures for backward compatibility.
+
+    [ ] Phase 4 — Unify Python bindings
+        Refactor python/pybcsv/bindings.cpp to delegate columnar I/O to the core
+        library instead of reimplementing the row-by-row loop. Maintain GIL release
+        around the C++ call. Update read_to_arrow / write_from_arrow paths similarly.
+
+    [ ] Phase 5 — Verification
+        Validate all existing tests pass unchanged (C++ 694, C API 911, C# 53,
+        Python 143). Add targeted tests for LayoutSubset (partial column read/write
+        round-trips, performance comparison vs full-row read).
 
 24 Compare against (document and benchmarks):
         parquet
