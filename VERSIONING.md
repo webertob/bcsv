@@ -162,8 +162,12 @@ BcsvReader reader;
 
 ### Compatibility Rules:
 - **Major version mismatch**: File cannot be read (breaking changes)
-- **Minor version newer**: File can be read (backward compatibility)
-- **Minor version older**: File can be read (forward compatibility within major)
+- **File has older minor version** (file < library): File can be read — the reader understands all older format features (backward compatibility)
+- **File has newer minor version** (file > library): File is **rejected** — the reader cannot safely interpret features from a newer format version
+
+> **Note:** Within v1.x, each minor version introduced breaking wire-format changes
+> (v1.2: xxHash64 checksums, v1.3: streaming LZ4 + new PacketHeader, v1.4: Delta002 + VLE + footer index).
+> True forward compatibility is planned for v2.0.0. See [ARCHITECTURE.md](ARCHITECTURE.md) for the roadmap.
 
 ## Troubleshooting
 

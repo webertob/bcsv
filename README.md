@@ -7,6 +7,11 @@
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://isocpp.org/)
 [![Version](https://img.shields.io/badge/version-1.3.0-orange.svg)](VERSIONING.md)
 
+> **Versioning:** Library version (e.g. v1.3.0) tracks API/code changes.
+> File format version (e.g. v1.4.0) tracks binary wire format changes.
+> Package versions (PyPI, NuGet) may advance independently.
+> See [VERSIONING.md](VERSIONING.md) for details.
+
 ---
 
 ## What is BCSV?

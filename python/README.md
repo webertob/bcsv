@@ -1,6 +1,6 @@
 # PyBCSV — Python Bindings for BCSV Library
 
-High-performance Python bindings for the [BCSV](https://github.com/bcsv/bcsv) (Binary CSV) library — fast, compact time-series storage with pandas integration.
+High-performance Python bindings for the [BCSV](https://github.com/webertob/bcsv) (Binary CSV) library — fast, compact time-series storage with pandas integration.
 
 ## Features
 
