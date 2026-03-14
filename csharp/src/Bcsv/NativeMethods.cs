@@ -310,6 +310,21 @@ internal static partial class NativeMethods
 
     // Array getters
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void bcsv_row_get_bool_array(nint row, int startCol, IntPtr dst, nuint count);
+
+    [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void bcsv_row_get_uint8_array(nint row, int startCol, IntPtr dst, nuint count);
+
+    [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void bcsv_row_get_uint16_array(nint row, int startCol, IntPtr dst, nuint count);
+
+    [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void bcsv_row_get_int8_array(nint row, int startCol, IntPtr dst, nuint count);
+
+    [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void bcsv_row_get_int16_array(nint row, int startCol, IntPtr dst, nuint count);
+
+    [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void bcsv_row_get_double_array(nint row, int startCol, IntPtr dst, nuint count);
 
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
@@ -328,6 +343,27 @@ internal static partial class NativeMethods
     internal static extern void bcsv_row_get_uint64_array(nint row, int startCol, IntPtr dst, nuint count);
 
     // Array setters
+    [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void bcsv_row_set_bool_array(nint row, int startCol, IntPtr src, nuint count);
+
+    [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void bcsv_row_set_uint8_array(nint row, int startCol, IntPtr src, nuint count);
+
+    [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void bcsv_row_set_uint16_array(nint row, int startCol, IntPtr src, nuint count);
+
+    [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void bcsv_row_set_uint32_array(nint row, int startCol, IntPtr src, nuint count);
+
+    [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void bcsv_row_set_uint64_array(nint row, int startCol, IntPtr src, nuint count);
+
+    [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void bcsv_row_set_int8_array(nint row, int startCol, IntPtr src, nuint count);
+
+    [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern void bcsv_row_set_int16_array(nint row, int startCol, IntPtr src, nuint count);
+
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern void bcsv_row_set_double_array(nint row, int startCol, IntPtr src, nuint count);
 
