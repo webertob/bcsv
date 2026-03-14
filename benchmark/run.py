@@ -271,7 +271,7 @@ def cmd_wip(args) -> int:
                     executables["bench_macro_datasets"], run_out, rt,
                     TYPE_ROWS[rt], args.build_type, pin_enabled, pin_cpu,
                     args.macro_profile, args.macro_scenario,
-                    args.macro_tracking, args.macro_storage, args.macro_codec,
+                    args.macro_storage, args.macro_codec,
                 )
             run_payloads[rt].append(payload)
 
@@ -315,7 +315,6 @@ def cmd_wip(args) -> int:
         "languages": args.languages,
         "macro_profile": args.macro_profile,
         "macro_scenario": args.macro_scenario,
-        "macro_tracking": args.macro_tracking,
         "macro_storage": args.macro_storage,
         "macro_codec": args.macro_codec,
     })
@@ -595,8 +594,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_wip.add_argument("--languages", default="", help="python,csharp")
     p_wip.add_argument("--macro-profile", default="")
     p_wip.add_argument("--macro-scenario", default="")
-    p_wip.add_argument("--macro-tracking", default="both",
-                        help="DEPRECATED: no effect. Use --macro-codec instead.")
     p_wip.add_argument("--macro-storage", default="both")
     p_wip.add_argument("--macro-codec", default="both")
     p_wip.add_argument("--detail", action="store_true",

@@ -263,7 +263,7 @@ protected:
         packet_pos_ = is.tellg();
 
         PacketHeader header;
-        bool success = header.read(is, true);
+        bool success = header.read(is);
 
         packet_hash_.reset();
 

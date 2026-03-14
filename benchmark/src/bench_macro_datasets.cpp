@@ -26,7 +26,6 @@
  *     --output=PATH    Write JSON results to file (default: stdout summary)
  *     --profile=NAME   Run only this profile (default: all)
  *     --scenario=LIST  Comma-separated sparse scenarios to run (default: all)
- *     --tracking=MODE  both|enabled|disabled (default: both)
  *     --storage=MODE   both|flexible|static (default: both)
  *     --codec=MODE     both|dense|zoh (default: both)
  *     --list           List available profiles and exit
@@ -181,12 +180,10 @@ using RealisticMeasurementLayoutStatic = LayoutFromTypeList_t<ConcatTypeLists<
 // portable template-recursion limits for std::tuple on MSVC.
 // These profiles benchmark in dynamic-layout mode only.
 
-enum class TrackingSelection { Both, Enabled, Disabled };
 enum class StorageSelection { Both, Flexible, Static };
 enum class CodecSelection { Both, Dense, ZoH };
 
 struct ModeSelection {
-    TrackingSelection tracking = TrackingSelection::Both;
     StorageSelection storage = StorageSelection::Both;
     CodecSelection codec = CodecSelection::Both;
     size_t compressionLevel = 1;
@@ -230,14 +227,6 @@ inline ProfileCapabilities capabilitiesForProfileName(std::string_view profileNa
     }
 
     return {false, false, false};
-}
-
-inline bool includesTrackingEnabled(TrackingSelection s) {
-    return s == TrackingSelection::Both || s == TrackingSelection::Enabled;
-}
-
-inline bool includesTrackingDisabled(TrackingSelection s) {
-    return s == TrackingSelection::Both || s == TrackingSelection::Disabled;
 }
 
 inline bool includesFlexible(StorageSelection s) {
@@ -442,17 +431,6 @@ std::vector<SparseScenario> filterScenarios(const std::vector<SparseScenario>& a
     }
 
     return selected;
-}
-
-TrackingSelection parseTrackingSelection(const std::string& value, std::string& /*error*/) {
-    // DEPRECATED: --tracking flag is vestigial. All values accepted for backward
-    // compatibility but the flag has no effect. Tracking was removed as a concept;
-    // codec selection (dense/zoh) is the relevant axis.
-    if (!value.empty() && value != "both") {
-        std::cerr << "WARNING: --tracking is deprecated and has no effect. "
-                  << "Use --codec=dense|zoh instead.\n";
-    }
-    return TrackingSelection::Both;
 }
 
 StorageSelection parseStorageSelection(const std::string& value, std::string& error) {
@@ -1417,7 +1395,6 @@ int main(int argc, char* argv[]) {
             << "  --output=PATH\n"
             << "  --profile=NAME\n"
             << "  --scenario=LIST\n"
-            << "  --tracking=both|enabled|disabled   (DEPRECATED, no effect)\n"
             << "  --storage=both|flexible|static     (default: both)\n"
             << "  --codec=both|dense|zoh            (default: both)\n"
             << "  --compression=N                   LZ4 compression level 1-9 (default: 1; 1=fast, 9=best ratio)\n"
@@ -1478,7 +1455,6 @@ int main(int argc, char* argv[]) {
     std::string outputPath = bench::getArgString(args, "output", "");
     std::string profileFilter = bench::getArgString(args, "profile", "");
     std::string scenarioFilter = bench::getArgString(args, "scenario", "");
-    std::string trackingFilter = bench::getArgString(args, "tracking", "both");
     std::string storageFilter = bench::getArgString(args, "storage", "both");
     std::string codecFilter = bench::getArgString(args, "codec", "both");
     bool quiet = bench::hasArg(args, "quiet");
@@ -1495,11 +1471,6 @@ int main(int argc, char* argv[]) {
 
     ModeSelection modeSelection;
     std::string modeError;
-    modeSelection.tracking = parseTrackingSelection(trackingFilter, modeError);
-    if (!modeError.empty()) {
-        std::cerr << "ERROR: " << modeError << "\n";
-        return 1;
-    }
     modeSelection.storage = parseStorageSelection(storageFilter, modeError);
     if (!modeError.empty()) {
         std::cerr << "ERROR: " << modeError << "\n";
@@ -1510,12 +1481,6 @@ int main(int argc, char* argv[]) {
         std::cerr << "ERROR: " << modeError << "\n";
         return 1;
     }
-    if (modeSelection.codec == CodecSelection::ZoH
-        && modeSelection.tracking == TrackingSelection::Disabled) {
-        // Legacy guard — no longer meaningful but kept for backward compat
-        // (parseTrackingSelection always returns Both now)
-    }
-
     std::string scenarioError;
     auto scenarios = filterScenarios(allScenarios, scenarioFilter, scenarioError);
     if (!scenarioError.empty()) {
@@ -1547,7 +1512,6 @@ int main(int argc, char* argv[]) {
                   << "==========================\n"
                   << "Profiles: " << profiles.size() << "\n"
                   << "Scenarios: " << scenarios.size() << "\n"
-                  << "Tracking: " << trackingFilter << " (deprecated, ignored)\n"
                   << "Storage: " << storageFilter << "\n"
                   << "Codec: " << codecFilter << "\n"
                   << "Compression: " << g_compression_level << "\n"

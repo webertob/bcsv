@@ -116,7 +116,6 @@ def run_macro(
     pin_cpu: int,
     profile: str = "",
     scenario: str = "",
-    tracking: str = "both",  # DEPRECATED: passed through for backward compat
     storage: str = "both",
     codec: str = "both",
     timeout: int = 3600,
@@ -133,7 +132,6 @@ def run_macro(
         f"--output={output_file}",
         f"--build-type={build_type}",
         f"--rows={rows}",
-        f"--tracking={tracking}",
         f"--storage={storage}",
         f"--codec={codec}",
     ]

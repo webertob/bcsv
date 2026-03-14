@@ -148,7 +148,7 @@ python3 benchmark/run.py wip --type=MICRO,MACRO-SMALL,MACRO-LARGE
 python3 benchmark/report.py <candidate_run_dir> --baseline <baseline_run_dir>
 ```
 
-14 dataset profiles × multiple mode combinations (storage × tracking × codec), with optional
+14 dataset profiles × multiple mode combinations (storage × codec), with optional
 external CSV library comparison. See [benchmark/README.md](benchmark/README.md) for details.
 
 ---

@@ -417,7 +417,7 @@ private:
         // 1. Read PacketHeader.
         std::streampos pos = is.tellg();
         PacketHeader header;
-        bool ok = header.read(is, true);
+        bool ok = header.read(is);
 
         if (!ok) {
             if (header.magic == FOOTER_BIDX_MAGIC) {

@@ -69,7 +69,7 @@ TEST(CodecZoH001DynamicTest, NoChangesAfterFirstRowReturnsEmpty) {
     EXPECT_TRUE(second.empty());
 }
 
-TEST(CodecZoH001DynamicTest, DisabledPolicyStillRoundTrips) {
+TEST(CodecZoH001DynamicTest, AllColumnsChangedOnFirstWrite) {
     Layout layout({
         {"b", ColumnType::BOOL},
         {"i32", ColumnType::INT32},

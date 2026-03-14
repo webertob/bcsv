@@ -106,20 +106,6 @@ class TestCsv2Bcsv:
         run_tool(tools["bcsv2csv"], bcsv, "-o", out)
         assert csv_equal(canon_csv["csv"], out)
 
-    def test_no_zoh_deprecation(self, tools, canon_csv, tmp_path):
-        bcsv = tmp_path / "nozoh.bcsv"
-        r = run_tool(tools["csv2bcsv"], "--no-zoh", "--file-codec", "packet_lz4",
-                     "-f", canon_csv["csv"], bcsv, check=False)
-        assert "deprecated" in (r.stdout + r.stderr).lower()
-
-    def test_no_zoh_roundtrip(self, tools, canon_csv, tmp_path):
-        bcsv = tmp_path / "nozoh.bcsv"
-        out = tmp_path / "rt_nozoh.csv"
-        run_tool(tools["csv2bcsv"], "--no-zoh", "--file-codec", "packet_lz4",
-                 "-f", canon_csv["csv"], bcsv, check=False)
-        run_tool(tools["bcsv2csv"], bcsv, "-o", out)
-        assert csv_rows(out) == CANON_ROWS
-
     def test_invalid_row_codec(self, tools, canon_csv, tmp_path):
         assert expect_fail(tools["csv2bcsv"], "--row-codec", "bogus",
                            "-f", canon_csv["csv"], tmp_path / "bad.bcsv")

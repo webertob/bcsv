@@ -17,6 +17,15 @@ This project uses [Semantic Versioning](https://semver.org/).
 - Python: type stubs (.pyi), strict NaN mode for `write_dataframe()`, `pathlib.Path` support, `__repr__` methods (Cycle 4)
 - C#: complete P/Invoke array declarations for all numeric types (Cycle 3)
 
+### Removed
+- Benchmark: `--tracking` CLI flag, `TrackingSelection` enum, and all related dead code from `bench_macro_datasets`
+- Benchmark: `--macro-tracking` flag from `run.py` orchestrator
+- Benchmark: `_TRK_SUFFIX` legacy label stripping regex from `constants.py`
+- CLI: `--no-zoh` deprecated alias from `csv2bcsv`
+- CLI: `--no-batch`, `--no-delta`, `--no-lz4` deprecated aliases from `bcsvSampler`
+- C++: unused `bool silent` parameter from `PacketHeader::read()`
+- Docs: stale "tracking" references from ARCHITECTURE.md, README.md, benchmark/README.md
+
 ### Fixed
 - C++: string exceeding `MAX_STRING_LENGTH` now throws `std::length_error` instead of silent truncation (Cycle 2)
 - C++: `Writer::close()` detects I/O errors during footer write (Cycle 2)

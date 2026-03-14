@@ -719,7 +719,7 @@ PacketHeader (16 B) | uint32_t uncompressed_size | uint32_t compressed_size
 
 **Macro benchmarks** (`benchmark/src/bench_macro_datasets.cpp`):
 - 14 dataset profiles covering diverse real-world schemas
-- Multiple mode combinations: storage (flexible/static) × tracking (on/off) × codec (dense/ZoH)
+- Multiple mode combinations: storage (flexible/static) × codec (dense/ZoH)
 - Configurable row count: `--size=S|M|L|XL` (10K/100K/500K/2M)
 
 **Micro benchmarks** (`benchmark/src/bench_micro_types.cpp`):

@@ -393,11 +393,6 @@ Config parseArgs(int argc, char* argv[]) {
             }
         } else if (arg == "--no-header") {
             config.has_header = false;
-        } else if (arg == "--no-zoh") {
-            // Deprecated alias — --no-zoh meant "disable ZoH, use default"
-            // The new default row codec is delta, so map accordingly.
-            std::cerr << "Warning: --no-zoh is deprecated. Use --row-codec delta instead.\n";
-            config.row_codec = "delta";
         } else if (arg == "-f" || arg == "--overwrite") {
             config.overwrite = true;
         } else if (arg == "-v" || arg == "--verbose") {

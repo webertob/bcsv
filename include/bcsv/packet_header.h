@@ -112,7 +112,7 @@ namespace bcsv {
          * @param stream Input stream to read from
          * @return true if read successful and header is valid
          */
-        bool read(std::istream& stream, [[maybe_unused]] bool silent = false) {
+        bool read(std::istream& stream) {
             std::array<std::byte, sizeof(PacketHeader)> raw{};
             stream.read(reinterpret_cast<char*>(raw.data()), raw.size());
             if (stream.gcount() != static_cast<std::streamsize>(raw.size())) {

@@ -253,17 +253,17 @@ class TestSamplerValues:
 class TestSamplerEncodings:
     @pytest.mark.parametrize("variant,extra_args", [
         ("default", []),
-        ("no-delta", ["--no-delta"]),
-        ("no-batch", ["--no-batch"]),
-        ("no-lz4", ["--no-lz4"]),
-        ("flat", ["--no-delta", "--no-lz4", "--no-batch"]),
+        ("flat-row", ["--row-codec", "flat"]),
+        ("packet-file", ["--file-codec", "packet"]),
+        ("packet-lz4-file", ["--file-codec", "packet_lz4"]),
+        ("flat-packet", ["--row-codec", "flat", "--file-codec", "packet"]),
     ])
     def test_encoding_variant(self, tools, sampler_data, tmp_path,
                               variant, extra_args):
         out_bcsv = tmp_path / f"enc_{variant}.bcsv"
         out_csv = tmp_path / f"enc_{variant}.csv"
         run_tool(tools["bcsvSampler"], "-c", "X[0][1] > 50.0",
-                 *extra_args, "--no-batch", "-f", sampler_data["bcsv"], out_bcsv,
+                 *extra_args, "--file-codec", "packet_lz4", "-f", sampler_data["bcsv"], out_bcsv,
                  timeout=10, check=False)
         run_tool(tools["bcsv2csv"], out_bcsv, out_csv, check=False)
         assert csv_rows(out_csv) == 2
@@ -277,14 +277,14 @@ class TestSamplerMisc:
     def test_disassembly(self, tools, sampler_data):
         r = run_tool(tools["bcsvSampler"], "--disassemble",
                      "-c", "X[0][1] > 50.0", "-s", "X[0][0], X[0][1]",
-                     "--no-batch", sampler_data["bcsv"], check=False, timeout=10)
+                     sampler_data["bcsv"], check=False, timeout=10)
         assert "HALT_COND" in r.stdout
         assert "HALT_SEL" in r.stdout
 
     def test_verbose_summary(self, tools, sampler_data, tmp_path):
         out = tmp_path / "summary.bcsv"
         r = run_tool(tools["bcsvSampler"], "-v", "-c", "X[0][1] > 50.0",
-                     "--no-batch", "-f", sampler_data["bcsv"], out,
+                     "-f", sampler_data["bcsv"], out,
                      check=False, timeout=10)
         combined = r.stdout + r.stderr
         assert "Pass rate" in combined

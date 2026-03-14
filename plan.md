@@ -50,8 +50,6 @@ The following items appeared in earlier drafts but were **verified as false or a
 ### Further Considerations
 
 - **Delta002 benchmark gap** — no macro benchmark uses Delta002. Consider adding in a follow-up.
-- **Full `--tracking` removal** — ~100 lines across C++/Python. Deprecated in this cycle; full removal in a follow-up.
-- **Benchmark README.md** — currently documents `--tracking`. Low priority documentation-only update.
 
 ---
 

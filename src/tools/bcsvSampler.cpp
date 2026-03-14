@@ -78,10 +78,7 @@ static void printUsage(const char* prog) {
         << "  --file-codec CODEC       File codec: stream, stream_lz4, packet,\n"
         << "                           packet_lz4, packet_lz4_batch (default)\n"
         << "  --compression-level N    LZ4 compression level (default: 1)\n"
-        << "  --block-size N           Block size in KB (default: 64)\n"
-        << "  --no-batch               (deprecated) alias for --file-codec packet_lz4\n"
-        << "  --no-delta               (deprecated) alias for --row-codec flat\n"
-        << "  --no-lz4                 (deprecated) alias for --file-codec packet\n\n"
+        << "  --block-size N           Block size in KB (default: 64)\n\n"
 
         << "General:\n"
         << "  -f, --overwrite          Overwrite output file if it exists\n"
@@ -94,8 +91,7 @@ static void printUsage(const char* prog) {
         << "  " << prog << " -c 'X[0][0] > 100' data.bcsv filtered.bcsv\n"
         << "  " << prog << " -s 'X[0][0], X[0][2]' data.bcsv projected.bcsv\n"
         << "  " << prog << " -c 'X[0][1] != X[-1][1]' -s 'X[0][0], X[0][1]' -m expand in.bcsv out.bcsv\n"
-        << "  " << prog << " --disassemble -c 'X[0][0] > 0' data.bcsv\n"
-        << "  " << prog << " --no-batch --no-delta -c 'X[0][2] == 1' in.bcsv out.bcsv\n";
+        << "  " << prog << " --disassemble -c 'X[0][0] > 0' data.bcsv\n";
 }
 
 // ── Argument parsing ────────────────────────────────────────────────
@@ -115,15 +111,6 @@ static Config parseArgs(int argc, char* argv[]) {
             cfg.overwrite = true;
         } else if (arg == "--disassemble") {
             cfg.disassemble = true;
-        } else if (arg == "--no-batch") {
-            std::cerr << "Warning: --no-batch is deprecated; use --file-codec packet_lz4\n";
-            cfg.file_codec = "packet_lz4";
-        } else if (arg == "--no-delta") {
-            std::cerr << "Warning: --no-delta is deprecated; use --row-codec flat\n";
-            cfg.row_codec = "flat";
-        } else if (arg == "--no-lz4") {
-            std::cerr << "Warning: --no-lz4 is deprecated; use --file-codec packet\n";
-            cfg.file_codec = "packet";
         } else if ((arg == "--row-codec") && i + 1 < argc) {
             cfg.row_codec = argv[++i];
             bcsv_cli::validateRowCodec(cfg.row_codec);

@@ -84,7 +84,7 @@ csv2bcsv [OPTIONS] INPUT_FILE [OUTPUT_FILE]
 csv2bcsv data.csv                                    # Auto-detect, default output
 csv2bcsv data.csv output.bcsv                         # Custom output
 csv2bcsv -d ';' --decimal-separator ',' german.csv    # European format
-csv2bcsv --no-zoh data.csv flat.bcsv                  # Disable ZoH (use delta)
+csv2bcsv --row-codec delta data.csv output.bcsv       # Explicit delta codec
 csv2bcsv --benchmark data.csv output.bcsv             # Measure throughput
 ```
 
@@ -95,7 +95,6 @@ csv2bcsv --benchmark data.csv output.bcsv             # Measure throughput
 | `-d, --delimiter CHAR` | Field delimiter (auto-detected if omitted) | auto |
 | `--decimal-separator CHAR` | Decimal separator: `.` or `,` | `.` |
 | `--no-header` | CSV file has no header row | |
-| `--no-zoh` | Disable Zero-Order Hold compression | ZoH enabled |
 | `-v, --verbose` | Verbose output | |
 | `--benchmark` | Print timing stats to stderr | |
 | `--json` | With `--benchmark`: emit JSON timing blob to stdout | |
@@ -264,9 +263,6 @@ bcsvSampler -c 'X[0][1] > 0' -s 'X[0][0], X[0][1]' data.bcsv out.bcsv  # Both
 | `-m, --mode MODE` | Boundary mode: `truncate` or `expand` | `truncate` |
 | `--compression-level N` | LZ4 compression level | `1` |
 | `--block-size N` | Block size in KB | `64` |
-| `--no-batch` | Disable batch compression | |
-| `--no-delta` | Use flat codec instead of delta | |
-| `--no-lz4` | Disable LZ4 compression | |
 | `-f, --overwrite` | Overwrite output file | |
 | `--disassemble` | Print compiled bytecode and exit | |
 | `-v, --verbose` | Verbose progress output | |

@@ -15,7 +15,7 @@ Legacy compare/leaderboard/report-latest flows are removed. Reporting and compar
 Current macro dataset catalog contains 14 profiles, including string-heavy reference workloads:
 `event_log`, `iot_fleet`, and `financial_orders`.
 
-Macro runs execute mode families across storage (`flexible|static`), tracking (`trk=off|trk=on`),
+Macro runs execute mode families across storage (`flexible|static`)
 and codec (`dense|ZoH`) depending on CLI filters.
 
 ## Build
@@ -84,7 +84,6 @@ python3 benchmark/run.py <subcommand> [options]
 - `--languages=python,csharp` (optional language lanes)
 - `--macro-profile=<name>` (pass-through to `bench_macro_datasets --profile`)
 - `--macro-scenario=<csv>` (pass-through to `bench_macro_datasets --scenario`)
-- `--macro-tracking=both|enabled|disabled` (default `both`)
 - `--macro-storage=both|flexible|static` (default `both`)
 - `--macro-codec=both|dense|zoh` (default `both`)
 - `--detail` (show per-profile breakdown table in operator summary)
@@ -112,18 +111,16 @@ python3 benchmark/run.py wip --type=MICRO --pin=CPU2
 # Full campaign (all three types)
 python3 benchmark/run.py wip --type=MICRO,MACRO-SMALL,MACRO-LARGE
 
-# Isolated macro family: flexible + tracking disabled + dense only
+# Isolated macro family: flexible + dense only
 python3 benchmark/run.py wip \
   --type=MACRO-SMALL \
   --macro-storage=flexible \
-  --macro-tracking=disabled \
   --macro-codec=dense
 
-# Isolated macro family: static + tracking enabled + ZoH only
+# Isolated macro family: static + ZoH only
 python3 benchmark/run.py wip \
   --type=MACRO-SMALL \
   --macro-storage=static \
-  --macro-tracking=enabled \
   --macro-codec=zoh
 
 # Include Python language lane in the same run directory/report
@@ -251,35 +248,31 @@ Temp clone location defaults:
 Use isolated runs to avoid mixing strategy families in one result set.
 
 ```bash
-# 1) Dense-only, flexible tracked-off
+# 1) Dense-only, flexible
 python3 benchmark/run.py wip \
   --type=MACRO-SMALL \
   --macro-storage=flexible \
-  --macro-tracking=disabled \
   --macro-codec=dense \
   --pin=CPU2
 
-# 2) Dense-only, static tracked-off
+# 2) Dense-only, static
 python3 benchmark/run.py wip \
   --type=MACRO-SMALL \
   --macro-storage=static \
-  --macro-tracking=disabled \
   --macro-codec=dense \
   --pin=CPU2
 
-# 3) ZoH-only, flexible tracked-on
+# 3) ZoH-only, flexible
 python3 benchmark/run.py wip \
   --type=MACRO-SMALL \
   --macro-storage=flexible \
-  --macro-tracking=enabled \
   --macro-codec=zoh \
   --pin=CPU2
 
-# 4) ZoH-only, static tracked-on
+# 4) ZoH-only, static
 python3 benchmark/run.py wip \
   --type=MACRO-SMALL \
   --macro-storage=static \
-  --macro-tracking=enabled \
   --macro-codec=zoh \
   --pin=CPU2
 ```
