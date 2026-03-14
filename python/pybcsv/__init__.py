@@ -9,7 +9,7 @@
 
 from .__version__ import __version__
 
-# Try to import the compiled extension module
+# Import the compiled extension module — fail immediately if not available
 try:
     from ._bcsv import *
     _BINDINGS_AVAILABLE = True
@@ -17,34 +17,12 @@ except ImportError:
     try:
         from _bcsv import *   # fallback for legacy in-tree builds
         _BINDINGS_AVAILABLE = True
-    except ImportError:
-        _BINDINGS_AVAILABLE = False
-    
-    # Create stub classes that raise ImportError
-    _STUB_MSG = "BCSV bindings are not available. Please compile the extension module."
-    def _make_stub(name):
-        def _init(self, *args, **kwargs):
-            raise ImportError(_STUB_MSG)
-        return type(name, (), {"__init__": _init})
-
-    Layout = _make_stub("Layout")
-    Writer = _make_stub("Writer")
-    Reader = _make_stub("Reader")
-    ReaderDirectAccess = _make_stub("ReaderDirectAccess")
-    Sampler = _make_stub("Sampler")
-    CsvWriter = _make_stub("CsvWriter")
-    CsvReader = _make_stub("CsvReader")
-
-    def read_columns(*args, **kwargs):
-        raise ImportError(_STUB_MSG)
-    def write_columns(*args, **kwargs):
-        raise ImportError(_STUB_MSG)
-    def type_to_string(*args, **kwargs):
-        raise ImportError(_STUB_MSG)
-    def read_to_arrow(*args, **kwargs):
-        raise ImportError(_STUB_MSG)
-    def write_from_arrow(*args, **kwargs):
-        raise ImportError(_STUB_MSG)
+    except ImportError as _exc:
+        raise ImportError(
+            "pybcsv native extension (_bcsv) is not available. "
+            "Install a pre-built wheel (pip install pybcsv) or build from source. "
+            "See https://github.com/webertob/bcsv/tree/main/python"
+        ) from _exc
 
 # Try to import pandas utilities if pandas is available
 try:

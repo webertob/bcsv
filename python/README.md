@@ -303,6 +303,19 @@ python/
 └── README.md
 ```
 
+## Known Limitations
+
+- **Arrow string columns: 2 GB per batch.** The Arrow C Data Interface uses
+  `utf8` format (`"u"`) with int32 offsets, limiting the total byte size of any
+  single string column within one batch to ~2 GB. An `OverflowError` is raised
+  at runtime if this limit is exceeded. For most workloads this is not an issue.
+  If you hit this limit, consider splitting data into smaller batches.
+
+- **No native null/missing value support.** BCSV is a fixed-width binary format
+  without a null bitmap. When writing a pandas DataFrame with NaN/None values,
+  they are coerced to zero, False, or empty string by default (with a warning).
+  Use `strict=True` in `write_dataframe()` to reject NaN values instead.
+
 ## Compatibility
 
 - **Python**: 3.11, 3.12, 3.13

@@ -628,6 +628,12 @@ NB_MODULE(_bcsv, m) {
         .def("__enter__", [](PyWriter& pw) -> PyWriter& { return pw; }, nb::rv_policy::reference)
         .def("__exit__", [](PyWriter& pw, nb::args) {
             pw.visit([](auto& w) { w.close(); });
+        })
+        .def("__repr__", [](PyWriter& pw) {
+            bool open = pw.visit([](auto& w) { return w.isOpen(); });
+            size_t rows = pw.visit([](auto& w) { return w.rowCount(); });
+            return "<Writer codec='" + pw.codec_name_ + "' open=" +
+                   (open ? "True" : "False") + " rows=" + std::to_string(rows) + ">";
         });
 
     // ── Reader binding ─────────────────────────────────────────────────
@@ -761,6 +767,12 @@ NB_MODULE(_bcsv, m) {
         }, nb::arg("batch_size") = 10000,
            "Read up to batch_size rows into a dict of numpy arrays/lists. Returns None at EOF.");
     bind_reader_iteration<ReaderT>(reader_cls);
+    reader_cls.def("__repr__", [](ReaderT& r) {
+        bool open = r.isOpen();
+        size_t pos = r.rowPos();
+        return std::string("<Reader open=") + (open ? "True" : "False") +
+               " row_pos=" + std::to_string(pos) + ">";
+    });
 
     // Utility functions
     m.def("type_to_string",
@@ -858,6 +870,12 @@ NB_MODULE(_bcsv, m) {
             if (!success)
                 throw nb::index_error(("Row index " + std::to_string(index) + " out of range").c_str());
             return row_to_list(r.row(), r.layout());
+        })
+        .def("__repr__", [](DaReaderT& r) {
+            bool open = r.isOpen();
+            size_t rows = open ? r.rowCount() : 0;
+            return std::string("<ReaderDirectAccess open=") + (open ? "True" : "False") +
+                   " rows=" + std::to_string(rows) + ">";
         });
 
     // ── Sampler enums ──────────────────────────────────────────────────

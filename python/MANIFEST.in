@@ -1,6 +1,7 @@
 include README.md
 include LICENSE
 include pybcsv/py.typed
+recursive-include pybcsv *.pyi
 
 # Include top-level headers bundled for distribution
 recursive-include include *.h

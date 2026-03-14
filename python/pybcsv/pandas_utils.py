@@ -7,6 +7,7 @@
 
 """Pandas integration utilities for pybcsv."""
 
+import os
 import numpy as np
 from typing import Optional, Union, Dict, Any
 import warnings
@@ -105,7 +106,8 @@ def write_dataframe(df,
                     filename: str, 
                     compression_level: int = 1,
                     row_codec: str = "delta",
-                    type_hints: Optional[Dict[str, ColumnType]] = None) -> None:
+                    type_hints: Optional[Dict[str, ColumnType]] = None,
+                    strict: bool = False) -> None:
     """
     Write a pandas DataFrame to a BCSV file via the C++ columnar path.
     
@@ -114,16 +116,28 @@ def write_dataframe(df,
     
     Args:
         df: The pandas DataFrame to write
-        filename: Output BCSV filename
+        filename: Output BCSV filename (str or pathlib.Path)
         compression_level: Compression level (0=no compression, 1-9=LZ4 compression level, default: 1)
         row_codec: Row codec to use ('flat', 'zoh', or 'delta', default: 'delta')
         type_hints: Optional dictionary mapping column names to specific BCSV types
+        strict: If True, raise ValueError when any column contains NaN/None
+                values instead of coercing them to zero/False/empty-string.
     """
     if not PANDAS_AVAILABLE:
         raise ImportError("pandas is not available. Please install pandas to use this function.")
     if not _COLUMNAR_AVAILABLE:
         raise ImportError("Columnar I/O is not available in this build. "
                           "Rebuild pybcsv with numpy headers available.")
+
+    filename = os.fspath(filename)
+
+    if strict:
+        null_cols = [str(c) for c in df.columns if df[c].isna().any()]
+        if null_cols:
+            raise ValueError(
+                f"NaN/None values found in columns: {null_cols}. "
+                f"Use strict=False (default) to coerce to zero/False/empty-string, "
+                f"or handle missing values before calling write_dataframe().")
 
     col_order = [str(c) for c in df.columns]
     col_types = []
@@ -168,7 +182,7 @@ def read_dataframe(filename: str,
     Read a BCSV file into a pandas DataFrame with optimized memory usage.
     
     Args:
-        filename: BCSV file to read
+        filename: BCSV file to read (str or pathlib.Path)
         columns: Optional list of column names to read (default: all columns)
         optimize_dtypes: Whether to optimize pandas dtypes based on BCSV types
         
@@ -177,6 +191,8 @@ def read_dataframe(filename: str,
     """
     if not PANDAS_AVAILABLE:
         raise ImportError("pandas is not available. Please install pandas to use this function.")
+
+    filename = os.fspath(filename)
 
     # Fastest path: Arrow C Data Interface → zero-copy to_pandas
     if _ARROW_AVAILABLE:
@@ -272,13 +288,15 @@ def to_csv(bcsv_filename: str, csv_filename: str, **csv_kwargs) -> None:
     Convert a BCSV file to CSV format.
     
     Args:
-        bcsv_filename: Input BCSV file
-        csv_filename: Output CSV file
+        bcsv_filename: Input BCSV file (str or pathlib.Path)
+        csv_filename: Output CSV file (str or pathlib.Path)
         **csv_kwargs: Additional arguments passed to pandas.DataFrame.to_csv()
     """
     if not PANDAS_AVAILABLE:
         raise ImportError("pandas is not available. Please install pandas to use this function.")
     
+    bcsv_filename = os.fspath(bcsv_filename)
+    csv_filename = os.fspath(csv_filename)
     df = read_dataframe(bcsv_filename)
     
     # Set default CSV parameters
@@ -300,8 +318,8 @@ def from_csv(csv_filename: str,
     Convert a CSV file to BCSV format.
     
     Args:
-        csv_filename: Input CSV file
-        bcsv_filename: Output BCSV file
+        csv_filename: Input CSV file (str or pathlib.Path)
+        bcsv_filename: Output BCSV file (str or pathlib.Path)
         compression_level: Compression level (0=no compression, 1-9=LZ4 compression level, default: 1)
         type_hints: Optional dictionary mapping column names to specific BCSV types
         **csv_kwargs: Additional arguments passed to pandas.read_csv()
@@ -309,6 +327,9 @@ def from_csv(csv_filename: str,
     if not PANDAS_AVAILABLE:
         raise ImportError("pandas is not available. Please install pandas to use this function.")
     
+    csv_filename = os.fspath(csv_filename)
+    bcsv_filename = os.fspath(bcsv_filename)
+
     # Set default CSV reading parameters
     csv_params = {
         'encoding': 'utf-8'
