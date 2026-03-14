@@ -65,6 +65,7 @@ python/*.egg-info/
 python/.pytest_cache/
 
 # Ignore scikit-build-core build artifacts
+python/build_ext/
 python/.ninja_deps
 python/.ninja_log
 python/.skbuild-info.json

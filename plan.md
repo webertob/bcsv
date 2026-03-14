@@ -42,7 +42,7 @@ The following items appeared in earlier drafts but were **verified as false or a
 | 1 | Critical Documentation Fixes | CRITICAL | 4 files | ✅ Done (0538feb) |
 | 2 | Core C++ Correctness | CRITICAL+HIGH | 5 files + tests | ✅ Done |
 | 3 | C# / Unity Safety | CRITICAL+HIGH | 8 files + tests | ✅ Done |
-| 4 | Python Hardening | HIGH | 4 files + tests | |
+| 4 | Python Hardening | HIGH | 4 files + tests | ✅ Done (0f35c35) |
 | 5 | Test Coverage Gaps | HIGH | 8 test files | |
 | 6 | Documentation Consolidation | MEDIUM | 10 files | |
 | 7 | Benchmark, Build & Examples | MEDIUM | 10 files | |
@@ -414,12 +414,13 @@ Note: BcsvRow is a readonly struct — correctly does NOT implement IDisposable.
 
 ---
 
-## Cycle 4: Python Hardening
+## Cycle 4: Python Hardening ✅ Done
 
 **Theme:** Improve Python binding safety and developer experience.  
 **Severity:** HIGH  
 **Reviewers who flagged:** Opus (#7, 6.2.1-6.2.5), Sonnet (C9, C10, M14-M15)  
-**Confidence:** All items verified ✅
+**Confidence:** All items verified ✅  
+**Commit:** `0f35c35` — 158 Python tests pass, 705 C++ tests pass
 
 ### Planning
 
