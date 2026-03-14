@@ -15,7 +15,15 @@ public sealed class BcsvCsvWriter : IDisposable
             throw new BcsvException("Failed to create CSV writer");
     }
 
+    ~BcsvCsvWriter() => Dispose(false);
+
     public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    private void Dispose(bool disposing)
     {
         if (_handle != 0)
         {

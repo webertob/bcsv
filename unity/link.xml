@@ -1,0 +1,19 @@
+<!--
+  IL2CPP managed code stripping protection for BCSV.
+  Ensures P/Invoke declarations and IDisposable types are not removed
+  by the Unity linker during AOT builds (iOS, WebGL, consoles).
+-->
+<linker>
+  <assembly fullname="Assembly-CSharp">
+    <type fullname="BCSV.NativeMethods" preserve="all"/>
+    <type fullname="BCSV.BcsvLayout" preserve="all"/>
+    <type fullname="BCSV.BcsvReader" preserve="all"/>
+    <type fullname="BCSV.BcsvWriter" preserve="all"/>
+    <type fullname="BCSV.BcsvRow" preserve="all"/>
+    <type fullname="BCSV.BcsvRowBase" preserve="all"/>
+    <type fullname="BCSV.BcsvRowRef" preserve="all"/>
+    <type fullname="BCSV.BcsvRowRefConst" preserve="all"/>
+    <type fullname="BCSV.ColumnType" preserve="all"/>
+    <type fullname="BCSV.FileFlags" preserve="all"/>
+  </assembly>
+</linker>

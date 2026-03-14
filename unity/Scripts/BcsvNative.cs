@@ -9,6 +9,7 @@
 
 using System;
 using System.Runtime.InteropServices;
+using UnityEngine.Scripting;
 
 namespace BCSV
 {
@@ -34,6 +35,7 @@ namespace BCSV
         ZOH  = 1 << 0,
     }
     // Native P/Invoke declarations
+    [Preserve]
     internal static class NativeMethods
     {
         const string DllName = "bcsv_c_api"; // Adjust this to match your actual DLL name
@@ -351,7 +353,7 @@ namespace BCSV
             return Marshal.PtrToStringUni(filenamePtr);
 #else
             // On POSIX, convert from char* to string
-            return Marshal.PtrToStringAnsi(filenamePtr);
+            return PtrToStringUtf8(filenamePtr);
 #endif
         }
 
@@ -369,8 +371,15 @@ namespace BCSV
             return Marshal.PtrToStringUni(filenamePtr);
 #else
             // On POSIX, convert from char* to string
-            return Marshal.PtrToStringAnsi(filenamePtr);
+            return PtrToStringUtf8(filenamePtr);
 #endif
         }
+
+        /// <summary>
+        /// Convert a native UTF-8 string pointer to a managed string.
+        /// Centralised helper matching the main C# binding convention.
+        /// </summary>
+        internal static string PtrToStringUtf8(IntPtr ptr)
+            => ptr == IntPtr.Zero ? string.Empty : Marshal.PtrToStringUTF8(ptr) ?? string.Empty;
     }
 }

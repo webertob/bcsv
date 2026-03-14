@@ -17,7 +17,15 @@ public sealed class BcsvCsvReader : IDisposable, IEnumerable<BcsvRow>
             throw new BcsvException("Failed to create CSV reader");
     }
 
+    ~BcsvCsvReader() => Dispose(false);
+
     public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    private void Dispose(bool disposing)
     {
         if (_handle != 0)
         {

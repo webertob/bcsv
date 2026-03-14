@@ -187,7 +187,7 @@ namespace BCSV
         public string GetString(int column)
         {
             var ptr = NativeMethods.bcsv_row_get_string(Handle, column);
-            return ptr == IntPtr.Zero ? null : Marshal.PtrToStringAnsi(ptr);
+            return NativeMethods.PtrToStringUtf8(ptr);
         }
 
         #endregion

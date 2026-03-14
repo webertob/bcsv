@@ -105,7 +105,7 @@ namespace BCSV
                 throw new ArgumentOutOfRangeException(nameof(index));
 
             var ptr = NativeMethods.bcsv_layout_column_name(Handle, (UIntPtr)index);
-            return Marshal.PtrToStringAnsi(ptr);
+            return NativeMethods.PtrToStringUtf8(ptr);
         }
 
         /// <summary>
@@ -226,7 +226,7 @@ namespace BCSV
         public static string GetLastError()
         {
             var ptr = NativeMethods.bcsv_last_error();
-            return ptr == IntPtr.Zero ? null : Marshal.PtrToStringAnsi(ptr);
+            return NativeMethods.PtrToStringUtf8(ptr);
         }
 
         public void Dispose()
