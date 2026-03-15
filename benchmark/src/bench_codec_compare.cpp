@@ -49,8 +49,8 @@ struct Candidate {
     size_t          compressionLevel;
     bcsv::FileFlags flags;
     bool            isCsv;
-    bool            useZoH;          // true → WriterZoH + generateZoH
-    bool            useDelta;        // true → WriterDelta + generateZoH
+    bool            useZoH;          // true → WriterZoH + generateTimeSeries
+    bool            useDelta;        // true → WriterDelta + generateTimeSeries
 };
 
 std::vector<Candidate> buildCandidates() {
@@ -117,7 +117,7 @@ IterResult runBcsv(const bench::DatasetProfile& profile,
         timer.start();
         for (size_t i = 0; i < numRows; ++i) {
             auto& row = writer.row();
-            profile.generateZoH(row, i);
+            profile.generateTimeSeries(row, i);
             writer.writeRow();
         }
         writer.close();
@@ -132,7 +132,7 @@ IterResult runBcsv(const bench::DatasetProfile& profile,
         timer.start();
         for (size_t i = 0; i < numRows; ++i) {
             auto& row = writer.row();
-            profile.generateZoH(row, i);
+            profile.generateTimeSeries(row, i);
             writer.writeRow();
         }
         writer.close();
@@ -172,7 +172,7 @@ IterResult runBcsv(const bench::DatasetProfile& profile,
         while (reader.readNext()) {
             const auto& row = reader.row();
             if (cand.useZoH || cand.useDelta)
-                profile.generateZoH(expected, rowsRead);
+                profile.generateTimeSeries(expected, rowsRead);
             else
                 profile.generate(expected, rowsRead);
 

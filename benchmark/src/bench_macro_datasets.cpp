@@ -13,8 +13,8 @@
  * 
  * For each dataset profile, benchmarks:
  * - CSV baseline (fair visitConst-based write, real-parsing read)
- * - BCSV Flexible
- * - BCSV Flexible + ZoH
+ * - BCSV Flexible (Flat, ZoH, Delta codecs)
+ * - BCSV Static (Flat, ZoH, Delta codecs)
  * 
  * All modes perform full round-trip validation.
  * Results are emitted as JSON for the Python orchestrator.
@@ -26,8 +26,8 @@
  *     --output=PATH    Write JSON results to file (default: stdout summary)
  *     --profile=NAME   Run only this profile (default: all)
  *     --scenario=LIST  Comma-separated sparse scenarios to run (default: all)
- *     --storage=MODE   both|flexible|static (default: both)
- *     --codec=MODE     both|dense|zoh (default: both)
+ *     --storage=MODE   all|flexible|static (default: all)
+ *     --codec=MODE     all|dense|zoh|delta|primary (default: all)
  *     --list           List available profiles and exit
  *     --list-scenarios List available sparse scenarios and exit
  *     --help           Show CLI help and examples
@@ -180,12 +180,12 @@ using RealisticMeasurementLayoutStatic = LayoutFromTypeList_t<ConcatTypeLists<
 // portable template-recursion limits for std::tuple on MSVC.
 // These profiles benchmark in dynamic-layout mode only.
 
-enum class StorageSelection { Both, Flexible, Static };
-enum class CodecSelection { Both, Dense, ZoH };
+enum class StorageSelection { All, Flexible, Static };
+enum class CodecSelection { All, Dense, ZoH, Delta, Primary };
 
 struct ModeSelection {
-    StorageSelection storage = StorageSelection::Both;
-    CodecSelection codec = CodecSelection::Both;
+    StorageSelection storage = StorageSelection::All;
+    CodecSelection codec = CodecSelection::All;
     size_t compressionLevel = 1;
 };
 
@@ -230,19 +230,23 @@ inline ProfileCapabilities capabilitiesForProfileName(std::string_view profileNa
 }
 
 inline bool includesFlexible(StorageSelection s) {
-    return s == StorageSelection::Both || s == StorageSelection::Flexible;
+    return s == StorageSelection::All || s == StorageSelection::Flexible;
 }
 
 inline bool includesStatic(StorageSelection s) {
-    return s == StorageSelection::Both || s == StorageSelection::Static;
+    return s == StorageSelection::All || s == StorageSelection::Static;
 }
 
 inline bool includesDense(CodecSelection c) {
-    return c == CodecSelection::Both || c == CodecSelection::Dense;
+    return c == CodecSelection::All || c == CodecSelection::Dense || c == CodecSelection::Primary;
 }
 
 inline bool includesZoH(CodecSelection c) {
-    return c == CodecSelection::Both || c == CodecSelection::ZoH;
+    return c == CodecSelection::All || c == CodecSelection::ZoH;
+}
+
+inline bool includesDelta(CodecSelection c) {
+    return c == CodecSelection::All || c == CodecSelection::Delta || c == CodecSelection::Primary;
 }
 
 template<typename Fn>
@@ -434,8 +438,8 @@ std::vector<SparseScenario> filterScenarios(const std::vector<SparseScenario>& a
 }
 
 StorageSelection parseStorageSelection(const std::string& value, std::string& error) {
-    if (value.empty() || value == "both") {
-        return StorageSelection::Both;
+    if (value.empty() || value == "both" || value == "all") {
+        return StorageSelection::All;
     }
     if (value == "flexible" || value == "flex") {
         return StorageSelection::Flexible;
@@ -443,13 +447,13 @@ StorageSelection parseStorageSelection(const std::string& value, std::string& er
     if (value == "static") {
         return StorageSelection::Static;
     }
-    error = "Unknown --storage=" + value + " (expected both|flexible|static)";
-    return StorageSelection::Both;
+    error = "Unknown --storage=" + value + " (expected all|flexible|static)";
+    return StorageSelection::All;
 }
 
 CodecSelection parseCodecSelection(const std::string& value, std::string& error) {
-    if (value.empty() || value == "both") {
-        return CodecSelection::Both;
+    if (value.empty() || value == "both" || value == "all") {
+        return CodecSelection::All;
     }
     if (value == "dense" || value == "flat") {
         return CodecSelection::Dense;
@@ -457,8 +461,14 @@ CodecSelection parseCodecSelection(const std::string& value, std::string& error)
     if (value == "zoh") {
         return CodecSelection::ZoH;
     }
-    error = "Unknown --codec=" + value + " (expected both|dense|zoh)";
-    return CodecSelection::Both;
+    if (value == "delta") {
+        return CodecSelection::Delta;
+    }
+    if (value == "primary") {
+        return CodecSelection::Primary;
+    }
+    error = "Unknown --codec=" + value + " (expected all|dense|zoh|delta|primary)";
+    return CodecSelection::All;
 }
 
 std::string makeScenarioDatasetName(const std::string& base, const SparseScenario& scenario) {
@@ -899,7 +909,7 @@ bench::BenchmarkResult benchmarkBCSVFlexibleZoH(const bench::DatasetProfile& pro
         timer.start();
         for (size_t i = 0; i < numRows; ++i) {
             auto& row = writer.row();
-            profile.generateZoH(row, i);
+            profile.generateTimeSeries(row, i);
             writer.writeRow();
         }
         writer.close();
@@ -938,7 +948,7 @@ bench::BenchmarkResult benchmarkBCSVFlexibleZoH(const bench::DatasetProfile& pro
         while (reader.readNext()) {
             const auto& row = reader.row();
 
-            profile.generateZoH(expectedRow, rowsRead);
+            profile.generateTimeSeries(expectedRow, rowsRead);
             if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
                 validateRowByScenario(scenario, rowsRead, expectedRow, row, profile.layout,
                                       selectedColumns, validator);
@@ -1068,7 +1078,109 @@ bench::BenchmarkResult benchmarkBCSVFlexibleZoHGeneric(const bench::DatasetProfi
     return result;
 }
 
-template<typename StaticLayout, bool UseZoH = false>
+bench::BenchmarkResult benchmarkBCSVFlexibleDelta(const bench::DatasetProfile& profile,
+                                                   size_t numRows,
+                                                   const SparseScenario& scenario,
+                                                   bool quiet)
+{
+    bench::BenchmarkResult result;
+    applyScenarioMetadata(result, profile, numRows, scenario, "BCSV Flexible Delta", "deserialize_first");
+
+    const std::string filename = bench::tempFilePath(profile.name + scenarioFileTag(scenario) + "_flex_delta", ".bcsv");
+
+    // ----- Write (Delta codec) -----
+    bench::Timer timer;
+    {
+        bcsv::WriterDelta<bcsv::Layout> writer(profile.layout);
+        if (!writer.open(filename, true, g_compression_level, 64, bcsv::FileFlags::DELTA_ENCODING)) {
+            result.validation_error = "Cannot open BCSV Delta file: " + writer.getErrorMsg();
+            return result;
+        }
+
+        timer.start();
+        for (size_t i = 0; i < numRows; ++i) {
+            auto& row = writer.row();
+            profile.generateTimeSeries(row, i);
+            writer.writeRow();
+        }
+        writer.close();
+        timer.stop();
+    }
+    result.write_time_ms = timer.elapsedMs();
+
+    try {
+        result.file_size = bench::validateFile(filename);
+    } catch (const std::exception& e) {
+        result.validation_error = e.what();
+        return result;
+    }
+
+    if (!quiet) {
+        std::cerr << "  [" << profile.name << "] BCSV Flex Delta write: "
+                  << std::fixed << std::setprecision(1) << result.write_time_ms << " ms\n";
+    }
+
+    // ----- Read and validate -----
+    bench::RoundTripValidator validator;
+    bcsv::Row expectedRow(profile.layout);
+    const auto selectedColumns = buildSelectedColumns(profile.layout, scenario.columns_k);
+    const auto predicateColumn = findFirstNumericColumn(profile.layout);
+    size_t processedRows = 0;
+
+    {
+        bcsv::Reader<bcsv::Layout> reader;
+        if (!reader.open(filename)) {
+            result.validation_error = "Cannot read BCSV Delta file: " + reader.getErrorMsg();
+            return result;
+        }
+
+        size_t rowsRead = 0;
+        timer.start();
+        while (reader.readNext()) {
+            const auto& row = reader.row();
+
+            profile.generateTimeSeries(expectedRow, rowsRead);
+            if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
+                validateRowByScenario(scenario, rowsRead, expectedRow, row, profile.layout,
+                                      selectedColumns, validator);
+                ++processedRows;
+            }
+
+            bench::doNotOptimize(row);
+            ++rowsRead;
+        }
+        reader.close();
+        timer.stop();
+
+        if (rowsRead != numRows) {
+            result.validation_error = "Row count mismatch: expected " + std::to_string(numRows)
+                                    + " got " + std::to_string(rowsRead);
+            result.read_time_ms = timer.elapsedMs();
+            return result;
+        }
+    }
+    result.read_time_ms = timer.elapsedMs();
+    result.processed_row_ratio = computeProcessedRowRatio(processedRows, numRows);
+
+    result.validation_passed = validator.passed();
+    if (!validator.passed()) {
+        result.validation_error = validator.summary();
+    }
+
+    result.computeThroughput();
+
+    if (!quiet) {
+        std::cerr << "  [" << profile.name << "] BCSV Flex Delta read:  "
+                  << std::fixed << std::setprecision(1) << result.read_time_ms << " ms"
+                  << " — " << (result.validation_passed ? "PASS" : "FAIL") << "\n";
+    }
+
+    return result;
+}
+
+enum class StaticCodecKind { Flat, ZoH, Delta };
+
+template<typename StaticLayout, StaticCodecKind Codec = StaticCodecKind::Flat>
 bench::BenchmarkResult runStaticLayoutVariant(const bench::DatasetProfile& profile,
                                               size_t numRows,
                                               const SparseScenario& scenario,
@@ -1076,8 +1188,13 @@ bench::BenchmarkResult runStaticLayoutVariant(const bench::DatasetProfile& profi
                                               const std::string& modeLabel,
                                               const std::string& suffix)
 {
-    using WriterType = std::conditional_t<UseZoH,
-        bcsv::WriterZoH<StaticLayout>, bcsv::Writer<StaticLayout>>;
+    using WriterType = std::conditional_t<Codec == StaticCodecKind::ZoH,
+        bcsv::WriterZoH<StaticLayout>,
+        std::conditional_t<Codec == StaticCodecKind::Delta,
+            bcsv::WriterDelta<StaticLayout>,
+            bcsv::Writer<StaticLayout>>>;
+
+    constexpr bool usesTimeSeries = (Codec == StaticCodecKind::ZoH || Codec == StaticCodecKind::Delta);
 
     bench::BenchmarkResult result;
     applyScenarioMetadata(result, profile, numRows, scenario, modeLabel, "deserialize_first");
@@ -1089,9 +1206,14 @@ bench::BenchmarkResult runStaticLayoutVariant(const bench::DatasetProfile& profi
         StaticLayout layoutStatic;
         layoutStatic = profile.layout;
         WriterType writer(layoutStatic);
-        const bool opened = UseZoH
-            ? writer.open(filename, true, g_compression_level, 64, bcsv::FileFlags::ZERO_ORDER_HOLD)
-            : writer.open(filename, true, g_compression_level);
+        bool opened = false;
+        if constexpr (Codec == StaticCodecKind::ZoH) {
+            opened = writer.open(filename, true, g_compression_level, 64, bcsv::FileFlags::ZERO_ORDER_HOLD);
+        } else if constexpr (Codec == StaticCodecKind::Delta) {
+            opened = writer.open(filename, true, g_compression_level, 64, bcsv::FileFlags::DELTA_ENCODING);
+        } else {
+            opened = writer.open(filename, true, g_compression_level);
+        }
         if (!opened) {
             result.validation_error = "Cannot open BCSV Static file: " + writer.getErrorMsg();
             return result;
@@ -1100,7 +1222,7 @@ bench::BenchmarkResult runStaticLayoutVariant(const bench::DatasetProfile& profi
         timer.start();
         for (size_t i = 0; i < numRows; ++i) {
             auto& row = writer.row();
-            const bool generated = UseZoH
+            const bool generated = usesTimeSeries
                 ? generateProfileZoHNoCopy(profile, row, i)
                 : generateProfileNonZoHNoCopy(profile, row, i);
             if (!generated) {
@@ -1122,8 +1244,12 @@ bench::BenchmarkResult runStaticLayoutVariant(const bench::DatasetProfile& profi
         return result;
     }
 
+    if (!quiet) {
+        std::cerr << "  [" << profile.name << "] " << modeLabel << " write: "
+                  << std::fixed << std::setprecision(1) << result.write_time_ms << " ms\n";
+    }
+
     bcsv::Row expectedRow(profile.layout);
-    bcsv::Row expectedZoHRow(profile.layout);
     const auto selectedColumns = buildSelectedColumns(profile.layout, scenario.columns_k);
     const auto predicateColumn = findFirstNumericColumn(profile.layout);
     size_t processedRows = 0;
@@ -1143,36 +1269,22 @@ bench::BenchmarkResult runStaticLayoutVariant(const bench::DatasetProfile& profi
         timer.start();
         while (reader.readNext()) {
             const auto& row = reader.row();
-            if constexpr (UseZoH) {
-                if (!generateProfileZoHNoCopy(profile, expectedZoHRow, rowsRead)) {
-                    result.validation_error = "No-copy static expected-row generator unavailable for profile: " + profile.name;
-                    reader.close();
-                    return result;
+            const bool generated = usesTimeSeries
+                ? generateProfileZoHNoCopy(profile, expectedRow, rowsRead)
+                : generateProfileNonZoHNoCopy(profile, expectedRow, rowsRead);
+            if (!generated) {
+                result.validation_error = "No-copy static expected-row generator unavailable for profile: " + profile.name;
+                reader.close();
+                return result;
+            }
+            if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
+                std::string err;
+                if (!validateRowByScenarioExact(scenario, rowsRead, expectedRow, row, profile.layout,
+                                                selectedColumns, err)) {
+                    validationOk = false;
+                    if (firstError.empty()) firstError = err;
                 }
-                if (shouldProcessRow(scenario, rowsRead, expectedZoHRow, profile.layout, predicateColumn)) {
-                    std::string err;
-                    if (!validateRowByScenarioExact(scenario, rowsRead, expectedZoHRow, row, profile.layout,
-                                                    selectedColumns, err)) {
-                        validationOk = false;
-                        if (firstError.empty()) firstError = err;
-                    }
-                    ++processedRows;
-                }
-            } else {
-                if (!generateProfileNonZoHNoCopy(profile, expectedRow, rowsRead)) {
-                    result.validation_error = "No-copy static expected-row generator unavailable for profile: " + profile.name;
-                    reader.close();
-                    return result;
-                }
-                if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
-                    std::string err;
-                    if (!validateRowByScenarioExact(scenario, rowsRead, expectedRow, row, profile.layout,
-                                                    selectedColumns, err)) {
-                        validationOk = false;
-                        if (firstError.empty()) firstError = err;
-                    }
-                    ++processedRows;
-                }
+                ++processedRows;
             }
             bench::doNotOptimize(row);
             ++rowsRead;
@@ -1209,21 +1321,30 @@ bench::BenchmarkResult benchmarkBCSVStaticVariant(const bench::DatasetProfile& p
                                                   bool quiet,
                                                   const std::string& modeLabel,
                                                   const std::string& suffix,
-                                                  bool useZoH)
+                                                  StaticCodecKind codecKind)
 {
     bench::BenchmarkResult result;
     bool dispatched = false;
 
-    if (useZoH) {
+    switch (codecKind) {
+    case StaticCodecKind::ZoH:
         dispatched = dispatchStaticLayoutForProfile(profile, [&]<typename StaticLayout>() {
-            result = runStaticLayoutVariant<StaticLayout, true>(
+            result = runStaticLayoutVariant<StaticLayout, StaticCodecKind::ZoH>(
                 profile, numRows, scenario, quiet, modeLabel, suffix);
         });
-    } else {
+        break;
+    case StaticCodecKind::Delta:
         dispatched = dispatchStaticLayoutForProfile(profile, [&]<typename StaticLayout>() {
-            result = runStaticLayoutVariant<StaticLayout, false>(
+            result = runStaticLayoutVariant<StaticLayout, StaticCodecKind::Delta>(
                 profile, numRows, scenario, quiet, modeLabel, suffix);
         });
+        break;
+    default:
+        dispatched = dispatchStaticLayoutForProfile(profile, [&]<typename StaticLayout>() {
+            result = runStaticLayoutVariant<StaticLayout, StaticCodecKind::Flat>(
+                profile, numRows, scenario, quiet, modeLabel, suffix);
+        });
+        break;
     }
 
     if (!dispatched) {
@@ -1240,7 +1361,7 @@ bench::BenchmarkResult benchmarkBCSVStatic(const bench::DatasetProfile& profile,
                                            const SparseScenario& scenario,
                                            bool quiet)
 {
-    return benchmarkBCSVStaticVariant(profile, numRows, scenario, quiet, "BCSV Static", "_static", false);
+    return benchmarkBCSVStaticVariant(profile, numRows, scenario, quiet, "BCSV Static", "_static", StaticCodecKind::Flat);
 }
 
 bench::BenchmarkResult benchmarkBCSVStaticZoH(const bench::DatasetProfile& profile,
@@ -1248,7 +1369,15 @@ bench::BenchmarkResult benchmarkBCSVStaticZoH(const bench::DatasetProfile& profi
                                               const SparseScenario& scenario,
                                               bool quiet)
 {
-    return benchmarkBCSVStaticVariant(profile, numRows, scenario, quiet, "BCSV Static ZoH", "_static_zoh", true);
+    return benchmarkBCSVStaticVariant(profile, numRows, scenario, quiet, "BCSV Static ZoH", "_static_zoh", StaticCodecKind::ZoH);
+}
+
+bench::BenchmarkResult benchmarkBCSVStaticDelta(const bench::DatasetProfile& profile,
+                                                size_t numRows,
+                                                const SparseScenario& scenario,
+                                                bool quiet)
+{
+    return benchmarkBCSVStaticVariant(profile, numRows, scenario, quiet, "BCSV Static Delta", "_static_delta", StaticCodecKind::Delta);
 }
 
 /// Run all benchmarks for a single dataset profile
@@ -1276,7 +1405,7 @@ std::vector<bench::BenchmarkResult> benchmarkProfile(const bench::DatasetProfile
     for (const auto& scenario : scenarios) {
         bench::BenchmarkResult csvResult;
         bool hasCsvBaseline = false;
-        if (modeSelection.storage == StorageSelection::Both) {
+        if (modeSelection.storage == StorageSelection::All) {
             csvResult = benchmarkCSV(profile, numRows, scenario, quiet);
             results.push_back(csvResult);
             hasCsvBaseline = true;
@@ -1309,6 +1438,14 @@ std::vector<bench::BenchmarkResult> benchmarkProfile(const bench::DatasetProfile
                 }
                 results.push_back(zohResult);
             }
+
+            if (includesDelta(modeSelection.codec)) {
+                auto deltaResult = benchmarkBCSVFlexibleDelta(profile, numRows, scenario, quiet);
+                if (hasCsvBaseline && csvResult.file_size > 0) {
+                    deltaResult.compression_ratio = static_cast<double>(deltaResult.file_size) / csvResult.file_size;
+                }
+                results.push_back(deltaResult);
+            }
         }
 
         if (includesStatic(modeSelection.storage) && supportsStaticMode(profile)) {
@@ -1327,6 +1464,14 @@ std::vector<bench::BenchmarkResult> benchmarkProfile(const bench::DatasetProfile
                 }
                 results.push_back(staticZoHResult);
             }
+
+            if (includesDelta(modeSelection.codec)) {
+                auto staticDeltaResult = benchmarkBCSVStaticDelta(profile, numRows, scenario, quiet);
+                if (hasCsvBaseline && csvResult.file_size > 0) {
+                    staticDeltaResult.compression_ratio = static_cast<double>(staticDeltaResult.file_size) / csvResult.file_size;
+                }
+                results.push_back(staticDeltaResult);
+            }
         } else if (includesStatic(modeSelection.storage)) {
             const std::string staticSkipReason = "no-copy static generator unavailable or layout >320 cols";
             if (includesDense(modeSelection.codec)) {
@@ -1343,6 +1488,14 @@ std::vector<bench::BenchmarkResult> benchmarkProfile(const bench::DatasetProfile
                     numRows,
                     scenario,
                     "BCSV Static ZoH",
+                    staticSkipReason));
+            }
+            if (includesDelta(modeSelection.codec)) {
+                results.push_back(makeSkippedResult(
+                    profile,
+                    numRows,
+                    scenario,
+                    "BCSV Static Delta",
                     staticSkipReason));
             }
             if (!quiet) {
@@ -1395,8 +1548,8 @@ int main(int argc, char* argv[]) {
             << "  --output=PATH\n"
             << "  --profile=NAME\n"
             << "  --scenario=LIST\n"
-            << "  --storage=both|flexible|static     (default: both)\n"
-            << "  --codec=both|dense|zoh            (default: both)\n"
+            << "  --storage=all|flexible|static       (default: all)\n"
+            << "  --codec=all|dense|zoh|delta|primary (default: all)\n"
             << "  --compression=N                   LZ4 compression level 1-9 (default: 1; 1=fast, 9=best ratio)\n"
             << "  --list\n"
             << "  --list-scenarios\n"
@@ -1407,7 +1560,9 @@ int main(int argc, char* argv[]) {
             << "  bench_macro_datasets --profile=rtl_waveform --rows=10000\n"
             << "  bench_macro_datasets --storage=static --scenario=baseline,sparse_columns_k1\n"
             << "  bench_macro_datasets --storage=flexible --codec=dense\n"
-            << "  bench_macro_datasets --storage=static --codec=zoh\n\n"
+            << "  bench_macro_datasets --storage=static --codec=zoh\n"
+            << "  bench_macro_datasets --codec=delta\n"
+            << "  bench_macro_datasets --codec=primary   # Flat + Delta (no ZoH)\n\n"
             << "Profiles (" << profileNames.size() << "):\n";
         for (const auto& name : profileNames) {
             std::cout << "  - " << name << "\n";

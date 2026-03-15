@@ -16,7 +16,7 @@ Current macro dataset catalog contains 14 profiles, including string-heavy refer
 `event_log`, `iot_fleet`, and `financial_orders`.
 
 Macro runs execute mode families across storage (`flexible|static`)
-and codec (`dense|ZoH`) depending on CLI filters.
+and codec (`dense|zoh|delta`) depending on CLI filters.
 
 ## Build
 
@@ -85,7 +85,8 @@ python3 benchmark/run.py <subcommand> [options]
 - `--macro-profile=<name>` (pass-through to `bench_macro_datasets --profile`)
 - `--macro-scenario=<csv>` (pass-through to `bench_macro_datasets --scenario`)
 - `--macro-storage=both|flexible|static` (default `both`)
-- `--macro-codec=both|dense|zoh` (default `both`)
+- `--macro-codec=both|dense|zoh|delta|primary` (default `both`)
+  - `primary` = dense + zoh + delta (skip CSV-only)
 - `--detail` (show per-profile breakdown table in operator summary)
 
 ## Operator Summary Output
@@ -122,6 +123,16 @@ python3 benchmark/run.py wip \
   --type=MACRO-SMALL \
   --macro-storage=static \
   --macro-codec=zoh
+
+# Delta codec only (flexible + static)
+python3 benchmark/run.py wip \
+  --type=MACRO-SMALL \
+  --macro-codec=delta
+
+# All BCSV codecs, skip CSV (dense + zoh + delta)
+python3 benchmark/run.py wip \
+  --type=MACRO-SMALL \
+  --macro-codec=primary
 
 # Include Python language lane in the same run directory/report
 python3 benchmark/run.py wip --type=MACRO-SMALL --languages=python

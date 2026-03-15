@@ -32,7 +32,7 @@ void assertStringColumnsArePopulatedByGenerators(const bench::DatasetProfile& pr
     profile.generate(randomRow, 17);
 
     bcsv::Row zohRow(profile.layout);
-    profile.generateZoH(zohRow, 17);
+    profile.generateTimeSeries(zohRow, 17);
 
     for (size_t i = 0; i < profile.layout.columnCount(); ++i) {
         if (profile.layout.columnType(i) != bcsv::ColumnType::STRING) {
@@ -131,7 +131,7 @@ TEST(BenchmarkProfiles, EventLogSchemaMatchesProposalShape) {
     );
     assertGeneratorDeterminism<bcsv::Row>(
         profile,
-        [&profile](bcsv::Row& row, size_t index) { profile.generateZoH(row, index); },
+        [&profile](bcsv::Row& row, size_t index) { profile.generateTimeSeries(row, index); },
         {0u, 1u, 2u, 10u, 13u, 23u}
     );
 }
@@ -150,7 +150,7 @@ TEST(BenchmarkProfiles, IotFleetSchemaMatchesProposalShape) {
     );
     assertGeneratorDeterminism<bcsv::Row>(
         profile,
-        [&profile](bcsv::Row& row, size_t index) { profile.generateZoH(row, index); },
+        [&profile](bcsv::Row& row, size_t index) { profile.generateTimeSeries(row, index); },
         {0u, 1u, 2u, 4u, 8u, 11u, 15u}
     );
 }
@@ -169,7 +169,7 @@ TEST(BenchmarkProfiles, FinancialOrdersSchemaMatchesProposalShape) {
     );
     assertGeneratorDeterminism<bcsv::Row>(
         profile,
-        [&profile](bcsv::Row& row, size_t index) { profile.generateZoH(row, index); },
+        [&profile](bcsv::Row& row, size_t index) { profile.generateTimeSeries(row, index); },
         {0u, 1u, 2u, 5u, 10u, 11u, 18u}
     );
 }

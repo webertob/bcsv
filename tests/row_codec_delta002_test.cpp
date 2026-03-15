@@ -12,6 +12,7 @@
 #include "bcsv/codec_row/row_codec_delta002.h"
 
 #include <cmath>
+#include <filesystem>
 #include <limits>
 
 using namespace bcsv;
@@ -1201,4 +1202,270 @@ TEST(CodecDelta002Test, CopyConstructor) {
     dec.deserialize(w1_copy, out); // second row (from copied encoder)
     EXPECT_EQ(out.get<int32_t>(0), 101);
     EXPECT_EQ(out.get<std::string>(1), "hello");
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// LayoutStatic specialization tests
+// ════════════════════════════════════════════════════════════════════════════
+
+TEST(CodecDelta002StaticTest, BasicRoundTrip) {
+    using SLayout = LayoutStatic<int32_t, float, std::string>;
+    SLayout layout({"counter", "value", "label"});
+
+    RowCodecDelta002<SLayout> enc;
+    enc.setup(layout);
+    RowCodecDelta002<SLayout> dec;
+    dec.setup(layout);
+
+    RowStatic<int32_t, float, std::string> row(layout);
+    RowStatic<int32_t, float, std::string> out(layout);
+    ByteBuffer buf;
+
+    row.set<0>(42);
+    row.set<1>(3.14f);
+    row.set<2>(std::string("hello"));
+
+    auto wire = enc.serialize(row, buf);
+    ASSERT_GT(wire.size(), 0u);
+    dec.deserialize(wire, out);
+
+    EXPECT_EQ(out.get<0>(), 42);
+    EXPECT_FLOAT_EQ(out.get<1>(), 3.14f);
+    EXPECT_EQ(out.get<2>(), "hello");
+}
+
+TEST(CodecDelta002StaticTest, ZoH_UnchangedRow) {
+    using SLayout = LayoutStatic<int32_t, double>;
+    SLayout layout({"a", "b"});
+
+    RowCodecDelta002<SLayout> enc;
+    enc.setup(layout);
+    RowCodecDelta002<SLayout> dec;
+    dec.setup(layout);
+
+    RowStatic<int32_t, double> row(layout);
+    RowStatic<int32_t, double> out(layout);
+    ByteBuffer buf;
+
+    row.set<0>(100);
+    row.set<1>(2.5);
+
+    // First row
+    auto w0 = enc.serialize(row, buf);
+    dec.deserialize(w0, out);
+    EXPECT_EQ(out.get<0>(), 100);
+    EXPECT_DOUBLE_EQ(out.get<1>(), 2.5);
+
+    // Second row: identical values → ZoH
+    buf.resize(0);
+    auto w1 = enc.serialize(row, buf);
+    ASSERT_GT(w1.size(), 0u);  // always emits header
+    dec.deserialize(w1, out);
+    EXPECT_EQ(out.get<0>(), 100);
+    EXPECT_DOUBLE_EQ(out.get<1>(), 2.5);
+}
+
+TEST(CodecDelta002StaticTest, FoC_LinearSequence) {
+    using SLayout = LayoutStatic<int32_t>;
+    SLayout layout({"counter"});
+
+    RowCodecDelta002<SLayout> enc;
+    enc.setup(layout);
+    RowCodecDelta002<SLayout> dec;
+    dec.setup(layout);
+
+    RowStatic<int32_t> row(layout);
+    RowStatic<int32_t> out(layout);
+    ByteBuffer buf;
+
+    // Write rows 0, 10, 20, 30, ...   (linear ramp → FoC from row 2)
+    for (int i = 0; i < 20; ++i) {
+        row.set<0>(i * 10);
+        buf.resize(0);
+        auto wire = enc.serialize(row, buf);
+        dec.deserialize(wire, out);
+        EXPECT_EQ(out.get<0>(), i * 10) << "Row " << i;
+    }
+}
+
+TEST(CodecDelta002StaticTest, DeltaEncoding_SmallChange) {
+    using SLayout = LayoutStatic<int64_t, float>;
+    SLayout layout({"big", "flt"});
+
+    RowCodecDelta002<SLayout> enc;
+    enc.setup(layout);
+    RowCodecDelta002<SLayout> dec;
+    dec.setup(layout);
+
+    RowStatic<int64_t, float> row(layout);
+    RowStatic<int64_t, float> out(layout);
+    ByteBuffer buf;
+
+    row.set<0>(int64_t(1000000));
+    row.set<1>(1.0f);
+    auto w0 = enc.serialize(row, buf);
+    dec.deserialize(w0, out);
+
+    // Small change → 1-byte delta
+    row.set<0>(int64_t(1000001));
+    row.set<1>(1.5f);
+    buf.resize(0);
+    auto w1 = enc.serialize(row, buf);
+    dec.deserialize(w1, out);
+    EXPECT_EQ(out.get<0>(), int64_t(1000001));
+    EXPECT_FLOAT_EQ(out.get<1>(), 1.5f);
+}
+
+TEST(CodecDelta002StaticTest, AllTypes_MultiRow) {
+    using SLayout = LayoutStatic<
+        bool, uint8_t, uint16_t, uint32_t, uint64_t,
+        int8_t, int16_t, int32_t, int64_t,
+        float, double, std::string>;
+    SLayout layout({"b", "u8", "u16", "u32", "u64",
+                    "i8", "i16", "i32", "i64",
+                    "f", "d", "s"});
+
+    RowCodecDelta002<SLayout> enc;
+    enc.setup(layout);
+    RowCodecDelta002<SLayout> dec;
+    dec.setup(layout);
+
+    RowStatic<bool, uint8_t, uint16_t, uint32_t, uint64_t,
+              int8_t, int16_t, int32_t, int64_t,
+              float, double, std::string> row(layout);
+    decltype(row) out(layout);
+    ByteBuffer buf;
+
+    for (int i = 0; i < 50; ++i) {
+        row.set<0>(i % 2 == 0);
+        row.set<1>(static_cast<uint8_t>(i));
+        row.set<2>(static_cast<uint16_t>(i * 10));
+        row.set<3>(static_cast<uint32_t>(i * 100));
+        row.set<4>(static_cast<uint64_t>(i * 1000));
+        row.set<5>(static_cast<int8_t>(i - 25));
+        row.set<6>(static_cast<int16_t>(i * -5));
+        row.set<7>(static_cast<int32_t>(i * 42));
+        row.set<8>(static_cast<int64_t>(i * -1000));
+        row.set<9>(static_cast<float>(i * 0.1f));
+        row.set<10>(static_cast<double>(i * 0.01));
+        row.set<11>(std::string("row_") + std::to_string(i));
+
+        buf.resize(0);
+        auto wire = enc.serialize(row, buf);
+        dec.deserialize(wire, out);
+
+        EXPECT_EQ(out.get<0>(), i % 2 == 0) << "Row " << i;
+        EXPECT_EQ(out.get<1>(), static_cast<uint8_t>(i)) << "Row " << i;
+        EXPECT_EQ(out.get<2>(), static_cast<uint16_t>(i * 10)) << "Row " << i;
+        EXPECT_EQ(out.get<3>(), static_cast<uint32_t>(i * 100)) << "Row " << i;
+        EXPECT_EQ(out.get<4>(), static_cast<uint64_t>(i * 1000)) << "Row " << i;
+        EXPECT_EQ(out.get<5>(), static_cast<int8_t>(i - 25)) << "Row " << i;
+        EXPECT_EQ(out.get<6>(), static_cast<int16_t>(i * -5)) << "Row " << i;
+        EXPECT_EQ(out.get<7>(), static_cast<int32_t>(i * 42)) << "Row " << i;
+        EXPECT_EQ(out.get<8>(), static_cast<int64_t>(i * -1000)) << "Row " << i;
+        EXPECT_FLOAT_EQ(out.get<9>(), static_cast<float>(i * 0.1f)) << "Row " << i;
+        EXPECT_DOUBLE_EQ(out.get<10>(), static_cast<double>(i * 0.01)) << "Row " << i;
+        EXPECT_EQ(out.get<11>(), std::string("row_") + std::to_string(i)) << "Row " << i;
+    }
+}
+
+TEST(CodecDelta002StaticTest, FileRoundTrip_WriterDelta) {
+    using SLayout = LayoutStatic<int32_t, float, std::string>;
+    SLayout layout({"counter", "sensor", "tag"});
+
+    const std::string path = "test_delta_static_roundtrip.bcsv";
+    constexpr size_t N = 200;
+
+    // Write
+    {
+        WriterDelta<SLayout> writer(layout);
+        ASSERT_TRUE(writer.open(path, true, 0, 64, FileFlags::DELTA_ENCODING));
+        for (size_t i = 0; i < N; ++i) {
+            writer.row().template set<0>(static_cast<int32_t>(i * 3));
+            writer.row().template set<1>(static_cast<float>(i * 0.5f));
+            writer.row().template set<2>(i % 10 == 0 ? "changed" : "same");
+            writer.writeRow();
+        }
+        writer.close();
+    }
+
+    // Read
+    {
+        Reader<SLayout> reader;
+        ASSERT_TRUE(reader.open(path));
+        size_t count = 0;
+        while (reader.readNext()) {
+            EXPECT_EQ(reader.row().template get<0>(), static_cast<int32_t>(count * 3)) << "Row " << count;
+            EXPECT_FLOAT_EQ(reader.row().template get<1>(), static_cast<float>(count * 0.5f)) << "Row " << count;
+            EXPECT_EQ(reader.row().template get<2>(), count % 10 == 0 ? "changed" : "same") << "Row " << count;
+            ++count;
+        }
+        EXPECT_EQ(count, N);
+        reader.close();
+    }
+
+    std::filesystem::remove(path);
+}
+
+TEST(CodecDelta002StaticTest, BoolOnlyLayout) {
+    using SLayout = LayoutStatic<bool, bool, bool>;
+    SLayout layout({"a", "b", "c"});
+
+    RowCodecDelta002<SLayout> enc;
+    enc.setup(layout);
+    RowCodecDelta002<SLayout> dec;
+    dec.setup(layout);
+
+    RowStatic<bool, bool, bool> row(layout);
+    RowStatic<bool, bool, bool> out(layout);
+    ByteBuffer buf;
+
+    for (int i = 0; i < 10; ++i) {
+        row.set<0>(i % 2 == 0);
+        row.set<1>(i % 3 == 0);
+        row.set<2>(i % 5 == 0);
+
+        buf.resize(0);
+        auto wire = enc.serialize(row, buf);
+        dec.deserialize(wire, out);
+
+        EXPECT_EQ(out.get<0>(), i % 2 == 0) << "Row " << i;
+        EXPECT_EQ(out.get<1>(), i % 3 == 0) << "Row " << i;
+        EXPECT_EQ(out.get<2>(), i % 5 == 0) << "Row " << i;
+    }
+}
+
+TEST(CodecDelta002StaticTest, Reset_RestartsEncoding) {
+    using SLayout = LayoutStatic<int32_t>;
+    SLayout layout({"x"});
+
+    RowCodecDelta002<SLayout> enc;
+    enc.setup(layout);
+    RowCodecDelta002<SLayout> dec;
+    dec.setup(layout);
+
+    RowStatic<int32_t> row(layout);
+    RowStatic<int32_t> out(layout);
+    ByteBuffer buf;
+
+    // Write 2 rows to build up state (feed both enc and dec)
+    row.set<0>(100);
+    auto w0 = enc.serialize(row, buf);
+    dec.deserialize(w0, out);
+
+    row.set<0>(110);
+    buf.resize(0);
+    auto w1 = enc.serialize(row, buf);
+    dec.deserialize(w1, out);
+
+    // Reset both encoder and decoder
+    enc.reset();
+    dec.reset();
+
+    // After reset, encoding should restart from clean state
+    row.set<0>(999);
+    buf.resize(0);
+    auto w2 = enc.serialize(row, buf);
+    dec.deserialize(w2, out);
+    EXPECT_EQ(out.get<0>(), 999);
 }

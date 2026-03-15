@@ -503,4 +503,406 @@ void RowCodecDelta002<LayoutType>::deserialize(
     rows_seen_++;
 }
 
+// ════════════════════════════════════════════════════════════════════════════
+// LayoutStatic specialization — implementation
+//
+// Tuple-based state with type-grouped fold-expression processing.
+// prev_data_ / grad_data_ are std::tuple<ColumnTypes...> — same type as
+// RowStatic::data_. No copies between tuple and flat byte arrays.
+// Per-type constexpr index arrays drive fold expansions that process
+// same-type columns together for branch prediction and ILP.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── forEachScalarType ────────────────────────────────────────────────────
+
+template<typename... ColumnTypes>
+template<typename Fn>
+void RowCodecDelta002<LayoutStatic<ColumnTypes...>>::forEachScalarType(Fn&& fn) {
+    if constexpr (N_UINT8  > 0) fn.template operator()<uint8_t,  IDX_UINT8,  N_UINT8>();
+    if constexpr (N_UINT16 > 0) fn.template operator()<uint16_t, IDX_UINT16, N_UINT16>();
+    if constexpr (N_UINT32 > 0) fn.template operator()<uint32_t, IDX_UINT32, N_UINT32>();
+    if constexpr (N_UINT64 > 0) fn.template operator()<uint64_t, IDX_UINT64, N_UINT64>();
+    if constexpr (N_INT8   > 0) fn.template operator()<int8_t,   IDX_INT8,   N_INT8>();
+    if constexpr (N_INT16  > 0) fn.template operator()<int16_t,  IDX_INT16,  N_INT16>();
+    if constexpr (N_INT32  > 0) fn.template operator()<int32_t,  IDX_INT32,  N_INT32>();
+    if constexpr (N_INT64  > 0) fn.template operator()<int64_t,  IDX_INT64,  N_INT64>();
+    if constexpr (N_FLOAT  > 0) fn.template operator()<float,    IDX_FLOAT,  N_FLOAT>();
+    if constexpr (N_DOUBLE > 0) fn.template operator()<double,   IDX_DOUBLE, N_DOUBLE>();
+}
+
+// ── Delta encoding helpers (typed — no byte-pointer indirection) ─────────
+
+template<typename... ColumnTypes>
+template<typename T>
+uint64_t RowCodecDelta002<LayoutStatic<ColumnTypes...>>::computeIntDelta(
+    const T& curr, const T& prev)
+{
+    using U = std::make_unsigned_t<T>;
+    using S = std::make_signed_t<T>;
+    U delta_u = static_cast<U>(curr) - static_cast<U>(prev);
+    S delta;
+    std::memcpy(&delta, &delta_u, sizeof(S));
+    return static_cast<uint64_t>(zigzagEncode(delta));
+}
+
+template<typename... ColumnTypes>
+template<typename T>
+T RowCodecDelta002<LayoutStatic<ColumnTypes...>>::applyIntDelta(
+    const T& prev, uint64_t zigzag)
+{
+    using U = std::make_unsigned_t<T>;
+    U delta_u;
+    { auto decoded = zigzagDecode(static_cast<U>(zigzag)); std::memcpy(&delta_u, &decoded, sizeof(U)); }
+    return static_cast<T>(static_cast<U>(prev) + delta_u);
+}
+
+template<typename... ColumnTypes>
+template<typename T>
+T RowCodecDelta002<LayoutStatic<ColumnTypes...>>::computeIntGradient(
+    const T& curr, const T& prev)
+{
+    using U = std::make_unsigned_t<T>;
+    using S = std::make_signed_t<T>;
+    U g_u = static_cast<U>(curr) - static_cast<U>(prev);
+    S g;
+    std::memcpy(&g, &g_u, sizeof(S));
+    return g;
+}
+
+template<typename... ColumnTypes>
+template<typename T>
+bool RowCodecDelta002<LayoutStatic<ColumnTypes...>>::checkIntFoC(
+    const T& curr, const T& prev, const T& grad)
+{
+    using U = std::make_unsigned_t<T>;
+    using S = std::make_signed_t<T>;
+    S g;
+    std::memcpy(&g, &grad, sizeof(S));
+    U g_u;
+    std::memcpy(&g_u, &g, sizeof(U));
+    T predicted = static_cast<T>(static_cast<U>(prev) + g_u);
+    return (curr == predicted);
+}
+
+template<typename... ColumnTypes>
+template<typename T>
+uint64_t RowCodecDelta002<LayoutStatic<ColumnTypes...>>::computeFloatXorDelta(
+    const T& curr, const T& prev)
+{
+    static_assert(std::is_floating_point_v<T>);
+    using U = std::conditional_t<sizeof(T) == 4, uint32_t, uint64_t>;
+    U c_bits, p_bits;
+    std::memcpy(&c_bits, &curr, sizeof(T));
+    std::memcpy(&p_bits, &prev, sizeof(T));
+    return static_cast<uint64_t>(c_bits ^ p_bits);
+}
+
+template<typename... ColumnTypes>
+template<typename T>
+T RowCodecDelta002<LayoutStatic<ColumnTypes...>>::applyFloatXorDelta(
+    const T& prev, uint64_t xor_delta)
+{
+    static_assert(std::is_floating_point_v<T>);
+    using U = std::conditional_t<sizeof(T) == 4, uint32_t, uint64_t>;
+    U p_bits;
+    std::memcpy(&p_bits, &prev, sizeof(T));
+    U result_bits = p_bits ^ static_cast<U>(xor_delta);
+    T result;
+    std::memcpy(&result, &result_bits, sizeof(T));
+    return result;
+}
+
+template<typename... ColumnTypes>
+template<typename T>
+T RowCodecDelta002<LayoutStatic<ColumnTypes...>>::computeFloatGradient(
+    const T& curr, const T& prev)
+{
+    return curr - prev;
+}
+
+template<typename... ColumnTypes>
+template<typename T>
+bool RowCodecDelta002<LayoutStatic<ColumnTypes...>>::checkFloatFoC(
+    const T& curr, const T& prev, const T& grad)
+{
+    T predicted = prev + grad;
+    return std::memcmp(&curr, &predicted, sizeof(T)) == 0;
+}
+
+// ── setup / reset ────────────────────────────────────────────────────────
+
+template<typename... ColumnTypes>
+void RowCodecDelta002<LayoutStatic<ColumnTypes...>>::setup(const LayoutType& layout) {
+    layout_ = &layout;
+    prev_data_ = TupleType{};
+    grad_data_ = TupleType{};
+    rows_seen_ = 0;
+}
+
+template<typename... ColumnTypes>
+void RowCodecDelta002<LayoutStatic<ColumnTypes...>>::reset() noexcept {
+    rows_seen_ = 0;
+}
+
+// ── serialize ────────────────────────────────────────────────────────────
+
+template<typename... ColumnTypes>
+std::span<std::byte>
+RowCodecDelta002<LayoutStatic<ColumnTypes...>>::serialize(
+    const RowType& row, ByteBuffer& buffer)
+{
+    const size_t headBytes = row_header_.sizeBytes();
+
+    // Reset header to all zeros
+    row_header_.reset();
+
+    // ── Bool values ──────────────────────────────────────────────────────
+    if constexpr (BOOL_COUNT > 0) {
+        [&]<size_t... S>(std::index_sequence<S...>) {
+            ((row_header_[ROW_HEADER_BIT_INDEX[IDX_BOOL[S]]] =
+                  std::get<IDX_BOOL[S]>(row.data_)), ...);
+        }(std::make_index_sequence<BOOL_COUNT>{});
+    }
+
+    // ── First-row state initialisation ───────────────────────────────────
+    if (rows_seen_ == 0) {
+        prev_data_ = TupleType{};
+        grad_data_ = TupleType{};
+    }
+
+    // ── Pessimistic buffer allocation ────────────────────────────────────
+    size_t maxSize = headBytes + MAX_NUMERIC_DATA_SIZE;
+    if constexpr (STRING_COUNT > 0) {
+        [&]<size_t... S>(std::index_sequence<S...>) {
+            ((maxSize += 2 + std::get<IDX_STRING[S]>(row.data_).size()), ...);
+        }(std::make_index_sequence<STRING_COUNT>{});
+    }
+    buffer.resize(maxSize);
+
+    size_t bufIdx = headBytes;
+
+    // ── Numeric columns (type-grouped fold expansion) ────────────────────
+    forEachScalarType([&]<typename T, const auto& Indices, size_t N>() {
+        constexpr size_t HB = headerBits<T>();
+
+        [&]<size_t... S>(std::index_sequence<S...>) {
+            ([&] {
+                constexpr size_t ColIdx = Indices[S];
+                const T& curr = std::get<ColIdx>(row.data_);
+                T& prev = std::get<ColIdx>(prev_data_);
+                T& grad = std::get<ColIdx>(grad_data_);
+
+                // ── ZoH check ────────────────────────────────────────────
+                if (curr == prev) {
+                    row_header_.encode(ROW_HEADER_BIT_INDEX[ColIdx], HB, 0);
+                    grad = T{};
+                    return;
+                }
+
+                // ── FoC check (valid from row ≥ 2) ──────────────────────
+                if (rows_seen_ >= 2) {
+                    bool foc;
+                    if constexpr (std::is_floating_point_v<T>)
+                        foc = checkFloatFoC(curr, prev, grad);
+                    else
+                        foc = checkIntFoC(curr, prev, grad);
+
+                    if (foc) {
+                        row_header_.encode(ROW_HEADER_BIT_INDEX[ColIdx], HB, 1);
+                        return;
+                    }
+                }
+
+                // ── Delta encoding ───────────────────────────────────────
+                uint64_t delta;
+                if constexpr (std::is_floating_point_v<T>)
+                    delta = computeFloatXorDelta(curr, prev);
+                else
+                    delta = computeIntDelta(curr, prev);
+
+                size_t deltaBytes = vleByteCount(delta);
+                if (deltaBytes > sizeof(T)) deltaBytes = sizeof(T);
+
+                const uint8_t code = static_cast<uint8_t>(deltaBytes + 1);
+                row_header_.encode(ROW_HEADER_BIT_INDEX[ColIdx], HB, code);
+                encodeDelta(&buffer[bufIdx], delta, deltaBytes);
+                bufIdx += deltaBytes;
+
+                // Update gradient
+                if constexpr (std::is_floating_point_v<T>)
+                    grad = computeFloatGradient(curr, prev);
+                else
+                    grad = computeIntGradient(curr, prev);
+            }(), ...);
+        }(std::make_index_sequence<N>{});
+    });
+
+    // ── String columns ───────────────────────────────────────────────────
+    if constexpr (STRING_COUNT > 0) {
+        [&]<size_t... S>(std::index_sequence<S...>) {
+            ([&] {
+                constexpr size_t ColIdx = IDX_STRING[S];
+                const auto& currStr = std::get<ColIdx>(row.data_);
+                const auto& prevStr = std::get<ColIdx>(prev_data_);
+
+                const bool changed = (rows_seen_ == 0) || (currStr != prevStr);
+
+                if (changed) {
+                    row_header_[ROW_HEADER_BIT_INDEX[ColIdx]] = true;
+
+                    uint16_t len = static_cast<uint16_t>(
+                        std::min(currStr.size(), MAX_STRING_LENGTH));
+                    if (bufIdx + 2 + len > buffer.size())
+                        buffer.resize(bufIdx + 2 + len);
+                    std::memcpy(&buffer[bufIdx], &len, 2);
+                    bufIdx += 2;
+                    if (len > 0) {
+                        std::memcpy(&buffer[bufIdx], currStr.data(), len);
+                        bufIdx += len;
+                    }
+                } else {
+                    row_header_[ROW_HEADER_BIT_INDEX[ColIdx]] = false;
+                }
+            }(), ...);
+        }(std::make_index_sequence<STRING_COUNT>{});
+    }
+
+    // Write header to buffer
+    std::memcpy(buffer.data(), row_header_.data(), headBytes);
+
+    // Bulk-copy current row into prev state (single tuple assignment)
+    prev_data_ = row.data_;
+
+    buffer.resize(bufIdx);
+
+    rows_seen_++;
+    return std::span<std::byte>(buffer.data(), bufIdx);
+}
+
+// ── deserialize ──────────────────────────────────────────────────────────
+
+template<typename... ColumnTypes>
+void RowCodecDelta002<LayoutStatic<ColumnTypes...>>::deserialize(
+    std::span<const std::byte> buffer, RowType& row)
+{
+    const size_t headBytes = row_header_.sizeBytes();
+
+    if (buffer.size() < headBytes)
+        throw std::runtime_error(
+            "RowCodecDelta002::deserialize() failed! Buffer too small for head Bitset.");
+
+    std::memcpy(row_header_.data(), buffer.data(), headBytes);
+
+    // ── First-row state initialisation ───────────────────────────────────
+    if (rows_seen_ == 0) {
+        prev_data_ = TupleType{};
+        grad_data_ = TupleType{};
+    }
+
+    // ── Bool values ──────────────────────────────────────────────────────
+    if constexpr (BOOL_COUNT > 0) {
+        [&]<size_t... S>(std::index_sequence<S...>) {
+            ((std::get<IDX_BOOL[S]>(prev_data_) =
+                  row_header_[ROW_HEADER_BIT_INDEX[IDX_BOOL[S]]]), ...);
+        }(std::make_index_sequence<BOOL_COUNT>{});
+    }
+
+    size_t dataOff = headBytes;
+
+    // ── Numeric columns (type-grouped fold expansion) ────────────────────
+    forEachScalarType([&]<typename T, const auto& Indices, size_t N>() {
+        constexpr size_t HB = headerBits<T>();
+
+        [&]<size_t... S>(std::index_sequence<S...>) {
+            ([&] {
+                constexpr size_t ColIdx = Indices[S];
+                T& prev = std::get<ColIdx>(prev_data_);
+                T& grad = std::get<ColIdx>(grad_data_);
+
+                const uint8_t code = row_header_.decode(ROW_HEADER_BIT_INDEX[ColIdx], HB);
+
+                // ── code 0: ZoH ──────────────────────────────────────────
+                if (code == 0) {
+                    grad = T{};
+                    return;
+                }
+
+                // ── code 1: FoC ──────────────────────────────────────────
+                if (code == 1) {
+                    if constexpr (std::is_floating_point_v<T>) {
+                        prev = prev + grad;
+                    } else {
+                        using U = std::make_unsigned_t<T>;
+                        using Signed = std::make_signed_t<T>;
+                        Signed g;
+                        std::memcpy(&g, &grad, sizeof(Signed));
+                        U g_u;
+                        std::memcpy(&g_u, &g, sizeof(U));
+                        prev = static_cast<T>(static_cast<U>(prev) + g_u);
+                    }
+                    return;
+                }
+
+                // ── code ≥ 2: delta with (code-1) bytes ─────────────────
+                const size_t deltaBytes = code - 1;
+
+                if (dataOff + deltaBytes > buffer.size())
+                    throw std::runtime_error(
+                        "RowCodecDelta002::deserialize() failed! Buffer too small for delta.");
+
+                uint64_t deltaValue = decodeDelta(&buffer[dataOff], deltaBytes);
+
+                T old_prev = prev;
+                if constexpr (std::is_floating_point_v<T>)
+                    prev = applyFloatXorDelta(prev, deltaValue);
+                else
+                    prev = applyIntDelta(prev, deltaValue);
+
+                // Update gradient
+                if constexpr (std::is_floating_point_v<T>)
+                    grad = computeFloatGradient(prev, old_prev);
+                else
+                    grad = computeIntGradient(prev, old_prev);
+
+                dataOff += deltaBytes;
+            }(), ...);
+        }(std::make_index_sequence<N>{});
+    });
+
+    // ── String columns ───────────────────────────────────────────────────
+    if constexpr (STRING_COUNT > 0) {
+        [&]<size_t... S>(std::index_sequence<S...>) {
+            ([&] {
+                constexpr size_t ColIdx = IDX_STRING[S];
+
+                if (row_header_[ROW_HEADER_BIT_INDEX[ColIdx]]) {
+                    if (dataOff + 2 > buffer.size())
+                        throw std::runtime_error(
+                            "RowCodecDelta002::deserialize() failed! Buffer too small for string length.");
+                    uint16_t len;
+                    std::memcpy(&len, &buffer[dataOff], 2);
+                    dataOff += 2;
+
+                    if (len > 0) {
+                        if (dataOff + len > buffer.size())
+                            throw std::runtime_error(
+                                "RowCodecDelta002::deserialize() failed! Buffer too small for string payload.");
+                        std::get<ColIdx>(prev_data_).assign(
+                            reinterpret_cast<const char*>(&buffer[dataOff]), len);
+                        dataOff += len;
+                    } else {
+                        std::get<ColIdx>(prev_data_).clear();
+                    }
+                }
+                // unchanged strings: prev_data_ already holds correct value
+            }(), ...);
+        }(std::make_index_sequence<STRING_COUNT>{});
+    }
+
+    // Bulk-copy decoded prev state into output row
+    row.data_ = prev_data_;
+
+    rows_seen_++;
+}
+
 } // namespace bcsv

@@ -37,10 +37,14 @@ MODE_ALIASES: OrderedDict[str, list[str]] = OrderedDict([
      ["BCSV Flexible", "BCSV Flat", "BCSV Standard", "BCSV Flexible Flat"]),
     ("BCSV Flexible ZoH",
      ["BCSV Flexible ZoH", "BCSV ZoH", "BCSV Flexible-ZoH"]),
+    ("BCSV Flexible Delta",
+     ["BCSV Flexible Delta"]),
     ("BCSV Static Dense",
      ["BCSV Static", "BCSV Static Flat", "BCSV Static Standard"]),
     ("BCSV Static ZoH",
      ["BCSV Static ZoH", "BCSV Static-ZoH"]),
+    ("BCSV Static Delta",
+     ["BCSV Static Delta"]),
 ])
 
 # ---------------------------------------------------------------------------

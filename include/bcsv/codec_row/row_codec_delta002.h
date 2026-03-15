@@ -56,12 +56,15 @@
 #include "../layout.h"
 #include "../layout_guard.h"
 
+#include <array>
+#include <bit>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace bcsv {
@@ -232,12 +235,144 @@ private:
 };
 
 // ────────────────────────────────────────────────────────────────────────────
-// Stub specialization for LayoutStatic — delta codec is dynamic-layout only
+// Partial specialization: RowCodecDelta002 for LayoutStatic<ColumnTypes...>
+//
+// Design: tuple-based state with type-grouped fold-expression processing.
+//   - prev_data_ / grad_data_ are std::tuple<ColumnTypes...>, same as row.data_
+//   - No copy between tuple and flat byte arrays — direct element access
+//   - Per-type constexpr index arrays group same-type columns for fold expansion
+//   - All type dispatch resolved at compile time via if-constexpr
+//   - Bitset encode/decode use assert-only range checks (zero cost in release)
 // ────────────────────────────────────────────────────────────────────────────
 template<typename... ColumnTypes>
 class RowCodecDelta002<LayoutStatic<ColumnTypes...>> {
     using LayoutType = LayoutStatic<ColumnTypes...>;
     using RowType    = typename LayoutType::RowType;
+    using TupleType  = std::tuple<ColumnTypes...>;
+
+public:
+    static constexpr size_t COLUMN_COUNT  = sizeof...(ColumnTypes);
+    static constexpr size_t BOOL_COUNT    = LayoutType::COLUMN_COUNT_BOOL;
+    static constexpr size_t STRING_COUNT  = LayoutType::COLUMN_COUNT_STRINGS;
+    static constexpr size_t NUMERIC_COUNT = COLUMN_COUNT - BOOL_COUNT - STRING_COUNT;
+
+    // ── Header sizing ────────────────────────────────────────────────────
+
+    static constexpr size_t headerBitsForSize(size_t typeSize) noexcept {
+        switch (typeSize) {
+            case 1: return 2;  case 2: return 2;
+            case 4: return 3;  case 8: return 4;
+            default: return 0;
+        }
+    }
+
+    template<typename T>
+    static constexpr size_t headerBits() noexcept {
+        if constexpr (sizeof(T) <= 2) return 2;
+        else if constexpr (sizeof(T) <= 4) return 3;
+        else return 4;
+    }
+
+    static constexpr size_t TOTAL_HEADER_BITS = []() {
+        constexpr auto& types = LayoutType::COLUMN_TYPES;
+        size_t total = 0;
+        for (size_t i = 0; i < COLUMN_COUNT; ++i) {
+            if (types[i] == ColumnType::BOOL) ++total;
+        }
+        for (size_t i = 0; i < COLUMN_COUNT; ++i) {
+            if (types[i] != ColumnType::BOOL && types[i] != ColumnType::STRING)
+                total += headerBitsForSize(sizeOf(types[i]));
+        }
+        for (size_t i = 0; i < COLUMN_COUNT; ++i) {
+            if (types[i] == ColumnType::STRING) ++total;
+        }
+        return total;
+    }();
+
+    /// Row header bit index per column.
+    static constexpr std::array<size_t, COLUMN_COUNT> ROW_HEADER_BIT_INDEX = []() {
+        constexpr auto& types = LayoutType::COLUMN_TYPES;
+        std::array<size_t, COLUMN_COUNT> r{};
+        size_t boolIdx = 0;
+        for (size_t i = 0; i < COLUMN_COUNT; ++i) {
+            if (types[i] == ColumnType::BOOL) r[i] = boolIdx++;
+        }
+        size_t numericBitPos = BOOL_COUNT;
+        for (uint8_t ct = static_cast<uint8_t>(ColumnType::UINT8);
+             ct < static_cast<uint8_t>(ColumnType::STRING); ++ct) {
+            for (size_t i = 0; i < COLUMN_COUNT; ++i) {
+                if (static_cast<uint8_t>(types[i]) == ct) {
+                    r[i] = numericBitPos;
+                    numericBitPos += headerBitsForSize(sizeOf(types[i]));
+                }
+            }
+        }
+        size_t strBitPos = numericBitPos;
+        for (size_t i = 0; i < COLUMN_COUNT; ++i) {
+            if (types[i] == ColumnType::STRING) r[i] = strBitPos++;
+        }
+        return r;
+    }();
+
+    // ── Per-type column index arrays (constexpr) ────────────────────────
+
+private:
+    template<ColumnType CT>
+    static constexpr size_t countType() {
+        size_t n = 0;
+        for (size_t i = 0; i < COLUMN_COUNT; ++i)
+            if (LayoutType::COLUMN_TYPES[i] == CT) ++n;
+        return n;
+    }
+
+    template<ColumnType CT>
+    static constexpr auto buildTypeIndices() {
+        constexpr size_t N = countType<CT>();
+        std::array<size_t, (N > 0 ? N : 1)> r{};
+        size_t idx = 0;
+        for (size_t i = 0; i < COLUMN_COUNT; ++i) {
+            if (LayoutType::COLUMN_TYPES[i] == CT)
+                r[idx++] = i;
+        }
+        return r;
+    }
+
+    // Per-type column counts
+    static constexpr size_t N_UINT8  = countType<ColumnType::UINT8>();
+    static constexpr size_t N_UINT16 = countType<ColumnType::UINT16>();
+    static constexpr size_t N_UINT32 = countType<ColumnType::UINT32>();
+    static constexpr size_t N_UINT64 = countType<ColumnType::UINT64>();
+    static constexpr size_t N_INT8   = countType<ColumnType::INT8>();
+    static constexpr size_t N_INT16  = countType<ColumnType::INT16>();
+    static constexpr size_t N_INT32  = countType<ColumnType::INT32>();
+    static constexpr size_t N_INT64  = countType<ColumnType::INT64>();
+    static constexpr size_t N_FLOAT  = countType<ColumnType::FLOAT>();
+    static constexpr size_t N_DOUBLE = countType<ColumnType::DOUBLE>();
+
+    // Per-type column index arrays (column indices, not byte offsets)
+    static constexpr auto IDX_UINT8  = buildTypeIndices<ColumnType::UINT8>();
+    static constexpr auto IDX_UINT16 = buildTypeIndices<ColumnType::UINT16>();
+    static constexpr auto IDX_UINT32 = buildTypeIndices<ColumnType::UINT32>();
+    static constexpr auto IDX_UINT64 = buildTypeIndices<ColumnType::UINT64>();
+    static constexpr auto IDX_INT8   = buildTypeIndices<ColumnType::INT8>();
+    static constexpr auto IDX_INT16  = buildTypeIndices<ColumnType::INT16>();
+    static constexpr auto IDX_INT32  = buildTypeIndices<ColumnType::INT32>();
+    static constexpr auto IDX_INT64  = buildTypeIndices<ColumnType::INT64>();
+    static constexpr auto IDX_FLOAT  = buildTypeIndices<ColumnType::FLOAT>();
+    static constexpr auto IDX_DOUBLE = buildTypeIndices<ColumnType::DOUBLE>();
+    static constexpr auto IDX_BOOL   = buildTypeIndices<ColumnType::BOOL>();
+    static constexpr auto IDX_STRING = buildTypeIndices<ColumnType::STRING>();
+
+    /// Maximum bytes needed for all numeric columns (compile-time constant).
+    static constexpr size_t MAX_NUMERIC_DATA_SIZE = []() {
+        constexpr auto& types = LayoutType::COLUMN_TYPES;
+        size_t total = 0;
+        for (size_t i = 0; i < COLUMN_COUNT; ++i) {
+            if (types[i] != ColumnType::BOOL && types[i] != ColumnType::STRING)
+                total += sizeOf(types[i]);
+        }
+        return total;
+    }();
 
 public:
     RowCodecDelta002() = default;
@@ -246,17 +381,86 @@ public:
     RowCodecDelta002(RowCodecDelta002&&) = default;
     RowCodecDelta002& operator=(RowCodecDelta002&&) = default;
 
-    void setup(const LayoutType&) {
-        throw std::logic_error("RowCodecDelta002: not supported for LayoutStatic");
-    }
-    void reset() noexcept {}
+    // ── Lifecycle ────────────────────────────────────────────────────────
+    void setup(const LayoutType& layout);
+    void reset() noexcept;
 
-    [[nodiscard]] std::span<std::byte> serialize(const RowType&, ByteBuffer&) {
-        throw std::logic_error("RowCodecDelta002: not supported for LayoutStatic");
+    // ── Bulk operations ──────────────────────────────────────────────────
+    [[nodiscard]] std::span<std::byte> serialize(
+        const RowType& row, ByteBuffer& buffer);
+
+    void deserialize(
+        std::span<const std::byte> buffer, RowType& row);
+
+private:
+    const LayoutType* layout_{nullptr};
+    mutable Bitset<TOTAL_HEADER_BITS> row_header_;
+
+    // Tuple-based state — same type as RowStatic::data_, zero-copy access
+    TupleType prev_data_{};
+    TupleType grad_data_{};
+
+    size_t rows_seen_{0};
+
+    // ── forEachScalarType (fold-expression dispatch) ─────────────────────
+
+    /// Call fn.template operator()<T, Indices, N>() for each scalar type present.
+    /// The lambda receives the constexpr index array and count, then uses
+    /// std::make_index_sequence<N> internally to fold over columns.
+    template<typename Fn>
+    static void forEachScalarType(Fn&& fn);
+
+    // ── Delta encoding helpers (typed, no byte-pointer indirection) ──────
+
+    static size_t vleByteCount(uint64_t absValue) {
+        if (absValue == 0) return 1;
+        return (std::bit_width(absValue) + 7) / 8;
     }
-    void deserialize(std::span<const std::byte>, RowType&) {
-        throw std::logic_error("RowCodecDelta002: not supported for LayoutStatic");
+
+    static size_t encodeDelta(std::byte* dst, uint64_t value, size_t byteCount) {
+        for (size_t i = 0; i < byteCount; ++i)
+            dst[i] = static_cast<std::byte>((value >> (i * 8)) & 0xFF);
+        return byteCount;
     }
+
+    static uint64_t decodeDelta(const std::byte* src, size_t byteCount) {
+        uint64_t result = 0;
+        for (size_t i = 0; i < byteCount; ++i)
+            result |= static_cast<uint64_t>(static_cast<uint8_t>(src[i])) << (i * 8);
+        return result;
+    }
+
+    /// Compute zigzag-encoded signed delta for integer types.
+    template<typename T>
+    static uint64_t computeIntDelta(const T& curr, const T& prev);
+
+    /// Compute XOR delta for float/double types.
+    template<typename T>
+    static uint64_t computeFloatXorDelta(const T& curr, const T& prev);
+
+    /// Apply zigzag-decoded delta to reconstruct integer value.
+    template<typename T>
+    static T applyIntDelta(const T& prev, uint64_t zigzag);
+
+    /// Apply XOR delta to reconstruct float/double value.
+    template<typename T>
+    static T applyFloatXorDelta(const T& prev, uint64_t xor_delta);
+
+    /// Compute integer gradient (curr - prev as signed).
+    template<typename T>
+    static T computeIntGradient(const T& curr, const T& prev);
+
+    /// Compute float gradient (curr - prev).
+    template<typename T>
+    static T computeFloatGradient(const T& curr, const T& prev);
+
+    /// Check integer first-order-constant prediction.
+    template<typename T>
+    static bool checkIntFoC(const T& curr, const T& prev, const T& grad);
+
+    /// Check float first-order-constant prediction.
+    template<typename T>
+    static bool checkFloatFoC(const T& curr, const T& prev, const T& grad);
 };
 
 } // namespace bcsv

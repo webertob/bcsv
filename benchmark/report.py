@@ -216,6 +216,51 @@ def compute_condensed_progress_metrics(results):
     return rows_out
 
 
+def generate_codec_recommendation(condensed_rows):
+    """Generate a codec recommendation table from condensed metrics."""
+    if not condensed_rows:
+        return []
+
+    by_mode = {r["mode"]: r for r in condensed_rows}
+
+    # Codec groups: (label, flexible_mode, static_mode)
+    codecs = [
+        ("Dense (Flat)", "BCSV Flexible Dense", "BCSV Static Dense"),
+        ("ZoH", "BCSV Flexible ZoH", "BCSV Static ZoH"),
+        ("Delta", "BCSV Flexible Delta", "BCSV Static Delta"),
+    ]
+
+    lines = []
+    lines.append("### Codec Recommendation")
+    lines.append("")
+    lines.append("| Codec | Compression | Dense Write | Dense Read | Best For |")
+    lines.append("|-------|------------:|------------:|-----------:|----------|")
+
+    for label, flex_key, stat_key in codecs:
+        flex = by_mode.get(flex_key, {})
+        stat = by_mode.get(stat_key, {})
+
+        comp = flex.get("compression_ratio_median")
+        wr = flex.get("dense_write_rows_per_sec_median")
+        rd = flex.get("dense_read_rows_per_sec_median")
+
+        comp_text = f"{comp:.3f}" if comp is not None else "—"
+        wr_text = f"{wr:.0f}" if wr is not None else "—"
+        rd_text = f"{rd:.0f}" if rd is not None else "—"
+
+        if label == "Dense (Flat)":
+            advice = "Maximum throughput, no compression"
+        elif label == "ZoH":
+            advice = "Steady-state / slow-changing signals"
+        else:
+            advice = "Time-series with trends / ramps"
+
+        lines.append(f"| {label} | {comp_text} | {wr_text} | {rd_text} | {advice} |")
+
+    lines.append("")
+    return lines
+
+
 def fmt_med_std(median_val, stdev_val, decimals=2):
     if median_val is None:
         return "—"
@@ -357,6 +402,8 @@ def generate_summary_markdown(run_dir: Path,
                 f" | {fmt_med_std(row.get('sparse_read_cells_per_sec_median'), row.get('sparse_read_cells_per_sec_stdev'), decimals=0)} |"
             )
         lines.append("")
+
+        lines.extend(generate_codec_recommendation(current_condensed))
 
         lines.append(f"## Condensed Performance Matrix Comparison ({macro_type})")
         lines.append("")

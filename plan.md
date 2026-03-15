@@ -49,7 +49,7 @@ The following items appeared in earlier drafts but were **verified as false or a
 
 ### Further Considerations
 
-- **Delta002 benchmark gap** — no macro benchmark uses Delta002. Consider adding in a follow-up.
+- ~~**Delta002 benchmark gap**~~ — ✅ Done. Delta002 included in all 14 macro profiles (Flexible + Static), unified measurement campaign generator, `--codec=delta|primary` CLI, codec recommendation table, 8 new LayoutStatic tests.
 
 ---
 

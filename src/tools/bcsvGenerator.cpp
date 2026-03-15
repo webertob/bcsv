@@ -240,7 +240,7 @@ int main(int argc, char* argv[]) {
 
         // ── Select generator ────────────────────────────────────────
         const bool timeseries = (cfg.data_mode == "timeseries");
-        auto& generator = timeseries ? profile.generateZoH : profile.generate;
+        auto& generator = timeseries ? profile.generateTimeSeries : profile.generate;
 
         // ── Resolve codec flags ─────────────────────────────────────
         auto codec = bcsv_cli::resolveCodecFlags(cfg.file_codec,

@@ -379,7 +379,7 @@ static int validatePattern(const Config& cfg) {
 
     const size_t expected_rows = cfg.rows > 0 ? cfg.rows : profile.default_rows;
     const bool timeseries = (cfg.data_mode == "timeseries");
-    auto& generator = timeseries ? profile.generateZoH : profile.generate;
+    auto& generator = timeseries ? profile.generateTimeSeries : profile.generate;
 
     // Open file
     bcsv::Reader<bcsv::Layout> reader;

@@ -13,6 +13,13 @@ This project uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- C++: Delta002 row codec now supports `LayoutStatic` (compile-time static layouts) — full serialize/deserialize with recursive template iteration, multi-bit headers, ZoH/FoC/VLE delta tiers
+- Benchmark: Delta002 codec included in all 14 macro benchmark profiles for both Flexible and Static layouts
+- Benchmark: `--codec=delta` and `--codec=primary` (Dense + ZoH + Delta) selection modes
+- Benchmark: unified measurement campaign data generator (`generateTimeSeries`) with 70% active / 30% standstill pattern for fair codec comparison
+- Benchmark: codec recommendation table in report output
+- Benchmark: Delta mode aliases and interleaved comparison metrics in Python reporting
+- Test coverage: 8 new LayoutStatic Delta002 tests (round-trip, ZoH, FoC, all-types, file I/O, reset)
 - Test coverage: version compatibility, architecture boundaries, Unicode, Delta002 special floats, golden-file wire format, VLE malformed encoding, crash resilience expansion (Cycle 5)
 - Python: type stubs (.pyi), strict NaN mode for `write_dataframe()`, `pathlib.Path` support, `__repr__` methods (Cycle 4)
 - C#: complete P/Invoke array declarations for all numeric types (Cycle 3)

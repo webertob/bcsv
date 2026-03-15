@@ -42,9 +42,12 @@ MACRO_METRICS = [
     MetricSpec("CSV Dense Write Time Δ (WIP vs Baseline)", "CSV", "write_rows_per_sec", "throughput"),
     MetricSpec("Flex Flat Dense Write Time Δ (WIP vs Baseline)", "BCSV Flexible", "write_rows_per_sec", "throughput"),
     MetricSpec("Flex-ZoH Dense Write Time Δ (WIP vs Baseline)", "BCSV Flexible ZoH", "write_rows_per_sec", "throughput"),
+    MetricSpec("Flex-Delta Dense Write Time Δ (WIP vs Baseline)", "BCSV Flexible Delta", "write_rows_per_sec", "throughput"),
     MetricSpec("Static Flat Dense Write Time Δ (WIP vs Baseline)", "BCSV Static", "write_rows_per_sec", "throughput"),
     MetricSpec("Static-ZoH Dense Write Time Δ (WIP vs Baseline)", "BCSV Static ZoH", "write_rows_per_sec", "throughput"),
+    MetricSpec("Static-Delta Dense Write Time Δ (WIP vs Baseline)", "BCSV Static Delta", "write_rows_per_sec", "throughput"),
     MetricSpec("Flex-ZoH Compression Ratio Δ (WIP vs Baseline)", "BCSV Flexible ZoH", "compression_ratio", "relative"),
+    MetricSpec("Flex-Delta Compression Ratio Δ (WIP vs Baseline)", "BCSV Flexible Delta", "compression_ratio", "relative"),
 ]
 
 

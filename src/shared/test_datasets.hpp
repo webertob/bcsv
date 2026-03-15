@@ -55,16 +55,16 @@ namespace bench {
 /// Callback type: populate one row given its index
 using RowGenerator = std::function<void(bcsv::Row& row, size_t rowIndex)>;
 
-/// Callback type for generating time-series (ZoH-friendly) data
-using RowGeneratorZoH = std::function<void(bcsv::Row& row, size_t rowIndex)>;
+/// Callback type for generating time-series data (measurement campaign pattern)
+using RowGeneratorTimeSeries = std::function<void(bcsv::Row& row, size_t rowIndex)>;
 
 struct DatasetProfile {
     std::string  name;
     std::string  description;
     bcsv::Layout layout;
     size_t       default_rows;     // recommended number of rows for "full" benchmark
-    RowGenerator generate;         // random/volatile data (worst-case for ZoH)
-    RowGeneratorZoH generateZoH;   // time-series data (ZoH-favorable patterns)
+    RowGenerator generate;         // random/volatile data (worst-case for ZoH/Delta)
+    RowGeneratorTimeSeries generateTimeSeries;   // measurement campaign data (mixed codec characteristics)
 };
 
 // ============================================================================
@@ -178,31 +178,75 @@ inline double gaussianNoise(size_t row, size_t col, double mean, double stddev) 
     return mean + z0 * stddev;
 }
 
-// ----- Time-series generators (change every N rows, ZoH-friendly) -----
+// ----- Measurement campaign helpers -----
+
+/// Returns true if the given row is in the active phase of its measurement cycle.
+/// Active phase is the first 70% of each cycle; standstill is the last 30%.
+constexpr bool isActive(size_t row, size_t cycleLength) {
+    return (row % cycleLength) < (cycleLength * 7 / 10);
+}
+
+/// Returns the effective row index for generation:
+/// During active phase, returns the actual row.
+/// During standstill, returns the last row of the active phase (values freeze).
+constexpr size_t effectiveRow(size_t row, size_t cycleLength) {
+    const size_t activeLen = cycleLength * 7 / 10;
+    const size_t cycle = row / cycleLength;
+    const size_t posInCycle = row % cycleLength;
+    if (posInCycle < activeLen) return row;
+    return cycle * cycleLength + activeLen - 1;
+}
+
+// ----- Time-series generators (measurement campaign pattern) -----
+// Each cycle has active (70%) and standstill (30%) phases.
+// Active: monotonic counters, linear drift + jitter on floats → Delta FoC excels
+// Standstill: all values frozen at last active value → ZoH excels
 
 template<typename T>
-constexpr T genTimeSeries(size_t row, size_t col, size_t changeInterval = 100) {
-    size_t segment = row / changeInterval;
-    uint64_t h = mix(hash64(segment, col));
-    
+inline T genTimeSeries(size_t row, size_t col, size_t cycleLength = 100) {
+    const size_t activeLen = cycleLength * 7 / 10;
+    const size_t cycle = row / cycleLength;
+    const size_t posInCycle = row % cycleLength;
+    const bool active = posInCycle < activeLen;
+    const size_t effPos = active ? posInCycle : (activeLen > 0 ? activeLen - 1 : 0);
+
     if constexpr (std::is_same_v<T, bool>) {
-        return ((segment + col) % 3) == 0;
+        // Toggle per segment within active phase, frozen during standstill
+        size_t segment = effPos / (cycleLength > 20 ? cycleLength / 10 : 5);
+        return ((segment + col + cycle) % 3) == 0;
     } else if constexpr (std::is_same_v<T, float>) {
-        return static_cast<float>(50.0f + (segment % 100) * 0.5f + col * 10.0f);
+        // Linear drift during active + small jitter, frozen during standstill
+        float base = 50.0f + static_cast<float>(col) * 10.0f + static_cast<float>(cycle) * 5.0f;
+        float drift = static_cast<float>(effPos) * 0.01f;
+        float jitter = active
+            ? static_cast<float>(static_cast<int32_t>(mix(hash64(row, col)) % 100) - 50) * 0.001f
+            : 0.0f;
+        return base + drift + jitter;
     } else if constexpr (std::is_same_v<T, double>) {
-        return static_cast<double>(100.0 + (segment % 500) * 0.1 + col * 25.0);
+        double base = 100.0 + static_cast<double>(col) * 25.0 + static_cast<double>(cycle) * 10.0;
+        double drift = static_cast<double>(effPos) * 0.005;
+        double jitter = active
+            ? static_cast<double>(static_cast<int64_t>(mix(hash64(row, col)) % 200) - 100) * 0.0001
+            : 0.0;
+        return base + drift + jitter;
     } else if constexpr (std::is_unsigned_v<T>) {
-        return static_cast<T>(h);
+        // Monotonic counter during active, frozen during standstill
+        T base = static_cast<T>(cycle * (activeLen > 0 ? activeLen : 1) + col * 1000);
+        return static_cast<T>(base + effPos);
     } else {
-        return static_cast<T>(h);
+        // Signed integer: monotonic increment with col-dependent offset
+        auto base = static_cast<int64_t>(cycle) * static_cast<int64_t>(activeLen > 0 ? activeLen : 1)
+                   + static_cast<int64_t>(col) * 100;
+        return static_cast<T>(base + static_cast<int64_t>(effPos));
     }
 }
 
-inline std::string genTimeSeriesString(size_t row, size_t col, size_t changeInterval = 100) {
+inline std::string genTimeSeriesString(size_t row, size_t col, size_t cycleLength = 100) {
     const char* categories[] = {"Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta",
                                  "Eta", "Theta", "Iota", "Kappa"};
-    size_t segment = row / changeInterval;
-    return categories[(segment / 5 + col) % 10];
+    size_t effRow = effectiveRow(row, cycleLength);
+    size_t segment = effRow / (cycleLength > 20 ? cycleLength / 10 : 5);
+    return categories[(segment + col) % 10];
 }
 
 /// Fill a row with random data based on its layout (generic, works with any layout)
@@ -227,24 +271,24 @@ inline void fillRowRandom(RowType& row, size_t rowIndex, const bcsv::Layout& lay
     }
 }
 
-/// Fill a row with time-series data (ZoH-friendly)
+/// Fill a row with time-series data (measurement campaign pattern)
 template<typename RowType>
 inline void fillRowTimeSeries(RowType& row, size_t rowIndex, const bcsv::Layout& layout, 
-                               size_t changeInterval = 100) {
+                               size_t cycleLength = 100) {
     for (size_t col = 0; col < layout.columnCount(); ++col) {
         switch (layout.columnType(col)) {
-            case bcsv::ColumnType::BOOL:    row.set(col, genTimeSeries<bool>(rowIndex, col, changeInterval)); break;
-            case bcsv::ColumnType::INT8:    row.set(col, genTimeSeries<int8_t>(rowIndex, col, changeInterval)); break;
-            case bcsv::ColumnType::INT16:   row.set(col, genTimeSeries<int16_t>(rowIndex, col, changeInterval)); break;
-            case bcsv::ColumnType::INT32:   row.set(col, genTimeSeries<int32_t>(rowIndex, col, changeInterval)); break;
-            case bcsv::ColumnType::INT64:   row.set(col, genTimeSeries<int64_t>(rowIndex, col, changeInterval)); break;
-            case bcsv::ColumnType::UINT8:   row.set(col, genTimeSeries<uint8_t>(rowIndex, col, changeInterval)); break;
-            case bcsv::ColumnType::UINT16:  row.set(col, genTimeSeries<uint16_t>(rowIndex, col, changeInterval)); break;
-            case bcsv::ColumnType::UINT32:  row.set(col, genTimeSeries<uint32_t>(rowIndex, col, changeInterval)); break;
-            case bcsv::ColumnType::UINT64:  row.set(col, genTimeSeries<uint64_t>(rowIndex, col, changeInterval)); break;
-            case bcsv::ColumnType::FLOAT:   row.set(col, genTimeSeries<float>(rowIndex, col, changeInterval)); break;
-            case bcsv::ColumnType::DOUBLE:  row.set(col, genTimeSeries<double>(rowIndex, col, changeInterval)); break;
-            case bcsv::ColumnType::STRING:  row.set(col, genTimeSeriesString(rowIndex, col, changeInterval)); break;
+            case bcsv::ColumnType::BOOL:    row.set(col, genTimeSeries<bool>(rowIndex, col, cycleLength)); break;
+            case bcsv::ColumnType::INT8:    row.set(col, genTimeSeries<int8_t>(rowIndex, col, cycleLength)); break;
+            case bcsv::ColumnType::INT16:   row.set(col, genTimeSeries<int16_t>(rowIndex, col, cycleLength)); break;
+            case bcsv::ColumnType::INT32:   row.set(col, genTimeSeries<int32_t>(rowIndex, col, cycleLength)); break;
+            case bcsv::ColumnType::INT64:   row.set(col, genTimeSeries<int64_t>(rowIndex, col, cycleLength)); break;
+            case bcsv::ColumnType::UINT8:   row.set(col, genTimeSeries<uint8_t>(rowIndex, col, cycleLength)); break;
+            case bcsv::ColumnType::UINT16:  row.set(col, genTimeSeries<uint16_t>(rowIndex, col, cycleLength)); break;
+            case bcsv::ColumnType::UINT32:  row.set(col, genTimeSeries<uint32_t>(rowIndex, col, cycleLength)); break;
+            case bcsv::ColumnType::UINT64:  row.set(col, genTimeSeries<uint64_t>(rowIndex, col, cycleLength)); break;
+            case bcsv::ColumnType::FLOAT:   row.set(col, genTimeSeries<float>(rowIndex, col, cycleLength)); break;
+            case bcsv::ColumnType::DOUBLE:  row.set(col, genTimeSeries<double>(rowIndex, col, cycleLength)); break;
+            case bcsv::ColumnType::STRING:  row.set(col, genTimeSeriesString(rowIndex, col, cycleLength)); break;
             default: break;
         }
     }
@@ -283,7 +327,7 @@ inline DatasetProfile createMixedGenericProfile() {
         datagen::fillRowRandom(row, rowIndex, layout);
     };
 
-    p.generateZoH = [layout = p.layout](bcsv::Row& row, size_t rowIndex) {
+    p.generateTimeSeries = [layout = p.layout](bcsv::Row& row, size_t rowIndex) {
         datagen::fillRowTimeSeries(row, rowIndex, layout, 100);
     };
 
@@ -317,10 +361,8 @@ inline DatasetProfile createSparseEventsProfile() {
         datagen::fillRowRandom(row, rowIndex, layout);
     };
 
-    // ZoH-favorable: only ~1% of rows have changes, values change every 100 rows
-    // but with long stable periods
-    p.generateZoH = [layout = p.layout](bcsv::Row& row, size_t rowIndex) {
-        // Very sparse: change interval of 500 rows (0.2% change rate per column)
+    // Sparse time-series: long 500-row cycles (350 active + 150 standstill)
+    p.generateTimeSeries = [layout = p.layout](bcsv::Row& row, size_t rowIndex) {
         datagen::fillRowTimeSeries(row, rowIndex, layout, 500);
     };
 
@@ -379,27 +421,36 @@ inline DatasetProfile createSensorNoisyProfile() {
         }
     };
 
-    // ZoH: sensors with slow drift (good for ZoH compression)
-    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
-        row.set(static_cast<size_t>(0), static_cast<uint64_t>(1640995200000ULL + rowIndex * 1000));
-        row.set(static_cast<size_t>(1), static_cast<uint32_t>(rowIndex));
+    // Measurement campaign: 2000-row cycles with active drift and standstill freeze
+    p.generateTimeSeries = [](bcsv::Row& row, size_t rowIndex) {
+        constexpr size_t cycleLen = 2000;
+        const bool active = datagen::isActive(rowIndex, cycleLen);
+        const size_t effRow = datagen::effectiveRow(rowIndex, cycleLen);
 
-        // Float sensors: slow drift, values change every 50-200 rows
+        // Timestamp: always monotonic. Counter: monotonic during active, frozen during standstill.
+        row.set(static_cast<size_t>(0), static_cast<uint64_t>(1640995200000ULL + rowIndex * 1000));
+        row.set(static_cast<size_t>(1), static_cast<uint32_t>(effRow));
+
+        // Float sensors: linear drift + small jitter during active, frozen during standstill
         for (size_t i = 0; i < 24; ++i) {
             size_t col = 2 + i;
-            size_t interval = 50 + (i * 7) % 150; // varied intervals
-            size_t segment = rowIndex / interval;
-            float val = static_cast<float>(20.0 + i * 5.0 + (segment % 100) * 0.1);
-            row.set(col, val);
+            float base = 20.0f + static_cast<float>(i) * 5.0f;
+            float drift = static_cast<float>(effRow % 10000) * 0.001f;
+            float jitter = active
+                ? static_cast<float>(static_cast<int32_t>(datagen::mix(datagen::hash64(rowIndex, col)) % 100) - 50) * 0.01f
+                : 0.0f;
+            row.set(col, base + drift + jitter);
         }
 
-        // Double sensors  
+        // Double sensors: same pattern with finer drift
         for (size_t i = 0; i < 24; ++i) {
             size_t col = 26 + i;
-            size_t interval = 80 + (i * 11) % 120;
-            size_t segment = rowIndex / interval;
-            double val = 100.0 + i * 10.0 + (segment % 200) * 0.05;
-            row.set(col, val);
+            double base = 100.0 + static_cast<double>(i) * 10.0;
+            double drift = static_cast<double>(effRow % 10000) * 0.0005;
+            double jitter = active
+                ? static_cast<double>(static_cast<int64_t>(datagen::mix(datagen::hash64(rowIndex, col)) % 200) - 100) * 0.001
+                : 0.0;
+            row.set(col, base + drift + jitter);
         }
     };
 
@@ -501,27 +552,30 @@ inline DatasetProfile createStringHeavyProfile() {
         }
     };
 
-    // ZoH-favorable: strings repeat more, values change slowly
-    p.generateZoH = [layout = p.layout](bcsv::Row& row, size_t rowIndex) {
-        // Scalars: slow change
-        size_t segment = rowIndex / 100;
-        row.set(static_cast<size_t>(0), static_cast<int32_t>(rowIndex));
+    // Measurement campaign: 1000-row cycles with active/standstill
+    p.generateTimeSeries = [layout = p.layout](bcsv::Row& row, size_t rowIndex) {
+        constexpr size_t cycleLen = 1000;
+        const size_t effRow = datagen::effectiveRow(rowIndex, cycleLen);
+
+        // Scalars: counters drift during active, freeze during standstill
+        size_t segment = effRow / 100;
+        row.set(static_cast<size_t>(0), static_cast<int32_t>(effRow));  // monotonic counter
         row.set(static_cast<size_t>(1), static_cast<int32_t>(segment % 100));
         row.set(static_cast<size_t>(2), static_cast<int32_t>(segment % 10));
-        row.set(static_cast<size_t>(3), static_cast<float>(segment * 0.5f));
-        row.set(static_cast<size_t>(4), static_cast<float>(segment * 1.5f));
-        row.set(static_cast<size_t>(5), static_cast<float>(segment * 0.1f));
-        row.set(static_cast<size_t>(6), static_cast<double>(segment * 0.01));
-        row.set(static_cast<size_t>(7), static_cast<double>(segment * 0.05));
-        row.set(static_cast<size_t>(8), static_cast<uint64_t>(segment * 1000));
-        row.set(static_cast<size_t>(9), static_cast<uint64_t>(segment * 10000));
+        row.set(static_cast<size_t>(3), static_cast<float>(static_cast<float>(segment) * 0.5f));
+        row.set(static_cast<size_t>(4), static_cast<float>(static_cast<float>(segment) * 1.5f));
+        row.set(static_cast<size_t>(5), static_cast<float>(static_cast<float>(segment) * 0.1f));
+        row.set(static_cast<size_t>(6), static_cast<double>(segment) * 0.01);
+        row.set(static_cast<size_t>(7), static_cast<double>(segment) * 0.05);
+        row.set(static_cast<size_t>(8), static_cast<uint64_t>(effRow * 1000));   // monotonic timer
+        row.set(static_cast<size_t>(9), static_cast<uint64_t>(effRow * 10000));  // monotonic timer
 
-        // Strings: change every 200 rows
+        // Strings: change during active phase, frozen during standstill
         static const std::array<std::string, 10> tags = {
             "alpha", "beta", "gamma", "delta", "epsilon",
             "zeta", "eta", "theta", "iota", "kappa"
         };
-        size_t strSeg = rowIndex / 200;
+        size_t strSeg = effRow / 200;
         for (size_t i = 0; i < 4; ++i) {
             size_t col = 10 + i;
             row.set(col, tags[(strSeg + i) % tags.size()]);
@@ -568,19 +622,21 @@ inline DatasetProfile createBoolHeavyProfile() {
         datagen::fillRowRandom(row, rowIndex, layout);
     };
 
-    // ZoH: booleans flip every 200 rows, scalars every 500
-    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
-        size_t boolSeg = rowIndex / 200;
+    // Measurement campaign: 1000-row cycles, bools toggle during active, frozen during standstill
+    p.generateTimeSeries = [](bcsv::Row& row, size_t rowIndex) {
+        constexpr size_t cycleLen = 1000;
+        const size_t effRow = datagen::effectiveRow(rowIndex, cycleLen);
+
+        size_t boolSeg = effRow / 200;
         for (size_t i = 0; i < 128; ++i) {
-            // Stagger flips: column i flips at different phase offsets
             bool val = ((boolSeg + i) % 3) == 0;
             row.set(i, val);
         }
-        size_t scalarSeg = rowIndex / 500;
-        row.set(static_cast<size_t>(128), static_cast<uint32_t>(scalarSeg * 10));
-        row.set(static_cast<size_t>(129), static_cast<uint32_t>(scalarSeg * 100));
-        row.set(static_cast<size_t>(130), static_cast<int64_t>(scalarSeg * 1000));
-        row.set(static_cast<size_t>(131), static_cast<int64_t>(scalarSeg * 10000));
+        // Counters: monotonic during active, frozen during standstill
+        row.set(static_cast<size_t>(128), static_cast<uint32_t>(effRow * 10));
+        row.set(static_cast<size_t>(129), static_cast<uint32_t>(effRow * 100));
+        row.set(static_cast<size_t>(130), static_cast<int64_t>(effRow * 1000));
+        row.set(static_cast<size_t>(131), static_cast<int64_t>(effRow * 10000));
     };
 
     return p;
@@ -612,9 +668,8 @@ inline DatasetProfile createArithmeticWideProfile() {
         datagen::fillRowRandom(row, rowIndex, layout);
     };
 
-    // ZoH generator: also volatile (short change interval = 5 rows)
-    // This deliberately stresses ZoH — minimal compression opportunity
-    p.generateZoH = [layout = p.layout](bcsv::Row& row, size_t rowIndex) {
+    // Short 5-row cycles (3 active + 2 standstill) — stress test for all codecs
+    p.generateTimeSeries = [layout = p.layout](bcsv::Row& row, size_t rowIndex) {
         datagen::fillRowTimeSeries(row, rowIndex, layout, 5);
     };
 
@@ -663,23 +718,37 @@ inline DatasetProfile createSimulationSmoothProfile() {
         }
     };
 
-    // ZoH: smooth drift, values change only every 1000 rows (very compressible)
-    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
+    // Measurement campaign: 5000-row cycles with smooth drift during active, frozen during standstill
+    p.generateTimeSeries = [](bcsv::Row& row, size_t rowIndex) {
+        constexpr size_t cycleLen = 5000;
+        const bool active = datagen::isActive(rowIndex, cycleLen);
+        const size_t effRow = datagen::effectiveRow(rowIndex, cycleLen);
+
+        // Monotonic tick and time — always change (Delta FoC ideal)
         row.set(static_cast<size_t>(0), static_cast<uint64_t>(rowIndex));
         row.set(static_cast<size_t>(1), static_cast<double>(rowIndex) * 0.001);
-        size_t segment = rowIndex / 1000;
-        row.set(static_cast<size_t>(2), static_cast<uint32_t>(segment));
-        row.set(static_cast<size_t>(3), (segment % 10) > 8);
+        row.set(static_cast<size_t>(2), static_cast<uint32_t>(effRow / 1000));
+        row.set(static_cast<size_t>(3), (effRow / 1000 % 10) > 8);
 
+        // Float channels: linear drift during active, frozen during standstill
         for (size_t i = 0; i < 48; ++i) {
             size_t col = 4 + i;
-            float val = static_cast<float>(static_cast<double>(i) * 10.0 + static_cast<double>(segment) * 0.1);
-            row.set(col, val);
+            float base = static_cast<float>(static_cast<double>(i) * 10.0);
+            float drift = static_cast<float>(effRow) * 0.001f;
+            float jitter = active
+                ? static_cast<float>(static_cast<int32_t>(datagen::mix(datagen::hash64(rowIndex, col)) % 60) - 30) * 0.0001f
+                : 0.0f;
+            row.set(col, base + drift + jitter);
         }
+        // Double channels: finer drift + tiny jitter
         for (size_t i = 0; i < 48; ++i) {
             size_t col = 52 + i;
-            double val = 1000.0 + static_cast<double>(i) * 50.0 + static_cast<double>(segment) * 0.01;
-            row.set(col, val);
+            double base = 1000.0 + static_cast<double>(i) * 50.0;
+            double drift = static_cast<double>(effRow) * 0.0005;
+            double jitter = active
+                ? static_cast<double>(static_cast<int64_t>(datagen::mix(datagen::hash64(rowIndex, col)) % 40) - 20) * 0.00001
+                : 0.0;
+            row.set(col, base + drift + jitter);
         }
     };
 
@@ -772,43 +841,61 @@ inline DatasetProfile createWeatherTimeseriesProfile() {
         row.set(col, static_cast<uint8_t>(datagen::hash32(rowIndex, col) % 5));
     };
 
-    // ZoH: weather changes slowly, station/region fixed for long runs
-    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
+    // Measurement campaign: 3000-row cycles (measurement interruptions)
+    p.generateTimeSeries = [](bcsv::Row& row, size_t rowIndex) {
+        constexpr size_t cycleLen = 3000;
+        const bool active = datagen::isActive(rowIndex, cycleLen);
+        const size_t effRow = datagen::effectiveRow(rowIndex, cycleLen);
+
         size_t col = 0;
+        // Timestamp: always monotonic
         row.set(col++, static_cast<uint64_t>(1704067200000ULL + rowIndex * 60000));
-        // Station and region change every 10000 rows (station deployment)
-        size_t stationSeg = rowIndex / 10000;
+        // Station and region: frozen during standstill (deployment change only when active)
+        size_t stationSeg = effRow / 10000;
         row.set(col++, stations[stationSeg % stations.size()]);
         row.set(col++, regions[stationSeg % regions.size()]);
         row.set(col++, static_cast<uint8_t>(stationSeg % 4));
 
-        // Temperature: changes every 60 rows (~1 hour)
-        size_t tempSeg = rowIndex / 60;
+        // Temperature: drift during active, frozen during standstill
         for (size_t i = 0; i < 10; ++i) {
-            float temp = static_cast<float>(15.0 + (tempSeg % 20) * 0.5 + i * 0.1);
-            row.set(col++, temp);
+            float base = 15.0f + static_cast<float>(i) * 0.1f;
+            float drift = static_cast<float>(effRow) * 0.001f;
+            float jitter = active
+                ? static_cast<float>(static_cast<int32_t>(datagen::mix(datagen::hash64(rowIndex, col)) % 100) - 50) * 0.005f
+                : 0.0f;
+            row.set(col++, base + drift + jitter);
         }
-        // Humidity: changes every 120 rows
-        size_t humSeg = rowIndex / 120;
+        // Humidity: similar pattern
         for (size_t i = 0; i < 6; ++i) {
-            float hum = static_cast<float>(50.0 + (humSeg % 40) * 1.0);
-            row.set(col++, hum);
+            float base = 50.0f;
+            float drift = static_cast<float>(effRow % 5000) * 0.01f;
+            float jitter = active
+                ? static_cast<float>(static_cast<int32_t>(datagen::mix(datagen::hash64(rowIndex, col)) % 80) - 40) * 0.01f
+                : 0.0f;
+            row.set(col++, base + drift + jitter);
         }
-        // Wind: changes every 30 rows
-        size_t windSeg = rowIndex / 30;
+        // Wind: moderate drift
         for (size_t i = 0; i < 4; ++i) {
-            float speed = static_cast<float>(5.0 + (windSeg % 25) * 0.5);
-            row.set(col++, speed);
-            row.set(col++, static_cast<uint16_t>((windSeg * 37 + i * 90) % 360));
+            float base = 5.0f;
+            float drift = static_cast<float>(effRow % 2000) * 0.003f;
+            float jitter = active
+                ? static_cast<float>(static_cast<int32_t>(datagen::mix(datagen::hash64(rowIndex, col)) % 60) - 30) * 0.01f
+                : 0.0f;
+            row.set(col++, base + drift + jitter);
+            // Wind direction: monotonic-ish during active
+            row.set(col++, static_cast<uint16_t>((effRow / 30 * 37 + i * 90) % 360));
         }
-        // Pressure: very stable, changes every 360 rows
-        size_t presSeg = rowIndex / 360;
+        // Pressure: very stable, tiny drift
         for (size_t i = 0; i < 4; ++i) {
-            double pres = 1005.0 + (presSeg % 20) * 0.5;
-            row.set(col++, pres);
+            double base = 1005.0;
+            double drift = static_cast<double>(effRow % 10000) * 0.0001;
+            double jitter = active
+                ? static_cast<double>(static_cast<int64_t>(datagen::mix(datagen::hash64(rowIndex, col)) % 20) - 10) * 0.00001
+                : 0.0;
+            row.set(col++, base + drift + jitter);
         }
-        // Precipitation/solar: change every 180 rows
-        size_t precipSeg = rowIndex / 180;
+        // Precipitation/solar
+        size_t precipSeg = effRow / 180;
         row.set(col++, static_cast<float>((precipSeg % 10) * 0.2f));
         row.set(col++, static_cast<float>(200.0f + (precipSeg % 8) * 50.0f));
         row.set(col++, (precipSeg % 5) == 0);
@@ -844,15 +931,18 @@ inline DatasetProfile createHighCardinalityStringProfile() {
         }
     };
 
-    // ZoH: UUIDs assigned per batch (change every 500 rows)
-    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
-        row.set(static_cast<size_t>(0), static_cast<uint64_t>(rowIndex));
-        size_t batchSeg = rowIndex / 500;
+    // Measurement campaign: 2000-row cycles, UUID generation pauses during standstill
+    p.generateTimeSeries = [](bcsv::Row& row, size_t rowIndex) {
+        constexpr size_t cycleLen = 2000;
+        const size_t effRow = datagen::effectiveRow(rowIndex, cycleLen);
+
+        row.set(static_cast<size_t>(0), static_cast<uint64_t>(rowIndex));  // always monotonic
+        size_t batchSeg = effRow / 500;
         row.set(static_cast<size_t>(1), static_cast<uint32_t>(batchSeg));
 
         for (size_t i = 0; i < 48; ++i) {
             size_t col = 2 + i;
-            // Use batchSeg instead of rowIndex → repeats within batch
+            // Use batchSeg (derived from effRow) → frozen during standstill
             row.set(col, datagen::genUuid(batchSeg, col));
         }
     };
@@ -961,7 +1051,11 @@ inline DatasetProfile createEventLogProfile() {
         row.set(static_cast<size_t>(26), static_cast<uint32_t>(rowIndex / 50));
     };
 
-    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
+    // Measurement campaign: 500-row cycles, quiet periods during standstill
+    p.generateTimeSeries = [](bcsv::Row& row, size_t rowIndex) {
+        constexpr size_t cycleLen = 500;
+        const size_t effRow = datagen::effectiveRow(rowIndex, cycleLen);
+
         static const std::array<std::string, 5> logLevels = {
             "TRACE", "DEBUG", "INFO", "WARN", "ERROR"
         };
@@ -996,23 +1090,24 @@ inline DatasetProfile createEventLogProfile() {
             "application/octet-stream", "multipart/form-data", "application/grpc", "application/x-www-form-urlencoded"
         };
 
-        const size_t metricSegment = rowIndex / 50;
+        const size_t metricSegment = effRow / 50;
 
-        row.set(static_cast<size_t>(0), static_cast<uint64_t>(rowIndex));
+        row.set(static_cast<size_t>(0), static_cast<uint64_t>(rowIndex));  // tick: always monotonic
         row.set(static_cast<size_t>(1), static_cast<uint64_t>(1704067200000000000ULL + rowIndex * 1000000ULL));
-        row.set(static_cast<size_t>(2), logLevels[(rowIndex * 3 + 1) % logLevels.size()]);
-        row.set(static_cast<size_t>(3), sourceModules[(rowIndex * 7 + 2) % sourceModules.size()]);
-        row.set(static_cast<size_t>(4), eventCategories[(rowIndex * 5 + 3) % eventCategories.size()]);
-        row.set(static_cast<size_t>(5), actions[(rowIndex * 11 + 4) % actions.size()]);
-        row.set(static_cast<size_t>(6), resultStatuses[(rowIndex * 5 + 1) % resultStatuses.size()]);
-        row.set(static_cast<size_t>(7), clientRegions[(rowIndex * 7 + 5) % clientRegions.size()]);
-        row.set(static_cast<size_t>(8), httpMethods[(rowIndex * 3 + 2) % httpMethods.size()]);
-        row.set(static_cast<size_t>(9), contentTypes[(rowIndex * 5 + 7) % contentTypes.size()]);
+        // Strings: freeze during standstill (use effRow)
+        row.set(static_cast<size_t>(2), logLevels[(effRow * 3 + 1) % logLevels.size()]);
+        row.set(static_cast<size_t>(3), sourceModules[(effRow * 7 + 2) % sourceModules.size()]);
+        row.set(static_cast<size_t>(4), eventCategories[(effRow * 5 + 3) % eventCategories.size()]);
+        row.set(static_cast<size_t>(5), actions[(effRow * 11 + 4) % actions.size()]);
+        row.set(static_cast<size_t>(6), resultStatuses[(effRow * 5 + 1) % resultStatuses.size()]);
+        row.set(static_cast<size_t>(7), clientRegions[(effRow * 7 + 5) % clientRegions.size()]);
+        row.set(static_cast<size_t>(8), httpMethods[(effRow * 3 + 2) % httpMethods.size()]);
+        row.set(static_cast<size_t>(9), contentTypes[(effRow * 5 + 7) % contentTypes.size()]);
         row.set(static_cast<size_t>(10), static_cast<float>(10.0f + static_cast<float>(metricSegment % 400) * 0.5f));
         row.set(static_cast<size_t>(11), static_cast<uint32_t>(1024 + (metricSegment % 1000) * 32));
         row.set(static_cast<size_t>(12), static_cast<uint16_t>((metricSegment % 20) == 0 ? 500 : 200 + (metricSegment % 20)));
         row.set(static_cast<size_t>(13), (metricSegment % 20) == 0);
-        row.set(static_cast<size_t>(14), (rowIndex % 9) != 0);
+        row.set(static_cast<size_t>(14), (effRow % 9) != 0);
 
         for (size_t i = 0; i < 8; ++i) {
             const size_t col = 15 + i;
@@ -1020,10 +1115,11 @@ inline DatasetProfile createEventLogProfile() {
             row.set(col, base + static_cast<double>(metricSegment % 500) * 0.05);
         }
 
-        row.set(static_cast<size_t>(23), static_cast<uint32_t>(rowIndex));
-        row.set(static_cast<size_t>(24), static_cast<uint32_t>(rowIndex - (rowIndex / 25)));
-        row.set(static_cast<size_t>(25), static_cast<uint32_t>(rowIndex / 25));
-        row.set(static_cast<size_t>(26), static_cast<uint32_t>(rowIndex / 64));
+        // Counters: monotonic during active, frozen during standstill
+        row.set(static_cast<size_t>(23), static_cast<uint32_t>(effRow));
+        row.set(static_cast<size_t>(24), static_cast<uint32_t>(effRow - (effRow / 25)));
+        row.set(static_cast<size_t>(25), static_cast<uint32_t>(effRow / 25));
+        row.set(static_cast<size_t>(26), static_cast<uint32_t>(effRow / 64));
     };
 
     return p;
@@ -1106,7 +1202,12 @@ inline DatasetProfile createIotFleetProfile() {
         }
     };
 
-    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
+    // Measurement campaign: 2000-row cycles, devices go offline during standstill
+    p.generateTimeSeries = [](bcsv::Row& row, size_t rowIndex) {
+        constexpr size_t cycleLen = 2000;
+        const bool active = datagen::isActive(rowIndex, cycleLen);
+        const size_t effRow = datagen::effectiveRow(rowIndex, cycleLen);
+
         static const std::array<std::string, 10> sensorTypes = {
             "temperature", "humidity", "pressure", "co2", "vibration",
             "light", "noise", "flow", "ph", "occupancy"
@@ -1121,13 +1222,14 @@ inline DatasetProfile createIotFleetProfile() {
             "normal", "caution", "warning", "critical"
         };
 
-        const size_t deviceIdx = rowIndex % 100;
+        const size_t deviceIdx = effRow % 100;
         const size_t locationIdx = deviceIdx / 4;
         const size_t sensorIdx = deviceIdx % sensorTypes.size();
-        const size_t metricSegment = rowIndex / 20;
+        const size_t metricSegment = effRow / 20;
 
-        row.set(static_cast<size_t>(0), static_cast<uint64_t>(rowIndex));
+        row.set(static_cast<size_t>(0), static_cast<uint64_t>(rowIndex));  // seq: always monotonic
         row.set(static_cast<size_t>(1), static_cast<uint64_t>(1704067200000000000ULL + rowIndex * 5000000ULL));
+        // Device metadata: frozen during standstill
         row.set(static_cast<size_t>(2), std::string("sensor_") + (deviceIdx < 9 ? "00" : (deviceIdx < 99 ? "0" : "")) + std::to_string(deviceIdx + 1));
         row.set(static_cast<size_t>(3), std::string("building_") + static_cast<char>('A' + (locationIdx / 5))
             + "/floor_" + std::to_string((locationIdx % 5) + 1)
@@ -1136,26 +1238,32 @@ inline DatasetProfile createIotFleetProfile() {
         row.set(static_cast<size_t>(5), firmware[(deviceIdx / 20) % firmware.size()]);
         row.set(static_cast<size_t>(6), units[sensorIdx % units.size()]);
 
-        const uint64_t skew = datagen::hash64(rowIndex, 7) % 100;
+        const uint64_t skew = datagen::hash64(effRow, 7) % 100;
         const std::string& alert = (skew < 90) ? alerts[0] : (skew < 97) ? alerts[1] : (skew < 99) ? alerts[2] : alerts[3];
         row.set(static_cast<size_t>(7), alert);
 
+        // Sensor readings: drift during active, frozen during standstill
         const double base = 10.0 + static_cast<double>(sensorIdx) * 7.5 + static_cast<double>(deviceIdx) * 0.2;
-        const double drift = static_cast<double>((metricSegment + deviceIdx) % 800) * 0.02;
-        const double reading = base + drift;
+        const double drift = static_cast<double>(effRow) * 0.001;
+        const double jitter = active
+            ? static_cast<double>(static_cast<int64_t>(datagen::mix(datagen::hash64(rowIndex, 8)) % 100) - 50) * 0.001
+            : 0.0;
+        const double reading = base + drift + jitter;
         row.set(static_cast<size_t>(8), reading);
         row.set(static_cast<size_t>(9), static_cast<float>(reading - 0.5));
         row.set(static_cast<size_t>(10), static_cast<float>(reading + 0.5));
         row.set(static_cast<size_t>(11), static_cast<uint8_t>(20 + (deviceIdx % 81)));
         row.set(static_cast<size_t>(12), static_cast<int8_t>(-80 + static_cast<int>((deviceIdx * 3) % 35)));
-        row.set(static_cast<size_t>(13), static_cast<uint32_t>(rowIndex / 100 + deviceIdx));
-        row.set(static_cast<size_t>(14), static_cast<uint64_t>(rowIndex * 5 + deviceIdx * 1000));
+        // Counters: monotonic during active, frozen during standstill
+        row.set(static_cast<size_t>(13), static_cast<uint32_t>(effRow / 100 + deviceIdx));
+        row.set(static_cast<size_t>(14), static_cast<uint64_t>(effRow * 5 + deviceIdx * 1000));
         row.set(static_cast<size_t>(15), true);
         row.set(static_cast<size_t>(16), (deviceIdx % 10) != 0);
 
         for (size_t i = 0; i < 8; ++i) {
             const size_t col = 17 + i;
-            const float aux = static_cast<float>(reading * 0.1 + static_cast<double>(i) * 0.5 + static_cast<double>(metricSegment % 50) * 0.05);
+            const float aux = static_cast<float>(reading * 0.1 + static_cast<double>(i) * 0.5
+                + static_cast<double>(metricSegment % 50) * 0.05);
             row.set(col, aux);
         }
     };
@@ -1264,7 +1372,11 @@ inline DatasetProfile createFinancialOrdersProfile() {
         row.set(static_cast<size_t>(21), static_cast<uint64_t>(rowIndex));
     };
 
-    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
+    // Measurement campaign: 5000-row cycles (market open/close)
+    p.generateTimeSeries = [](bcsv::Row& row, size_t rowIndex) {
+        constexpr size_t cycleLen = 5000;
+        const size_t effRow = datagen::effectiveRow(rowIndex, cycleLen);
+
         static const std::array<std::string, 50> tickers = {
             "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA", "ORCL", "INTC", "AMD",
             "NFLX", "ADBE", "CRM", "PYPL", "QCOM", "AVGO", "TXN", "IBM", "CSCO", "MU",
@@ -1306,38 +1418,38 @@ inline DatasetProfile createFinancialOrdersProfile() {
             185.0, 42.0, 390.0, 102.0, 55.0, 61.0, 280.0, 445.0, 295.0, 910.0
         };
 
-        const size_t tickerIdx = (rowIndex * 7 + 3) % tickers.size();
-        const size_t driftSegment = rowIndex / 1000;
-        const double drift = static_cast<double>(driftSegment % 500) * 0.01;
+        // Use effRow for all values that should freeze during market close (standstill)
+        const size_t tickerIdx = (effRow * 7 + 3) % tickers.size();
+        const double drift = static_cast<double>(effRow) * 0.001;
         const double price = basePrices[tickerIdx] + drift;
-        const uint32_t quantity = static_cast<uint32_t>(100 + ((rowIndex * 37) % 5000));
-        const uint32_t fillQty = static_cast<uint32_t>(quantity * ((rowIndex % 4) + 1) / 4);
+        const uint32_t quantity = static_cast<uint32_t>(100 + ((effRow * 37) % 5000));
+        const uint32_t fillQty = static_cast<uint32_t>(quantity * ((effRow % 4) + 1) / 4);
         const double fillPrice = price + 0.01;
         const double notional = price * static_cast<double>(quantity);
         const double pnl = (fillPrice - price) * static_cast<double>(fillQty);
 
-        row.set(static_cast<size_t>(0), static_cast<uint64_t>(1000000000ULL + rowIndex));
+        row.set(static_cast<size_t>(0), static_cast<uint64_t>(1000000000ULL + rowIndex));  // order_id: always monotonic
         row.set(static_cast<size_t>(1), static_cast<uint64_t>(1704067200000000000ULL + rowIndex * 100000ULL));
         row.set(static_cast<size_t>(2), tickers[tickerIdx]);
-        row.set(static_cast<size_t>(3), exchanges[(rowIndex * 3 + 1) % exchanges.size()]);
-        row.set(static_cast<size_t>(4), orderTypes[(rowIndex * 5 + 2) % orderTypes.size()]);
-        row.set(static_cast<size_t>(5), sides[rowIndex % sides.size()]);
-        row.set(static_cast<size_t>(6), statuses[(rowIndex * 7 + 3) % statuses.size()]);
-        row.set(static_cast<size_t>(7), brokers[(rowIndex * 11 + 4) % brokers.size()]);
-        row.set(static_cast<size_t>(8), currencies[(rowIndex * 3 + tickerIdx) % currencies.size()]);
-        row.set(static_cast<size_t>(9), strategies[(rowIndex * 13 + 1) % strategies.size()]);
+        row.set(static_cast<size_t>(3), exchanges[(effRow * 3 + 1) % exchanges.size()]);
+        row.set(static_cast<size_t>(4), orderTypes[(effRow * 5 + 2) % orderTypes.size()]);
+        row.set(static_cast<size_t>(5), sides[effRow % sides.size()]);
+        row.set(static_cast<size_t>(6), statuses[(effRow * 7 + 3) % statuses.size()]);
+        row.set(static_cast<size_t>(7), brokers[(effRow * 11 + 4) % brokers.size()]);
+        row.set(static_cast<size_t>(8), currencies[(effRow * 3 + tickerIdx) % currencies.size()]);
+        row.set(static_cast<size_t>(9), strategies[(effRow * 13 + 1) % strategies.size()]);
         row.set(static_cast<size_t>(10), price);
         row.set(static_cast<size_t>(11), quantity);
         row.set(static_cast<size_t>(12), fillPrice);
         row.set(static_cast<size_t>(13), fillQty);
         row.set(static_cast<size_t>(14), static_cast<float>(0.0002 * static_cast<double>(quantity)));
-        row.set(static_cast<size_t>(15), (rowIndex % 5) == 0);
-        row.set(static_cast<size_t>(16), (rowIndex % 10) == 0);
-        row.set(static_cast<size_t>(17), (rowIndex % 5) < 3);
+        row.set(static_cast<size_t>(15), (effRow % 5) == 0);
+        row.set(static_cast<size_t>(16), (effRow % 10) == 0);
+        row.set(static_cast<size_t>(17), (effRow % 5) < 3);
         row.set(static_cast<size_t>(18), notional);
         row.set(static_cast<size_t>(19), pnl);
         row.set(static_cast<size_t>(20), static_cast<float>((tickerIdx % 10) / 10.0));
-        row.set(static_cast<size_t>(21), static_cast<uint64_t>(rowIndex));
+        row.set(static_cast<size_t>(21), static_cast<uint64_t>(effRow));  // counter: frozen during standstill
     };
 
     return p;
@@ -1404,25 +1516,29 @@ inline DatasetProfile createRealisticMeasurementProfile() {
         row.set(static_cast<size_t>(1), static_cast<uint64_t>(rowIndex * 1000));
     };
 
-    // ZoH generator: realistic multi-phase, multi-rate pattern
-    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
-        const size_t N = 500000;  // assumed total rows for phase calc
-        double progress = static_cast<double>(rowIndex) / static_cast<double>(N);
+    // Measurement campaign: recurring 10000-row cycles with active/standstill
+    // Active (70%): sensors drift, counters increment, noise present
+    // Standstill (30%): all sensors frozen, counters frozen
+    p.generateTimeSeries = [](bcsv::Row& row, size_t rowIndex) {
+        constexpr size_t cycleLen = 10000;
+        const bool active = datagen::isActive(rowIndex, cycleLen);
+        const size_t effRow = datagen::effectiveRow(rowIndex, cycleLen);
+        const size_t cycle = rowIndex / cycleLen;
 
-        // Determine phase: 0=setup 1=warmup 2=measure 3=cooldown 4=teardown
+        // Phase: derived from position in cycle (recurring, not one-shot)
+        const size_t posInCycle = rowIndex % cycleLen;
+        const size_t activeLen = cycleLen * 7 / 10;
         uint8_t phase;
-        bool active;  // sensors actively sampling?
-        if      (progress < 0.05) { phase = 0; active = false; }  // 0–5%  setup
-        else if (progress < 0.20) { phase = 1; active = false; }  // 5–20% warmup (mostly static)
-        else if (progress < 0.80) { phase = 2; active = true;  }  // 20–80% measurement
-        else if (progress < 0.95) { phase = 3; active = false; }  // 80–95% cooldown
-        else                      { phase = 4; active = false; }  // 95–100% teardown
+        if (!active)                         { phase = 4; }  // standstill
+        else if (posInCycle < activeLen / 10) { phase = 0; }  // warmup (first 10% of active)
+        else if (posInCycle < activeLen * 9 / 10) { phase = 2; }  // measurement (middle 80% of active)
+        else                                 { phase = 3; }  // cooldown (last 10% of active)
 
         // ── Always changing: tick + timestamp ──
         row.set(static_cast<size_t>(0), static_cast<uint64_t>(rowIndex));
         row.set(static_cast<size_t>(1), static_cast<uint64_t>(1700000000000000ULL + rowIndex * 1000));
 
-        // ── Static metadata: set once, never changes ──
+        // ── Static metadata: set once, never changes ── (ZoH ideal)
         row.set(static_cast<size_t>(2), std::string("Thermal_Cycling_Test_v3"));
         row.set(static_cast<size_t>(3), std::string("DUT-2026-0042"));
         row.set(static_cast<size_t>(4), std::string("TWeber"));
@@ -1430,60 +1546,49 @@ inline DatasetProfile createRealisticMeasurementProfile() {
         // ── Phase ──
         row.set(static_cast<size_t>(5), phase);
 
-        // ── Fast sensors (every row during active, static otherwise) ──
+        // ── Fast sensors: linear drift + small noise during active, frozen during standstill ──
         for (size_t i = 0; i < 8; ++i) {
             size_t col = 6 + i;
-            if (active) {
-                // Sensor with slow drift + per-sensor offset
-                float base = 20.0f + static_cast<float>(i) * 5.0f;
-                float drift = static_cast<float>(rowIndex % 10000) * 0.001f;
-                float noise = static_cast<float>(datagen::hash32(rowIndex, col) % 100) * 0.01f;
-                row.set(col, base + drift + noise);
-            } else {
-                // Static: initial calibration value
-                row.set(col, 20.0f + static_cast<float>(i) * 5.0f);
-            }
+            float base = 20.0f + static_cast<float>(i) * 5.0f + static_cast<float>(cycle) * 2.0f;
+            float drift = static_cast<float>(effRow % 10000) * 0.001f;
+            float noise = active
+                ? static_cast<float>(static_cast<int32_t>(datagen::mix(datagen::hash64(rowIndex, col)) % 100) - 50) * 0.005f
+                : 0.0f;
+            row.set(col, base + drift + noise);
         }
 
-        // ── Medium sensors (every ~10 rows during active) ──
+        // ── Medium sensors: drift during active, frozen during standstill ──
         for (size_t i = 0; i < 8; ++i) {
             size_t col = 14 + i;
-            size_t interval = 10 + i * 3;  // 10,13,16,19,22,25,28,31 — staggered
-            if (active) {
-                size_t seg = rowIndex / interval;
-                double base = 100.0 + static_cast<double>(i) * 25.0;
-                row.set(col, base + static_cast<double>(seg % 500) * 0.01);
-            } else {
-                row.set(col, 100.0 + static_cast<double>(i) * 25.0);
-            }
+            double base = 100.0 + static_cast<double>(i) * 25.0 + static_cast<double>(cycle) * 5.0;
+            double drift = static_cast<double>(effRow % 10000) * 0.0005;
+            double noise = active
+                ? static_cast<double>(static_cast<int64_t>(datagen::mix(datagen::hash64(rowIndex, col)) % 40) - 20) * 0.0001
+                : 0.0;
+            row.set(col, base + drift + noise);
         }
 
-        // ── Slow sensors (every ~100 rows during active) ──
+        // ── Slow sensors: step-wise change during active, frozen during standstill ──
         for (size_t i = 0; i < 8; ++i) {
             size_t col = 22 + i;
-            size_t interval = 100 + i * 50;  // 100,150,200,...,450
-            if (active) {
-                size_t seg = rowIndex / interval;
-                row.set(col, static_cast<int32_t>(1000 + seg * 10 + static_cast<int32_t>(i)));
-            } else {
-                row.set(col, static_cast<int32_t>(1000 + static_cast<int32_t>(i)));
-            }
+            size_t interval = 100 + i * 50;
+            size_t seg = effRow / interval;
+            row.set(col, static_cast<int32_t>(1000 + static_cast<int32_t>(seg * 10 + i)));
         }
 
-        // ── Status flags: sparse events (~0.2% toggle rate) ──
+        // ── Status flags: sparse events, frozen during standstill ──
         for (size_t i = 0; i < 4; ++i) {
             size_t col = 30 + i;
-            // Each flag has a different event period
-            size_t period = 500 * (i + 1);  // 500, 1000, 1500, 2000
-            bool val = (rowIndex % period) < (period / 50);  // ON for 2% of each period
+            size_t period = 500 * (i + 1);
+            bool val = (effRow % period) < (period / 50);
             row.set(col, val);
         }
 
-        // ── Counters at different rates ──
-        row.set(static_cast<size_t>(34), static_cast<uint32_t>(rowIndex));            // every row
-        row.set(static_cast<size_t>(35), static_cast<uint32_t>(rowIndex / 5));        // every 5
-        row.set(static_cast<size_t>(36), static_cast<uint32_t>(rowIndex / 25));       // every 25
-        row.set(static_cast<size_t>(37), static_cast<uint32_t>(rowIndex / 125));      // every 125
+        // ── Counters: monotonic during active, frozen during standstill ── (Delta FoC ideal)
+        row.set(static_cast<size_t>(34), static_cast<uint32_t>(effRow));
+        row.set(static_cast<size_t>(35), static_cast<uint32_t>(effRow / 5));
+        row.set(static_cast<size_t>(36), static_cast<uint32_t>(effRow / 25));
+        row.set(static_cast<size_t>(37), static_cast<uint32_t>(effRow / 125));
     };
 
     return p;
@@ -1552,79 +1657,75 @@ inline DatasetProfile createRtlWaveformProfile() {
         }
     };
 
-    // ZoH generator: realistic waveform patterns
-    p.generateZoH = [](bcsv::Row& row, size_t rowIndex) {
-        // ── Monotonic counters (always change) ──
+    // Measurement campaign: 2000-row cycles (clock-gating during standstill)
+    p.generateTimeSeries = [](bcsv::Row& row, size_t rowIndex) {
+        constexpr size_t cycleLen = 2000;
+        const size_t effRow = datagen::effectiveRow(rowIndex, cycleLen);
+
+        // ── Monotonic counters (always change — Delta FoC ideal) ──
         row.set(static_cast<size_t>(0), static_cast<uint64_t>(rowIndex));
         row.set(static_cast<size_t>(1), static_cast<uint64_t>(rowIndex * 10));
 
-        // ── 256 digital signals with varied toggle rates ──
-        // Group structure mirrors a real SoC:
-        //   sig_0      — master clock (toggles every row)
-        //   sig_1..3   — clock dividers (/2, /4, /8)
-        //   sig_4..15  — FSM state bits (change every 16–128 cycles)
-        //   sig_16..63 — control/enable signals (change every 50–500 cycles)
-        //   sig_64..255— data-path bits (change every 2–32 cycles, varied)
+        // ── 256 digital signals: use effRow so all signals freeze during standstill ──
 
-        // sig_0: master clock — toggles every cycle
-        row.set(static_cast<size_t>(2), (rowIndex & 1) != 0);
+        // sig_0: master clock — toggles every cycle (frozen during standstill = clock gating)
+        row.set(static_cast<size_t>(2), (effRow & 1) != 0);
 
         // sig_1..3: clock dividers
-        row.set(static_cast<size_t>(3), ((rowIndex / 2)  & 1) != 0);  // /2
-        row.set(static_cast<size_t>(4), ((rowIndex / 4)  & 1) != 0);  // /4
-        row.set(static_cast<size_t>(5), ((rowIndex / 8)  & 1) != 0);  // /8
+        row.set(static_cast<size_t>(3), ((effRow / 2)  & 1) != 0);
+        row.set(static_cast<size_t>(4), ((effRow / 4)  & 1) != 0);
+        row.set(static_cast<size_t>(5), ((effRow / 8)  & 1) != 0);
 
-        // sig_4..15: FSM state bits — change at varied intervals (16..128)
+        // sig_4..15: FSM state bits — change at varied intervals
         for (size_t i = 4; i < 16; ++i) {
-            size_t period = 16 * (1 + (i % 4));  // 16,32,48,64
-            size_t seg = rowIndex / period;
+            size_t period = 16 * (1 + (i % 4));
+            size_t seg = effRow / period;
             row.set(2 + i, ((seg + i) & 1) != 0);
         }
 
         // sig_16..63: control/enable signals — slower
         for (size_t i = 16; i < 64; ++i) {
-            size_t period = 50 + (i * 7) % 450;  // 50..499
-            size_t seg = rowIndex / period;
+            size_t period = 50 + (i * 7) % 450;
+            size_t seg = effRow / period;
             row.set(2 + i, ((seg ^ i) & 1) != 0);
         }
 
         // sig_64..255: data-path bits — moderate toggle rates
         for (size_t i = 64; i < 256; ++i) {
-            size_t period = 2 + (i * 3) % 30;  // 2..31
-            size_t seg = rowIndex / period;
-            // Use hash for more varied patterns
+            size_t period = 2 + (i * 3) % 30;
+            size_t seg = effRow / period;
             row.set(2 + i, (datagen::hash32(seg, i) & 1) != 0);
         }
 
-        // ── 16 byte registers (change at different bus-cycle rates) ──
+        // ── 16 byte registers: monotonic increment during active, frozen during standstill ──
         for (size_t i = 0; i < 16; ++i) {
             size_t col = 258 + i;
-            size_t period = 4 + i * 8;  // 4,12,20,...,124
-            size_t seg = rowIndex / period;
+            size_t period = 4 + i * 8;
+            size_t seg = effRow / period;
             row.set(col, static_cast<uint8_t>(seg + i));
         }
 
         // ── 8 halfword registers ──
         for (size_t i = 0; i < 8; ++i) {
             size_t col = 274 + i;
-            size_t period = 8 + i * 16;  // 8,24,40,...,120
-            size_t seg = rowIndex / period;
+            size_t period = 8 + i * 16;
+            size_t seg = effRow / period;
             row.set(col, static_cast<uint16_t>(seg * 17 + i));
         }
 
-        // ── 4 word registers (32-bit data bus) ──
+        // ── 4 word registers ──
         for (size_t i = 0; i < 4; ++i) {
             size_t col = 282 + i;
-            size_t period = 16 + i * 32;  // 16,48,80,112
-            size_t seg = rowIndex / period;
+            size_t period = 16 + i * 32;
+            size_t seg = effRow / period;
             row.set(col, static_cast<uint32_t>(datagen::hash32(seg, i)));
         }
 
-        // ── 4 doubleword registers (64-bit wide path) ──
+        // ── 4 doubleword registers ──
         for (size_t i = 0; i < 4; ++i) {
             size_t col = 286 + i;
-            size_t period = 32 + i * 64;  // 32,96,160,224
-            size_t seg = rowIndex / period;
+            size_t period = 32 + i * 64;
+            size_t seg = effRow / period;
             row.set(col, static_cast<uint64_t>(datagen::hash64(seg, i)));
         }
     };
