@@ -225,31 +225,30 @@ TEST_F(FileHeaderTest, VersionCompatibility_AcceptsOlderMinor) {
     // Write a valid header, patch minor version to current-1, verify reader accepts
     if constexpr (version::MINOR == 0) {
         GTEST_SKIP() << "Cannot test older minor when current minor is 0";
-        return;
+    } else {
+        Layout layout;
+        layout.addColumn(ColumnDefinition("x", ColumnType::INT32));
+
+        FileHeader writer_hdr(layout.columnCount(), 0);
+        std::ostringstream oss(std::ios::binary);
+        writer_hdr.writeToBinary(oss, layout);
+        std::string data = oss.str();
+
+        // Patch byte offset 13 (minor version) to current - 1
+        data[13] = static_cast<char>(version::MINOR - 1);
+
+        std::istringstream iss(data, std::ios::binary);
+        Layout read_layout;
+        FileHeader reader_hdr;
+        reader_hdr.readFromBinary(iss, read_layout);
+
+        // Major matches, minor <= current → acceptable
+        EXPECT_EQ(reader_hdr.versionMajor(), static_cast<uint8_t>(version::MAJOR));
+        EXPECT_LT(reader_hdr.versionMinor(), static_cast<uint8_t>(version::MINOR));
+        // Layout was successfully read
+        EXPECT_EQ(read_layout.columnCount(), 1u);
+        EXPECT_EQ(read_layout.columnName(0), "x");
     }
-
-    Layout layout;
-    layout.addColumn(ColumnDefinition("x", ColumnType::INT32));
-
-    FileHeader writer_hdr(layout.columnCount(), 0);
-    std::ostringstream oss(std::ios::binary);
-    writer_hdr.writeToBinary(oss, layout);
-    std::string data = oss.str();
-
-    // Patch byte offset 13 (minor version) to current - 1
-    data[13] = static_cast<char>(version::MINOR - 1);
-
-    std::istringstream iss(data, std::ios::binary);
-    Layout read_layout;
-    FileHeader reader_hdr;
-    reader_hdr.readFromBinary(iss, read_layout);
-
-    // Major matches, minor <= current → acceptable
-    EXPECT_EQ(reader_hdr.versionMajor(), static_cast<uint8_t>(version::MAJOR));
-    EXPECT_LT(reader_hdr.versionMinor(), static_cast<uint8_t>(version::MINOR));
-    // Layout was successfully read
-    EXPECT_EQ(read_layout.columnCount(), 1u);
-    EXPECT_EQ(read_layout.columnName(0), "x");
 }
 
 // ==========================================================================

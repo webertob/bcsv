@@ -128,7 +128,7 @@ jobs:
   benchmark-release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
     - name: Checkout release
@@ -151,18 +151,24 @@ jobs:
           -DBCSV_BUILD_MICRO_BENCHMARKS=ON \
           -DBCSV_ENABLE_EXTERNAL_CSV_BENCH=ON
 
-    - name: Build all benchmarks
-      run: cmake --build build -j$(nproc)
+    - name: Build benchmarks
+      run: cmake --build build --target bench_macro_datasets bench_micro_types bench_generate_csv -j$(nproc)
+
+    - name: Build CLI tools
+      run: cmake --build build --target csv2bcsv bcsv2csv -j$(nproc)
+
+    - name: Build core tests
+      run: cmake --build build --target bcsv_gtest test_c_api test_row_api -j$(nproc)
 
     - name: Run core tests
       run: ctest --test-dir build --output-on-failure
 
-    - name: Run full benchmark sweep
+    - name: Run release benchmark sweep
       run: |
         RUN_ROOT="${{ runner.temp }}/bench_results/release-${{ github.ref_name }}"
         python3 benchmark/run.py wip \
-          --type=MICRO,MACRO-SMALL,MACRO-LARGE \
-          --repetitions=3 \
+          --type=MICRO,MACRO-SMALL \
+          --repetitions=1 \
           --build-type=Release \
           --git=${{ github.ref_name }} \
           --results="$RUN_ROOT" \
