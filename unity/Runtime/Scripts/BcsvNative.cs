@@ -30,9 +30,15 @@ namespace BCSV
         String = 11
     }
 
-    public enum FileFlags     {
-        None = 0,
-        ZOH  = 1 << 0,
+    [System.Flags]
+    public enum FileFlags
+    {
+        None           = 0,
+        ZOH            = 1 << 0,
+        NoFileIndex    = 1 << 1,
+        StreamMode     = 1 << 2,
+        BatchCompress  = 1 << 3,
+        DeltaEncoding  = 1 << 4,
     }
     // Native P/Invoke declarations
     [Preserve]
@@ -331,6 +337,12 @@ namespace BCSV
         // Error handling
         [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr bcsv_last_error();
+
+        /// <summary>
+        /// Convert a native UTF-8 string pointer to a managed string.
+        /// </summary>
+        internal static string PtrToStringUtf8(IntPtr ptr)
+            => ptr == IntPtr.Zero ? string.Empty : Marshal.PtrToStringUTF8(ptr) ?? string.Empty;
     }
 
     /// <summary>

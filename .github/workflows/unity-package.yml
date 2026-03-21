@@ -1,0 +1,208 @@
+# Build multi-platform native libraries and pack a Unity Package Manager (.tgz)
+# Produces native bcsv_c_api binaries for:
+#   win-x64, linux-x64, linux-arm64, osx-arm64
+# Then packs unity/ into a UPM-compatible .tgz tarball.
+
+name: Unity Package
+
+on:
+  push:
+    branches: [main, master]
+    tags:
+      - 'v*'
+    paths:
+      - 'unity/**'
+      - 'include/**'
+      - 'src/bcsv_c_api.cpp'
+      - 'CMakeLists.txt'
+      - '.github/workflows/unity-package.yml'
+  pull_request:
+    paths:
+      - 'unity/**'
+      - 'include/**'
+      - 'src/bcsv_c_api.cpp'
+      - 'CMakeLists.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Build native shared library per platform ────────────────────────
+  build-native:
+    name: Native ${{ matrix.rid }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: linux-x64
+            os: ubuntu-latest
+            lib-name: libbcsv_c_api.so
+            lib-dir: build
+
+          - rid: linux-arm64
+            os: ubuntu-24.04-arm
+            lib-name: libbcsv_c_api.so
+            lib-dir: build
+
+          - rid: win-x64
+            os: windows-latest
+            lib-name: bcsv_c_api.dll
+            lib-dir: build/bin
+
+          - rid: osx-arm64
+            os: macos-15
+            lib-name: libbcsv_c_api.dylib
+            lib-dir: build
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Ninja (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build
+
+      - name: Install Ninja (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ninja
+
+      - name: Setup MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Cache CMake dependencies
+        uses: actions/cache@v5
+        with:
+          path: build/_deps
+          key: unity-native-deps-${{ matrix.rid }}-${{ hashFiles('CMakeLists.txt') }}
+
+      - name: Configure & Build (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          cmake -G Ninja -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBCSV_WERROR=ON \
+            -DBUILD_TESTS=OFF
+          cmake --build build --target bcsv_c_api --parallel
+
+      - name: Configure & Build (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          cmake -G Ninja -B build `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DBCSV_WERROR=ON `
+            -DBUILD_TESTS=OFF
+          cmake --build build --target bcsv_c_api --parallel
+
+      - name: Upload native library
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-native-${{ matrix.rid }}
+          path: ${{ matrix.lib-dir }}/${{ matrix.lib-name }}
+          retention-days: 7
+
+  # ── Pack Unity .tgz package ─────────────────────────────────────────
+  pack:
+    name: Pack .tgz
+    needs: build-native
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download all native artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: native-artifacts
+          pattern: unity-native-*
+
+      - name: Stage native libraries into Plugins structure
+        run: |
+          cp native-artifacts/unity-native-win-x64/bcsv_c_api.dll \
+             unity/Runtime/Plugins/Windows/x86_64/
+          cp native-artifacts/unity-native-linux-x64/libbcsv_c_api.so \
+             unity/Runtime/Plugins/Linux/x86_64/
+          cp native-artifacts/unity-native-linux-arm64/libbcsv_c_api.so \
+             unity/Runtime/Plugins/Linux/arm64/
+          cp native-artifacts/unity-native-osx-arm64/libbcsv_c_api.dylib \
+             unity/Runtime/Plugins/macOS/
+
+          # Remove .gitkeep placeholders
+          find unity/Runtime/Plugins -name ".gitkeep" -delete
+
+          echo "=== Staged native libraries ==="
+          find unity/Runtime/Plugins -type f
+
+      - name: Extract version from tag or set dev version
+        id: version
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          else
+            VERSION="0.0.0-dev.$(date +%Y%m%d%H%M%S)"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Package version: $VERSION"
+
+      - name: Patch package.json version
+        run: |
+          cd unity
+          python3 -c "
+          import json
+          with open('package.json', 'r') as f:
+              pkg = json.load(f)
+          pkg['version'] = '${{ steps.version.outputs.version }}'
+          with open('package.json', 'w') as f:
+              json.dump(pkg, f, indent=2)
+              f.write('\n')
+          print(f'Updated package.json version to: {pkg[\"version\"]}')
+          "
+
+      - name: Pack .tgz (UPM format)
+        run: |
+          # UPM .tgz must contain a top-level "package/" directory
+          mkdir -p staging/package
+          cp -r unity/* staging/package/
+          # Include the license from root
+          cp LICENSE staging/package/LICENSE.md
+
+          cd staging
+          TARBALL="com.bcsv.unity-${{ steps.version.outputs.version }}.tgz"
+          tar -czf "../${TARBALL}" package/
+          cd ..
+
+          ls -lh "${TARBALL}"
+          echo "tarball=${TARBALL}" >> "$GITHUB_OUTPUT"
+
+      - name: Inspect package contents
+        run: |
+          TARBALL="com.bcsv.unity-${{ steps.version.outputs.version }}.tgz"
+          tar -tzf "${TARBALL}" | head -50
+
+      - name: Upload .tgz
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-package
+          path: com.bcsv.unity-*.tgz
+          retention-days: 30
+
+  # ── Attach to GitHub Release ────────────────────────────────────────
+  publish:
+    name: Attach to Release
+    needs: pack
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download .tgz
+        uses: actions/download-artifact@v4
+        with:
+          name: unity-package
+          path: dist
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/com.bcsv.unity-*.tgz

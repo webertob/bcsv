@@ -4,7 +4,7 @@
   by the Unity linker during AOT builds (iOS, WebGL, consoles).
 -->
 <linker>
-  <assembly fullname="Assembly-CSharp">
+  <assembly fullname="BCSV">
     <type fullname="BCSV.NativeMethods" preserve="all"/>
     <type fullname="BCSV.BcsvLayout" preserve="all"/>
     <type fullname="BCSV.BcsvReader" preserve="all"/>

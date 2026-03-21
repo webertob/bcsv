@@ -85,7 +85,7 @@ public class SubscriptionBuilder
 
 public class BcsvRecorder : MonoBehaviour
 {
-    [SerializeField] private string filePath = "c:/ws/test_{timestamp}.bcsv";
+    [SerializeField] private string filePath = "bcsv_recording_{timestamp}.bcsv";
     [SerializeField] private float timerInterval = 0.1f;
     [SerializeField] private bool running = true;
     
@@ -168,7 +168,10 @@ public class BcsvRecorder : MonoBehaviour
         CreateLayout();
         
         string timestamp = System.DateTime.Now.ToString("yyyyMMdd_HHmmss");
-        string finalPath = filePath.Replace("{timestamp}", timestamp);
+        string fileName = filePath.Replace("{timestamp}", timestamp);
+        string finalPath = System.IO.Path.IsPathRooted(fileName)
+            ? fileName
+            : System.IO.Path.Combine(Application.persistentDataPath, fileName);
         
         writer = new BcsvWriter(layout);
         if (writer.Open(finalPath, true, 1, 64, FileFlags.ZOH))

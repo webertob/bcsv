@@ -1,60 +1,58 @@
-# BCSV Unity Plugin
+# BCSV Unity Package
 
-This folder contains Unity integration files for the BCSV (Binary CSV) library, allowing you to use BCSV's high-performance binary data format in Unity projects.
-
-## Overview
-
-BCSV provides a fast, compact binary format for storing tabular data with built-in compression and type safety. This Unity plugin allows you to read and write BCSV files directly from Unity scripts.
+Unity Package Manager (UPM) package for the BCSV (Binary CSV) library.
+Fast, compact binary format for streaming time-series data with LZ4 compression
+and Zero-Order Hold encoding. P/Invoke bindings to the native `bcsv_c_api` library.
 
 ## Installation
 
-### Step 1: Copy Unity Scripts
+### Option A: Git URL (recommended)
 
-Copy both Unity folders to your Unity project's Assets directory:
+In Unity, open **Window → Package Manager → + → Add package from git URL** and enter:
 
-```text
-YourUnityProject/
-└── Assets/
-    ├── BCSV/
-    │   ├── Scripts/         (copy from unity/plugin/)
-    │   │   ├── BcsvLayout.cs
-    │   │   ├── BcsvNative.cs
-    │   │   ├── BcsvReader.cs
-    │   │   ├── BcsvRow.cs
-    │   │   └── BcsvWriter.cs
-    │   └── Examples/        (copy from unity/example/)
-    │       └── BcsvRecorder.cs
-    └── Plugins/
-        └── bcsv_c_api.dll   (copy from build output)
+```
+https://github.com/webertob/bcsv.git?path=unity#v1.4.3
 ```
 
-### Step 2: Copy Native Library
+Replace `v1.4.3` with the desired release tag.
 
-Copy the `bcsv_c_api.dll` to your Unity project's `Assets/Plugins/` folder:
+### Option B: Tarball
 
-**From Release Build:**
+Download `com.bcsv.unity-<version>.tgz` from the
+[GitHub Releases](https://github.com/webertob/bcsv/releases) page, then in Unity
+open **Window → Package Manager → + → Add package from tarball** and select the file.
+
+### Option C: Local development
+
+Clone the repo and in Unity open **Window → Package Manager → + → Add package from disk**,
+then select `unity/package.json`.
+
+### Native Library (local builds only)
+
+When installing via Git URL or tarball the native binaries are included automatically.
+For local development you need to build `bcsv_c_api` and copy the library into the
+`Runtime/Plugins/` directories:
 
 ```bash
-copy "path/to/bcsv/build/Release/bcsv_c_api.dll" "YourUnityProject/Assets/Plugins/"
+# Windows (from repo root)
+cmake --preset ninja-release
+cmake --build --preset ninja-release-build --target bcsv_c_api
+copy build\ninja-release\bin\bcsv_c_api.dll unity\Runtime\Plugins\Windows\x86_64\
+
+# Linux
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+cmake --build build --target bcsv_c_api
+cp build/libbcsv_c_api.so unity/Runtime/Plugins/Linux/x86_64/
+
+# macOS
+cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF
+cmake --build build --target bcsv_c_api
+cp build/libbcsv_c_api.dylib unity/Runtime/Plugins/macOS/
 ```
-
-**From Debug Build (for development):**
-
-```bash
-copy "path/to/bcsv/build/Debug/bcsv_c_api.dll" "YourUnityProject/Assets/Plugins/"
-```
-
-### Step 3: Configure Platform Settings
-
-1. Select `bcsv_c_api.dll` in the Unity Project window
-2. In the Inspector, configure platform settings:
-   - **Settings for Any Platform**: ✅ Check
-   - **Windows**: ✅ Check (x86_64)
-   - **Editor**: ✅ Check (Windows x86_64)
 
 ## Usage Examples
 
-### Basic Writing Example
+### Basic Writing
 
 ```csharp
 using UnityEngine;
@@ -64,30 +62,26 @@ public class BcsvWriteExample : MonoBehaviour
 {
     void Start()
     {
-        // Create layout
-        var layout = new BcsvLayout();
-        layout.AddColumn("id", BcsvColumnType.INT32);
-        layout.AddColumn("name", BcsvColumnType.STRING);
-        layout.AddColumn("position_x", BcsvColumnType.FLOAT);
-        layout.AddColumn("position_y", BcsvColumnType.FLOAT);
-        layout.AddColumn("position_z", BcsvColumnType.FLOAT);
+        using var layout = new BcsvLayout();
+        layout.AddColumn("id", ColumnType.Int32);
+        layout.AddColumn("name", ColumnType.String);
+        layout.AddColumn("position_x", ColumnType.Float);
+        layout.AddColumn("position_y", ColumnType.Float);
+        layout.AddColumn("position_z", ColumnType.Float);
 
-        // Create writer
-        var writer = new BcsvWriter(layout);
+        using var writer = new BcsvWriter(layout);
         string filePath = Application.persistentDataPath + "/gamedata.bcsv";
-        
-        if (writer.Open(filePath))
+
+        if (writer.Open(filePath, overwrite: true))
         {
-            // Write data
-            var row = writer.GetRow();
-            
+            var row = writer.Row;
             row.SetInt32(0, 1);
             row.SetString(1, "Player");
             row.SetFloat(2, transform.position.x);
             row.SetFloat(3, transform.position.y);
             row.SetFloat(4, transform.position.z);
-            writer.WriteRow();
-            
+            writer.Next();
+
             writer.Close();
             Debug.Log("Data written to: " + filePath);
         }
@@ -95,7 +89,7 @@ public class BcsvWriteExample : MonoBehaviour
 }
 ```
 
-### Basic Reading Example
+### Basic Reading
 
 ```csharp
 using UnityEngine;
@@ -106,20 +100,18 @@ public class BcsvReadExample : MonoBehaviour
     void Start()
     {
         string filePath = Application.persistentDataPath + "/gamedata.bcsv";
-        
-        var reader = new BcsvReader();
+
+        using var reader = new BcsvReader();
         if (reader.Open(filePath))
         {
-            while (reader.ReadNext())
+            while (reader.Next())
             {
-                var row = reader.GetRow();
-                
+                var row = reader.Row;
                 int id = row.GetInt32(0);
                 string name = row.GetString(1);
                 float x = row.GetFloat(2);
                 float y = row.GetFloat(3);
                 float z = row.GetFloat(4);
-                
                 Debug.Log($"ID: {id}, Name: {name}, Position: ({x}, {y}, {z})");
             }
             reader.Close();
@@ -128,19 +120,33 @@ public class BcsvReadExample : MonoBehaviour
 }
 ```
 
-## File Structure
+## Package Structure
 
-### Scripts (`unity/plugin/`)
-
-- **`BcsvNative.cs`**: P/Invoke declarations for the native BCSV C API
-- **`BcsvLayout.cs`**: Manages column definitions and data schema
-- **`BcsvWriter.cs`**: High-level writer interface for creating BCSV files
-- **`BcsvReader.cs`**: High-level reader interface for reading BCSV files
-- **`BcsvRow.cs`**: Row data access with type-safe get/set methods
-
-### Examples (`unity/example/`)
-
-- **`BcsvRecorder.cs`**: Complete example showing data recording and playback
+```
+unity/
+├── package.json                 # UPM manifest
+├── CHANGELOG.md
+├── README.md
+├── OWNERSHIP_SEMANTICS.md
+├── Runtime/
+│   ├── link.xml                 # IL2CPP stripping protection
+│   ├── Scripts/
+│   │   ├── BCSV.asmdef          # Assembly definition
+│   │   ├── BcsvNative.cs        # P/Invoke declarations
+│   │   ├── BcsvLayout.cs        # Column schema management
+│   │   ├── BcsvWriter.cs        # Streaming writer
+│   │   ├── BcsvReader.cs        # Streaming reader
+│   │   └── BcsvRow.cs           # Row access (owning, ref, const-ref)
+│   └── Plugins/
+│       ├── Windows/x86_64/      # bcsv_c_api.dll
+│       ├── Linux/x86_64/        # libbcsv_c_api.so
+│       ├── Linux/arm64/         # libbcsv_c_api.so
+│       └── macOS/               # libbcsv_c_api.dylib (universal)
+└── Samples~/
+    └── Basic/
+        ├── BcsvRecorder.cs      # Data recording component
+        └── BcsvUnityExample.cs  # API demo
+```
 
 ## Supported Data Types
 
@@ -183,15 +189,28 @@ string gameDataPath = Path.Combine(Application.streamingAssetsPath, "levels.bcsv
 
 ## Compression
 
-BCSV supports multiple compression levels (0-9):
-- **Level 0**: No compression (fastest)
-- **Level 1**: Fast compression (good balance)
-- **Level 5**: Medium compression (default)
-- **Level 9**: Maximum compression (slowest)
+BCSV supports LZ4 compression controlled via the `compression` parameter when opening a writer:
+- **Level 0**: No compression (fastest writes)
+- **Level 1**: Fast compression (good balance, default for Unity)
+- **Level 9**: Maximum compression (smallest files)
 
 ```csharp
-var writer = new BcsvWriter(layout, compressionLevel: 1); // Fast compression
+writer.Open(filePath, overwrite: true, compression: 1);
 ```
+
+## Building the Native Library
+
+The CI workflow ([`.github/workflows/unity-package.yml`](../.github/workflows/unity-package.yml))
+builds `bcsv_c_api` for all 5 platforms and packs the UPM `.tgz` automatically on every push.
+
+To build locally for your current platform:
+
+```bash
+cmake --preset ninja-release
+cmake --build --preset ninja-release-build --target bcsv_c_api
+```
+
+The output is at `build/ninja-release/bin/bcsv_c_api.dll` (Windows) or `build/libbcsv_c_api.so|.dylib`.
 
 ## Error Handling
 
@@ -216,48 +235,36 @@ catch (System.Exception e)
 }
 ```
 
-## Platform Considerations
-
-### Windows
-- Requires Visual C++ Redistributable (usually included with Unity)
-- 64-bit only
-
-### Building for Other Platforms
-Currently, only Windows is supported. For other platforms, you would need to:
-1. Build the native BCSV library for the target platform
-2. Replace `bcsv_c_api.dll` with the platform-specific library
-3. Configure Unity's platform settings accordingly
-
 ## Troubleshooting
 
 ### Common Issues
 
-1. **"DllNotFoundException"**
-   - Ensure `bcsv_c_api.dll` is in `Assets/Plugins/`
-   - Check platform settings on the DLL
-   - Verify Unity target platform matches DLL architecture
+1. **DllNotFoundException**
+   - Ensure the native library for your platform is in `Runtime/Plugins/`
+   - For local dev: build `bcsv_c_api` and copy it to the correct Plugins subfolder
+   - Verify Unity target platform matches library architecture (x86_64)
 
-2. **"EntryPointNotFoundException"**
-   - DLL version mismatch - ensure you're using the correct DLL version
-   - Rebuild the native library if necessary
+2. **EntryPointNotFoundException**
+   - DLL version mismatch — rebuild the native library from the same commit as the C# scripts
 
-3. **"AccessViolationException"**
-   - Check file paths are valid
-   - Ensure proper disposal of readers/writers
+3. **AccessViolationException**
+   - Ensure proper disposal of readers/writers (`using` statements or `Dispose()`)
    - Verify data types match between write and read operations
 
-### Debug Tips
+### IL2CPP / AOT Builds
 
-- Enable "Load symbols" in Unity's platform settings for better error messages
-- Use the Debug build of `bcsv_c_api.dll` during development
-- Check Unity's Console for detailed error messages
+The package includes `link.xml` to prevent managed code stripping. If you use a
+custom assembly name, update `link.xml` accordingly.
 
-## Performance Tips
+## Platform Support
 
-1. **Reuse Objects**: Create readers/writers once and reuse them
-2. **Batch Operations**: Write multiple rows before closing
-3. **Choose Appropriate Compression**: Balance file size vs. speed
-4. **Proper Disposal**: Always close readers/writers to free resources
+| Platform | Architecture | Status |
+|----------|-------------|--------|
+| Windows | x86_64 | ✅ Supported |
+| Linux | x86_64 | ✅ Supported |
+| Linux | ARM64 | ✅ Supported |
+| macOS | x86_64 + ARM64 | ✅ Universal binary |
+| Android / iOS | — | Not yet supported |
 
 ## License
 

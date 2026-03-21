@@ -51,7 +51,8 @@ namespace BCSV
             get
             {
                 var layoutHandle = NativeMethods.bcsv_row_layout(Handle);
-                return layoutHandle == IntPtr.Zero ? null : new BcsvLayout(layoutHandle);
+                // Non-owning wrapper: the native row owns the layout, we must not destroy it
+                return layoutHandle == IntPtr.Zero ? null : new BcsvLayout(layoutHandle, ownsHandle: false);
             }
         }
 
