@@ -213,6 +213,7 @@ if(WIN32)
     set_target_properties(bcsv_c_api PROPERTIES
         WINDOWS_EXPORT_ALL_SYMBOLS ON
         OUTPUT_NAME "bcsv_c_api"
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     )
 else()
     set_target_properties(bcsv_c_api PROPERTIES
@@ -246,6 +247,11 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTS)
     target_link_libraries(test_c_api_full bcsv_c_api $<$<NOT:$<CXX_COMPILER_ID:MSVC>>:m>)
     target_include_directories(test_c_api_full PRIVATE ${CMAKE_SOURCE_DIR})
     add_test(NAME test_c_api_full COMMAND $<TARGET_FILE:test_c_api_full>)
+
+    # Ensure C API test executables are co-located with the DLL
+    set_target_properties(test_row_api test_c_api test_c_api_full PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
+    )
 
     # Register examples as CTest tests (self-validating)
     if(BUILD_EXAMPLES)
