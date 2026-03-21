@@ -380,3 +380,36 @@ Use `docs/LEAN_CHECKLIST.md` for every non-trivial item (especially wire format,
 Recommended cadence:
 - **Before coding:** run sections A-C to validate scope and ownership
 - **Before merge:** run sections D-H and add the summary template to commit/PR notes
+
+## Adding a New Codec (Version-Gated Registry)
+
+When a new minor version introduces a new row or file codec, follow this recipe.
+A `static_assert` in `definitions.h` will break the build if you add an enum
+value without completing these steps.
+
+### Row Codec (e.g., adding DELTA003 in v1.7)
+
+1. **Create codec files**: `include/bcsv/codec_row/row_codec_delta003.h` and `.hpp`.
+   Keep `row_codec_delta002.h/.hpp` unchanged — old codec must stay for backward compat.
+2. **Add enum value** in `definitions.h`: Add `DELTA003` to `RowCodecId` and bump `ROW_CODEC_COUNT`.
+3. **Add version threshold** in `resolveRowCodecId()` (definitions.h):
+   ```cpp
+   if ((flags & FileFlags::DELTA_ENCODING) != FileFlags::NONE)
+       return (fileMinor >= 7) ? RowCodecId::DELTA003 : RowCodecId::DELTA002;
+   ```
+4. **Add dispatch case** in `RowCodecDispatch::setup()` (row_codec_dispatch.h):
+   new `case RowCodecId::DELTA003:` block with trampoline functions.
+5. **Bump version** via git tag: `git tag v1.7.0`.
+6. **Update** the version→codec table in `VERSIONING.md §Codec Registry`.
+7. **Add tests**: cross-version test that writes with v1.7 codec, patches header
+   to v1.6 minor, and verifies the old codec is selected.
+
+### File Codec (e.g., adding PACKET_LZ4_BATCH_002 in v1.8)
+
+Same pattern — add enum to `FileCodecId`, bump `FILE_CODEC_COUNT`, add threshold
+in `resolveFileCodecId()`, add case in `FileCodecDispatch::setup()`.
+
+### Removing Old Codecs
+
+Old codecs are removed only on **major version bumps** (e.g., v2.0.0).
+Reset the version→codec registry thresholds and remove deprecated codec files.

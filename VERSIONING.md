@@ -129,45 +129,84 @@ git push origin v1.0.4
 
 ## Version Format
 
-BCSV uses [Semantic Versioning](https://semver.org/):
-- **MAJOR**: Incompatible API changes
-- **MINOR**: Backward-compatible functionality
-- **PATCH**: Backward-compatible bug fixes
+BCSV uses [Semantic Versioning](https://semver.org/) with a **unified version**:
+since v1.5.0, the library version and the binary file format version are one and
+the same.  The single version is derived from git tags and is stamped into every
+`.bcsv` file header.
+
+- **MAJOR**: Incompatible API *and* wire-format changes (breaking in both directions)
+- **MINOR**: Backward-compatible new functionality (new codecs, new column types, etc.)
+- **PATCH**: Backward-compatible bug fixes (wire format unchanged)
 
 ### Examples
 
-- `v1.0.0` → `1.0.0` (Initial release)
-- `v1.0.1` → `1.0.1` (Bug fix)
-- `v1.1.0` → `1.1.0` (New features)
-- `v2.0.0` → `2.0.0` (Breaking changes)
+- `v1.5.0` → `1.5.0` (Unified version baseline)
+- `v1.5.1` → `1.5.1` (Bug fix — wire format identical to 1.5.0)
+- `v1.6.0` → `1.6.0` (New codec or feature — can still read 1.5.x files)
+- `v2.0.0` → `2.0.0` (Breaking — cannot read v1.x files, and vice versa)
 
 ### Development Versions
 
-- `1.0.3-dev.5` (5 commits after v1.0.3)
-- `1.0.3-dev.5-dirty` (5 commits + uncommitted changes)
+- `1.5.0-dev.5` (5 commits after v1.5.0)
+- `1.5.0-dev.5-dirty` (5 commits + uncommitted changes)
 
 ## File Format Versioning
 
-BCSV files embed version information for compatibility checking:
+BCSV files embed `version_major.version_minor.version_patch` in the 24-byte
+fixed header.  When reading, the library checks:
 
-```cpp
-// When writing files
-BcsvWriter writer(layout);
-// Version is automatically embedded: VERSION_MAJOR.VERSION_MINOR
+```
+Rule A — Major must match exactly (breaking in both directions).
+         Data written in 1.x cannot be read by 2.x, and vice versa.
 
-// When reading files  
-BcsvReader reader;
-// Automatically validates file version against library version
+Rule B — Minor is backward compatible only.
+         BCSV 1.6.1 can read files written by 1.5.0.
+         But 1.5.0 cannot read files written by 1.6.1.
+
+Rule C — Patch is compatible in both directions.
+         Wire format must not change within a minor version.
+         BCSV 1.6.5 can read files from 1.6.2 and 1.6.7.
 ```
 
-### Compatibility Rules:
-- **Major version mismatch**: File cannot be read (breaking changes)
-- **File has older minor version** (file < library): File can be read — the reader understands all older format features (backward compatibility)
-- **File has newer minor version** (file > library): File is **rejected** — the reader cannot safely interpret features from a newer format version
+Implemented in `Reader::readFileHeader()`:
+```cpp
+if (file_header.versionMajor() != version::MAJOR ||     // Rule A
+    file_header.versionMinor() > version::MINOR)         // Rule B
+    → reject                                             // Rule C: patch not checked
+```
 
-> **Note:** Within v1.x, each minor version introduced breaking wire-format changes
-> (v1.2: xxHash64 checksums, v1.3: streaming LZ4 + new PacketHeader, v1.4: Delta002 + VLE + footer index).
-> True forward compatibility is planned for v2.0.0. See [ARCHITECTURE.md](ARCHITECTURE.md) for the roadmap.
+## Codec Registry
+
+Backward compatibility for minor versions is achieved through **version-gated
+codec selection**.  When a new minor version introduces a new row or file codec,
+the old codec is kept alongside the new one.  The library uses the file header's
+minor version to select the correct codec:
+
+```
+resolveRowCodecId(fileMinor, flags)   →  RowCodecId
+resolveFileCodecId(fileMinor, compressionLevel, flags)  →  FileCodecId
+```
+
+### Version → Codec Mapping
+
+| Minor Version | Row Codecs Available | File Codecs Available |
+|---|---|---|
+| 0–4 | FLAT001, ZOH001, DELTA002 | STREAM_001, STREAM_LZ4_001, PACKET_001, PACKET_LZ4_001, PACKET_LZ4_BATCH_001 |
+
+*This table grows as new codecs are added in future minor versions.*
+
+### Codec Lifecycle
+
+- **Added**: At a minor version bump (e.g., v1.7 adds DELTA003)
+- **Retained**: Old codecs live alongside new ones for backward compatibility
+- **Removed**: Only on a **major** version bump (e.g., v2.0 may drop FLAT001)
+
+### Adding a New Codec — Checklist
+
+See the `HOW TO ADD A NEW CODEC` recipe comments in `definitions.h` (above
+`resolveRowCodecId()` and `resolveFileCodecId()`) and the detailed recipe in
+`SKILLS.md`.  A `static_assert` guardrail in `definitions.h` will **break the
+build** if a new enum value is added without updating the registry.
 
 ## Troubleshooting
 

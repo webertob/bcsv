@@ -317,7 +317,7 @@ TEST(CodecDispatchUnitTest, DefaultState) {
 TEST(CodecDispatchUnitTest, SelectFlat) {
     auto layout = createFlexLayout();
     bcsv::RowCodecDispatch<bcsv::Layout> dispatch;
-    dispatch.selectCodec(bcsv::FileFlags::NONE, layout);
+    dispatch.selectCodec(bcsv::version::MINOR, bcsv::FileFlags::NONE, layout);
     EXPECT_TRUE(dispatch.isSetup());
     EXPECT_TRUE(dispatch.isFlat());
     EXPECT_FALSE(dispatch.isZoH());
@@ -326,7 +326,7 @@ TEST(CodecDispatchUnitTest, SelectFlat) {
 TEST(CodecDispatchUnitTest, SelectZoH) {
     auto layout = createFlexLayout();
     bcsv::RowCodecDispatch<bcsv::Layout> dispatch;
-    dispatch.selectCodec(bcsv::FileFlags::ZERO_ORDER_HOLD, layout);
+    dispatch.selectCodec(bcsv::version::MINOR, bcsv::FileFlags::ZERO_ORDER_HOLD, layout);
     EXPECT_TRUE(dispatch.isSetup());
     EXPECT_FALSE(dispatch.isFlat());
     EXPECT_TRUE(dispatch.isZoH());
@@ -337,10 +337,10 @@ TEST(CodecDispatchUnitTest, ReSelect) {
     bcsv::RowCodecDispatch<bcsv::Layout> dispatch;
 
     // First select flat
-    dispatch.selectCodec(bcsv::FileFlags::NONE, layout);
+    dispatch.selectCodec(bcsv::version::MINOR, bcsv::FileFlags::NONE, layout);
     EXPECT_TRUE(dispatch.isFlat());
 
     // Re-select to ZoH (tests destroy + placement new)
-    dispatch.selectCodec(bcsv::FileFlags::ZERO_ORDER_HOLD, layout);
+    dispatch.selectCodec(bcsv::version::MINOR, bcsv::FileFlags::ZERO_ORDER_HOLD, layout);
     EXPECT_TRUE(dispatch.isZoH());
 }

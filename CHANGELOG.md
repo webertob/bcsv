@@ -12,6 +12,18 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- C++: Unified library version and file format version — single version from git tags stamped into every `.bcsv` header (see VERSIONING.md)
+- C++: Version-gated codec registry — `resolveRowCodecId(fileMinor, flags)` and `resolveFileCodecId(fileMinor, ...)` enable backward-compatible codec selection from file header
+- C++: `static_assert` guardrails on `ROW_CODEC_COUNT` / `FILE_CODEC_COUNT` break the build when a codec enum is added without updating the registry
+- Docs: VERSIONING.md rewritten with A/B/C compatibility rules and Codec Registry section
+- Docs: ARCHITECTURE.md codec dispatch section updated for version-gated selection
+- Docs: SKILLS.md codec recipe added ("Adding a New Codec — Version-Gated Registry")
+
+### Removed
+- C API: `bcsv_format_version()` — superseded by unified `bcsv_version()` (library = format)
+- C#: `BcsvVersion.FormatVersion` property and its P/Invoke binding
+
 ### Added
 - C++: Delta002 row codec now supports `LayoutStatic` (compile-time static layouts) — full serialize/deserialize with recursive template iteration, multi-bit headers, ZoH/FoC/VLE delta tiers
 - Benchmark: Delta002 codec included in all 14 macro benchmark profiles for both Flexible and Static layouts

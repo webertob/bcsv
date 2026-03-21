@@ -107,7 +107,7 @@ bcsv_layout_destroy(layout);
 
 ### Additional Features
 
-- **Version API**: `bcsv_version()` returns the library version string; `bcsv_format_version()` returns the file format version.
+- **Version API**: `bcsv_version()` returns the library version string (unified with file format version since v1.5.0).
 - **Writer codecs**: `bcsv_writer_create(layout)` (flat), `bcsv_writer_create_zoh(layout)` (zero-order hold), `bcsv_writer_create_delta(layout)` (delta + VLE encoding).
 - **Extended reader**: `bcsv_reader_open_ex(reader, filename, rebuild_footer)` opens with optional footer rebuild; `bcsv_reader_read(reader, index)` provides random-access by row index.
 - **CSV reader/writer**: `bcsv_csv_reader_create(layout, delimiter, decimal_sep)` and `bcsv_csv_writer_create(layout, delimiter, decimal_sep)` for reading and writing plain CSV files through the same row API.

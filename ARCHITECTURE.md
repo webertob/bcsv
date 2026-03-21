@@ -353,12 +353,13 @@ The Writer knows what format it writes. All serialize calls are direct member
 function calls, fully inlined.
 
 **Reader** holds `RowCodecDispatch<Layout>` — runtime codec selection via
-function pointers. At `open()` time, `selectCodec(flags, layout)` checks the
-file header's `ZERO_ORDER_HOLD` flag, constructs the correct codec on the heap
-via `new`, and wires function pointers (`serialize_fn_`, `deserialize_fn_`,
-`reset_fn_`, `destroy_fn_`, `clone_fn_`). Subsequent `deserialize()` calls go
-through a single indirect call — branch predictor learns the target after the
-first row.
+function pointers. At `open()` time, `selectCodec(fileMinor, flags, layout)`
+uses the file header's minor version and feature flags to select the correct
+codec via `resolveRowCodecId(fileMinor, flags)`.  The selected codec is
+constructed on the heap via `new`, and function pointers (`serialize_fn_`,
+`deserialize_fn_`, `reset_fn_`, `destroy_fn_`, `clone_fn_`) are wired.
+Subsequent `deserialize()` calls go through a single indirect call — branch
+predictor learns the target after the first row.
 
 #### Codec Selection Flow
 
@@ -370,12 +371,18 @@ first row.
   `DELTA_ENCODING`) to `Writer::open()` which records the flag in the file
   header for readers to detect.
 
-**Reader** — runtime selection from file header flags:
+**Reader** — version-gated runtime selection from file header:
 - `Reader::open()` reads the file header, then calls
-  `RowCodecDispatch::selectCodec(flags, layout)` which maps
+  `RowCodecDispatch::selectCodec(fileMinor, flags, layout)` which calls
+  `resolveRowCodecId(fileMinor, flags)` to map
   `DELTA_ENCODING` → `RowCodecId::DELTA002`,
   `ZERO_ORDER_HOLD` → `RowCodecId::ZOH001`,
   otherwise → `RowCodecId::FLAT001`.
+- The `fileMinor` parameter enables version-gated dispatch: when a future
+  minor version adds a new codec (e.g., `DELTA003`), the registry maps
+  `minor >= N` to the new codec while preserving the old codec for older files.
+- See `resolveRowCodecId()` and `resolveFileCodecId()` in `definitions.h`
+  and the `VERSIONING.md §Codec Registry` for full details.
 
 #### Naming Convention
 

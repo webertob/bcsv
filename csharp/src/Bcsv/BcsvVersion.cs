@@ -1,7 +1,7 @@
 // Copyright (c) 2025-2026 Tobias Weber. Licensed under the MIT License.
 namespace Bcsv;
 
-/// <summary>Library and file format version information.</summary>
+/// <summary>Library version information (unified with wire format since v1.5.0).</summary>
 public static class BcsvVersion
 {
     public static string Version
@@ -10,7 +10,4 @@ public static class BcsvVersion
     public static int Major => NativeMethods.bcsv_version_major();
     public static int Minor => NativeMethods.bcsv_version_minor();
     public static int Patch => NativeMethods.bcsv_version_patch();
-
-    public static string FormatVersion
-        => NativeMethods.PtrToStringUtf8(NativeMethods.bcsv_format_version());
 }

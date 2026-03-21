@@ -25,7 +25,6 @@ namespace {
 thread_local std::string g_last_error;
 thread_local bool g_has_error = false;     // flag-based: avoids string::clear() per call
 thread_local std::string g_fmt_buf;        // reusable buffer for to_string helpers
-thread_local std::string g_fmt_version;    // reusable buffer for format version string
 
 inline void clear_last_error() noexcept {
     g_has_error = false;
@@ -182,12 +181,6 @@ const char* bcsv_version(void) {
 int bcsv_version_major(void) { return bcsv::VERSION_MAJOR; }
 int bcsv_version_minor(void) { return bcsv::VERSION_MINOR; }
 int bcsv_version_patch(void) { return bcsv::VERSION_PATCH; }
-const char* bcsv_format_version(void) {
-    g_fmt_version = std::to_string(bcsv::BCSV_FORMAT_VERSION_MAJOR) + "." +
-                    std::to_string(bcsv::BCSV_FORMAT_VERSION_MINOR) + "." +
-                    std::to_string(bcsv::BCSV_FORMAT_VERSION_PATCH);
-    return g_fmt_version.c_str();
-}
 
 // ============================================================================
 // Layout API

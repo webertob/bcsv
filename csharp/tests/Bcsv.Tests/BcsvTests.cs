@@ -42,12 +42,6 @@ public class BcsvTests : IDisposable
         Assert.True(BcsvVersion.Patch >= 0);
     }
 
-    [Fact]
-    public void FormatVersion_ReturnsNonEmpty()
-    {
-        Assert.False(string.IsNullOrEmpty(BcsvVersion.FormatVersion));
-    }
-
     // ════════════════════════════════════════════════════════════════════
     // Layout
     // ════════════════════════════════════════════════════════════════════

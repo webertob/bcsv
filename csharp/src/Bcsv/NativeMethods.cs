@@ -21,9 +21,6 @@ internal static partial class NativeMethods
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern int bcsv_version_patch();
 
-    [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern IntPtr bcsv_format_version();
-
     // ── Error ──────────────────────────────────────────────────────────
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern IntPtr bcsv_last_error();

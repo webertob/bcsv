@@ -60,10 +60,9 @@ namespace bcsv {
         return version::STRING;
     }
 
-    // File format version (separate from library version)
-    constexpr uint8_t BCSV_FORMAT_VERSION_MAJOR = 1;
-    constexpr uint8_t BCSV_FORMAT_VERSION_MINOR = 4;
-    constexpr uint8_t BCSV_FORMAT_VERSION_PATCH = 0;
+    // Since v1.5.0, library version and wire-format version are unified.
+    // The library version (from git tags) IS the file format version.
+    // See VERSIONING.md for compatibility rules (A/B/C).
 
     // Constants for the binary file format
     constexpr char MAGIC_BYTES_BCSV[4] = { 'B', 'C', 'S', 'V' };
@@ -112,6 +111,52 @@ namespace bcsv {
     }
 
     /**
+     * @brief Identifies the row-level codec used for serialization/deserialization.
+     *
+     * Each ID maps to a concrete RowCodec class.  The ID is derived from
+     * FileHeader flags and file minor version via resolveRowCodecId().
+     */
+    enum class RowCodecId : uint8_t {
+        FLAT001,    ///< Dense flat binary: raw column data, no delta/compression
+        ZOH001,     ///< Zero-Order-Hold: detects unchanged columns
+        DELTA002,   ///< Delta + VLE: type-grouped, combined header codes
+    };
+
+    // When adding a new RowCodecId value, this static_assert will fire.
+    // Follow the checklist in the recipe comment above resolveRowCodecId().
+    constexpr size_t ROW_CODEC_COUNT = 3;
+    static_assert(static_cast<int>(RowCodecId::DELTA002) + 1 == ROW_CODEC_COUNT,
+        "New RowCodecId added \u2014 update resolveRowCodecId(), ROW_CODEC_COUNT, "
+        "and RowCodecDispatch::setup(). See VERSIONING.md \u00a7Codec Registry.");
+
+    // \u2500\u2500 HOW TO ADD A NEW ROW CODEC \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    // 1. Add enum value to RowCodecId (and bump ROW_CODEC_COUNT)
+    // 2. Add version threshold in resolveRowCodecId(): if (minor >= N) return new codec
+    // 3. Add case to RowCodecDispatch::setup() switch
+    // 4. Bump version::MINOR via git tag
+    // 5. See VERSIONING.md \u00a7Codec Registry for full details
+    // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+
+    /**
+     * @brief Derive the RowCodecId from file header fields.
+     *
+     * Uses file minor version and FileFlags to select the row codec.
+     * The fileMinor parameter enables version-gated codec selection
+     * for backward compatibility.
+     *
+     * @param fileMinor  Minor version from the file header
+     * @param flags  Feature flags from the file header
+     */
+    inline constexpr RowCodecId resolveRowCodecId([[maybe_unused]] uint8_t fileMinor,
+                                                  FileFlags flags) noexcept {
+        if ((flags & FileFlags::DELTA_ENCODING) != FileFlags::NONE)
+            return RowCodecId::DELTA002;
+        else if ((flags & FileFlags::ZERO_ORDER_HOLD) != FileFlags::NONE)
+            return RowCodecId::ZOH001;
+        else
+            return RowCodecId::FLAT001;
+    }
+
+    /**
      * @brief Identifies the file-level codec used for framing, compression and I/O.
      *
      * Each ID maps to a concrete FileCodec class.  The ID is derived from
@@ -128,14 +173,34 @@ namespace bcsv {
         PACKET_LZ4_BATCH_001,   ///< Packet-LZ4-Batch: packet framing + batch LZ4, async double-buffered I/O
     };
 
+    // When adding a new FileCodecId value, this static_assert will fire.
+    // Follow the checklist in the recipe comment above resolveFileCodecId().
+    constexpr size_t FILE_CODEC_COUNT = 5;
+    static_assert(static_cast<int>(FileCodecId::PACKET_LZ4_BATCH_001) + 1 == FILE_CODEC_COUNT,
+        "New FileCodecId added — update resolveFileCodecId(), FILE_CODEC_COUNT, "
+        "and FileCodecDispatch::setup(). See VERSIONING.md §Codec Registry.");
+
+    // ── HOW TO ADD A NEW FILE CODEC ──────────────────────────────────
+    // 1. Add enum value to FileCodecId (and bump FILE_CODEC_COUNT)
+    // 2. Add version threshold below: if (fileMinor >= N) return new codec
+    // 3. Add case to FileCodecDispatch::setup() switch
+    // 4. Bump version::MINOR via git tag
+    // 5. See VERSIONING.md §Codec Registry for full details
+    // ─────────────────────────────────────────────────────────────────────
+
     /**
      * @brief Derive the FileCodecId from file header fields.
      *
-     * Uses compression_level and the STREAM_MODE / BATCH_COMPRESS flags to
-     * select the codec.  Batch-LZ4 is selected when both BATCH_COMPRESS is
-     * set and compression is enabled.
+     * Uses file minor version, compression_level and the STREAM_MODE /
+     * BATCH_COMPRESS flags to select the codec.  The fileMinor parameter
+     * enables version-gated codec selection for backward compatibility.
+     *
+     * @param fileMinor  Minor version from the file header (for version-gated dispatch)
+     * @param compressionLevel  Compression level from the file header
+     * @param flags  Feature flags from the file header
      */
-    inline constexpr FileCodecId resolveFileCodecId(uint8_t compressionLevel, FileFlags flags) noexcept {
+    inline constexpr FileCodecId resolveFileCodecId([[maybe_unused]] uint8_t fileMinor,
+                                                    uint8_t compressionLevel, FileFlags flags) noexcept {
         const bool stream = (flags & FileFlags::STREAM_MODE) != FileFlags::NONE;
         const bool compressed = compressionLevel > 0;
         const bool batch = (flags & FileFlags::BATCH_COMPRESS) != FileFlags::NONE;

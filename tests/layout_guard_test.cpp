@@ -308,7 +308,7 @@ TEST(LayoutGuard, DispatchSetupLocksLayout) {
 TEST(LayoutGuard, DispatchSelectCodecLocksLayout) {
     Layout layout = makeTestLayout();
     RowCodecDispatch<Layout> dispatch;
-    dispatch.selectCodec(FileFlags::ZERO_ORDER_HOLD, layout);
+    dispatch.selectCodec(version::MINOR, FileFlags::ZERO_ORDER_HOLD, layout);
     EXPECT_TRUE(layout.isStructurallyLocked());
 
     dispatch.destroy();
@@ -318,7 +318,7 @@ TEST(LayoutGuard, DispatchSelectCodecLocksLayout) {
 TEST(LayoutGuard, DispatchDestroyReleasesLock) {
     Layout layout = makeTestLayout();
     RowCodecDispatch<Layout> dispatch;
-    dispatch.selectCodec(FileFlags::NONE, layout);
+    dispatch.selectCodec(version::MINOR, FileFlags::NONE, layout);
     EXPECT_TRUE(layout.isStructurallyLocked());
 
     dispatch.destroy();

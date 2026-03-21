@@ -71,26 +71,26 @@ protected:
 
 TEST_F(FileCodecTest, ResolveFileCodecId_PacketLZ4_Default) {
     // Default: compression > 0, no STREAM_MODE → PACKET_LZ4_001
-    EXPECT_EQ(resolveFileCodecId(1, FileFlags::NONE), FileCodecId::PACKET_LZ4_001);
-    EXPECT_EQ(resolveFileCodecId(9, FileFlags::NONE), FileCodecId::PACKET_LZ4_001);
-    EXPECT_EQ(resolveFileCodecId(5, FileFlags::ZERO_ORDER_HOLD), FileCodecId::PACKET_LZ4_001);
+    EXPECT_EQ(resolveFileCodecId(version::MINOR, 1, FileFlags::NONE), FileCodecId::PACKET_LZ4_001);
+    EXPECT_EQ(resolveFileCodecId(version::MINOR, 9, FileFlags::NONE), FileCodecId::PACKET_LZ4_001);
+    EXPECT_EQ(resolveFileCodecId(version::MINOR, 5, FileFlags::ZERO_ORDER_HOLD), FileCodecId::PACKET_LZ4_001);
 }
 
 TEST_F(FileCodecTest, ResolveFileCodecId_PacketRaw) {
     // compression = 0, no STREAM_MODE → PACKET_001
-    EXPECT_EQ(resolveFileCodecId(0, FileFlags::NONE), FileCodecId::PACKET_001);
-    EXPECT_EQ(resolveFileCodecId(0, FileFlags::ZERO_ORDER_HOLD), FileCodecId::PACKET_001);
+    EXPECT_EQ(resolveFileCodecId(version::MINOR, 0, FileFlags::NONE), FileCodecId::PACKET_001);
+    EXPECT_EQ(resolveFileCodecId(version::MINOR, 0, FileFlags::ZERO_ORDER_HOLD), FileCodecId::PACKET_001);
 }
 
 TEST_F(FileCodecTest, ResolveFileCodecId_StreamRaw) {
     // compression = 0, STREAM_MODE → STREAM_001
-    EXPECT_EQ(resolveFileCodecId(0, FileFlags::STREAM_MODE), FileCodecId::STREAM_001);
+    EXPECT_EQ(resolveFileCodecId(version::MINOR, 0, FileFlags::STREAM_MODE), FileCodecId::STREAM_001);
 }
 
 TEST_F(FileCodecTest, ResolveFileCodecId_StreamLZ4) {
     // compression > 0, STREAM_MODE → STREAM_LZ4_001
-    EXPECT_EQ(resolveFileCodecId(1, FileFlags::STREAM_MODE), FileCodecId::STREAM_LZ4_001);
-    EXPECT_EQ(resolveFileCodecId(9, FileFlags::STREAM_MODE), FileCodecId::STREAM_LZ4_001);
+    EXPECT_EQ(resolveFileCodecId(version::MINOR, 1, FileFlags::STREAM_MODE), FileCodecId::STREAM_LZ4_001);
+    EXPECT_EQ(resolveFileCodecId(version::MINOR, 9, FileFlags::STREAM_MODE), FileCodecId::STREAM_LZ4_001);
 }
 
 // ============================================================================
@@ -112,7 +112,7 @@ TEST_F(FileCodecTest, Dispatch_IsSetup_AfterSelect) {
     FileCodecDispatch d;
     EXPECT_FALSE(d.isSetup());
 
-    d.select(1, FileFlags::NONE);
+    d.select(version::MINOR, 1, FileFlags::NONE);
     EXPECT_TRUE(d.isSetup());
     EXPECT_EQ(d.codecId(), FileCodecId::PACKET_LZ4_001);
 
@@ -452,13 +452,13 @@ TEST_F(FileCodecTest, RoundTrip_PacketLZ4_Delta_MultiPacket) {
 
 TEST_F(FileCodecTest, ResolveFileCodecId_BatchCompress) {
     // BATCH_COMPRESS + compression > 0 → PACKET_LZ4_BATCH_001
-    EXPECT_EQ(resolveFileCodecId(1, FileFlags::BATCH_COMPRESS), FileCodecId::PACKET_LZ4_BATCH_001);
-    EXPECT_EQ(resolveFileCodecId(9, FileFlags::BATCH_COMPRESS), FileCodecId::PACKET_LZ4_BATCH_001);
+    EXPECT_EQ(resolveFileCodecId(version::MINOR, 1, FileFlags::BATCH_COMPRESS), FileCodecId::PACKET_LZ4_BATCH_001);
+    EXPECT_EQ(resolveFileCodecId(version::MINOR, 9, FileFlags::BATCH_COMPRESS), FileCodecId::PACKET_LZ4_BATCH_001);
     // With ZoH too
-    EXPECT_EQ(resolveFileCodecId(5, FileFlags::BATCH_COMPRESS | FileFlags::ZERO_ORDER_HOLD),
+    EXPECT_EQ(resolveFileCodecId(version::MINOR, 5, FileFlags::BATCH_COMPRESS | FileFlags::ZERO_ORDER_HOLD),
               FileCodecId::PACKET_LZ4_BATCH_001);
     // BATCH_COMPRESS without compression → PACKET_001 (batch requires compression)
-    EXPECT_EQ(resolveFileCodecId(0, FileFlags::BATCH_COMPRESS), FileCodecId::PACKET_001);
+    EXPECT_EQ(resolveFileCodecId(version::MINOR, 0, FileFlags::BATCH_COMPRESS), FileCodecId::PACKET_001);
 }
 
 #ifdef BCSV_HAS_BATCH_CODEC

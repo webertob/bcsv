@@ -439,7 +439,7 @@ TEST(CodecDelta002Test, SelectCodecWithDeltaFlag) {
     Layout layout({{"i32", ColumnType::INT32}});
 
     RowCodecDispatch<Layout> dispatch;
-    dispatch.selectCodec(FileFlags::DELTA_ENCODING, layout);
+    dispatch.selectCodec(version::MINOR, FileFlags::DELTA_ENCODING, layout);
     EXPECT_TRUE(dispatch.isDelta());
     EXPECT_EQ(dispatch.codecId(), RowCodecId::DELTA002);
 }
@@ -449,7 +449,7 @@ TEST(CodecDelta002Test, SelectCodecPriority_DeltaOverZoH) {
 
     RowCodecDispatch<Layout> dispatch;
     // DELTA_ENCODING takes priority over ZERO_ORDER_HOLD
-    dispatch.selectCodec(FileFlags::DELTA_ENCODING | FileFlags::ZERO_ORDER_HOLD, layout);
+    dispatch.selectCodec(version::MINOR, FileFlags::DELTA_ENCODING | FileFlags::ZERO_ORDER_HOLD, layout);
     EXPECT_TRUE(dispatch.isDelta());
     EXPECT_EQ(dispatch.codecId(), RowCodecId::DELTA002);
 }

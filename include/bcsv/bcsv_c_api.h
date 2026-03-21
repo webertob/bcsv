@@ -86,11 +86,10 @@ typedef void (*bcsv_visit_callback_t)(size_t col_index, bcsv_type_t col_type,
 // ============================================================================
 // Version API
 // ============================================================================
-const char*         bcsv_version        (void);                         // library version string, e.g. "1.2.0"
+const char*         bcsv_version        (void);                         // library version string, e.g. "1.5.0"
 int                 bcsv_version_major  (void);                         // library major version
 int                 bcsv_version_minor  (void);                         // library minor version
 int                 bcsv_version_patch  (void);                         // library patch version
-const char*         bcsv_format_version (void);                         // file format version string, e.g. "1.3.0"
 
 // ============================================================================
 // Error API

@@ -165,7 +165,8 @@ namespace bcsv {
             row_cnt_ = 0;
 
             // Initialize file-level codec (framing, compression, checksums)
-            file_codec_.select(static_cast<uint8_t>(compressionLevel), flags);
+            file_codec_.select(static_cast<uint8_t>(version::MINOR),
+                               static_cast<uint8_t>(compressionLevel), flags);
             file_codec_.setupWrite(stream_, file_header_);
 
             row_.clear();

@@ -123,8 +123,8 @@ public:
     }
 
     /// Convenience: resolve codec from header fields, then construct.
-    void select(uint8_t compressionLevel, FileFlags flags) {
-        setup(resolveFileCodecId(compressionLevel, flags));
+    void select(uint8_t fileMinor, uint8_t compressionLevel, FileFlags flags) {
+        setup(resolveFileCodecId(fileMinor, compressionLevel, flags));
     }
 
     void destroy() noexcept {

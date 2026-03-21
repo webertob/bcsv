@@ -519,7 +519,7 @@ TEST_F(CoverageGapsTest, VersionCompatibility_FullFileCycle_RejectsNewerMinor) {
         std::fstream f(path, std::ios::in | std::ios::out | std::ios::binary);
         ASSERT_TRUE(f.is_open());
         f.seekp(13);
-        char patched_minor = static_cast<char>(BCSV_FORMAT_VERSION_MINOR + 1);
+        char patched_minor = static_cast<char>(version::MINOR + 1);
         f.write(&patched_minor, 1);
         f.close();
     }
@@ -529,7 +529,7 @@ TEST_F(CoverageGapsTest, VersionCompatibility_FullFileCycle_RejectsNewerMinor) {
         Reader<Layout> reader;
         bool opened = reader.open(path);
         EXPECT_FALSE(opened) << "Reader should reject file with minor version "
-                             << (BCSV_FORMAT_VERSION_MINOR + 1);
+                             << (version::MINOR + 1);
     }
 }
 
@@ -569,7 +569,7 @@ TEST_F(CoverageGapsTest, VersionCompatibility_FullFileCycle_RejectsMajor2) {
 TEST_F(CoverageGapsTest, VersionCompatibility_FullFileCycle_AcceptsOlderMinor) {
     // Write a valid file, patch minor version to current-1, Reader should accept.
 
-    if (BCSV_FORMAT_VERSION_MINOR == 0) {
+    if (version::MINOR == 0) {
         GTEST_SKIP() << "Cannot test older minor when current minor is 0";
     }
 
@@ -591,7 +591,7 @@ TEST_F(CoverageGapsTest, VersionCompatibility_FullFileCycle_AcceptsOlderMinor) {
         std::fstream f(path, std::ios::in | std::ios::out | std::ios::binary);
         ASSERT_TRUE(f.is_open());
         f.seekp(13);
-        char patched_minor = static_cast<char>(BCSV_FORMAT_VERSION_MINOR - 1);
+        char patched_minor = static_cast<char>(version::MINOR - 1);
         f.write(&patched_minor, 1);
         f.close();
     }

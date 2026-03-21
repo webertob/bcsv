@@ -33,9 +33,9 @@ protected:
 TEST_F(FileHeaderTest, DefaultConstruction) {
     FileHeader hdr;
     EXPECT_TRUE(hdr.isValidMagic());
-    EXPECT_EQ(hdr.versionMajor(), BCSV_FORMAT_VERSION_MAJOR);
-    EXPECT_EQ(hdr.versionMinor(), BCSV_FORMAT_VERSION_MINOR);
-    EXPECT_EQ(hdr.versionPatch(), BCSV_FORMAT_VERSION_PATCH);
+    EXPECT_EQ(hdr.versionMajor(), static_cast<uint8_t>(version::MAJOR));
+    EXPECT_EQ(hdr.versionMinor(), static_cast<uint8_t>(version::MINOR));
+    EXPECT_EQ(hdr.versionPatch(), static_cast<uint8_t>(version::PATCH));
 }
 
 TEST_F(FileHeaderTest, VersionString) {
@@ -196,7 +196,7 @@ TEST_F(FileHeaderTest, VersionCompatibility_RejectsNewerMajor) {
 
     EXPECT_EQ(reader_hdr.versionMajor(), 2);
     // The reader's version check logic rejects mismatched major:
-    EXPECT_NE(reader_hdr.versionMajor(), BCSV_FORMAT_VERSION_MAJOR);
+    EXPECT_NE(reader_hdr.versionMajor(), static_cast<uint8_t>(version::MAJOR));
 }
 
 TEST_F(FileHeaderTest, VersionCompatibility_RejectsNewerMinor) {
@@ -210,7 +210,7 @@ TEST_F(FileHeaderTest, VersionCompatibility_RejectsNewerMinor) {
     std::string data = oss.str();
 
     // Patch byte offset 13 (minor version) to current + 1
-    data[13] = static_cast<char>(BCSV_FORMAT_VERSION_MINOR + 1);
+    data[13] = static_cast<char>(version::MINOR + 1);
 
     std::istringstream iss(data, std::ios::binary);
     Layout read_layout;
@@ -218,12 +218,12 @@ TEST_F(FileHeaderTest, VersionCompatibility_RejectsNewerMinor) {
     reader_hdr.readFromBinary(iss, read_layout);
 
     // Reader should see minor > current
-    EXPECT_GT(reader_hdr.versionMinor(), BCSV_FORMAT_VERSION_MINOR);
+    EXPECT_GT(reader_hdr.versionMinor(), static_cast<uint8_t>(version::MINOR));
 }
 
 TEST_F(FileHeaderTest, VersionCompatibility_AcceptsOlderMinor) {
     // Write a valid header, patch minor version to current-1, verify reader accepts
-    if constexpr (BCSV_FORMAT_VERSION_MINOR == 0) {
+    if constexpr (version::MINOR == 0) {
         GTEST_SKIP() << "Cannot test older minor when current minor is 0";
         return;
     }
@@ -237,7 +237,7 @@ TEST_F(FileHeaderTest, VersionCompatibility_AcceptsOlderMinor) {
     std::string data = oss.str();
 
     // Patch byte offset 13 (minor version) to current - 1
-    data[13] = static_cast<char>(BCSV_FORMAT_VERSION_MINOR - 1);
+    data[13] = static_cast<char>(version::MINOR - 1);
 
     std::istringstream iss(data, std::ios::binary);
     Layout read_layout;
@@ -245,8 +245,8 @@ TEST_F(FileHeaderTest, VersionCompatibility_AcceptsOlderMinor) {
     reader_hdr.readFromBinary(iss, read_layout);
 
     // Major matches, minor <= current → acceptable
-    EXPECT_EQ(reader_hdr.versionMajor(), BCSV_FORMAT_VERSION_MAJOR);
-    EXPECT_LT(reader_hdr.versionMinor(), BCSV_FORMAT_VERSION_MINOR);
+    EXPECT_EQ(reader_hdr.versionMajor(), static_cast<uint8_t>(version::MAJOR));
+    EXPECT_LT(reader_hdr.versionMinor(), static_cast<uint8_t>(version::MINOR));
     // Layout was successfully read
     EXPECT_EQ(read_layout.columnCount(), 1u);
     EXPECT_EQ(read_layout.columnName(0), "x");

@@ -86,9 +86,6 @@ static void test_version_api(void) {
     char expected[32];
     snprintf(expected, sizeof(expected), "%d.%d.%d", major, minor, patch);
     TEST_ASSERT_EQ_STR(ver, expected, "version string matches components");
-
-    const char* fmt_ver = bcsv_format_version();
-    TEST_ASSERT(fmt_ver != NULL && strlen(fmt_ver) > 0, "format_version returns non-empty string");
 }
 
 /* ── Layout API Extended Tests ─────────────────────────────────────── */

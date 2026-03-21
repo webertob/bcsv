@@ -34,11 +34,7 @@
 
 namespace bcsv {
 
-enum class RowCodecId : uint8_t {
-    FLAT001,
-    ZOH001,
-    DELTA002,
-};
+// RowCodecId is defined in definitions.h (alongside resolveRowCodecId)
 
 template<typename LayoutType>
 class RowCodecDispatch {
@@ -139,15 +135,8 @@ public:
         setup(id);
     }
 
-    void selectCodec(FileFlags flags, const LayoutType& layout) {
-        RowCodecId id;
-        if ((flags & FileFlags::DELTA_ENCODING) != FileFlags::NONE)
-            id = RowCodecId::DELTA002;
-        else if ((flags & FileFlags::ZERO_ORDER_HOLD) != FileFlags::NONE)
-            id = RowCodecId::ZOH001;
-        else
-            id = RowCodecId::FLAT001;
-        setup(id, layout);
+    void selectCodec(uint8_t fileMinor, FileFlags flags, const LayoutType& layout) {
+        setup(resolveRowCodecId(fileMinor, flags), layout);
     }
 
     void destroy() noexcept {

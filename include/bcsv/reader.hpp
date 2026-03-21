@@ -130,7 +130,8 @@ namespace bcsv {
 
             // Initialize file-level codec (framing, decompression, checksums)
             // setupRead also opens the first packet for packet-based codecs.
-            file_codec_.select(compressionLevel(), file_header_.getFlags());
+            file_codec_.select(file_header_.versionMinor(),
+                               compressionLevel(), file_header_.getFlags());
             file_codec_.setupRead(stream_, file_header_);
 
             row_pos_ = 0;
@@ -163,14 +164,14 @@ namespace bcsv {
             file_header_.readFromBinary(stream_, layout);
             
             // Check version compatibility: same major, minor <= ours
-            if (file_header_.versionMajor() != BCSV_FORMAT_VERSION_MAJOR || 
-                file_header_.versionMinor() > BCSV_FORMAT_VERSION_MINOR) {
+            if (file_header_.versionMajor() != static_cast<uint8_t>(version::MAJOR) || 
+                file_header_.versionMinor() > static_cast<uint8_t>(version::MINOR)) {
                 std::ostringstream oss;
                 oss << "Error: Incompatible file version: "
                     << static_cast<int>(file_header_.versionMajor()) << "."
                     << static_cast<int>(file_header_.versionMinor())
-                    << " (Expected: " << static_cast<int>(BCSV_FORMAT_VERSION_MAJOR) << "." 
-                    << static_cast<int>(BCSV_FORMAT_VERSION_MINOR) << " or earlier)";
+                    << " (Expected: " << version::MAJOR << "." 
+                    << version::MINOR << " or earlier)";
                 err_msg_ = oss.str();
                 if constexpr (DEBUG_OUTPUTS) {
                     std::cerr << err_msg_ << "\n";
@@ -180,9 +181,11 @@ namespace bcsv {
             
             row_ = RowType(layout);
 
-            // Initialize codec dispatch — selects Flat001 or ZoH001 based on
-            // file flags. Codec is selected at file-open time (Item 11 §7).
-            row_codec_.selectCodec(file_header_.getFlags(), row_.layout());
+            // Initialize codec dispatch — version-gated codec selection.
+            // Uses file minor version + flags to select the correct codec
+            // for backward compatibility.  See resolveRowCodecId().
+            row_codec_.selectCodec(file_header_.versionMinor(),
+                                   file_header_.getFlags(), row_.layout());
 
             return true;
             
@@ -261,7 +264,8 @@ namespace bcsv {
         std::streampos originalPos = Base::stream_.tellg();
 
         // Initialize a separate row codec for direct-access deserialization
-        da_row_codec_.selectCodec(Base::file_header_.getFlags(), Base::row_.layout());
+        da_row_codec_.selectCodec(Base::file_header_.versionMinor(),
+                                  Base::file_header_.getFlags(), Base::row_.layout());
 
         // additionally read file footer
         try {
