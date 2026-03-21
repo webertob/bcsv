@@ -1116,11 +1116,20 @@ namespace bcsv {
             assert(endIndex <= COLUMN_COUNT && "RowStatic::visit: Range out of bounds");
         }
         
-        for (size_t i = startIndex; i < endIndex; ++i) {
-            [&]<size_t... I>(std::index_sequence<I...>) {
-                static_cast<void>(((I == i ? (static_cast<void>(visitor(I, std::get<I>(data_))), true) : false) || ...));
-            }(std::make_index_sequence<COLUMN_COUNT>{});
-        }
+        using Self = RowStatic<ColumnTypes...>;
+        using VisitorRef = Visitor&;
+        using DispatchFunc = void (*)(VisitorRef, const Self&);
+
+        static constexpr auto handlers = []<size_t... I>(std::index_sequence<I...>) {
+            return std::array<DispatchFunc, COLUMN_COUNT>{
+                +[](VisitorRef v, const Self& self) {
+                    v(I, std::get<I>(self.data_));
+                }...
+            };
+        }(std::make_index_sequence<COLUMN_COUNT>{});
+
+        for (size_t i = startIndex; i < endIndex; ++i)
+            handlers[i](visitor, *this);
     }
 
     template<typename... ColumnTypes>
@@ -1146,15 +1155,20 @@ namespace bcsv {
             assert(endIndex <= COLUMN_COUNT && "RowStatic::visit: Range out of bounds");
         }
         
-        for (size_t i = startIndex; i < endIndex; ++i) {
-            [&]<size_t... I>(std::index_sequence<I...>) {
-                ([&] {
-                    if (I == i) {
-                        visitor(I, std::get<I>(data_));
-                    }
-                }(), ...);
-            }(std::make_index_sequence<COLUMN_COUNT>{});
-        }
+        using Self = RowStatic<ColumnTypes...>;
+        using VisitorRef = Visitor&;
+        using DispatchFunc = void (*)(VisitorRef, Self&);
+
+        static constexpr auto handlers = []<size_t... I>(std::index_sequence<I...>) {
+            return std::array<DispatchFunc, COLUMN_COUNT>{
+                +[](VisitorRef v, Self& self) {
+                    v(I, std::get<I>(self.data_));
+                }...
+            };
+        }(std::make_index_sequence<COLUMN_COUNT>{});
+
+        for (size_t i = startIndex; i < endIndex; ++i)
+            handlers[i](visitor, *this);
     }
 
     template<typename... ColumnTypes>

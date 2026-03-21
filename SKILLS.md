@@ -296,7 +296,7 @@ Deep reference: `tests/README.md`.
 # Quick micro benchmark
 python3 benchmark/run.py wip --type=MICRO --no-report
 
-# Macro small (14 profiles, ~30s)
+# Macro small (15 profiles, ~30s)
 python3 benchmark/run.py wip --type=MACRO-SMALL
 
 # Full campaign
@@ -307,6 +307,11 @@ python3 benchmark/run.py wip --type=MICRO,MACRO-SMALL,MACRO-LARGE
 
 # Compare runs
 python3 benchmark/report.py <candidate_dir> --baseline <baseline_dir>
+
+# Codec parity investigation (Flexible vs Static, all file codecs × row codecs)
+./build/ninja-release/bin/bench_codec_compare \
+    --rows=50000 --iterations=5 --profile=measurement_campaign \
+    --storage=both --json=tmp/parity_investigation.json
 ```
 
 Targets: `bench_macro_datasets`, `bench_micro_types`, `bench_micro_bitset`, `bench_direct_access`, `bench_c_api`, `bench_sampler`, `bench_codec_compare`.

@@ -261,6 +261,74 @@ def generate_codec_recommendation(condensed_rows):
     return lines
 
 
+def generate_static_parity_table(condensed_rows):
+    """Generate a Static vs Flexible parity table from condensed metrics.
+
+    Pairs each flex mode with its static counterpart and computes speedup
+    ratios (Static / Flexible).  Ratios > 1.0 mean Static is faster;
+    values < 1.0 are flagged as anomalies.
+    """
+    if not condensed_rows:
+        return []
+
+    by_mode = {r["mode"]: r for r in condensed_rows}
+
+    pairs = [
+        ("Dense", "BCSV Flexible Dense", "BCSV Static Dense"),
+        ("ZoH",   "BCSV Flexible ZoH",   "BCSV Static ZoH"),
+        ("Delta", "BCSV Flexible Delta",  "BCSV Static Delta"),
+    ]
+
+    def ratio_text(static_val, flex_val):
+        if static_val is None or flex_val is None or flex_val == 0:
+            return "—"
+        r = static_val / flex_val
+        flag = " **!!**" if r < 1.0 else ""
+        return f"{r:.3f}{flag}"
+
+    lines = []
+    lines.append("### Static vs Flexible Parity")
+    lines.append("")
+    lines.append("Speedup = Static rows/s ÷ Flexible rows/s.  "
+                 "Values > 1.0 mean Static is faster; **!!** flags anomalies where Static is slower.")
+    lines.append("")
+    lines.append("| Codec | Write Speedup | Read Speedup | Compression Ratio Δ |")
+    lines.append("|-------|-------------:|-------------:|--------------------:|")
+
+    has_data = False
+    for label, flex_key, stat_key in pairs:
+        flex = by_mode.get(flex_key, {})
+        stat = by_mode.get(stat_key, {})
+
+        wr_flex = flex.get("dense_write_rows_per_sec_median")
+        wr_stat = stat.get("dense_write_rows_per_sec_median")
+        rd_flex = flex.get("dense_read_rows_per_sec_median")
+        rd_stat = stat.get("dense_read_rows_per_sec_median")
+
+        cr_flex = flex.get("compression_ratio_median")
+        cr_stat = stat.get("compression_ratio_median")
+
+        if wr_stat is not None or rd_stat is not None:
+            has_data = True
+
+        cr_delta = "—"
+        if cr_flex is not None and cr_stat is not None and cr_flex != 0:
+            cr_delta = f"{((cr_stat - cr_flex) / cr_flex) * 100:+.1f}%"
+
+        lines.append(
+            f"| {label} | {ratio_text(wr_stat, wr_flex)}"
+            f" | {ratio_text(rd_stat, rd_flex)}"
+            f" | {cr_delta} |"
+        )
+
+    lines.append("")
+
+    if not has_data:
+        return []  # No static data present — skip section entirely
+
+    return lines
+
+
 def fmt_med_std(median_val, stdev_val, decimals=2):
     if median_val is None:
         return "—"
@@ -404,6 +472,8 @@ def generate_summary_markdown(run_dir: Path,
         lines.append("")
 
         lines.extend(generate_codec_recommendation(current_condensed))
+
+        lines.extend(generate_static_parity_table(current_condensed))
 
         lines.append(f"## Condensed Performance Matrix Comparison ({macro_type})")
         lines.append("")

@@ -9,22 +9,27 @@
 
 /**
  * @file bench_codec_compare.cpp
- * @brief Comprehensive codec comparison: all 5 file codecs × {Flat,ZoH,Delta} + CSV baseline
+ * @brief Comprehensive codec comparison: all 5 file codecs × {Flat,ZoH,Delta} × {Flexible,Static} + CSV baseline
  *
- * Runs write/read round-trips for every codec × row-codec combination on all
- * dataset profiles, with interleaved iterations to neutralize thermal throttling.
+ * Runs write/read round-trips for every codec × row-codec × layout combination
+ * on all dataset profiles, with interleaved iterations to neutralize thermal
+ * throttling.  Static candidates are auto-skipped for profiles that lack a
+ * compile-time LayoutStatic definition.
  *
  * Candidates:
  *   File codecs:   CSV, PacketRaw, PacketLZ4, StreamRaw, StreamLZ4, BatchLZ4
- *   Row codecs:    Flat (Writer<Layout>), ZoH (WriterZoH<Layout>), Delta (WriterDelta<Layout>)
- *   CSV only runs with Flat (ZoH/Delta are binary-only concepts).
+ *   Row codecs:    Flat (Writer<L>), ZoH (WriterZoH<L>), Delta (WriterDelta<L>)
+ *   Layouts:       Flexible (Layout), Static (LayoutStatic<...>)
+ *   CSV only runs with Flat/Flexible (ZoH/Delta and Static are binary-only).
  *
  * Usage:
- *   bench_codec_compare [--rows=N] [--iterations=N] [--profile=NAME|all] [--json=PATH]
+ *   bench_codec_compare [--rows=N] [--iterations=N] [--profile=NAME|all]
+ *                       [--storage=both|flexible|static] [--json=PATH]
  */
 
 #include "bench_common.hpp"
 #include "bench_datasets.hpp"
+#include "bench_static_layouts.hpp"
 
 #include <bcsv/bcsv.h>
 
@@ -51,34 +56,50 @@ struct Candidate {
     bool            isCsv;
     bool            useZoH;          // true → WriterZoH + generateTimeSeries
     bool            useDelta;        // true → WriterDelta + generateTimeSeries
+    bool            isStatic;        // true → use LayoutStatic dispatch
 };
 
-std::vector<Candidate> buildCandidates() {
+enum class StorageFilter { Both, Flexible, Static };
+
+std::vector<Candidate> buildCandidates(StorageFilter storage) {
     std::vector<Candidate> c;
+
+    const bool wantFlex   = (storage != StorageFilter::Static);
+    const bool wantStatic = (storage != StorageFilter::Flexible);
+
+    // Helper: add a candidate for flex and/or static
+    auto add = [&](const std::string& label, size_t comp, bcsv::FileFlags flags,
+                   bool csv, bool zoh, bool delta) {
+        if (wantFlex)
+            c.push_back({label, comp, flags, csv, zoh, delta, false});
+        if (wantStatic && !csv)
+            c.push_back({label + "(S)", comp, flags, false, zoh, delta, true});
+    };
+
     // --- Flat (dense) row codec ---
-    c.push_back({"CSV",              0, bcsv::FileFlags::NONE,        true,  false, false});
-    c.push_back({"PktRaw",           0, bcsv::FileFlags::NONE,        false, false, false});
-    c.push_back({"PktLZ4",           1, bcsv::FileFlags::NONE,        false, false, false});
-    c.push_back({"StrmRaw",          0, bcsv::FileFlags::STREAM_MODE, false, false, false});
-    c.push_back({"StrmLZ4",          1, bcsv::FileFlags::STREAM_MODE, false, false, false});
+    add("CSV",       0, bcsv::FileFlags::NONE,        true,  false, false);
+    add("PktRaw",    0, bcsv::FileFlags::NONE,        false, false, false);
+    add("PktLZ4",    1, bcsv::FileFlags::NONE,        false, false, false);
+    add("StrmRaw",   0, bcsv::FileFlags::STREAM_MODE, false, false, false);
+    add("StrmLZ4",   1, bcsv::FileFlags::STREAM_MODE, false, false, false);
 #ifdef BCSV_HAS_BATCH_CODEC
-    c.push_back({"BatchLZ4",         1, bcsv::FileFlags::BATCH_COMPRESS, false, false, false});
+    add("BatchLZ4",  1, bcsv::FileFlags::BATCH_COMPRESS, false, false, false);
 #endif
-    // --- ZoH row codec (ZERO_ORDER_HOLD flag ORed in) ---
-    c.push_back({"PktRaw+ZoH",       0, bcsv::FileFlags::ZERO_ORDER_HOLD,        false, true, false});
-    c.push_back({"PktLZ4+ZoH",       1, bcsv::FileFlags::ZERO_ORDER_HOLD,        false, true, false});
-    c.push_back({"StrmRaw+ZoH",      0, bcsv::FileFlags::STREAM_MODE | bcsv::FileFlags::ZERO_ORDER_HOLD, false, true, false});
-    c.push_back({"StrmLZ4+ZoH",      1, bcsv::FileFlags::STREAM_MODE | bcsv::FileFlags::ZERO_ORDER_HOLD, false, true, false});
+    // --- ZoH row codec ---
+    add("PktRaw+ZoH",  0, bcsv::FileFlags::ZERO_ORDER_HOLD,        false, true, false);
+    add("PktLZ4+ZoH",  1, bcsv::FileFlags::ZERO_ORDER_HOLD,        false, true, false);
+    add("StrmRaw+ZoH", 0, bcsv::FileFlags::STREAM_MODE | bcsv::FileFlags::ZERO_ORDER_HOLD, false, true, false);
+    add("StrmLZ4+ZoH", 1, bcsv::FileFlags::STREAM_MODE | bcsv::FileFlags::ZERO_ORDER_HOLD, false, true, false);
 #ifdef BCSV_HAS_BATCH_CODEC
-    c.push_back({"BatchLZ4+ZoH",     1, bcsv::FileFlags::BATCH_COMPRESS | bcsv::FileFlags::ZERO_ORDER_HOLD, false, true, false});
+    add("BatchLZ4+ZoH",1, bcsv::FileFlags::BATCH_COMPRESS | bcsv::FileFlags::ZERO_ORDER_HOLD, false, true, false);
 #endif
-    // --- Delta row codec (DELTA_ENCODING flag ORed in, uses ZoH data generator) ---
-    c.push_back({"PktRaw+Delta",     0, bcsv::FileFlags::DELTA_ENCODING,        false, false, true});
-    c.push_back({"PktLZ4+Delta",     1, bcsv::FileFlags::DELTA_ENCODING,        false, false, true});
-    c.push_back({"StrmRaw+Delta",    0, bcsv::FileFlags::STREAM_MODE | bcsv::FileFlags::DELTA_ENCODING, false, false, true});
-    c.push_back({"StrmLZ4+Delta",    1, bcsv::FileFlags::STREAM_MODE | bcsv::FileFlags::DELTA_ENCODING, false, false, true});
+    // --- Delta row codec ---
+    add("PktRaw+Delta",  0, bcsv::FileFlags::DELTA_ENCODING,        false, false, true);
+    add("PktLZ4+Delta",  1, bcsv::FileFlags::DELTA_ENCODING,        false, false, true);
+    add("StrmRaw+Delta", 0, bcsv::FileFlags::STREAM_MODE | bcsv::FileFlags::DELTA_ENCODING, false, false, true);
+    add("StrmLZ4+Delta", 1, bcsv::FileFlags::STREAM_MODE | bcsv::FileFlags::DELTA_ENCODING, false, false, true);
 #ifdef BCSV_HAS_BATCH_CODEC
-    c.push_back({"BatchLZ4+Delta",   1, bcsv::FileFlags::BATCH_COMPRESS | bcsv::FileFlags::DELTA_ENCODING, false, false, true});
+    add("BatchLZ4+Delta",1, bcsv::FileFlags::BATCH_COMPRESS | bcsv::FileFlags::DELTA_ENCODING, false, false, true);
 #endif
     return c;
 }
@@ -97,18 +118,39 @@ struct IterResult {
 // ============================================================================
 // Run one write/read cycle for a BCSV candidate (flat or ZoH)
 // ============================================================================
+// Run one write/read cycle for a BCSV candidate, unified for any LayoutType.
+//
+// Uses bench::datagen::fillRowRandom / fillRowTimeSeries which are templated
+// on RowType and work directly with both Row and RowStatic, producing
+// identical deterministic data — ensuring a fair Flexible vs Static comparison.
+// ============================================================================
 
-IterResult runBcsv(const bench::DatasetProfile& profile,
-                   size_t numRows,
-                   const Candidate& cand,
-                   const std::string& filePath)
+template<typename LayoutType>
+IterResult runBcsvImpl(const bench::DatasetProfile& profile,
+                       size_t numRows,
+                       const Candidate& cand,
+                       const std::string& filePath)
 {
     IterResult r;
     bench::Timer timer;
+    const auto& layout = profile.layout;
+
+    LayoutType layoutInstance;
+    if constexpr (std::is_same_v<LayoutType, bcsv::Layout>)
+        layoutInstance = layout;
+    else
+        layoutInstance = layout;  // LayoutStatic assignment from Layout
+
+    auto fillRow = [&](auto& row, size_t i) {
+        if (cand.useZoH || cand.useDelta)
+            bench::datagen::fillRowTimeSeries(row, i, layout);
+        else
+            bench::datagen::fillRowRandom(row, i, layout);
+    };
 
     // ----- Write -----
     if (cand.useDelta) {
-        bcsv::WriterDelta<bcsv::Layout> writer(profile.layout);
+        bcsv::WriterDelta<LayoutType> writer(layoutInstance);
         if (!writer.open(filePath, true, cand.compressionLevel, 64, cand.flags)) {
             std::cerr << "  ERROR: open failed for " << cand.label << ": "
                       << writer.getErrorMsg() << "\n";
@@ -116,14 +158,13 @@ IterResult runBcsv(const bench::DatasetProfile& profile,
         }
         timer.start();
         for (size_t i = 0; i < numRows; ++i) {
-            auto& row = writer.row();
-            profile.generateTimeSeries(row, i);
+            fillRow(writer.row(), i);
             writer.writeRow();
         }
         writer.close();
         timer.stop();
     } else if (cand.useZoH) {
-        bcsv::WriterZoH<bcsv::Layout> writer(profile.layout);
+        bcsv::WriterZoH<LayoutType> writer(layoutInstance);
         if (!writer.open(filePath, true, cand.compressionLevel, 64, cand.flags)) {
             std::cerr << "  ERROR: open failed for " << cand.label << ": "
                       << writer.getErrorMsg() << "\n";
@@ -131,14 +172,13 @@ IterResult runBcsv(const bench::DatasetProfile& profile,
         }
         timer.start();
         for (size_t i = 0; i < numRows; ++i) {
-            auto& row = writer.row();
-            profile.generateTimeSeries(row, i);
+            fillRow(writer.row(), i);
             writer.writeRow();
         }
         writer.close();
         timer.stop();
     } else {
-        bcsv::Writer<bcsv::Layout> writer(profile.layout);
+        bcsv::Writer<LayoutType> writer(layoutInstance);
         if (!writer.open(filePath, true, cand.compressionLevel, 64, cand.flags)) {
             std::cerr << "  ERROR: open failed for " << cand.label << ": "
                       << writer.getErrorMsg() << "\n";
@@ -146,8 +186,7 @@ IterResult runBcsv(const bench::DatasetProfile& profile,
         }
         timer.start();
         for (size_t i = 0; i < numRows; ++i) {
-            auto& row = writer.row();
-            profile.generate(row, i);
+            fillRow(writer.row(), i);
             writer.writeRow();
         }
         writer.close();
@@ -158,29 +197,26 @@ IterResult runBcsv(const bench::DatasetProfile& profile,
 
     // ----- Read & validate -----
     {
-        bcsv::Reader<bcsv::Layout> reader;
+        bcsv::Reader<LayoutType> reader;
         if (!reader.open(filePath)) {
             std::cerr << "  ERROR: read open failed for " << cand.label << "\n";
             return r;
         }
 
-        bcsv::Row expected(profile.layout);
+        bcsv::Row expected(layout);
         size_t rowsRead = 0;
         bool mismatch = false;
 
         timer.start();
         while (reader.readNext()) {
             const auto& row = reader.row();
-            if (cand.useZoH || cand.useDelta)
-                profile.generateTimeSeries(expected, rowsRead);
-            else
-                profile.generate(expected, rowsRead);
+            fillRow(expected, rowsRead);
 
             // spot-check first and every 1000th row
             if (rowsRead == 0 || rowsRead % 1000 == 0) {
-                for (size_t c = 0; c < profile.layout.columnCount(); ++c) {
-                    if (profile.layout.columnType(c) == bcsv::ColumnType::STRING) {
-                        if (expected.get<std::string>(c) != row.get<std::string>(c))
+                for (size_t c = 0; c < layout.columnCount(); ++c) {
+                    if (layout.columnType(c) == bcsv::ColumnType::STRING) {
+                        if (expected.get<std::string>(c) != row.template get<std::string>(c))
                             mismatch = true;
                     }
                 }
@@ -194,6 +230,27 @@ IterResult runBcsv(const bench::DatasetProfile& profile,
         r.read_ms = timer.elapsedMs();
         r.valid = (rowsRead == numRows && !mismatch);
     }
+    return r;
+}
+
+IterResult runBcsv(const bench::DatasetProfile& profile,
+                   size_t numRows,
+                   const Candidate& cand,
+                   const std::string& filePath)
+{
+    return runBcsvImpl<bcsv::Layout>(profile, numRows, cand, filePath);
+}
+
+IterResult runBcsvStatic(const bench::DatasetProfile& profile,
+                         size_t numRows,
+                         const Candidate& cand,
+                         const std::string& filePath)
+{
+    IterResult r;
+    bench_static::dispatchStaticLayoutForProfile(profile,
+        [&]<typename StaticLayout>() {
+            r = runBcsvImpl<StaticLayout>(profile, numRows, cand, filePath);
+        });
     return r;
 }
 
@@ -316,17 +373,27 @@ std::vector<ProfileResult> runProfile(
     const std::vector<Candidate>& candidates,
     bool quiet)
 {
-    const size_t numCands = candidates.size();
+    // Check static dispatch availability once
+    const bool hasStatic = bench_static::dispatchStaticLayoutForProfile(
+        profile, []<typename>() {});
 
-    // results[cand][iter]
-    std::vector<std::vector<IterResult>> results(numCands, std::vector<IterResult>(iterations));
+    // Filter candidates: drop static ones if this profile has no LayoutStatic
+    std::vector<size_t> activeIndices;
+    for (size_t ci = 0; ci < candidates.size(); ++ci) {
+        if (candidates[ci].isStatic && !hasStatic) continue;
+        activeIndices.push_back(ci);
+    }
+    const size_t numActive = activeIndices.size();
+
+    // results[active_idx][iter]
+    std::vector<std::vector<IterResult>> results(numActive, std::vector<IterResult>(iterations));
 
     for (size_t iter = 0; iter < iterations; ++iter) {
         if (!quiet)
             std::cerr << "  iter " << (iter + 1) << "/" << iterations;
 
-        for (size_t ci = 0; ci < numCands; ++ci) {
-            const auto& cand = candidates[ci];
+        for (size_t ai = 0; ai < numActive; ++ai) {
+            const auto& cand = candidates[activeIndices[ai]];
             std::string ext = cand.isCsv ? ".csv" : ".bcsv";
             std::string filePath = bench::tempFilePath(
                 profile.name + "_c_" + cand.label, ext);
@@ -334,10 +401,12 @@ std::vector<ProfileResult> runProfile(
             IterResult r;
             if (cand.isCsv)
                 r = runCsv(profile, numRows, filePath);
+            else if (cand.isStatic)
+                r = runBcsvStatic(profile, numRows, cand, filePath);
             else
                 r = runBcsv(profile, numRows, cand, filePath);
 
-            results[ci][iter] = r;
+            results[ai][iter] = r;
             std::filesystem::remove(filePath);
         }
         if (!quiet) std::cerr << "  done\n";
@@ -345,21 +414,21 @@ std::vector<ProfileResult> runProfile(
 
     // Find CSV file size for ratio
     size_t csvFileSize = 0;
-    for (size_t ci = 0; ci < numCands; ++ci) {
-        if (candidates[ci].isCsv && !candidates[ci].useZoH) {
+    for (size_t ai = 0; ai < numActive; ++ai) {
+        if (candidates[activeIndices[ai]].isCsv && !candidates[activeIndices[ai]].useZoH) {
             std::vector<double> sizes;
-            for (auto& r : results[ci]) sizes.push_back(static_cast<double>(r.file_size));
+            for (auto& r : results[ai]) sizes.push_back(static_cast<double>(r.file_size));
             csvFileSize = static_cast<size_t>(median(sizes));
             break;
         }
     }
 
     std::vector<ProfileResult> out;
-    for (size_t ci = 0; ci < numCands; ++ci) {
+    for (size_t ai = 0; ai < numActive; ++ai) {
         std::vector<double> wt, rt;
         size_t fsize = 0;
         bool allValid = true;
-        for (auto& r : results[ci]) {
+        for (auto& r : results[ai]) {
             wt.push_back(r.write_ms);
             rt.push_back(r.read_ms);
             fsize = r.file_size;
@@ -370,7 +439,7 @@ std::vector<ProfileResult> runProfile(
         ProfileResult pr;
         pr.profileName     = profile.name;
         pr.numCols         = profile.layout.columnCount();
-        pr.candidateLabel  = candidates[ci].label;
+        pr.candidateLabel  = candidates[activeIndices[ai]].label;
         pr.medianWriteMs   = wMed;
         pr.medianReadMs    = rMed;
         pr.fileSize        = fsize;
@@ -398,6 +467,7 @@ int main(int argc, char* argv[]) {
                   << "  --rows=N          Number of rows (default: 10000)\n"
                   << "  --iterations=N    Number of interleaved iterations (default: 5)\n"
                   << "  --profile=NAME    Dataset profile, or 'all' (default: all)\n"
+                  << "  --storage=MODE    both|flexible|static (default: both)\n"
                   << "  --json=PATH       Write JSON results to file\n"
                   << "  --quiet           Suppress per-iteration progress\n"
                   << "  --help            Show this help\n";
@@ -407,8 +477,13 @@ int main(int argc, char* argv[]) {
     const size_t numRows    = std::stoull(getArg(args, "rows", "10000"));
     const size_t iterations = std::stoull(getArg(args, "iterations", "5"));
     const std::string profileFilter = getArg(args, "profile", "all");
+    const std::string storageStr    = getArg(args, "storage", "both");
     const std::string jsonPath      = getArg(args, "json", "");
     const bool quiet = hasFlag(args, "quiet");
+
+    StorageFilter storage = StorageFilter::Both;
+    if (storageStr == "flexible") storage = StorageFilter::Flexible;
+    else if (storageStr == "static") storage = StorageFilter::Static;
 
     // Resolve profiles
     const auto& allProfiles = bench::getAllProfiles();
@@ -427,7 +502,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    auto candidates = buildCandidates();
+    auto candidates = buildCandidates(storage);
 
     std::cerr << "=== Codec Comparison Benchmark ===\n"
               << "  Profiles:   " << profiles.size() << "\n"

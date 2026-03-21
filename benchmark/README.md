@@ -12,8 +12,9 @@ The benchmark workflow is intentionally reduced to three run types:
 
 Legacy compare/leaderboard/report-latest flows are removed. Reporting and comparison are handled by `benchmark/report.py`.
 
-Current macro dataset catalog contains 14 profiles, including string-heavy reference workloads:
-`event_log`, `iot_fleet`, and `financial_orders`.
+Current macro dataset catalog contains 15 profiles, including string-heavy reference workloads
+(`event_log`, `iot_fleet`, `financial_orders`) and the 84-column `measurement_campaign` profile
+for Static vs Flexible parity investigation.
 
 Macro runs execute mode families across storage (`flexible|static`)
 and codec (`dense|zoh|delta`) depending on CLI filters.
@@ -55,6 +56,49 @@ Discovery helpers:
 
 - `--list` prints all profile names
 - `--list-scenarios` prints all scenario IDs
+
+## Codec Parity Investigation (`bench_codec_compare`)
+
+Standalone tool for cross-product comparison of all file codecs × row codecs × layout types
+(Flexible vs Static). Uses interleaved iterations to neutralize thermal throttling.
+Not driven by `run.py` — intended for targeted investigation.
+
+```bash
+# Build
+cmake --build --preset ninja-release-build --target bench_codec_compare -j$(nproc)
+
+# Full parity run (84-column measurement_campaign profile)
+./build/ninja-release/bin/bench_codec_compare \
+    --rows=50000 --iterations=5 --profile=measurement_campaign \
+    --storage=both --json=tmp/parity_investigation.json
+
+# Flexible-only (skip Static candidates)
+./build/ninja-release/bin/bench_codec_compare \
+    --rows=10000 --iterations=3 --profile=mixed_generic \
+    --storage=flexible
+
+# Static-only
+./build/ninja-release/bin/bench_codec_compare \
+    --rows=10000 --iterations=3 --profile=measurement_campaign \
+    --storage=static
+```
+
+Options:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--rows=N` | 10000 | Rows per write/read cycle |
+| `--iterations=N` | 5 | Interleaved iterations per candidate |
+| `--profile=NAME\|all` | `all` | Single profile or all profiles |
+| `--storage=both\|flexible\|static` | `both` | Layout filter |
+| `--json=PATH` | (none) | Write JSON results to file |
+
+Static candidates appear with `(S)` suffix in output and are auto-skipped
+for profiles without a compile-time `LayoutStatic` definition.
+
+When JSON output is produced via the orchestrated report pipeline, `report.py`
+generates a **Static Parity** table pairing Flexible/Static results per codec
+and flagging anomalies where Static is slower than Flexible.
 
 ## Streamlined CLI
 

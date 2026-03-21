@@ -33,6 +33,7 @@
  * 12. event_log              — backend event stream, 8 low-cardinality categorical strings
  * 13. iot_fleet              — fleet telemetry, round-robin devices with bounded metadata vocab
  * 14. financial_orders       — order/trade feed with 8 categorical strings per event
+ * 15. measurement_campaign   — 84 columns, SIMD-grouped float/double, measurement campaign time-series
  */
 
 #include <bcsv/bcsv.h>
@@ -1734,6 +1735,249 @@ inline DatasetProfile createRtlWaveformProfile() {
 }
 
 // ============================================================================
+// Profile 15: measurement_campaign — SIMD-grouped float/double, time-series
+// ============================================================================
+//
+// Designed for Static vs Flexible parity analysis and SIMD vectorization
+// investigation.  Float and double columns are arranged in groups of
+// 1, 2, 3, 4 adjacent columns so that the compiler's auto-vectorizer
+// can (or cannot) employ SSE/AVX lanes depending on group width.
+//
+// 84 columns total (within the 320-col Static layout limit):
+//   6 × bool, int8, int16, int32, int64, uint8, uint16, uint32, uint64, string
+//   12 × float  (groups: 1 + 2 + 3 + 4 + 2)
+//   12 × double (groups: 1 + 2 + 3 + 4 + 2)
+
+inline DatasetProfile createMeasurementCampaignProfile() {
+    DatasetProfile p;
+    p.name = "measurement_campaign";
+    p.description = "84 columns, SIMD-grouped float/double, measurement campaign time-series for Static vs Flexible codec analysis";
+    p.default_rows = 500000;
+
+    // --- Bool: 6 status/alarm flags ---
+    for (size_t i = 0; i < 6; ++i)
+        p.layout.addColumn({"alarm_" + std::to_string(i), bcsv::ColumnType::BOOL});           // 0-5
+
+    // --- Int8: 6 small enums ---
+    for (size_t i = 0; i < 6; ++i)
+        p.layout.addColumn({"state_i8_" + std::to_string(i), bcsv::ColumnType::INT8});        // 6-11
+
+    // --- Int16: 6 medium counters ---
+    for (size_t i = 0; i < 6; ++i)
+        p.layout.addColumn({"counter_i16_" + std::to_string(i), bcsv::ColumnType::INT16});    // 12-17
+
+    // --- Int32: 6 step counters ---
+    for (size_t i = 0; i < 6; ++i)
+        p.layout.addColumn({"sensor_i32_" + std::to_string(i), bcsv::ColumnType::INT32});     // 18-23
+
+    // --- Int64: 6 tick/timestamp/large counters ---
+    for (size_t i = 0; i < 6; ++i)
+        p.layout.addColumn({"tick_i64_" + std::to_string(i), bcsv::ColumnType::INT64});       // 24-29
+
+    // --- UInt8: 6 phase/state ---
+    for (size_t i = 0; i < 6; ++i)
+        p.layout.addColumn({"phase_u8_" + std::to_string(i), bcsv::ColumnType::UINT8});       // 30-35
+
+    // --- UInt16: 6 analog readings ---
+    for (size_t i = 0; i < 6; ++i)
+        p.layout.addColumn({"adc_u16_" + std::to_string(i), bcsv::ColumnType::UINT16});       // 36-41
+
+    // --- UInt32: 6 monotonic counters ---
+    for (size_t i = 0; i < 6; ++i)
+        p.layout.addColumn({"cnt_u32_" + std::to_string(i), bcsv::ColumnType::UINT32});       // 42-47
+
+    // --- UInt64: 6 nanosecond timers ---
+    for (size_t i = 0; i < 6; ++i)
+        p.layout.addColumn({"timer_u64_" + std::to_string(i), bcsv::ColumnType::UINT64});     // 48-53
+
+    // --- Float: 12 sensor channels in SIMD-diagnostic groups ---
+    //     Group 1: 1 solo  (scalar fallback)
+    p.layout.addColumn({"f_solo_0", bcsv::ColumnType::FLOAT});                                 // 54
+    //     Group 2: 2 pair  (SSE 64-bit / half-register)
+    p.layout.addColumn({"f_pair_0", bcsv::ColumnType::FLOAT});                                 // 55
+    p.layout.addColumn({"f_pair_1", bcsv::ColumnType::FLOAT});                                 // 56
+    //     Group 3: 3 triple (partial SIMD)
+    p.layout.addColumn({"f_triple_0", bcsv::ColumnType::FLOAT});                               // 57
+    p.layout.addColumn({"f_triple_1", bcsv::ColumnType::FLOAT});                               // 58
+    p.layout.addColumn({"f_triple_2", bcsv::ColumnType::FLOAT});                               // 59
+    //     Group 4: 4 quad  (full SSE / half AVX)
+    p.layout.addColumn({"f_quad_0", bcsv::ColumnType::FLOAT});                                 // 60
+    p.layout.addColumn({"f_quad_1", bcsv::ColumnType::FLOAT});                                 // 61
+    p.layout.addColumn({"f_quad_2", bcsv::ColumnType::FLOAT});                                 // 62
+    p.layout.addColumn({"f_quad_3", bcsv::ColumnType::FLOAT});                                 // 63
+    //     Group 5: 2 extra pair
+    p.layout.addColumn({"f_extra_0", bcsv::ColumnType::FLOAT});                                // 64
+    p.layout.addColumn({"f_extra_1", bcsv::ColumnType::FLOAT});                                // 65
+
+    // --- Double: 12 precision sensors in SIMD-diagnostic groups ---
+    //     Group 1: 1 solo
+    p.layout.addColumn({"d_solo_0", bcsv::ColumnType::DOUBLE});                                // 66
+    //     Group 2: 2 pair (SSE 128-bit)
+    p.layout.addColumn({"d_pair_0", bcsv::ColumnType::DOUBLE});                                // 67
+    p.layout.addColumn({"d_pair_1", bcsv::ColumnType::DOUBLE});                                // 68
+    //     Group 3: 3 triple
+    p.layout.addColumn({"d_triple_0", bcsv::ColumnType::DOUBLE});                              // 69
+    p.layout.addColumn({"d_triple_1", bcsv::ColumnType::DOUBLE});                              // 70
+    p.layout.addColumn({"d_triple_2", bcsv::ColumnType::DOUBLE});                              // 71
+    //     Group 4: 4 quad (full AVX 256-bit)
+    p.layout.addColumn({"d_quad_0", bcsv::ColumnType::DOUBLE});                                // 72
+    p.layout.addColumn({"d_quad_1", bcsv::ColumnType::DOUBLE});                                // 73
+    p.layout.addColumn({"d_quad_2", bcsv::ColumnType::DOUBLE});                                // 74
+    p.layout.addColumn({"d_quad_3", bcsv::ColumnType::DOUBLE});                                // 75
+    //     Group 5: 2 extra pair
+    p.layout.addColumn({"d_extra_0", bcsv::ColumnType::DOUBLE});                               // 76
+    p.layout.addColumn({"d_extra_1", bcsv::ColumnType::DOUBLE});                               // 77
+
+    // --- String: 6 metadata/labels ---
+    for (size_t i = 0; i < 6; ++i)
+        p.layout.addColumn({"label_" + std::to_string(i), bcsv::ColumnType::STRING});          // 78-83
+
+    // ── Random generator (volatile worst-case) ──
+    p.generate = [layout = p.layout](bcsv::Row& row, size_t rowIndex) {
+        datagen::fillRowRandom(row, rowIndex, layout);
+    };
+
+    // ── Measurement campaign generator: 2000-row cycles ──
+    // Active phase (70% = 1400 rows): monotonic counters, drifting sensors,
+    //   noise, occasional signal loss (flat segments).
+    // Standstill phase (30% = 600 rows): all values frozen.
+    p.generateTimeSeries = [](bcsv::Row& row, size_t rowIndex) {
+        constexpr size_t cycleLen = 2000;
+        const bool active = datagen::isActive(rowIndex, cycleLen);
+        const size_t effRow = datagen::effectiveRow(rowIndex, cycleLen);
+        const size_t cycle = rowIndex / cycleLen;
+
+        // --- Bool alarms: toggle per segment, frozen in standstill ---
+        for (size_t i = 0; i < 6; ++i) {
+            size_t seg = effRow / 200;
+            row.set(i, ((seg + i + cycle) % 3) == 0);
+        }
+
+        // --- Int8 state enums: step-wise, frozen in standstill ---
+        for (size_t i = 0; i < 6; ++i) {
+            size_t col = 6 + i;
+            size_t seg = effRow / (100 + i * 50);
+            row.set(col, static_cast<int8_t>((seg + i) % 127));
+        }
+
+        // --- Int16 medium counters: monotonic, frozen in standstill ---
+        for (size_t i = 0; i < 6; ++i) {
+            size_t col = 12 + i;
+            row.set(col, static_cast<int16_t>(static_cast<int16_t>(effRow / (10 + i * 5)) + static_cast<int16_t>(i * 100)));
+        }
+
+        // --- Int32 step counters: slow sensors ---
+        for (size_t i = 0; i < 6; ++i) {
+            size_t col = 18 + i;
+            size_t interval = 50 + i * 25;
+            size_t seg = effRow / interval;
+            row.set(col, static_cast<int32_t>(1000 + static_cast<int32_t>(seg * 7 + i)));
+        }
+
+        // --- Int64 tick/timestamp: always monotonic (tick), frozen (others) ---
+        row.set(static_cast<size_t>(24), static_cast<int64_t>(rowIndex));                      // tick: always advances
+        row.set(static_cast<size_t>(25), static_cast<int64_t>(1700000000LL + static_cast<int64_t>(rowIndex) * 1000)); // timestamp
+        for (size_t i = 2; i < 6; ++i) {
+            size_t col = 24 + i;
+            row.set(col, static_cast<int64_t>(static_cast<int64_t>(effRow) * static_cast<int64_t>(100 + i * 50)));
+        }
+
+        // --- UInt8 phase/state: step-wise ---
+        for (size_t i = 0; i < 6; ++i) {
+            size_t col = 30 + i;
+            size_t seg = effRow / (200 + i * 100);
+            row.set(col, static_cast<uint8_t>((seg + i) % 255));
+        }
+
+        // --- UInt16 ADC readings: monotonic + noise ---
+        for (size_t i = 0; i < 6; ++i) {
+            size_t col = 36 + i;
+            uint16_t base = static_cast<uint16_t>(effRow / (5 + i * 3) + i * 1000);
+            uint16_t noise = active
+                ? static_cast<uint16_t>(datagen::mix(datagen::hash64(rowIndex, col)) % 10)
+                : static_cast<uint16_t>(0);
+            row.set(col, static_cast<uint16_t>(base + noise));
+        }
+
+        // --- UInt32 monotonic counters ---
+        for (size_t i = 0; i < 6; ++i) {
+            size_t col = 42 + i;
+            row.set(col, static_cast<uint32_t>(effRow / (1 + i) + cycle * 10000));
+        }
+
+        // --- UInt64 nanosecond timers ---
+        for (size_t i = 0; i < 6; ++i) {
+            size_t col = 48 + i;
+            row.set(col, static_cast<uint64_t>(effRow) * static_cast<uint64_t>(1000 + i * 500)
+                       + static_cast<uint64_t>(cycle) * uint64_t{1000000});
+        }
+
+        // --- Float sensors (SIMD groups): drift + jitter, signal loss ---
+        for (size_t i = 0; i < 12; ++i) {
+            size_t col = 54 + i;
+            float base = 20.0f + static_cast<float>(i) * 5.0f + static_cast<float>(cycle) * 2.0f;
+            float drift = static_cast<float>(effRow) * 0.005f;
+
+            // Signal loss: ~2% of active rows go flat (sensor reading stuck)
+            uint64_t h = datagen::mix(datagen::hash64(rowIndex, col));
+            bool signalLost = active && (h % 50) == 0;
+
+            float jitter = 0.0f;
+            if (active && !signalLost) {
+                jitter = static_cast<float>(static_cast<int32_t>(h % 200) - 100) * 0.002f;
+            }
+            row.set(col, signalLost ? base : (base + drift + jitter));
+        }
+
+        // --- Double sensors (SIMD groups): drift + jitter, signal loss ---
+        for (size_t i = 0; i < 12; ++i) {
+            size_t col = 66 + i;
+            double base = 100.0 + static_cast<double>(i) * 15.0 + static_cast<double>(cycle) * 5.0;
+            double drift = static_cast<double>(effRow) * 0.001;
+
+            uint64_t h = datagen::mix(datagen::hash64(rowIndex, col));
+            bool signalLost = active && (h % 50) == 0;
+
+            double jitter = 0.0;
+            if (active && !signalLost) {
+                jitter = static_cast<double>(static_cast<int64_t>(h % 400) - 200) * 0.0005;
+            }
+            row.set(col, signalLost ? base : (base + drift + jitter));
+        }
+
+        // --- String metadata: static labels, change per cycle ---
+        static const std::array<std::string, 6> testNames = {
+            "Thermal_Cycle_v3", "Vibration_Test", "Endurance_Run",
+            "Calibration_Check", "Stress_Profile_A", "Baseline_Sweep"
+        };
+        static const std::array<std::string, 6> dutIds = {
+            "DUT-2026-0042", "DUT-2026-0043", "DUT-2026-0044",
+            "DUT-2026-0101", "DUT-2026-0102", "DUT-2026-0103"
+        };
+        row.set(static_cast<size_t>(78), testNames[cycle % testNames.size()]);
+        row.set(static_cast<size_t>(79), dutIds[cycle % dutIds.size()]);
+        // Phase label: derived from position in cycle
+        const size_t posInCycle = rowIndex % cycleLen;
+        const size_t activeLen = cycleLen * 7 / 10;
+        const char* phaseLabel = !active ? "standstill"
+            : (posInCycle < activeLen / 10) ? "warmup"
+            : (posInCycle < activeLen * 9 / 10) ? "active"
+            : "cooldown";
+        row.set(static_cast<size_t>(80), phaseLabel);
+        static const std::array<const char*, 4> operatorLabels = {
+            "Operator_0", "Operator_1", "Operator_2", "Operator_3"
+        };
+        row.set(static_cast<size_t>(81), operatorLabels[cycle % 4]);
+        // Remaining strings: batch/run labels
+        size_t strSeg = effRow / 400;
+        row.set(static_cast<size_t>(82), std::string("batch_") + std::to_string(strSeg % 20));
+        row.set(static_cast<size_t>(83), std::string("run_") + std::to_string(cycle));
+    };
+
+    return p;
+}
+
+// ============================================================================
 // Registry — get all available dataset profiles
 // ============================================================================
 
@@ -1752,7 +1996,8 @@ inline const std::vector<DatasetProfile>& getAllProfilesCached() {
         createIotFleetProfile(),
         createFinancialOrdersProfile(),
         createRealisticMeasurementProfile(),
-        createRtlWaveformProfile()
+        createRtlWaveformProfile(),
+        createMeasurementCampaignProfile()
     };
     return profiles;
 }

@@ -28,8 +28,13 @@ ctest --test-dir build/ninja-debug --output-on-failure
 # Quick micro benchmark
 python3 benchmark/run.py wip --type=MICRO --no-report
 
-# Macro benchmark (14 profiles)
+# Macro benchmark (15 profiles)
 python3 benchmark/run.py wip --type=MACRO-SMALL
+
+# Codec parity investigation (Flexible vs Static)
+./build/ninja-release/bin/bench_codec_compare \
+    --rows=50000 --iterations=5 --profile=measurement_campaign \
+    --storage=both --json=tmp/parity_investigation.json
 
 # Build single CLI tool
 cmake --build --preset ninja-release-build --target bcsvSampler -j$(nproc)
