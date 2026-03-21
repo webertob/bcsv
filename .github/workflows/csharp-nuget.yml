@@ -39,22 +39,27 @@ jobs:
           - rid: linux-x64
             os: ubuntu-latest
             lib-name: libbcsv_c_api.so
+            lib-dir: build
 
           - rid: linux-arm64
             os: ubuntu-24.04-arm
             lib-name: libbcsv_c_api.so
+            lib-dir: build
 
           - rid: win-x64
             os: windows-latest
             lib-name: bcsv_c_api.dll
+            lib-dir: build/bin
 
           - rid: osx-x64
             os: macos-15
             lib-name: libbcsv_c_api.dylib
+            lib-dir: build
 
           - rid: osx-arm64
             os: macos-15
             lib-name: libbcsv_c_api.dylib
+            lib-dir: build
 
     steps:
       - uses: actions/checkout@v5
@@ -72,7 +77,7 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Cache CMake dependencies
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: build/_deps
           key: native-deps-${{ matrix.rid }}-${{ hashFiles('CMakeLists.txt') }}
@@ -99,7 +104,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: native-${{ matrix.rid }}
-          path: build/${{ matrix.lib-name }}
+          path: ${{ matrix.lib-dir }}/${{ matrix.lib-name }}
           retention-days: 7
 
   # ── Pack NuGet package ──────────────────────────────────────────────
