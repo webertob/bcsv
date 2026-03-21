@@ -115,6 +115,9 @@ if(BCSV_BUILD_BENCHMARKS)
     set_target_properties(bench_codec_compare PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     )
+    if(MSVC)
+        target_compile_options(bench_codec_compare PRIVATE /bigobj)
+    endif()
 
     # --- External CSV library comparison (optional) ---
     option(BCSV_ENABLE_EXTERNAL_CSV_BENCH "Build external CSV library comparison benchmark" OFF)

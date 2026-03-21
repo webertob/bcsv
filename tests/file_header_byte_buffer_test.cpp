@@ -223,8 +223,9 @@ TEST_F(FileHeaderTest, VersionCompatibility_RejectsNewerMinor) {
 
 TEST_F(FileHeaderTest, VersionCompatibility_AcceptsOlderMinor) {
     // Write a valid header, patch minor version to current-1, verify reader accepts
-    if (BCSV_FORMAT_VERSION_MINOR == 0) {
+    if constexpr (BCSV_FORMAT_VERSION_MINOR == 0) {
         GTEST_SKIP() << "Cannot test older minor when current minor is 0";
+        return;
     }
 
     Layout layout;
