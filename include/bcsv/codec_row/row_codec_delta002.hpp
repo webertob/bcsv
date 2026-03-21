@@ -683,7 +683,7 @@ RowCodecDelta002<LayoutStatic<ColumnTypes...>>::serialize(
 
     // ── Numeric columns (type-grouped fold expansion) ────────────────────
     forEachScalarType([&]<typename T, const auto& Indices, size_t N>() {
-        constexpr size_t HB = headerBits<T>();
+        [[maybe_unused]] constexpr size_t HB = headerBits<T>();
 
         [&]<size_t... S>(std::index_sequence<S...>) {
             ([&] {
@@ -811,7 +811,7 @@ void RowCodecDelta002<LayoutStatic<ColumnTypes...>>::deserialize(
 
     // ── Numeric columns (type-grouped fold expansion) ────────────────────
     forEachScalarType([&]<typename T, const auto& Indices, size_t N>() {
-        constexpr size_t HB = headerBits<T>();
+        [[maybe_unused]] constexpr size_t HB = headerBits<T>();
 
         [&]<size_t... S>(std::index_sequence<S...>) {
             ([&] {
