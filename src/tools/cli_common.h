@@ -117,7 +117,7 @@ inline void printLayoutSummary(const std::string& label,
     bool first = true;
     for (const auto& [tname, cnt] : type_counts) {
         if (!first) os << ", ";
-        os << cnt << "\xc3\x97" << tname;   // UTF-8 ×
+        os << cnt << "x" << tname;
         first = false;
     }
     os << " ]\n";
