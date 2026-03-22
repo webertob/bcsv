@@ -91,7 +91,7 @@ namespace BCSV
         {
             var result = NativeMethods.bcsv_layout_column_index(Handle, name);
             // C API returns SIZE_MAX on failure, not 0 (which is a valid column index)
-            return result == UIntPtr.MaxValue ? -1 : (int)result;
+            return result == (UIntPtr)ulong.MaxValue ? -1 : (int)result;
         }
 
         /// <summary>
