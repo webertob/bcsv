@@ -44,7 +44,7 @@ public sealed class BcsvWriter : IDisposable
     }
 
     public void Open(string filename, bool overwrite = true,
-                     int compression = 1, int blockSizeKb = 64,
+                     int compression = 1, int blockSizeKb = 8192,
                      FileFlags flags = FileFlags.BatchCompress)
     {
         if (!NativeMethods.bcsv_writer_open(_handle, filename, overwrite,

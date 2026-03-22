@@ -109,8 +109,12 @@ namespace BCSV
         /// Open a BCSV file for writing
         /// </summary>
         /// <param name="filename">Path to the BCSV file to create</param>
+        /// <param name="overwrite">If true, overwrite existing file</param>
+        /// <param name="compression">LZ4 compression level (0=none, 1=fast, 9=max)</param>
+        /// <param name="blockSizeKB">Packet size in KB (default 8192 = 8 MB)</param>
+        /// <param name="flag">File codec flags (default: BatchCompress for LZ4 batch mode)</param>
         /// <returns>True if successful</returns>
-        public bool Open(string filename, bool overwrite = false, int compression = 1, int blockSizeKB = 64, FileFlags flag = FileFlags.None)
+        public bool Open(string filename, bool overwrite = false, int compression = 1, int blockSizeKB = 8192, FileFlags flag = FileFlags.BatchCompress)
         {
             if (string.IsNullOrEmpty(filename))
                 throw new ArgumentNullException(nameof(filename));

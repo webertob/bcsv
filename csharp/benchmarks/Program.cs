@@ -169,7 +169,7 @@ static class BcsvBenchmark
     {
         using var layout = BuildLayout(cols);
         using var writer = new BcsvWriter(layout, rowCodec);
-        writer.Open(filePath, overwrite: true, compression: 1, blockSizeKb: 64, flags: flags);
+        writer.Open(filePath, overwrite: true, compression: 1, blockSizeKb: 8192, flags: flags);
 
         var rng = new Random(seed);
         var row = writer.Row;
