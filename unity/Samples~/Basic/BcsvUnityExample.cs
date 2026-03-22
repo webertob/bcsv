@@ -35,48 +35,50 @@ namespace BCSV.Examples
         {
             Debug.Log("\n--- Row API Features ---");
 
-            // Create a layout
+            string testFile = System.IO.Path.Combine(Application.persistentDataPath, "row_api_test.bcsv");
+
+            // Create a layout with fluent chaining
             using (var layout = new BcsvLayout())
             {
-                layout.AddColumn("id", ColumnType.Int32);
-                layout.AddColumn("name", ColumnType.String);
-                layout.AddColumn("value", ColumnType.Double);
+                layout.AddColumn("id", ColumnType.Int32)
+                      .AddColumn("name", ColumnType.String)
+                      .AddColumn("value", ColumnType.Double);
 
-                // Test row creation and lifecycle
-                using (var row = BcsvRow.Create(layout))
+                Debug.Log($"Layout: {layout}");
+
+                // Write rows — Row is a lightweight struct handle, not IDisposable
+                using (var writer = new BcsvWriter(layout))
                 {
-                    Debug.Log("✓ Created row with layout");
+                    writer.Open(testFile, overwrite: true);
 
-                    // Public row-level change tracking APIs were removed; tracking is internal-only
-                    Debug.Log("Using internal codec-managed tracking (no public row change flags)");
-
-                    // Set some values
+                    var row = writer.Row;
                     row.SetInt32(0, 42);
-                    row.SetString(1, "Test");
+                    row.SetString(1, "Hello");
                     row.SetDouble(2, 3.14159);
-                    
-                    Debug.Log("Set values successfully");
+                    writer.WriteRow();
 
-                    // Test cloning
-                    using (var clonedRow = BcsvRow.Clone(row))
-                    {
-                        Debug.Log("✓ Cloned row successfully");
-                        Debug.Log($"Cloned row ID: {clonedRow.GetInt32(0)}");
-                        Debug.Log($"Cloned row name: {clonedRow.GetString(1)}");
-                        Debug.Log($"Cloned row value: {clonedRow.GetDouble(2)}");
+                    row.SetInt32(0, 99);
+                    row.SetString(1, "World");
+                    row.SetDouble(2, 2.71828);
+                    writer.WriteRow();
 
-                        // Test assignment
-                        clonedRow.SetInt32(0, 99);
-                        clonedRow.SetString(1, "Modified");
-                        
-                        row.Assign(clonedRow);
-                        Debug.Log($"After assignment - ID: {row.GetInt32(0)}, Name: {row.GetString(1)}");
-                    }
-
-                    // Test clear
-                    row.Clear();
-                    Debug.Log($"After clear - ID: {row.GetInt32(0)}, Name: '{row.GetString(1)}'");
+                    Debug.Log($"Wrote {writer.RowCount} rows");
                 }
+
+                // Read rows back using foreach
+                using (var reader = new BcsvReader())
+                {
+                    reader.Open(testFile);
+                    Debug.Log($"Row count: {reader.RowCount}");
+
+                    foreach (var row in reader)
+                    {
+                        Debug.Log($"  id={row.GetInt32(0)}, name={row.GetString(1)}, value={row.GetDouble(2)}");
+                    }
+                }
+
+                // Test version API
+                Debug.Log($"BCSV version: {BcsvVersion.Version} ({BcsvVersion.Major}.{BcsvVersion.Minor}.{BcsvVersion.Patch})");
             }
         }
 
@@ -90,65 +92,42 @@ namespace BCSV.Examples
             // Create a simple layout
             using (var layout = new BcsvLayout())
             {
-                layout.AddColumn("id", ColumnType.Int32);
-                layout.AddColumn("message", ColumnType.String);
+                layout.AddColumn("id", ColumnType.Int32)
+                      .AddColumn("message", ColumnType.String);
 
                 // Test writer filename handling
                 using (var writer = new BcsvWriter(layout))
                 {
-                    bool opened = writer.Open(testFile, overwrite: true);
-                    Debug.Log($"Writer opened: {opened}");
-                    
-                    if (opened)
-                    {
-                        // This now works cross-platform (wchar_t* on Windows, char* on POSIX)
-                        string writerFilename = writer.Filename;
-                        Debug.Log($"Writer filename: {writerFilename}");
-                        Debug.Log($"Filename contains test file: {writerFilename?.Contains("unity_test.bcsv")}");
+                    writer.Open(testFile, overwrite: true);
 
-                        // Write a sample row
-                        var row = writer.Row;
-                        row.SetInt32(0, 123);
-                        row.SetString(1, "Hello Unity!");
-                        writer.Next();
-                        
-                        writer.Close();
-                    }
+                    string writerFilename = writer.Filename;
+                    Debug.Log($"Writer filename: {writerFilename}");
+
+                    var row = writer.Row;
+                    row.SetInt32(0, 123);
+                    row.SetString(1, "Hello Unity!");
+                    writer.WriteRow();
+                    writer.Close();
                 }
 
                 // Test reader filename handling
                 using (var reader = new BcsvReader())
                 {
-                    bool opened = reader.Open(testFile);
-                    Debug.Log($"Reader opened: {opened}");
-                    
-                    if (opened)
-                    {
-                        // This now works cross-platform (wchar_t* on Windows, char* on POSIX)
-                        string readerFilename = reader.Filename;
-                        Debug.Log($"Reader filename: {readerFilename}");
-                        Debug.Log($"Filename contains test file: {readerFilename?.Contains("unity_test.bcsv")}");
+                    reader.Open(testFile);
 
-                        // Read the data back
-                        if (reader.Next())
-                        {
-                            var row = reader.Row;
-                            int id = row.GetInt32(0);
-                            string message = row.GetString(1);
-                            Debug.Log($"Read data - ID: {id}, Message: {message}");
-                        }
-                        
-                        reader.Close();
+                    string readerFilename = reader.Filename;
+                    Debug.Log($"Reader filename: {readerFilename}");
+
+                    if (reader.ReadNext())
+                    {
+                        var row = reader.Row;
+                        Debug.Log($"Read data - ID: {row.GetInt32(0)}, Message: {row.GetString(1)}");
                     }
+                    reader.Close();
                 }
             }
 
-            Debug.Log("\n✅ Cross-platform filename handling test completed!");
-            Debug.Log("Key benefits:");
-            Debug.Log("- Windows: Native Unicode support (wchar_t*)");
-            Debug.Log("- POSIX: Native char support");
-            Debug.Log("- Unity: Unified string interface across all platforms");
-            Debug.Log("- Zero-copy filename access from native library");
+            Debug.Log("✅ Cross-platform filename handling test completed!");
         }
     }
 }

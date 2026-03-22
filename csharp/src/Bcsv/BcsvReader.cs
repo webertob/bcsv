@@ -52,8 +52,38 @@ public sealed class BcsvReader : IDisposable, IEnumerable<BcsvRow>
         _row = new BcsvRow(NativeMethods.bcsv_reader_row(_handle));
     }
 
+    /// <summary>Tries to open a file. Returns false on failure (no exception).</summary>
+    public bool TryOpen(string filename)
+    {
+        if (!NativeMethods.bcsv_reader_open(_handle, filename))
+            return false;
+        _row = new BcsvRow(NativeMethods.bcsv_reader_row(_handle));
+        return true;
+    }
+
+    /// <summary>Tries to open with optional footer rebuild. Returns false on failure.</summary>
+    public bool TryOpen(string filename, bool rebuildFooter)
+    {
+        if (!NativeMethods.bcsv_reader_open_ex(_handle, filename, rebuildFooter))
+            return false;
+        _row = new BcsvRow(NativeMethods.bcsv_reader_row(_handle));
+        return true;
+    }
+
     public void Close() => NativeMethods.bcsv_reader_close(_handle);
     public bool IsOpen => NativeMethods.bcsv_reader_is_open(_handle);
+
+    public string? Filename
+    {
+        get
+        {
+            var ptr = NativeMethods.bcsv_reader_filename(_handle);
+            return ptr == IntPtr.Zero ? null : NativeMethods.PtrToStringAuto(ptr);
+        }
+    }
+
+    public string ErrorMessage =>
+        NativeMethods.PtrToStringUtf8(NativeMethods.bcsv_reader_error_msg(_handle));
 
     /// <summary>Advance to next row. Returns false at EOF.</summary>
     public bool ReadNext() => NativeMethods.bcsv_reader_next(_handle);

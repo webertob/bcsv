@@ -41,6 +41,15 @@ public sealed class BcsvCsvReader : IDisposable, IEnumerable<BcsvRow>
         _row = new BcsvRow(NativeMethods.bcsv_csv_reader_row(_handle));
     }
 
+    /// <summary>Tries to open a CSV file. Returns false on failure (no exception).</summary>
+    public bool TryOpen(string filename, bool hasHeader = true)
+    {
+        if (!NativeMethods.bcsv_csv_reader_open(_handle, filename, hasHeader))
+            return false;
+        _row = new BcsvRow(NativeMethods.bcsv_csv_reader_row(_handle));
+        return true;
+    }
+
     public void Close() => NativeMethods.bcsv_csv_reader_close(_handle);
     public bool IsOpen => NativeMethods.bcsv_csv_reader_is_open(_handle);
 

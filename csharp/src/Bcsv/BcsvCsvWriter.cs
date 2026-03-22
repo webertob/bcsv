@@ -32,11 +32,20 @@ public sealed class BcsvCsvWriter : IDisposable
         }
     }
 
-    public void Open(string filename, bool overwrite = true, bool includeHeader = true)
+    public void Open(string filename, bool overwrite = false, bool includeHeader = true)
     {
         if (!NativeMethods.bcsv_csv_writer_open(_handle, filename, overwrite, includeHeader))
             NativeMethods.ThrowWithError("Failed to open CSV writer", NativeMethods.bcsv_csv_writer_error_msg(_handle));
         _row = new BcsvRow(NativeMethods.bcsv_csv_writer_row(_handle));
+    }
+
+    /// <summary>Tries to open a CSV file for writing. Returns false on failure.</summary>
+    public bool TryOpen(string filename, bool overwrite = false, bool includeHeader = true)
+    {
+        if (!NativeMethods.bcsv_csv_writer_open(_handle, filename, overwrite, includeHeader))
+            return false;
+        _row = new BcsvRow(NativeMethods.bcsv_csv_writer_row(_handle));
+        return true;
     }
 
     public void Close() => NativeMethods.bcsv_csv_writer_close(_handle);

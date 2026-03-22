@@ -61,29 +61,30 @@ public class BcsvWriteExample : MonoBehaviour
 {
     void Start()
     {
+        // Fluent layout builder
         using var layout = new BcsvLayout();
-        layout.AddColumn("id", ColumnType.Int32);
-        layout.AddColumn("name", ColumnType.String);
-        layout.AddColumn("position_x", ColumnType.Float);
-        layout.AddColumn("position_y", ColumnType.Float);
-        layout.AddColumn("position_z", ColumnType.Float);
+        layout.AddColumn("id", ColumnType.Int32)
+              .AddColumn("name", ColumnType.String)
+              .AddColumn("position_x", ColumnType.Float)
+              .AddColumn("position_y", ColumnType.Float)
+              .AddColumn("position_z", ColumnType.Float);
 
+        // Default row codec is "delta" (most compact)
         using var writer = new BcsvWriter(layout);
         string filePath = Application.persistentDataPath + "/gamedata.bcsv";
 
-        if (writer.Open(filePath, overwrite: true))
-        {
-            var row = writer.Row;
-            row.SetInt32(0, 1);
-            row.SetString(1, "Player");
-            row.SetFloat(2, transform.position.x);
-            row.SetFloat(3, transform.position.y);
-            row.SetFloat(4, transform.position.z);
-            writer.Next();
+        writer.Open(filePath, overwrite: true);  // throws BcsvException on failure
 
-            writer.Close();
-            Debug.Log("Data written to: " + filePath);
-        }
+        var row = writer.Row;
+        row.SetInt32(0, 1);
+        row.SetString(1, "Player");
+        row.SetFloat(2, transform.position.x);
+        row.SetFloat(3, transform.position.y);
+        row.SetFloat(4, transform.position.z);
+        writer.WriteRow();
+
+        writer.Close();
+        Debug.Log("Data written to: " + filePath);
     }
 }
 ```
@@ -101,20 +102,19 @@ public class BcsvReadExample : MonoBehaviour
         string filePath = Application.persistentDataPath + "/gamedata.bcsv";
 
         using var reader = new BcsvReader();
-        if (reader.Open(filePath))
+        reader.Open(filePath);  // throws BcsvException on failure
+
+        // foreach via IEnumerable<BcsvRow>
+        foreach (var row in reader)
         {
-            while (reader.Next())
-            {
-                var row = reader.Row;
-                int id = row.GetInt32(0);
-                string name = row.GetString(1);
-                float x = row.GetFloat(2);
-                float y = row.GetFloat(3);
-                float z = row.GetFloat(4);
-                Debug.Log($"ID: {id}, Name: {name}, Position: ({x}, {y}, {z})");
-            }
-            reader.Close();
+            int id = row.GetInt32(0);
+            string name = row.GetString(1);
+            float x = row.GetFloat(2);
+            float y = row.GetFloat(3);
+            float z = row.GetFloat(4);
+            Debug.Log($"ID: {id}, Name: {name}, Position: ({x}, {y}, {z})");
         }
+        reader.Close();
     }
 }
 ```
@@ -126,16 +126,22 @@ unity/
 ├── package.json                 # UPM manifest
 ├── CHANGELOG.md
 ├── README.md
-├── OWNERSHIP_SEMANTICS.md
 ├── Runtime/
 │   ├── link.xml                 # IL2CPP stripping protection
 │   ├── Scripts/
 │   │   ├── BCSV.asmdef          # Assembly definition
-│   │   ├── BcsvNative.cs        # P/Invoke declarations
-│   │   ├── BcsvLayout.cs        # Column schema management
-│   │   ├── BcsvWriter.cs        # Streaming writer
-│   │   ├── BcsvReader.cs        # Streaming reader
-│   │   └── BcsvRow.cs           # Row access (owning, ref, const-ref)
+│   │   ├── BcsvNative.cs        # P/Invoke declarations + enums
+│   │   ├── BcsvException.cs     # Exception type for native failures
+│   │   ├── ColumnDefinition.cs  # Describes a single column
+│   │   ├── BcsvLayout.cs        # Column schema (IReadOnlyList)
+│   │   ├── BcsvRow.cs           # Row access (readonly struct)
+│   │   ├── BcsvWriter.cs        # Streaming binary writer
+│   │   ├── BcsvReader.cs        # Streaming binary reader (IEnumerable)
+│   │   ├── BcsvCsvReader.cs     # CSV text reader (IEnumerable)
+│   │   ├── BcsvCsvWriter.cs     # CSV text writer
+│   │   ├── BcsvSampler.cs       # Expression filter/projection
+│   │   ├── BcsvColumns.cs       # Columnar bulk I/O
+│   │   └── BcsvVersion.cs       # Library version query
 │   └── Plugins/
 │       ├── Windows/x86_64/      # bcsv_c_api.dll
 │       ├── Linux/x86_64/        # libbcsv_c_api.so
@@ -213,24 +219,35 @@ The output is at `build/ninja-release/bin/bcsv_c_api.dll` (Windows) or `build/li
 
 ## Error Handling
 
-Always check return values and wrap operations in try-catch blocks:
+BCSV uses two error patterns:
+
+- **Throwing methods** (`Open`, `WriteRow`): throw `BcsvException` on failure.
+- **Try methods** (`TryOpen`): return `false` on failure (no exception).
 
 ```csharp
+// Pattern 1 — exceptions (default)
 try
 {
-    var reader = new BcsvReader();
-    if (!reader.Open(filePath))
-    {
-        Debug.LogError("Failed to open BCSV file: " + filePath);
-        return;
-    }
-    
-    // Process data...
-    reader.Close();
+    using var reader = new BcsvReader();
+    reader.Open(filePath);
+    foreach (var row in reader)
+        Debug.Log(row.GetInt32(0));
 }
-catch (System.Exception e)
+catch (BcsvException e)
 {
     Debug.LogError("BCSV Error: " + e.Message);
+}
+
+// Pattern 2 — TryOpen (no exceptions)
+using var reader2 = new BcsvReader();
+if (reader2.TryOpen(filePath))
+{
+    while (reader2.ReadNext())
+        Debug.Log(reader2.Row.GetInt32(0));
+}
+else
+{
+    Debug.LogError("Failed to open: " + reader2.ErrorMessage);
 }
 ```
 

@@ -1,555 +1,225 @@
-/*
- * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
- * 
- * This file is part of the BCSV library.
- * 
- * Licensed under the MIT License. See LICENSE file in the project root 
- * for full license information.
- */
+// Copyright (c) 2025-2026 Tobias Weber. Licensed under the MIT License.
 
 using System;
 using System.Runtime.InteropServices;
-using UnityEngine;
 
 namespace BCSV
 {
     /// <summary>
-    /// Abstract base class for all BCSV row types
-    /// Defines common interface for row operations
+    /// Provides typed get/set access to a single BCSV row.
+    /// Non-owning wrapper — always references a Reader's or Writer's internal row.
     /// </summary>
-    public abstract class BcsvRowBase
+    public readonly struct BcsvRow
     {
-        protected IntPtr handle;
+        internal readonly nint Handle;
 
-        /// <summary>
-        /// Internal constructor for derived classes
-        /// </summary>
-        /// <param name="nativeHandle">Native handle to wrap</param>
-        protected BcsvRowBase(IntPtr nativeHandle)
+        internal BcsvRow(nint handle) => Handle = handle;
+
+        public int ColumnCount => (int)NativeMethods.bcsv_row_column_count(Handle);
+
+        // ── Typed getters ──────────────────────────────────────────────
+        public bool   GetBool(int col)   => NativeMethods.bcsv_row_get_bool(Handle, col);
+        public byte   GetUInt8(int col)  => NativeMethods.bcsv_row_get_uint8(Handle, col);
+        public ushort GetUInt16(int col) => NativeMethods.bcsv_row_get_uint16(Handle, col);
+        public uint   GetUInt32(int col) => NativeMethods.bcsv_row_get_uint32(Handle, col);
+        public ulong  GetUInt64(int col) => NativeMethods.bcsv_row_get_uint64(Handle, col);
+        public sbyte  GetInt8(int col)   => NativeMethods.bcsv_row_get_int8(Handle, col);
+        public short  GetInt16(int col)  => NativeMethods.bcsv_row_get_int16(Handle, col);
+        public int    GetInt32(int col)  => NativeMethods.bcsv_row_get_int32(Handle, col);
+        public long   GetInt64(int col)  => NativeMethods.bcsv_row_get_int64(Handle, col);
+        public float  GetFloat(int col)  => NativeMethods.bcsv_row_get_float(Handle, col);
+        public double GetDouble(int col) => NativeMethods.bcsv_row_get_double(Handle, col);
+        public string GetString(int col) =>
+            NativeMethods.PtrToStringUtf8(NativeMethods.bcsv_row_get_string(Handle, col));
+
+        // ── Typed setters ──────────────────────────────────────────────
+        public void SetBool(int col, bool value)     => NativeMethods.bcsv_row_set_bool(Handle, col, value);
+        public void SetUInt8(int col, byte value)    => NativeMethods.bcsv_row_set_uint8(Handle, col, value);
+        public void SetUInt16(int col, ushort value) => NativeMethods.bcsv_row_set_uint16(Handle, col, value);
+        public void SetUInt32(int col, uint value)   => NativeMethods.bcsv_row_set_uint32(Handle, col, value);
+        public void SetUInt64(int col, ulong value)  => NativeMethods.bcsv_row_set_uint64(Handle, col, value);
+        public void SetInt8(int col, sbyte value)    => NativeMethods.bcsv_row_set_int8(Handle, col, value);
+        public void SetInt16(int col, short value)   => NativeMethods.bcsv_row_set_int16(Handle, col, value);
+        public void SetInt32(int col, int value)     => NativeMethods.bcsv_row_set_int32(Handle, col, value);
+        public void SetInt64(int col, long value)    => NativeMethods.bcsv_row_set_int64(Handle, col, value);
+        public void SetFloat(int col, float value)   => NativeMethods.bcsv_row_set_float(Handle, col, value);
+        public void SetDouble(int col, double value) => NativeMethods.bcsv_row_set_double(Handle, col, value);
+        public void SetString(int col, string value) => NativeMethods.bcsv_row_set_string(Handle, col, value);
+
+        // ── Generic get/set ────────────────────────────────────────────
+        public T Get<T>(int col)
         {
-            handle = nativeHandle;
+            if (typeof(T) == typeof(bool))   return (T)(object)GetBool(col);
+            if (typeof(T) == typeof(byte))   return (T)(object)GetUInt8(col);
+            if (typeof(T) == typeof(ushort)) return (T)(object)GetUInt16(col);
+            if (typeof(T) == typeof(uint))   return (T)(object)GetUInt32(col);
+            if (typeof(T) == typeof(ulong))  return (T)(object)GetUInt64(col);
+            if (typeof(T) == typeof(sbyte))  return (T)(object)GetInt8(col);
+            if (typeof(T) == typeof(short))  return (T)(object)GetInt16(col);
+            if (typeof(T) == typeof(int))    return (T)(object)GetInt32(col);
+            if (typeof(T) == typeof(long))   return (T)(object)GetInt64(col);
+            if (typeof(T) == typeof(float))  return (T)(object)GetFloat(col);
+            if (typeof(T) == typeof(double)) return (T)(object)GetDouble(col);
+            if (typeof(T) == typeof(string)) return (T)(object)GetString(col);
+            throw new BcsvException($"Unsupported type: {typeof(T)}");
         }
 
-        /// <summary>
-        /// Internal handle for native calls
-        /// </summary>
-        internal IntPtr Handle
+        public void Set<T>(int col, T value)
         {
-            get
+            switch (value)
             {
-                if (handle == IntPtr.Zero)
-                    throw new ObjectDisposedException(GetType().Name);
-                return handle;
+                case bool v:   SetBool(col, v); break;
+                case byte v:   SetUInt8(col, v); break;
+                case ushort v: SetUInt16(col, v); break;
+                case uint v:   SetUInt32(col, v); break;
+                case ulong v:  SetUInt64(col, v); break;
+                case sbyte v:  SetInt8(col, v); break;
+                case short v:  SetInt16(col, v); break;
+                case int v:    SetInt32(col, v); break;
+                case long v:   SetInt64(col, v); break;
+                case float v:  SetFloat(col, v); break;
+                case double v: SetDouble(col, v); break;
+                case string v: SetString(col, v); break;
+                default: throw new BcsvException($"Unsupported type: {typeof(T)}");
             }
         }
 
-        /// <summary>
-        /// Get the layout for this row
-        /// </summary>
-        public BcsvLayout Layout
+        // ── Array access (Span-based, zero-copy via IL2CPP) ────────────
+        public unsafe void GetBools(int startCol, Span<bool> dst)
         {
-            get
-            {
-                var layoutHandle = NativeMethods.bcsv_row_layout(Handle);
-                // Non-owning wrapper: the native row owns the layout, we must not destroy it
-                return layoutHandle == IntPtr.Zero ? null : new BcsvLayout(layoutHandle, ownsHandle: false);
-            }
+            fixed (bool* p = dst)
+                NativeMethods.bcsv_row_get_bool_array(Handle, startCol, (IntPtr)p, (nuint)dst.Length);
         }
 
-        #region Common Row Operations
-
-        /// <summary>
-        /// Clear all values in this row to their default values
-        /// </summary>
-        public virtual void Clear()
+        public unsafe void SetBools(int startCol, ReadOnlySpan<bool> src)
         {
-            NativeMethods.bcsv_row_clear(Handle);
+            fixed (bool* p = src)
+                NativeMethods.bcsv_row_set_bool_array(Handle, startCol, (IntPtr)p, (nuint)src.Length);
         }
 
-        #endregion
-
-        #region Single Value Getters
-
-        /// <summary>
-        /// Get a boolean value from the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <returns>Boolean value</returns>
-        public bool GetBool(int column)
+        public unsafe void GetUInt8s(int startCol, Span<byte> dst)
         {
-            return NativeMethods.bcsv_row_get_bool(Handle, column);
+            fixed (byte* p = dst)
+                NativeMethods.bcsv_row_get_uint8_array(Handle, startCol, (IntPtr)p, (nuint)dst.Length);
         }
 
-        /// <summary>
-        /// Get a byte value from the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <returns>Byte value</returns>
-        public byte GetUInt8(int column)
+        public unsafe void SetUInt8s(int startCol, ReadOnlySpan<byte> src)
         {
-            return NativeMethods.bcsv_row_get_uint8(Handle, column);
+            fixed (byte* p = src)
+                NativeMethods.bcsv_row_set_uint8_array(Handle, startCol, (IntPtr)p, (nuint)src.Length);
         }
 
-        /// <summary>
-        /// Get a ushort value from the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <returns>UShort value</returns>
-        public ushort GetUInt16(int column)
+        public unsafe void GetUInt16s(int startCol, Span<ushort> dst)
         {
-            return NativeMethods.bcsv_row_get_uint16(Handle, column);
+            fixed (ushort* p = dst)
+                NativeMethods.bcsv_row_get_uint16_array(Handle, startCol, (IntPtr)p, (nuint)dst.Length);
         }
 
-        /// <summary>
-        /// Get a uint value from the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <returns>UInt value</returns>
-        public uint GetUInt32(int column)
+        public unsafe void SetUInt16s(int startCol, ReadOnlySpan<ushort> src)
         {
-            return NativeMethods.bcsv_row_get_uint32(Handle, column);
+            fixed (ushort* p = src)
+                NativeMethods.bcsv_row_set_uint16_array(Handle, startCol, (IntPtr)p, (nuint)src.Length);
         }
 
-        /// <summary>
-        /// Get a ulong value from the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <returns>ULong value</returns>
-        public ulong GetUInt64(int column)
+        public unsafe void GetUInt32s(int startCol, Span<uint> dst)
         {
-            return NativeMethods.bcsv_row_get_uint64(Handle, column);
+            fixed (uint* p = dst)
+                NativeMethods.bcsv_row_get_uint32_array(Handle, startCol, (IntPtr)p, (nuint)dst.Length);
         }
 
-        /// <summary>
-        /// Get a sbyte value from the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <returns>SByte value</returns>
-        public sbyte GetInt8(int column)
+        public unsafe void SetUInt32s(int startCol, ReadOnlySpan<uint> src)
         {
-            return NativeMethods.bcsv_row_get_int8(Handle, column);
+            fixed (uint* p = src)
+                NativeMethods.bcsv_row_set_uint32_array(Handle, startCol, (IntPtr)p, (nuint)src.Length);
         }
 
-        /// <summary>
-        /// Get a short value from the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <returns>Short value</returns>
-        public short GetInt16(int column)
+        public unsafe void GetUInt64s(int startCol, Span<ulong> dst)
         {
-            return NativeMethods.bcsv_row_get_int16(Handle, column);
+            fixed (ulong* p = dst)
+                NativeMethods.bcsv_row_get_uint64_array(Handle, startCol, (IntPtr)p, (nuint)dst.Length);
         }
 
-        /// <summary>
-        /// Get an int value from the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <returns>Int value</returns>
-        public int GetInt32(int column)
+        public unsafe void SetUInt64s(int startCol, ReadOnlySpan<ulong> src)
         {
-            return NativeMethods.bcsv_row_get_int32(Handle, column);
+            fixed (ulong* p = src)
+                NativeMethods.bcsv_row_set_uint64_array(Handle, startCol, (IntPtr)p, (nuint)src.Length);
         }
 
-        /// <summary>
-        /// Get a long value from the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <returns>Long value</returns>
-        public long GetInt64(int column)
+        public unsafe void GetInt8s(int startCol, Span<sbyte> dst)
         {
-            return NativeMethods.bcsv_row_get_int64(Handle, column);
+            fixed (sbyte* p = dst)
+                NativeMethods.bcsv_row_get_int8_array(Handle, startCol, (IntPtr)p, (nuint)dst.Length);
         }
 
-        /// <summary>
-        /// Get a float value from the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <returns>Float value</returns>
-        public float GetFloat(int column)
+        public unsafe void SetInt8s(int startCol, ReadOnlySpan<sbyte> src)
         {
-            return NativeMethods.bcsv_row_get_float(Handle, column);
+            fixed (sbyte* p = src)
+                NativeMethods.bcsv_row_set_int8_array(Handle, startCol, (IntPtr)p, (nuint)src.Length);
         }
 
-        /// <summary>
-        /// Get a double value from the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <returns>Double value</returns>
-        public double GetDouble(int column)
+        public unsafe void GetInt16s(int startCol, Span<short> dst)
         {
-            return NativeMethods.bcsv_row_get_double(Handle, column);
+            fixed (short* p = dst)
+                NativeMethods.bcsv_row_get_int16_array(Handle, startCol, (IntPtr)p, (nuint)dst.Length);
         }
 
-        /// <summary>
-        /// Get a string value from the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <returns>String value</returns>
-        public string GetString(int column)
+        public unsafe void SetInt16s(int startCol, ReadOnlySpan<short> src)
         {
-            var ptr = NativeMethods.bcsv_row_get_string(Handle, column);
-            return NativeMethods.PtrToStringUtf8(ptr);
+            fixed (short* p = src)
+                NativeMethods.bcsv_row_set_int16_array(Handle, startCol, (IntPtr)p, (nuint)src.Length);
         }
 
-        #endregion
-
-        #region Single Value Setters
-
-        /// <summary>
-        /// Set a boolean value in the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <param name="value">Value to set</param>
-        public virtual void SetBool(int column, bool value)
+        public unsafe void GetInt32s(int startCol, Span<int> dst)
         {
-            NativeMethods.bcsv_row_set_bool(Handle, column, value);
+            fixed (int* p = dst)
+                NativeMethods.bcsv_row_get_int32_array(Handle, startCol, (IntPtr)p, (nuint)dst.Length);
         }
 
-        /// <summary>
-        /// Set a byte value in the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <param name="value">Value to set</param>
-        public virtual void SetUInt8(int column, byte value)
+        public unsafe void SetInt32s(int startCol, ReadOnlySpan<int> src)
         {
-            NativeMethods.bcsv_row_set_uint8(Handle, column, value);
+            fixed (int* p = src)
+                NativeMethods.bcsv_row_set_int32_array(Handle, startCol, (IntPtr)p, (nuint)src.Length);
         }
 
-        /// <summary>
-        /// Set a ushort value in the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <param name="value">Value to set</param>
-        public virtual void SetUInt16(int column, ushort value)
+        public unsafe void GetInt64s(int startCol, Span<long> dst)
         {
-            NativeMethods.bcsv_row_set_uint16(Handle, column, value);
+            fixed (long* p = dst)
+                NativeMethods.bcsv_row_get_int64_array(Handle, startCol, (IntPtr)p, (nuint)dst.Length);
         }
 
-        /// <summary>
-        /// Set a uint value in the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <param name="value">Value to set</param>
-        public virtual void SetUInt32(int column, uint value)
+        public unsafe void SetInt64s(int startCol, ReadOnlySpan<long> src)
         {
-            NativeMethods.bcsv_row_set_uint32(Handle, column, value);
+            fixed (long* p = src)
+                NativeMethods.bcsv_row_set_int64_array(Handle, startCol, (IntPtr)p, (nuint)src.Length);
         }
 
-        /// <summary>
-        /// Set a ulong value in the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <param name="value">Value to set</param>
-        public virtual void SetUInt64(int column, ulong value)
+        public unsafe void GetFloats(int startCol, Span<float> dst)
         {
-            NativeMethods.bcsv_row_set_uint64(Handle, column, value);
+            fixed (float* p = dst)
+                NativeMethods.bcsv_row_get_float_array(Handle, startCol, (IntPtr)p, (nuint)dst.Length);
         }
 
-        /// <summary>
-        /// Set a sbyte value in the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <param name="value">Value to set</param>
-        public virtual void SetInt8(int column, sbyte value)
+        public unsafe void SetFloats(int startCol, ReadOnlySpan<float> src)
         {
-            NativeMethods.bcsv_row_set_int8(Handle, column, value);
+            fixed (float* p = src)
+                NativeMethods.bcsv_row_set_float_array(Handle, startCol, (IntPtr)p, (nuint)src.Length);
         }
 
-        /// <summary>
-        /// Set a short value in the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <param name="value">Value to set</param>
-        public virtual void SetInt16(int column, short value)
+        public unsafe void GetDoubles(int startCol, Span<double> dst)
         {
-            NativeMethods.bcsv_row_set_int16(Handle, column, value);
+            fixed (double* p = dst)
+                NativeMethods.bcsv_row_get_double_array(Handle, startCol, (IntPtr)p, (nuint)dst.Length);
         }
 
-        /// <summary>
-        /// Set an int value in the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <param name="value">Value to set</param>
-        public virtual void SetInt32(int column, int value)
+        public unsafe void SetDoubles(int startCol, ReadOnlySpan<double> src)
         {
-            NativeMethods.bcsv_row_set_int32(Handle, column, value);
+            fixed (double* p = src)
+                NativeMethods.bcsv_row_set_double_array(Handle, startCol, (IntPtr)p, (nuint)src.Length);
         }
 
-        /// <summary>
-        /// Set a long value in the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <param name="value">Value to set</param>
-        public virtual void SetInt64(int column, long value)
-        {
-            NativeMethods.bcsv_row_set_int64(Handle, column, value);
-        }
+        public void Clear() => NativeMethods.bcsv_row_clear(Handle);
 
-        /// <summary>
-        /// Set a float value in the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <param name="value">Value to set</param>
-        public virtual void SetFloat(int column, float value)
-        {
-            NativeMethods.bcsv_row_set_float(Handle, column, value);
-        }
-
-        /// <summary>
-        /// Set a double value in the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <param name="value">Value to set</param>
-        public virtual void SetDouble(int column, double value)
-        {
-            NativeMethods.bcsv_row_set_double(Handle, column, value);
-        }
-
-        /// <summary>
-        /// Set a string value in the specified column
-        /// </summary>
-        /// <param name="column">Column index</param>
-        /// <param name="value">Value to set</param>
-        public virtual void SetString(int column, string value)
-        {
-            NativeMethods.bcsv_row_set_string(Handle, column, value);
-        }
-
-        #endregion
-
-        #region Array Access Methods
-        // Note: Array methods are kept for performance scenarios
-        // Implementation would continue with all array getter/setter methods...
-        // For brevity, I'll add a few key ones and indicate where others would go
-
-        /// <summary>
-        /// Get multiple int values starting from the specified column
-        /// </summary>
-        /// <param name="startColumn">Starting column index</param>
-        /// <param name="dst">Destination array</param>
-        /// <param name="count">Number of values to read</param>
-        public void GetInt32Array(int startColumn, int[] dst, int count)
-        {
-            NativeMethods.bcsv_row_get_int32_array(Handle, startColumn, dst, (UIntPtr)count);
-        }
-
-        /// <summary>
-        /// Set multiple int values starting from the specified column
-        /// </summary>
-        /// <param name="startColumn">Starting column index</param>
-        /// <param name="src">Source array</param>
-        /// <param name="count">Number of values to write</param>
-        public virtual void SetInt32Array(int startColumn, int[] src, int count)
-        {
-            NativeMethods.bcsv_row_set_int32_array(Handle, startColumn, src, (UIntPtr)count);
-        }
-
-        // Additional array methods would be implemented here for all types...
-        // GetBoolArray, SetBoolArray, GetFloatArray, SetFloatArray, etc.
-
-        #endregion
-    }
-
-    /// <summary>
-    /// Owning BCSV row with value semantics
-    /// Creates and manages its own native handle
-    /// Must be disposed to free native resources
-    /// </summary>
-    public sealed class BcsvRow : BcsvRowBase, IDisposable
-    {
-        /// <summary>
-        /// Create a new row with the specified layout (creates owned handle)
-        /// </summary>
-        /// <param name="layout">Layout for the new row</param>
-        /// <returns>New BcsvRow instance</returns>
-        public static BcsvRow Create(BcsvLayout layout)
-        {
-            if (layout == null)
-                throw new ArgumentNullException(nameof(layout));
-            
-            var handle = NativeMethods.bcsv_row_create(layout.Handle);
-            if (handle == IntPtr.Zero)
-                throw new InvalidOperationException("Failed to create BCSV row");
-            
-            return new BcsvRow(handle);
-        }
-
-        /// <summary>
-        /// Create a copy of another row (creates owned handle)
-        /// </summary>
-        /// <param name="source">Source row to copy from</param>
-        /// <returns>New BcsvRow instance with copied data</returns>
-        public static BcsvRow Clone(BcsvRowBase source)
-        {
-            if (source == null)
-                throw new ArgumentNullException(nameof(source));
-            
-            var handle = NativeMethods.bcsv_row_clone(source.Handle);
-            if (handle == IntPtr.Zero)
-                throw new InvalidOperationException("Failed to clone BCSV row");
-            
-            return new BcsvRow(handle);
-        }
-
-        /// <summary>
-        /// Internal constructor for owning row
-        /// </summary>
-        /// <param name="nativeHandle">Native handle to own</param>
-        private BcsvRow(IntPtr nativeHandle) : base(nativeHandle)
-        {
-        }
-
-        /// <summary>
-        /// Assign values from another row to this row
-        /// </summary>
-        /// <param name="source">Source row to copy from</param>
-        public void Assign(BcsvRowBase source)
-        {
-            if (source == null)
-                throw new ArgumentNullException(nameof(source));
-            
-            NativeMethods.bcsv_row_assign(Handle, source.Handle);
-        }
-
-        /// <summary>
-        /// Dispose of this row - frees the native handle
-        /// </summary>
-        public void Dispose()
-        {
-            Dispose(true);
-            GC.SuppressFinalize(this);
-        }
-
-        private void Dispose(bool disposing)
-        {
-            if (handle != IntPtr.Zero)
-            {
-                NativeMethods.bcsv_row_destroy(handle);
-                handle = IntPtr.Zero;
-            }
-        }
-
-        ~BcsvRow()
-        {
-            Dispose(false);
-        }
-    }
-
-    /// <summary>
-    /// Non-owning mutable reference to a BCSV row
-    /// Used for writer.Row scenarios where the row is owned by the writer
-    /// Allows full read/write access but doesn't manage the native handle lifecycle
-    /// </summary>
-    public sealed class BcsvRowRef : BcsvRowBase
-    {
-        /// <summary>
-        /// Internal constructor for mutable row reference
-        /// </summary>
-        /// <param name="nativeHandle">Native handle to reference (not owned)</param>
-        internal BcsvRowRef(IntPtr nativeHandle) : base(nativeHandle)
-        {
-        }
-
-        /// <summary>
-        /// Assign values from another row to this row
-        /// </summary>
-        /// <param name="source">Source row to copy from</param>
-        public void Assign(BcsvRowBase source)
-        {
-            if (source == null)
-                throw new ArgumentNullException(nameof(source));
-            
-            NativeMethods.bcsv_row_assign(Handle, source.Handle);
-        }
-    }
-
-    /// <summary>
-    /// Non-owning immutable reference to a BCSV row
-    /// Used for reader.Row scenarios where the row is owned by the reader
-    /// Provides read-only access and prevents accidental modification
-    /// Setter methods throw InvalidOperationException
-    /// </summary>
-    public sealed class BcsvRowRefConst : BcsvRowBase
-    {
-        /// <summary>
-        /// Internal constructor for immutable row reference
-        /// </summary>
-        /// <param name="nativeHandle">Native handle to reference (not owned)</param>
-        internal BcsvRowRefConst(IntPtr nativeHandle) : base(nativeHandle)
-        {
-        }
-
-        // Override all setter methods to throw exceptions
-        public override void Clear()
-        {
-            throw new InvalidOperationException("Cannot modify read-only row reference");
-        }
-
-        public override void SetBool(int column, bool value)
-        {
-            throw new InvalidOperationException("Cannot modify read-only row reference");
-        }
-
-        public override void SetUInt8(int column, byte value)
-        {
-            throw new InvalidOperationException("Cannot modify read-only row reference");
-        }
-
-        public override void SetUInt16(int column, ushort value)
-        {
-            throw new InvalidOperationException("Cannot modify read-only row reference");
-        }
-
-        public override void SetUInt32(int column, uint value)
-        {
-            throw new InvalidOperationException("Cannot modify read-only row reference");
-        }
-
-        public override void SetUInt64(int column, ulong value)
-        {
-            throw new InvalidOperationException("Cannot modify read-only row reference");
-        }
-
-        public override void SetInt8(int column, sbyte value)
-        {
-            throw new InvalidOperationException("Cannot modify read-only row reference");
-        }
-
-        public override void SetInt16(int column, short value)
-        {
-            throw new InvalidOperationException("Cannot modify read-only row reference");
-        }
-
-        public override void SetInt32(int column, int value)
-        {
-            throw new InvalidOperationException("Cannot modify read-only row reference");
-        }
-
-        public override void SetInt64(int column, long value)
-        {
-            throw new InvalidOperationException("Cannot modify read-only row reference");
-        }
-
-        public override void SetFloat(int column, float value)
-        {
-            throw new InvalidOperationException("Cannot modify read-only row reference");
-        }
-
-        public override void SetDouble(int column, double value)
-        {
-            throw new InvalidOperationException("Cannot modify read-only row reference");
-        }
-
-        public override void SetString(int column, string value)
-        {
-            throw new InvalidOperationException("Cannot modify read-only row reference");
-        }
-
-        public override void SetInt32Array(int startColumn, int[] src, int count)
-        {
-            throw new InvalidOperationException("Cannot modify read-only row reference");
-        }
-
-        // Additional array setter overrides would go here...
+        public override string ToString()
+            => NativeMethods.PtrToStringUtf8(NativeMethods.bcsv_row_to_string(Handle));
     }
 }

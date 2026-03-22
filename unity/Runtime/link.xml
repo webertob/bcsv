@@ -10,10 +10,16 @@
     <type fullname="BCSV.BcsvReader" preserve="all"/>
     <type fullname="BCSV.BcsvWriter" preserve="all"/>
     <type fullname="BCSV.BcsvRow" preserve="all"/>
-    <type fullname="BCSV.BcsvRowBase" preserve="all"/>
-    <type fullname="BCSV.BcsvRowRef" preserve="all"/>
-    <type fullname="BCSV.BcsvRowRefConst" preserve="all"/>
+    <type fullname="BCSV.BcsvCsvReader" preserve="all"/>
+    <type fullname="BCSV.BcsvCsvWriter" preserve="all"/>
+    <type fullname="BCSV.BcsvSampler" preserve="all"/>
+    <type fullname="BCSV.BcsvVersion" preserve="all"/>
+    <type fullname="BCSV.BcsvColumns" preserve="all"/>
+    <type fullname="BCSV.BcsvException" preserve="all"/>
+    <type fullname="BCSV.ColumnData" preserve="all"/>
+    <type fullname="BCSV.ColumnDefinition" preserve="all"/>
     <type fullname="BCSV.ColumnType" preserve="all"/>
     <type fullname="BCSV.FileFlags" preserve="all"/>
+    <type fullname="BCSV.SamplerMode" preserve="all"/>
   </assembly>
 </linker>

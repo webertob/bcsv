@@ -529,6 +529,15 @@ internal static partial class NativeMethods
         return Marshal.PtrToStringUTF8(ptr) ?? string.Empty;
     }
 
+    /// <summary>Filename helper: C API returns wchar_t* on Windows, char* elsewhere.</summary>
+    internal static string PtrToStringAuto(IntPtr ptr)
+    {
+        if (ptr == IntPtr.Zero) return string.Empty;
+        return OperatingSystem.IsWindows()
+            ? Marshal.PtrToStringUni(ptr) ?? string.Empty
+            : Marshal.PtrToStringUTF8(ptr) ?? string.Empty;
+    }
+
     internal static void ThrowIfError(string context)
     {
         var errPtr = bcsv_last_error();

@@ -149,7 +149,7 @@ layout[i]             # ColumnDefinition at index i
 
 ```python
 writer = pybcsv.Writer(layout: Layout, row_codec: str = "delta")
-writer.open(filename: str, overwrite: bool = True,
+writer.open(filename: str, overwrite: bool = False,
             compression_level: int = 1, block_size_kb: int = 64,
             flags: FileFlags = FileFlags.BATCH_COMPRESS)  # raises RuntimeError on failure
 writer.write_row(values: list)
@@ -229,7 +229,7 @@ Native CSV I/O with the same Layout-based schema.
 ```python
 # Write CSV
 csv_w = pybcsv.CsvWriter(layout, delimiter=',', decimal_sep='.')
-csv_w.open(filename, overwrite=True, include_header=True)
+csv_w.open(filename, overwrite=False, include_header=True)
 csv_w.write_row(values)
 csv_w.write_rows(rows)
 csv_w.close()

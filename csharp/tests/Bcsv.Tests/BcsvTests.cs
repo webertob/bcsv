@@ -919,7 +919,7 @@ public class BcsvTests : IDisposable
         {
             BcsvColumns.WriteColumns(path, layout,
                 new Dictionary<int, Array> { [0] = xData, [1] = labels }, 200,
-                compression: 1);
+                compression: 1, overwrite: true);
 
             using var data = BcsvColumns.ReadColumns(path);
             Assert.Equal(200, data.RowCount);

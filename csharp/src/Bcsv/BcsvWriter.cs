@@ -43,7 +43,7 @@ public sealed class BcsvWriter : IDisposable
         }
     }
 
-    public void Open(string filename, bool overwrite = true,
+    public void Open(string filename, bool overwrite = false,
                      int compression = 1, int blockSizeKb = 8192,
                      FileFlags flags = FileFlags.BatchCompress)
     {
@@ -52,9 +52,32 @@ public sealed class BcsvWriter : IDisposable
             NativeMethods.ThrowWithError("Failed to open writer", NativeMethods.bcsv_writer_error_msg(_handle));
     }
 
+    /// <summary>Tries to open a file. Returns false on failure (no exception).</summary>
+    public bool TryOpen(string filename, bool overwrite = false,
+                        int compression = 1, int blockSizeKb = 8192,
+                        FileFlags flags = FileFlags.BatchCompress)
+    {
+        return NativeMethods.bcsv_writer_open(_handle, filename, overwrite,
+            compression, blockSizeKb, (int)flags);
+    }
+
     public void Close() => NativeMethods.bcsv_writer_close(_handle);
     public void Flush() => NativeMethods.bcsv_writer_flush(_handle);
     public bool IsOpen => NativeMethods.bcsv_writer_is_open(_handle);
+
+    public string? Filename
+    {
+        get
+        {
+            var ptr = NativeMethods.bcsv_writer_filename(_handle);
+            return ptr == IntPtr.Zero ? null : NativeMethods.PtrToStringAuto(ptr);
+        }
+    }
+
+    public string ErrorMessage =>
+        NativeMethods.PtrToStringUtf8(NativeMethods.bcsv_writer_error_msg(_handle));
+
+    public byte CompressionLevel => NativeMethods.bcsv_writer_compression_level(_handle);
 
     /// <summary>Mutable reference to the internal row. Fill with Set*, then call WriteRow().</summary>
     public BcsvRow Row => _row;

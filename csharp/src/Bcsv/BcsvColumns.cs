@@ -93,7 +93,7 @@ public static class BcsvColumns
     public static void WriteColumns(string filename, BcsvLayout layout,
         IDictionary<int, Array> columns, int rowCount,
         string rowCodec = "delta", int compression = 1,
-        FileFlags flags = FileFlags.BatchCompress)
+        FileFlags flags = FileFlags.BatchCompress, bool overwrite = false)
     {
         int numCols = layout.ColumnCount;
         var types = new ColumnType[numCols];
@@ -105,7 +105,7 @@ public static class BcsvColumns
         }
 
         using var writer = new BcsvWriter(layout, rowCodec);
-        writer.Open(filename, overwrite: true, compression: compression, flags: flags);
+        writer.Open(filename, overwrite: overwrite, compression: compression, flags: flags);
 
         var gcHandles = new GCHandle[numCols];
         var bufPtrs = new IntPtr[numCols];

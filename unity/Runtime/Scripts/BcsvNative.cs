@@ -1,11 +1,5 @@
-/*
- * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
- * 
- * This file is part of the BCSV library.
- * 
- * Licensed under the MIT License. See LICENSE file in the project root 
- * for full license information.
- */
+// Copyright (c) 2025-2026 Tobias Weber. Licensed under the MIT License.
+// Full P/Invoke coverage matching csharp/src/Bcsv/NativeMethods.cs.
 
 using System;
 using System.Runtime.InteropServices;
@@ -13,7 +7,6 @@ using UnityEngine.Scripting;
 
 namespace BCSV
 {
-    // Enum for column types - must match bcsv_type_t in C API
     public enum ColumnType
     {
         Bool   = 0,
@@ -34,364 +27,581 @@ namespace BCSV
     public enum FileFlags
     {
         None           = 0,
-        ZOH            = 1 << 0,
+        ZeroOrderHold  = 1 << 0,
         NoFileIndex    = 1 << 1,
         StreamMode     = 1 << 2,
         BatchCompress  = 1 << 3,
         DeltaEncoding  = 1 << 4,
     }
-    // Native P/Invoke declarations
+
+    public enum SamplerMode
+    {
+        Truncate = 0,
+        Expand   = 1,
+    }
+
     [Preserve]
     internal static class NativeMethods
     {
-        const string DllName = "bcsv_c_api"; // Adjust this to match your actual DLL name
+        const string Lib = "bcsv_c_api";
 
-        // Layout API
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_layout_create();
+        // ── Version ────────────────────────────────────────────────────
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_version();
 
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_layout_clone(IntPtr layout);
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int bcsv_version_major();
 
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_layout_destroy(IntPtr layout);
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int bcsv_version_minor();
 
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern bool bcsv_layout_has_column(IntPtr layout, string name);
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int bcsv_version_patch();
 
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern UIntPtr bcsv_layout_column_count(IntPtr layout);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern UIntPtr bcsv_layout_column_index(IntPtr layout, string name);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_layout_column_name(IntPtr layout, UIntPtr index);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern ColumnType bcsv_layout_column_type(IntPtr layout, UIntPtr index);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern bool bcsv_layout_set_column_name(IntPtr layout, UIntPtr index, string name);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_layout_set_column_type(IntPtr layout, UIntPtr index, ColumnType type);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern bool bcsv_layout_add_column(IntPtr layout, UIntPtr index, string name, ColumnType type);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_layout_remove_column(IntPtr layout, UIntPtr index);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_layout_clear(IntPtr layout);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern bool bcsv_layout_is_compatible(IntPtr layout1, IntPtr layout2);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_layout_assign(IntPtr dest, IntPtr src);
-
-        // Reader API
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_reader_create();
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_reader_destroy(IntPtr reader);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_reader_close(IntPtr reader);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern UIntPtr bcsv_reader_count_rows(IntPtr reader);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern bool bcsv_reader_open(IntPtr reader, string filename);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern bool bcsv_reader_is_open(IntPtr reader);
-
-        // Platform-specific filename functions
-#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_reader_filename(IntPtr reader); // Returns wchar_t* on Windows
-#else
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_reader_filename(IntPtr reader); // Returns char* on POSIX
-#endif
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_reader_layout(IntPtr reader);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern bool bcsv_reader_next(IntPtr reader);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_reader_row(IntPtr reader);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern UIntPtr bcsv_reader_index(IntPtr reader);
-
-        // Writer API
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_writer_create(IntPtr layout);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_writer_create_zoh(IntPtr layout);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_writer_destroy(IntPtr writer);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_writer_close(IntPtr writer);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_writer_flush(IntPtr writer);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern bool bcsv_writer_open(IntPtr writer, string filename, bool overwrite, int compression, int block_size_kb, FileFlags flag);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern bool bcsv_writer_is_open(IntPtr writer);
-
-        // Platform-specific filename functions
-#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_writer_filename(IntPtr writer); // Returns wchar_t* on Windows
-#else
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_writer_filename(IntPtr writer); // Returns char* on POSIX
-#endif
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_writer_layout(IntPtr writer);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern bool bcsv_writer_next(IntPtr writer);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_writer_row(IntPtr writer);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern UIntPtr bcsv_writer_index(IntPtr writer);
-
-        // Row API - Lifecycle
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_row_create(IntPtr layout);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_row_clone(IntPtr row);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_destroy(IntPtr row);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_clear(IntPtr row);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_assign(IntPtr dest, IntPtr src);
-
-        // Row API - Single value access
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_row_layout(IntPtr row);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern bool bcsv_row_get_bool(IntPtr row, int col);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern byte bcsv_row_get_uint8(IntPtr row, int col);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern ushort bcsv_row_get_uint16(IntPtr row, int col);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern uint bcsv_row_get_uint32(IntPtr row, int col);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern ulong bcsv_row_get_uint64(IntPtr row, int col);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern sbyte bcsv_row_get_int8(IntPtr row, int col);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern short bcsv_row_get_int16(IntPtr row, int col);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern int bcsv_row_get_int32(IntPtr row, int col);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern long bcsv_row_get_int64(IntPtr row, int col);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern float bcsv_row_get_float(IntPtr row, int col);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern double bcsv_row_get_double(IntPtr row, int col);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_row_get_string(IntPtr row, int col);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_bool(IntPtr row, int col, bool value);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_uint8(IntPtr row, int col, byte value);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_uint16(IntPtr row, int col, ushort value);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_uint32(IntPtr row, int col, uint value);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_uint64(IntPtr row, int col, ulong value);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_int8(IntPtr row, int col, sbyte value);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_int16(IntPtr row, int col, short value);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_int32(IntPtr row, int col, int value);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_int64(IntPtr row, int col, long value);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_float(IntPtr row, int col, float value);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_double(IntPtr row, int col, double value);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_string(IntPtr row, int col, string value);
-
-        // Row API - Array access
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_get_bool_array(IntPtr row, int start_col, bool[] dst, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_get_uint8_array(IntPtr row, int start_col, byte[] dst, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_get_uint16_array(IntPtr row, int start_col, ushort[] dst, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_get_uint32_array(IntPtr row, int start_col, uint[] dst, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_get_uint64_array(IntPtr row, int start_col, ulong[] dst, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_get_int8_array(IntPtr row, int start_col, sbyte[] dst, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_get_int16_array(IntPtr row, int start_col, short[] dst, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_get_int32_array(IntPtr row, int start_col, int[] dst, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_get_int64_array(IntPtr row, int start_col, long[] dst, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_get_float_array(IntPtr row, int start_col, float[] dst, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_get_double_array(IntPtr row, int start_col, double[] dst, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_bool_array(IntPtr row, int start_col, bool[] src, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_uint8_array(IntPtr row, int start_col, byte[] src, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_uint16_array(IntPtr row, int start_col, ushort[] src, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_uint32_array(IntPtr row, int start_col, uint[] src, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_uint64_array(IntPtr row, int start_col, ulong[] src, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_int8_array(IntPtr row, int start_col, sbyte[] src, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_int16_array(IntPtr row, int start_col, short[] src, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_int32_array(IntPtr row, int start_col, int[] src, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_int64_array(IntPtr row, int start_col, long[] src, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_float_array(IntPtr row, int start_col, float[] src, UIntPtr count);
-
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_row_set_double_array(IntPtr row, int start_col, double[] src, UIntPtr count);
-
-        // Error handling
-        [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+        // ── Error ──────────────────────────────────────────────────────
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr bcsv_last_error();
 
-        /// <summary>
-        /// Convert a native UTF-8 string pointer to a managed string.
-        /// </summary>
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_clear_last_error();
+
+        // ── Layout ─────────────────────────────────────────────────────
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_layout_create();
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_layout_clone(nint layout);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_layout_destroy(nint layout);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_layout_has_column(nint layout,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string name);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nuint bcsv_layout_column_count(nint layout);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        internal static extern nuint bcsv_layout_column_index(nint layout,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string name);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_layout_column_name(nint layout, nuint index);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern ColumnType bcsv_layout_column_type(nint layout, nuint index);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_layout_set_column_name(nint layout, nuint index,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string name);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_layout_set_column_type(nint layout, nuint index, ColumnType type);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_layout_add_column(nint layout, nuint index,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string name, ColumnType type);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_layout_remove_column(nint layout, nuint index);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_layout_clear(nint layout);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_layout_is_compatible(nint layout1, nint layout2);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_layout_assign(nint dest, nint src);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nuint bcsv_layout_column_count_by_type(nint layout, ColumnType type);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_layout_to_string(nint layout);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nuint bcsv_layout_row_data_size(nint layout);
+
+        // ── Reader ─────────────────────────────────────────────────────
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_reader_create();
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_reader_destroy(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_reader_open(nint reader,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string filename);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_reader_open_ex(nint reader,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string filename,
+            [MarshalAs(UnmanagedType.U1)] bool rebuildFooter);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_reader_close(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_reader_is_open(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_reader_filename(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_reader_layout(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_reader_next(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_reader_read(nint reader, nuint index);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_reader_row(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nuint bcsv_reader_index(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nuint bcsv_reader_count_rows(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_reader_error_msg(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern byte bcsv_reader_compression_level(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int bcsv_reader_file_flags(nint reader);
+
+        // ── Writer ─────────────────────────────────────────────────────
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_writer_create(nint layout);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_writer_create_zoh(nint layout);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_writer_create_delta(nint layout);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_writer_destroy(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_writer_close(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_writer_flush(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_writer_open(nint writer,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string filename,
+            [MarshalAs(UnmanagedType.U1)] bool overwrite,
+            int compress, int blockSizeKb, int flags);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_writer_is_open(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_writer_filename(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_writer_layout(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_writer_next(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_writer_write(nint writer, nint row);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_writer_row(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nuint bcsv_writer_index(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_writer_error_msg(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern byte bcsv_writer_compression_level(nint writer);
+
+        // ── Row ────────────────────────────────────────────────────────
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_row_create(nint layout);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_row_clone(nint row);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_destroy(nint row);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_clear(nint row);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_assign(nint dest, nint src);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_row_layout(nint row);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nuint bcsv_row_column_count(nint row);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_row_to_string(nint row);
+
+        // Scalar getters
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_row_get_bool(nint row, int col);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern byte bcsv_row_get_uint8(nint row, int col);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern ushort bcsv_row_get_uint16(nint row, int col);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern uint bcsv_row_get_uint32(nint row, int col);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern ulong bcsv_row_get_uint64(nint row, int col);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern sbyte bcsv_row_get_int8(nint row, int col);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern short bcsv_row_get_int16(nint row, int col);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern int bcsv_row_get_int32(nint row, int col);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern long bcsv_row_get_int64(nint row, int col);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern float bcsv_row_get_float(nint row, int col);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern double bcsv_row_get_double(nint row, int col);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_row_get_string(nint row, int col);
+
+        // Scalar setters
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_bool(nint row, int col, [MarshalAs(UnmanagedType.U1)] bool value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_uint8(nint row, int col, byte value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_uint16(nint row, int col, ushort value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_uint32(nint row, int col, uint value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_uint64(nint row, int col, ulong value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_int8(nint row, int col, sbyte value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_int16(nint row, int col, short value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_int32(nint row, int col, int value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_int64(nint row, int col, long value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_float(nint row, int col, float value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_double(nint row, int col, double value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        internal static extern void bcsv_row_set_string(nint row, int col,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string value);
+
+        // Array getters
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_get_bool_array(nint row, int startCol, IntPtr dst, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_get_uint8_array(nint row, int startCol, IntPtr dst, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_get_uint16_array(nint row, int startCol, IntPtr dst, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_get_uint32_array(nint row, int startCol, IntPtr dst, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_get_uint64_array(nint row, int startCol, IntPtr dst, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_get_int8_array(nint row, int startCol, IntPtr dst, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_get_int16_array(nint row, int startCol, IntPtr dst, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_get_int32_array(nint row, int startCol, IntPtr dst, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_get_int64_array(nint row, int startCol, IntPtr dst, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_get_float_array(nint row, int startCol, IntPtr dst, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_get_double_array(nint row, int startCol, IntPtr dst, nuint count);
+
+        // Array setters
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_bool_array(nint row, int startCol, IntPtr src, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_uint8_array(nint row, int startCol, IntPtr src, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_uint16_array(nint row, int startCol, IntPtr src, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_uint32_array(nint row, int startCol, IntPtr src, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_uint64_array(nint row, int startCol, IntPtr src, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_int8_array(nint row, int startCol, IntPtr src, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_int16_array(nint row, int startCol, IntPtr src, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_int32_array(nint row, int startCol, IntPtr src, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_int64_array(nint row, int startCol, IntPtr src, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_float_array(nint row, int startCol, IntPtr src, nuint count);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_row_set_double_array(nint row, int startCol, IntPtr src, nuint count);
+
+        // ── CSV Reader ─────────────────────────────────────────────────
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_csv_reader_create(nint layout, byte delimiter, byte decimalSep);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_csv_reader_destroy(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_csv_reader_open(nint reader,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string filename,
+            [MarshalAs(UnmanagedType.U1)] bool hasHeader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_csv_reader_close(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_csv_reader_is_open(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_csv_reader_layout(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_csv_reader_next(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_csv_reader_row(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nuint bcsv_csv_reader_index(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_csv_reader_error_msg(nint reader);
+
+        // ── CSV Writer ─────────────────────────────────────────────────
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_csv_writer_create(nint layout, byte delimiter, byte decimalSep);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_csv_writer_destroy(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_csv_writer_open(nint writer,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string filename,
+            [MarshalAs(UnmanagedType.U1)] bool overwrite,
+            [MarshalAs(UnmanagedType.U1)] bool includeHeader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_csv_writer_close(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_csv_writer_is_open(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_csv_writer_layout(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_csv_writer_next(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_csv_writer_write(nint writer, nint row);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_csv_writer_row(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nuint bcsv_csv_writer_index(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_csv_writer_error_msg(nint writer);
+
+        // ── Sampler ────────────────────────────────────────────────────
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_sampler_create(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_sampler_destroy(nint sampler);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_sampler_set_conditional(nint sampler,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string expr);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_sampler_set_selection(nint sampler,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string expr);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_sampler_get_conditional(nint sampler);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_sampler_get_selection(nint sampler);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_sampler_set_mode(nint sampler, SamplerMode mode);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern SamplerMode bcsv_sampler_get_mode(nint sampler);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_sampler_next(nint sampler);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_sampler_row(nint sampler);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_sampler_output_layout(nint sampler);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nuint bcsv_sampler_source_row_pos(nint sampler);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_sampler_error_msg(nint sampler);
+
+        // ── Columnar Bulk I/O ──────────────────────────────────────────
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nuint bcsv_reader_read_columns(nint reader, IntPtr[] bufs,
+            nuint numCols, nuint maxRows);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_reader_column_string(nint reader, nuint col, nuint row);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nuint bcsv_reader_column_string_count(nint reader, nuint col);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nuint bcsv_reader_column_strings_packed(nint reader, nuint col,
+            IntPtr outBuf, nuint bufSize);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_writer_write_columns(nint writer, IntPtr[] bufs,
+            nuint numCols, nuint numRows);
+
+        // ── Helpers ────────────────────────────────────────────────────
         internal static string PtrToStringUtf8(IntPtr ptr)
-            => ptr == IntPtr.Zero ? string.Empty : Marshal.PtrToStringUTF8(ptr) ?? string.Empty;
+        {
+            if (ptr == IntPtr.Zero) return string.Empty;
+            return Marshal.PtrToStringUTF8(ptr) ?? string.Empty;
+        }
+
+        internal static void ThrowIfError(string context)
+        {
+            var errPtr = bcsv_last_error();
+            var err = PtrToStringUtf8(errPtr);
+            if (!string.IsNullOrEmpty(err))
+            {
+                bcsv_clear_last_error();
+                throw new BcsvException($"{context}: {err}");
+            }
+        }
+
+        internal static void ThrowWithError(string message, IntPtr errPtr)
+        {
+            var err = PtrToStringUtf8(errPtr);
+            throw new BcsvException($"{message}: {err}");
+        }
     }
 
     /// <summary>
-    /// Helper methods for cross-platform filename handling
-    /// Provides unified string interface while using platform-specific native calls
+    /// Cross-platform filename handling. Windows returns wchar_t*, POSIX returns char*.
     /// </summary>
     internal static class FilenameHelper
     {
-        /// <summary>
-        /// Get reader filename as string, handling platform differences
-        /// </summary>
-        internal static string GetReaderFilename(IntPtr reader)
+        internal static string GetReaderFilename(nint reader)
         {
-            IntPtr filenamePtr = NativeMethods.bcsv_reader_filename(reader);
-            if (filenamePtr == IntPtr.Zero)
-                return null;
-
+            IntPtr ptr = NativeMethods.bcsv_reader_filename(reader);
+            if (ptr == IntPtr.Zero) return null;
 #if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
-            // On Windows, convert from wchar_t* to string
-            return Marshal.PtrToStringUni(filenamePtr);
+            return Marshal.PtrToStringUni(ptr);
 #else
-            // On POSIX, convert from char* to string
-            return PtrToStringUtf8(filenamePtr);
+            return NativeMethods.PtrToStringUtf8(ptr);
 #endif
         }
 
-        /// <summary>
-        /// Get writer filename as string, handling platform differences
-        /// </summary>
-        internal static string GetWriterFilename(IntPtr writer)
+        internal static string GetWriterFilename(nint writer)
         {
-            IntPtr filenamePtr = NativeMethods.bcsv_writer_filename(writer);
-            if (filenamePtr == IntPtr.Zero)
-                return null;
-
+            IntPtr ptr = NativeMethods.bcsv_writer_filename(writer);
+            if (ptr == IntPtr.Zero) return null;
 #if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
-            // On Windows, convert from wchar_t* to string
-            return Marshal.PtrToStringUni(filenamePtr);
+            return Marshal.PtrToStringUni(ptr);
 #else
-            // On POSIX, convert from char* to string
-            return PtrToStringUtf8(filenamePtr);
+            return NativeMethods.PtrToStringUtf8(ptr);
 #endif
         }
-
-        /// <summary>
-        /// Convert a native UTF-8 string pointer to a managed string.
-        /// Centralised helper matching the main C# binding convention.
-        /// </summary>
-        internal static string PtrToStringUtf8(IntPtr ptr)
-            => ptr == IntPtr.Zero ? string.Empty : Marshal.PtrToStringUTF8(ptr) ?? string.Empty;
     }
 }

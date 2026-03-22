@@ -794,7 +794,7 @@ NB_MODULE(_bcsv, m) {
                 throw std::runtime_error(err);
             }
             return success;
-        }, nb::arg("filename"), nb::arg("overwrite") = true, nb::arg("include_header") = true)
+        }, nb::arg("filename"), nb::arg("overwrite") = false, nb::arg("include_header") = true)
         .def("close", [](CsvWriterT& w) { w.close(); })
         .def("is_open", &CsvWriterT::isOpen)
         .def("row_count", &CsvWriterT::rowCount)

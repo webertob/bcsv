@@ -174,14 +174,15 @@ public class BcsvRecorder : MonoBehaviour
             : System.IO.Path.Combine(Application.persistentDataPath, fileName);
         
         writer = new BcsvWriter(layout);
-        if (writer.Open(finalPath, true, 1, 64, FileFlags.ZOH))
+        try
         {
+            writer.Open(finalPath, overwrite: true);
             Debug.Log($"Started recording to: {finalPath}");
             timerCounter = timerInterval;
         }
-        else
+        catch (BcsvException ex)
         {
-            Debug.LogError($"Failed to open BCSV file for writing: {finalPath}");
+            Debug.LogError($"Failed to open BCSV file for writing: {finalPath} — {ex.Message}");
             running = false;
         }
     }
@@ -207,8 +208,6 @@ public class BcsvRecorder : MonoBehaviour
         if (writer == null || !writer.IsOpen) return;
         
         var row = writer.Row;
-        if (row == null) return;
-        
         int columnIndex = 0;
         row.SetFloat(columnIndex++, Time.time);
         
@@ -232,10 +231,10 @@ public class BcsvRecorder : MonoBehaviour
             }
         }
         
-        writer.Next();
+        writer.WriteRow();
     }
 
-    private void SetRowValue(BcsvRowRef row, int columnIndex, object value, ColumnType columnType)
+    private void SetRowValue(BcsvRow row, int columnIndex, object value, ColumnType columnType)
     {
         try
         {

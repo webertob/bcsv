@@ -1,263 +1,136 @@
-/*
- * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
- * 
- * This file is part of the BCSV library.
- * 
- * Licensed under the MIT License. See LICENSE file in the project root 
- * for full license information.
- */
+// Copyright (c) 2025-2026 Tobias Weber. Licensed under the MIT License.
 
 using System;
-using System.Runtime.InteropServices;
-using UnityEngine;
+using System.Collections;
+using System.Collections.Generic;
 
 namespace BCSV
 {
     /// <summary>
-    /// Reader for BCSV files - reads files row by row
+    /// Reads rows sequentially from a BCSV binary file. Supports IEnumerable for
+    /// foreach iteration. Also supports random access via Read(index).
     /// </summary>
-    public class BcsvReader : IDisposable
+    public sealed class BcsvReader : IDisposable, IEnumerable<BcsvRow>
     {
-        private IntPtr handle;
+        private nint _handle;
+        private BcsvLayout _layout;
+        private BcsvRow _row;
 
-        /// <summary>
-        /// Create a new BCSV reader
-        /// </summary>
         public BcsvReader()
         {
-            handle = NativeMethods.bcsv_reader_create();
-            if (handle == IntPtr.Zero)
-                throw new InvalidOperationException("Failed to create BCSV reader");
+            _handle = NativeMethods.bcsv_reader_create();
+            if (_handle == 0)
+                throw new BcsvException("Failed to create reader");
         }
 
-        /// <summary>
-        /// Internal handle for native calls
-        /// </summary>
-        internal IntPtr Handle
-        {
-            get
-            {
-                if (handle == IntPtr.Zero)
-                    throw new ObjectDisposedException("BcsvReader");
-                return handle;
-            }
-        }
-
-        /// <summary>
-        /// Check if the reader has a file open
-        /// </summary>
-        public bool IsOpen
-        {
-            get { return NativeMethods.bcsv_reader_is_open(Handle); }
-        }
-
-        /// <summary>
-        /// Get the filename of the currently open file
-        /// </summary>
-        public string Filename
-        {
-            get
-            {
-                return FilenameHelper.GetReaderFilename(Handle);
-            }
-        }
-
-        /// <summary>
-        /// Get the layout of the currently open file
-        /// </summary>
-        public BcsvLayout Layout
-        {
-            get
-            {
-                var layoutHandle = NativeMethods.bcsv_reader_layout(Handle);
-                // Non-owning wrapper: Reader owns the native layout, we must not destroy it
-                return layoutHandle == IntPtr.Zero ? null : new BcsvLayout(layoutHandle, ownsHandle: false);
-            }
-        }
-
-        /// <summary>
-        /// Get the current row (valid after calling Next() successfully)
-        /// Returns an immutable reference to prevent accidental modification
-        /// </summary>
-        public BcsvRowRefConst Row
-        {
-            get
-            {
-                var rowHandle = NativeMethods.bcsv_reader_row(Handle);
-                return rowHandle == IntPtr.Zero ? null : new BcsvRowRefConst(rowHandle);
-            }
-        }
-
-        /// <summary>
-        /// Get the current row index (0-based, number of rows read so far)
-        /// </summary>
-        public int Index
-        {
-            get { return (int)NativeMethods.bcsv_reader_index(Handle); }
-        }
-
-        /// <summary>
-        /// Open a BCSV file for reading
-        /// </summary>
-        /// <param name="filename">Path to the BCSV file</param>
-        /// <returns>True if successful</returns>
-        public bool Open(string filename)
-        {
-            if (string.IsNullOrEmpty(filename))
-                throw new ArgumentNullException(nameof(filename));
-
-            return NativeMethods.bcsv_reader_open(Handle, filename);
-        }
-
-        /// <summary>
-        /// Close the currently open file
-        /// </summary>
-        public void Close()
-        {
-            NativeMethods.bcsv_reader_close(Handle);
-        }
-
-        /// <summary>
-        /// Get the total number of rows in the file
-        /// </summary>
-        public ulong CountRows()
-        {
-            return (ulong)NativeMethods.bcsv_reader_count_rows(Handle);
-        }
-
-        /// <summary>
-        /// Read the next row from the file
-        /// </summary>
-        /// <returns>True if a row was read, false if end of file</returns>
-        public bool Next()
-        {
-            return NativeMethods.bcsv_reader_next(Handle);
-        }
-
-        /// <summary>
-        /// Read all rows from the file using a callback function
-        /// </summary>
-        /// <param name="rowCallback">Function to call for each row</param>
-        /// <returns>Number of rows processed</returns>
-        public int ReadAll(Action<BcsvRowRefConst, int> rowCallback)
-        {
-            if (rowCallback == null)
-                throw new ArgumentNullException(nameof(rowCallback));
-
-            int rowCount = 0;
-            while (Next())
-            {
-                rowCallback(Row, Index);
-                rowCount++;
-            }
-            return rowCount;
-        }
-
-        /// <summary>
-        /// Read all rows from the file and return them as an array
-        /// </summary>
-        /// <returns>Array of row data as object arrays</returns>
-        public object[][] ReadAllRows()
-        {
-            if (!IsOpen || Layout == null)
-                throw new InvalidOperationException("No file is open");
-
-            var rows = new System.Collections.Generic.List<object[]>();
-            var layout = Layout;
-            int columnCount = layout.ColumnCount;
-
-            while (Next())
-            {
-                var row = Row;
-                var rowData = new object[columnCount];
-
-                for (int i = 0; i < columnCount; i++)
-                {
-                    var columnType = layout.GetColumnType(i);
-                    switch (columnType)
-                    {
-                        case ColumnType.Bool:
-                            rowData[i] = row.GetBool(i);
-                            break;
-                        case ColumnType.UInt8:
-                            rowData[i] = row.GetUInt8(i);
-                            break;
-                        case ColumnType.UInt16:
-                            rowData[i] = row.GetUInt16(i);
-                            break;
-                        case ColumnType.UInt32:
-                            rowData[i] = row.GetUInt32(i);
-                            break;
-                        case ColumnType.UInt64:
-                            rowData[i] = row.GetUInt64(i);
-                            break;
-                        case ColumnType.Int8:
-                            rowData[i] = row.GetInt8(i);
-                            break;
-                        case ColumnType.Int16:
-                            rowData[i] = row.GetInt16(i);
-                            break;
-                        case ColumnType.Int32:
-                            rowData[i] = row.GetInt32(i);
-                            break;
-                        case ColumnType.Int64:
-                            rowData[i] = row.GetInt64(i);
-                            break;
-                        case ColumnType.Float:
-                            rowData[i] = row.GetFloat(i);
-                            break;
-                        case ColumnType.Double:
-                            rowData[i] = row.GetDouble(i);
-                            break;
-                        case ColumnType.String:
-                            rowData[i] = row.GetString(i);
-                            break;
-                        default:
-                            rowData[i] = null;
-                            break;
-                    }
-                }
-                rows.Add(rowData);
-            }
-
-            return rows.ToArray();
-        }
-
-        /// <summary>
-        /// Get the last error message from the native library
-        /// </summary>
-        /// <returns>Error message or null</returns>
-        public static string GetLastError()
-        {
-            var ptr = NativeMethods.bcsv_last_error();
-            return NativeMethods.PtrToStringUtf8(ptr);
-        }
+        ~BcsvReader() => Dispose(false);
 
         public void Dispose()
         {
             Dispose(true);
-            GC.SuppressFinalize(this); // Prevent finalizer from running
+            GC.SuppressFinalize(this);
         }
 
-        protected virtual void Dispose(bool disposing)
+        private void Dispose(bool disposing)
         {
-            if (handle != IntPtr.Zero)
+            if (_handle != 0)
             {
-                if (disposing)
-                {
-                    // Disposing from user code - safe to call other methods
-                    Close(); // Close file if open
-                }
-                // Always clean up native resources
-                NativeMethods.bcsv_reader_destroy(handle);
-                handle = IntPtr.Zero;
+                NativeMethods.bcsv_reader_destroy(_handle);
+                _handle = 0;
             }
         }
 
-        ~BcsvReader()
+        /// <summary>Opens a file. Throws BcsvException on failure.</summary>
+        public void Open(string filename)
         {
-            // Finalizer safety net for forgotten Dispose() calls
-            Dispose(false);
+            if (!NativeMethods.bcsv_reader_open(_handle, filename))
+                NativeMethods.ThrowWithError("Failed to open",
+                    NativeMethods.bcsv_reader_error_msg(_handle));
+            _row = new BcsvRow(NativeMethods.bcsv_reader_row(_handle));
         }
+
+        /// <summary>Opens a file with optional footer rebuild. Throws on failure.</summary>
+        public void Open(string filename, bool rebuildFooter)
+        {
+            if (!NativeMethods.bcsv_reader_open_ex(_handle, filename, rebuildFooter))
+                NativeMethods.ThrowWithError("Failed to open",
+                    NativeMethods.bcsv_reader_error_msg(_handle));
+            _row = new BcsvRow(NativeMethods.bcsv_reader_row(_handle));
+        }
+
+        /// <summary>Tries to open a file. Returns false on failure (no exception).</summary>
+        public bool TryOpen(string filename)
+        {
+            if (!NativeMethods.bcsv_reader_open(_handle, filename))
+                return false;
+            _row = new BcsvRow(NativeMethods.bcsv_reader_row(_handle));
+            return true;
+        }
+
+        /// <summary>Tries to open with optional footer rebuild. Returns false on failure.</summary>
+        public bool TryOpen(string filename, bool rebuildFooter)
+        {
+            if (!NativeMethods.bcsv_reader_open_ex(_handle, filename, rebuildFooter))
+                return false;
+            _row = new BcsvRow(NativeMethods.bcsv_reader_row(_handle));
+            return true;
+        }
+
+        public void Close() => NativeMethods.bcsv_reader_close(_handle);
+        public bool IsOpen => NativeMethods.bcsv_reader_is_open(_handle);
+
+        public string Filename => FilenameHelper.GetReaderFilename(_handle);
+
+        /// <summary>Advance to next row. Returns false at EOF.</summary>
+        public bool ReadNext() => NativeMethods.bcsv_reader_next(_handle);
+
+        /// <summary>Random access: read row at given index.</summary>
+        public bool Read(long index) => NativeMethods.bcsv_reader_read(_handle, (nuint)index);
+
+        /// <summary>Current row (reference — data changes on ReadNext/Read).</summary>
+        public BcsvRow Row => _row;
+
+        public BcsvLayout Layout
+        {
+            get
+            {
+                _layout ??= new BcsvLayout(NativeMethods.bcsv_reader_layout(_handle), ownsHandle: false);
+                return _layout;
+            }
+        }
+
+        public long RowCount => (long)NativeMethods.bcsv_reader_count_rows(_handle);
+        public long CurrentIndex => (long)NativeMethods.bcsv_reader_index(_handle);
+        public byte CompressionLevel => NativeMethods.bcsv_reader_compression_level(_handle);
+        public FileFlags FileFlags => (FileFlags)NativeMethods.bcsv_reader_file_flags(_handle);
+
+        public string ErrorMessage =>
+            NativeMethods.PtrToStringUtf8(NativeMethods.bcsv_reader_error_msg(_handle));
+
+        internal nint Handle => _handle;
+
+        /// <summary>
+        /// Read up to maxRows rows from current position into column-oriented buffers.
+        /// Returns a ColumnData with the actual number of rows read.
+        /// Returns null at EOF (0 rows available).
+        /// </summary>
+        public ColumnData ReadBatch(int maxRows)
+        {
+            if (maxRows <= 0)
+                throw new ArgumentOutOfRangeException(nameof(maxRows), maxRows, "Must be positive");
+
+            var result = BcsvColumns.ReadColumnsFromHandle(_handle, Layout, maxRows);
+            if (result.RowCount == 0) { result.Dispose(); return null; }
+            return result;
+        }
+
+        // ── IEnumerable<BcsvRow> — enables foreach ─────────────────────
+        public IEnumerator<BcsvRow> GetEnumerator()
+        {
+            while (ReadNext())
+                yield return _row;
+        }
+
+        IEnumerator IEnumerable.GetEnumerator() => GetEnumerator();
     }
 }
