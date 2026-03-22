@@ -11,10 +11,10 @@ and Zero-Order Hold encoding. P/Invoke bindings to the native `bcsv_c_api` libra
 In Unity, open **Window → Package Manager → + → Add package from git URL** and enter:
 
 ```
-https://github.com/webertob/bcsv.git?path=unity#v1.4.3
+https://github.com/webertob/bcsv.git?path=unity#v1.5.0
 ```
 
-Replace `v1.4.3` with the desired release tag.
+Replace `v1.5.0` with the desired release tag (UPM support starts at v1.5.0).
 
 ### Option B: Tarball
 
