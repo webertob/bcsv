@@ -12,6 +12,13 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-03-22
+
+### Fixed
+- Unity: `ColumnDefinition` reverted from `readonly record struct` to `readonly struct` for C# 9.0 / Mono compatibility
+- C#: `BcsvColumns.WriteColumns` now accepts an `overwrite` parameter (default `false`)
+- C#: `PtrToStringAuto` helper for cross-platform filename marshalling (Windows `wchar_t*` vs Unix `char*`)
+
 ## [1.5.0] - 2026-03-22
 
 ### Changed
@@ -161,7 +168,8 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ---
 
-[Unreleased]: https://github.com/webertob/bcsv/compare/v1.4.3...HEAD
+[Unreleased]: https://github.com/webertob/bcsv/compare/v1.5.2...HEAD
+[1.5.2]: https://github.com/webertob/bcsv/compare/v1.5.1...v1.5.2
 [1.4.3]: https://github.com/webertob/bcsv/compare/v1.4.2...v1.4.3
 [1.4.2]: https://github.com/webertob/bcsv/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/webertob/bcsv/compare/v1.4.0...v1.4.1

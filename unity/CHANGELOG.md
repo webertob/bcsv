@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-03-22
+
+### Fixed
+- `ColumnDefinition` reverted from `readonly record struct` to `readonly struct` for C# 9.0 / Unity Mono compatibility
+- `WriteColumns` now accepts an `overwrite` parameter (default `false`) instead of silently overwriting
+
 ### Added
 - **BcsvCsvReader**: CSV text file reader with `IEnumerable<BcsvRow>` and `TryOpen()`
 - **BcsvCsvWriter**: CSV text file writer with `TryOpen()`
@@ -74,6 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Double-free bug in `BcsvRowBase.Layout` (now uses non-owning handle)
 - README path references (`unity/plugin/` → `unity/Runtime/Scripts/`)
 
-[Unreleased]: https://github.com/webertob/bcsv/compare/v1.5.0...HEAD
+[Unreleased]: https://github.com/webertob/bcsv/compare/v1.5.2...HEAD
+[1.5.2]: https://github.com/webertob/bcsv/compare/v1.5.1...v1.5.2
 [1.5.0]: https://github.com/webertob/bcsv/compare/v1.4.3...v1.5.0
 [1.4.3]: https://github.com/webertob/bcsv/releases/tag/v1.4.3

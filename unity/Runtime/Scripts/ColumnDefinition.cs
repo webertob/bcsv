@@ -3,5 +3,17 @@
 namespace BCSV
 {
     /// <summary>Describes a single column in a BCSV layout.</summary>
-    public readonly record struct ColumnDefinition(string Name, ColumnType Type, int Index);
+    public readonly struct ColumnDefinition
+    {
+        public string Name { get; }
+        public ColumnType Type { get; }
+        public int Index { get; }
+
+        public ColumnDefinition(string name, ColumnType type, int index)
+        {
+            Name = name;
+            Type = type;
+            Index = index;
+        }
+    }
 }
