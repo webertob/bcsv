@@ -27,11 +27,11 @@ open **Window → Package Manager → + → Add package from tarball** and selec
 Clone the repo and in Unity open **Window → Package Manager → + → Add package from disk**,
 then select `unity/package.json`.
 
-### Native Library (local builds only)
+### Native Library
 
-When installing via Git URL or tarball the native binaries are included automatically.
-For local development you need to build `bcsv_c_api` and copy the library into the
-`Runtime/Plugins/` directories:
+The tarball from GitHub Releases includes pre-built native binaries.
+For **Git URL** or **local development** installs, you need to build `bcsv_c_api`
+and copy the library into the `Runtime/Plugins/` directories:
 
 ```bash
 # Windows (from repo root)
