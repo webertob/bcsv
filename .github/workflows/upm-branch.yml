@@ -1,0 +1,195 @@
+# Update the 'upm' branch with a complete Unity package including native binaries.
+# Unity users can install via Git URL:
+#   https://github.com/webertob/bcsv.git#upm
+#
+# This workflow triggers after the Unity Package workflow succeeds,
+# or can be run manually.
+
+name: Update UPM Branch
+
+on:
+  workflow_run:
+    workflows: ["Unity Package"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-upm:
+    name: Update upm branch
+    runs-on: ubuntu-latest
+    # Only run if triggered manually, or if the Unity Package workflow succeeded
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          # Get version from package.json (always reliable regardless of trigger)
+          VERSION=$(python3 -c "import json; print(json.load(open('unity/package.json'))['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
+
+          # Check if this was triggered by a tag
+          HEAD_BRANCH="${{ github.event.workflow_run.head_branch || '' }}"
+          if [[ "$HEAD_BRANCH" == v* ]]; then
+            echo "is_tag=true" >> "$GITHUB_OUTPUT"
+            echo "tag=$HEAD_BRANCH" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_tag=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Ninja
+        run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build
+
+      # ── Build native libraries for all platforms using cross-compilation where needed ──
+      # For the upm branch we build Linux x64 natively and note that Windows/macOS/Linux-arm64
+      # require the full Unity Package workflow artifacts. We download them if available.
+
+      - name: Download Unity Package artifacts
+        id: download
+        run: |
+          echo "Attempting to download native artifacts from Unity Package workflow..."
+
+          # If triggered by workflow_run, use that specific run ID
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            RUN_ID="${{ github.event.workflow_run.id }}"
+            echo "Using triggering workflow run: $RUN_ID"
+          else
+            # Find the latest successful Unity Package workflow run
+            RUN_ID=$(gh run list \
+              --workflow="unity-package.yml" \
+              --status=success \
+              --limit=1 \
+              --json databaseId \
+              --jq '.[0].databaseId' 2>/dev/null || echo "")
+            echo "Found latest successful run: $RUN_ID"
+          fi
+
+          if [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ]; then
+            mkdir -p native-artifacts
+
+            # Download each platform artifact
+            for RID in win-x64 linux-x64 linux-arm64 osx-arm64; do
+              gh run download "$RUN_ID" \
+                --name "unity-native-$RID" \
+                --dir "native-artifacts/unity-native-$RID" 2>/dev/null || true
+            done
+
+            echo "=== Downloaded artifacts ==="
+            find native-artifacts -type f 2>/dev/null || echo "No artifacts found"
+
+            # Check if we got at least one native
+            NATIVE_COUNT=$(find native-artifacts -type f \( -name "*.dll" -o -name "*.so" -o -name "*.dylib" \) | wc -l)
+            if [ "$NATIVE_COUNT" -gt 0 ]; then
+              echo "has_artifacts=true" >> "$GITHUB_OUTPUT"
+              echo "Found $NATIVE_COUNT native libraries"
+            else
+              echo "has_artifacts=false" >> "$GITHUB_OUTPUT"
+              echo "No native libraries found in artifacts"
+            fi
+          else
+            echo "No Unity Package workflow run found"
+            echo "has_artifacts=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Build Linux x64 native (fallback)
+        if: steps.download.outputs.has_artifacts != 'true'
+        run: |
+          cmake -G Ninja -B build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBCSV_WERROR=ON \
+            -DBUILD_TESTS=OFF
+          cmake --build build --target bcsv_c_api --parallel
+          mkdir -p native-artifacts/unity-native-linux-x64
+          cp build/libbcsv_c_api.so native-artifacts/unity-native-linux-x64/
+
+      - name: Prepare upm branch content
+        run: |
+          mkdir -p upm-staging
+
+          # Copy unity package files to root of staging area
+          cp -r unity/* upm-staging/
+
+          # Copy license from project root
+          cp LICENSE upm-staging/LICENSE.md
+
+          # Stage native libraries into Plugins structure
+          PLUGINS="upm-staging/Runtime/Plugins"
+
+          if [ -f native-artifacts/unity-native-win-x64/bcsv_c_api.dll ]; then
+            cp native-artifacts/unity-native-win-x64/bcsv_c_api.dll "$PLUGINS/Windows/x86_64/"
+            echo "  Staged: Windows/x86_64/bcsv_c_api.dll"
+          fi
+
+          if [ -f native-artifacts/unity-native-linux-x64/libbcsv_c_api.so ]; then
+            cp native-artifacts/unity-native-linux-x64/libbcsv_c_api.so "$PLUGINS/Linux/x86_64/"
+            echo "  Staged: Linux/x86_64/libbcsv_c_api.so"
+          fi
+
+          if [ -f native-artifacts/unity-native-linux-arm64/libbcsv_c_api.so ]; then
+            cp native-artifacts/unity-native-linux-arm64/libbcsv_c_api.so "$PLUGINS/Linux/arm64/"
+            echo "  Staged: Linux/arm64/libbcsv_c_api.so"
+          fi
+
+          if [ -f native-artifacts/unity-native-osx-arm64/libbcsv_c_api.dylib ]; then
+            cp native-artifacts/unity-native-osx-arm64/libbcsv_c_api.dylib "$PLUGINS/macOS/"
+            echo "  Staged: macOS/libbcsv_c_api.dylib"
+          fi
+
+          # Remove .gitkeep placeholders (natives replace them)
+          find "$PLUGINS" -name ".gitkeep" -delete 2>/dev/null || true
+
+          # Patch version in package.json
+          python3 -c "
+          import json
+          with open('upm-staging/package.json', 'r') as f:
+              pkg = json.load(f)
+          pkg['version'] = '${{ steps.version.outputs.version }}'
+          with open('upm-staging/package.json', 'w') as f:
+              json.dump(pkg, f, indent=2)
+              f.write('\n')
+          print(f'package.json version: {pkg[\"version\"]}')
+          "
+
+          echo "=== UPM branch contents ==="
+          find upm-staging -type f | head -40
+
+      - name: Push to upm branch
+        run: |
+          cd upm-staging
+
+          git init
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout -b upm
+          git add -A
+          git commit -m "UPM package v${{ steps.version.outputs.version }}"
+
+          # Force-push to the upm branch
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          git push -f origin upm
+
+          echo "Updated upm branch with v${{ steps.version.outputs.version }}"
+
+      - name: Tag upm branch
+        if: steps.version.outputs.is_tag == 'true'
+        run: |
+          cd upm-staging
+          TAG="${{ steps.version.outputs.tag }}-upm"
+          git tag "$TAG"
+          git push origin "$TAG" --force
+          echo "Tagged upm branch as $TAG"

@@ -77,7 +77,7 @@ jobs:
       run: cmake --build build --target bcsv_gtest test_c_api test_row_api -j$(nproc)
 
     - name: Run core tests
-      run: ctest --test-dir build --output-on-failure
+      run: ctest --test-dir build --output-on-failure -R "test_row_api|test_c_api$|BCSVTestSuite"
 
     - name: Run benchmark sweep (MACRO-SMALL)
       run: |
@@ -161,7 +161,7 @@ jobs:
       run: cmake --build build --target bcsv_gtest test_c_api test_row_api -j$(nproc)
 
     - name: Run core tests
-      run: ctest --test-dir build --output-on-failure
+      run: ctest --test-dir build --output-on-failure -R "test_row_api|test_c_api$|BCSVTestSuite"
 
     - name: Run release benchmark sweep
       run: |

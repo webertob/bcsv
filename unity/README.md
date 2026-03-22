@@ -11,27 +11,26 @@ and Zero-Order Hold encoding. P/Invoke bindings to the native `bcsv_c_api` libra
 In Unity, open **Window → Package Manager → + → Add package from git URL** and enter:
 
 ```
-https://github.com/webertob/bcsv.git?path=unity#v1.5.0
+https://github.com/webertob/bcsv.git#upm
 ```
 
-Replace `v1.5.0` with the desired release tag (UPM support starts at v1.5.0).
+This installs from the `upm` branch which includes **pre-built native binaries**
+for Windows x64, Linux x64/arm64, and macOS arm64. No manual build required.
 
 ### Option B: Tarball
 
 Download `com.bcsv.unity-<version>.tgz` from the
 [GitHub Releases](https://github.com/webertob/bcsv/releases) page, then in Unity
 open **Window → Package Manager → + → Add package from tarball** and select the file.
+The tarball includes pre-built native binaries for all supported platforms.
 
 ### Option C: Local development
 
 Clone the repo and in Unity open **Window → Package Manager → + → Add package from disk**,
 then select `unity/package.json`.
 
-### Native Library
-
-The tarball from GitHub Releases includes pre-built native binaries.
-For **Git URL** or **local development** installs, you need to build `bcsv_c_api`
-and copy the library into the `Runtime/Plugins/` directories:
+For local development installs, you need to build `bcsv_c_api` and copy the
+library into the `Runtime/Plugins/` directories:
 
 ```bash
 # Windows (from repo root)
