@@ -5,7 +5,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://isocpp.org/)
-[![Version](https://img.shields.io/badge/version-1.3.0-orange.svg)](VERSIONING.md)
+[![Version](https://img.shields.io/badge/version-1.5.0-orange.svg)](VERSIONING.md)
 
 > **Versioning:** Library version (e.g. v1.3.0) tracks API/code changes.
 > File format version (e.g. v1.4.0) tracks binary wire format changes.
@@ -159,7 +159,8 @@ external CSV library comparison. See [benchmark/README.md](benchmark/README.md) 
 |----------|-------------|----------|-------|
 | **C++** | Header-only, C++20 | Maximum performance (static API) | [examples/](examples/) |
 | **Python** | `pip install pybcsv` | Pandas workflows, prototyping | [python/README.md](python/README.md) |
-| **C# / Unity** | NuGet / Unity package | Game development | [unity/README.md](unity/README.md) |
+| **C#** | `dotnet add package Bcsv` | .NET services, Sampler, columnar I/O | [csharp/README.md](csharp/README.md) |
+| **Unity** | UPM Git URL or tarball | Game development, recording | [unity/README.md](unity/README.md) |
 | **C** | Shared library (`libbcsv`) | FFI bindings, embedded systems | [docs/API_OVERVIEW.md](docs/API_OVERVIEW.md) |
 
 **All APIs produce identical binary format** — files are 100% cross-compatible. See [docs/INTEROPERABILITY.md](docs/INTEROPERABILITY.md) and [docs/API_OVERVIEW.md](docs/API_OVERVIEW.md) for code examples and comparison matrix.

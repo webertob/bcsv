@@ -12,6 +12,8 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-03-22
+
 ### Changed
 - C++: Unified library version and file format version — single version from git tags stamped into every `.bcsv` header (see VERSIONING.md)
 - C++: Version-gated codec registry — `resolveRowCodecId(fileMinor, flags)` and `resolveFileCodecId(fileMinor, ...)` enable backward-compatible codec selection from file header
@@ -55,6 +57,16 @@ This project uses [Semantic Versioning](https://semver.org/).
 - Unity: replaced `PtrToStringAnsi` with `PtrToStringUTF8` at 6 locations (Cycle 3)
 - Unity: added `[Preserve]` attributes for IL2CPP compatibility (Cycle 3)
 - Docs: fixed broken URLs, corrected forward-compatibility documentation (Cycle 1)
+- CI: benchmark workflow scoped ctest to only run built targets (exclude examples/pytest)
+- CI: pybcsv publish workflow added `skip-existing` to PyPI publish step
+- Unity: double-free in `BcsvRowBase.Layout` (now uses non-owning handle)
+- Unity: replaced `UIntPtr.MaxValue` with .NET Standard 2.1 compatible cast
+
+### Added (Unity / CI)
+- Unity: UPM package structure (`package.json`, assembly definition, Samples~, .meta files)
+- Unity: `FileFlags` enum entries: `NoFileIndex`, `StreamMode`, `BatchCompress`, `DeltaEncoding`
+- CI: `unity-package.yml` — multi-platform native builds (win-x64, linux-x64/arm64, osx-arm64) with `.tgz` packaging
+- CI: `upm-branch.yml` — auto-updates `upm` branch with pre-built native binaries for Git URL installs
 
 ---
 
