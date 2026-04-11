@@ -1928,6 +1928,12 @@ constexpr Bitset<N>& Bitset<N>::assignRange(const Bitset<M>& src,
     // Fast path: destination is word-aligned
     if (dst_shift == 0) {
         const size_t base = offset / WORD_BITS;
+        // GCC false-positive: bounds are verified by the asserts above, but
+        // the compiler cannot prove it for dynamic (N=npos) specialisations.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#endif
         for (size_t i = 0; i < full_words; ++i) {
             word_t s = (i < src_wc) ? src_data[i] : word_t{0};
             dst_data[base + i] = s;
@@ -1937,6 +1943,9 @@ constexpr Bitset<N>& Bitset<N>::assignRange(const Bitset<M>& src,
             word_t& d = dst_data[base + full_words];
             d = (d & ~tail_mask) | (s & tail_mask);
         }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
         clearUnusedBits();
         return *this;
     }
