@@ -229,8 +229,8 @@ int main(int argc, char* argv[]) {
         // ── Open reader & create sampler ────────────────────────────
         bcsv::Reader<bcsv::Layout> reader;
         if (!reader.open(cfg.input_file)) {
-            std::cerr << "Error: Cannot open BCSV file: "
-                      << cfg.input_file << "\n";
+            std::cerr << "Error: Cannot open BCSV file: " << cfg.input_file << "\n"
+                      << "  " << reader.getErrorMsg() << "\n";
             return 1;
         }
 

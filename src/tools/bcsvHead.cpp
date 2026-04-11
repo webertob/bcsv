@@ -119,7 +119,8 @@ int main(int argc, char* argv[]) {
         // Open BCSV file
         bcsv::Reader<bcsv::Layout> reader;
         if (!reader.open(config.input_file)) {
-            std::cerr << "Error: Cannot open BCSV file: " << config.input_file << std::endl;
+            std::cerr << "Error: Cannot open BCSV file: " << config.input_file << "\n"
+                      << "  " << reader.getErrorMsg() << std::endl;
             return 1;
         }
         

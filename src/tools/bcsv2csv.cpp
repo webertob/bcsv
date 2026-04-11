@@ -275,7 +275,8 @@ int main(int argc, char* argv[]) {
 
         if (!has_direct_access) {
             if (!seq_reader.open(config.input_file)) {
-                throw std::runtime_error("Cannot open BCSV file: " + config.input_file);
+                throw std::runtime_error("Cannot open BCSV file: " + config.input_file +
+                                         " (" + seq_reader.getErrorMsg() + ")");
             }
             if (config.verbose) {
                 std::cerr << "Using sequential reader (stream-mode file)" << std::endl;

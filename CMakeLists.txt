@@ -11,6 +11,14 @@ cmake_minimum_required(VERSION 3.28)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(GetGitVersion)
 
+# Generate version header from git-derived version into the build tree.
+# Build-tree include paths are listed before source-tree paths below so this
+# file always shadows the gitignored source-tree fallback copy.
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/include/bcsv/version_generated.h" @ONLY
+)
+
 project(bcsv VERSION ${VERSION_STRING} LANGUAGES CXX C)
 
 # Set C++ standard
@@ -98,8 +106,8 @@ endif()
 add_library(bcsv INTERFACE)
 
 target_include_directories(bcsv INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>  # generated files (e.g. version_generated.h) take precedence
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
 
@@ -178,7 +186,12 @@ add_subdirectory(benchmark)
 # ============================================================================
 # Installation
 # ============================================================================
-install(DIRECTORY include/ DESTINATION include)
+# Install headers — exclude the gitignored source-tree copy of version_generated.h;
+# the build-tree copy (correctly stamped from git tags) is installed separately.
+install(DIRECTORY include/ DESTINATION include
+    PATTERN "version_generated.h" EXCLUDE)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/include/bcsv/version_generated.h"
+    DESTINATION include/bcsv)
 
 set(INSTALL_TARGETS bcsv xxhash)
 
@@ -198,8 +211,8 @@ add_library(bcsv_c_api SHARED
 
 target_include_directories(bcsv_c_api
     PUBLIC
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>  # generated files first
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
         $<INSTALL_INTERFACE:include>
 )
 

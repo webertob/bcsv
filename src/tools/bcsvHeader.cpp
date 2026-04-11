@@ -101,7 +101,8 @@ int main(int argc, char* argv[]) {
             // Fall back to plain Reader (footer may be missing)
             bcsv::Reader<bcsv::Layout> plain_reader;
             if (!plain_reader.open(config.input_file)) {
-                std::cerr << "Error: Cannot open BCSV file: " << config.input_file << std::endl;
+                std::cerr << "Error: Cannot open BCSV file: " << config.input_file << "\n"
+                          << "  " << plain_reader.getErrorMsg() << std::endl;
                 return 1;
             }
             // We only need the layout; close immediately

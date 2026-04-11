@@ -151,7 +151,8 @@ static size_t tailDirectAccess(const Config& config) {
 static size_t tailSequential(const Config& config) {
     bcsv::Reader<bcsv::Layout> reader;
     if (!reader.open(config.input_file)) {
-        std::cerr << "Error: Cannot open BCSV file: " << config.input_file << std::endl;
+        std::cerr << "Error: Cannot open BCSV file: " << config.input_file << "\n"
+                  << "  " << reader.getErrorMsg() << std::endl;
         return 0;
     }
 
