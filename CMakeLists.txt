@@ -229,6 +229,13 @@ install(TARGETS bcsv_c_api
     ARCHIVE DESTINATION lib
 )
 
+# Install CLI tools (built by src/tools/CMakeLists.txt)
+install(TARGETS
+        csv2bcsv bcsv2csv bcsvHead bcsvTail bcsvHeader
+        bcsvSampler bcsvGenerator bcsvValidate bcsvRepair
+    RUNTIME DESTINATION bin
+)
+
 # ============================================================================
 # Test Programs
 # ============================================================================

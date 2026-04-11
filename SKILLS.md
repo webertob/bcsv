@@ -122,6 +122,30 @@ cmake --preset ninja-release && cmake --build --preset ninja-release-build -j$(n
 python3 benchmark/run.py wip --type=MICRO --no-report
 ```
 
+### System-wide Install (Linux — Ubuntu / CachyOS)
+
+```bash
+# Install to /usr/local (default prefix, requires sudo)
+bash scripts/install.sh
+
+# Install to custom prefix (no sudo needed for user-local paths)
+bash scripts/install.sh --prefix ~/.local
+
+# Uninstall (uses build/ninja-release/install_manifest.txt)
+bash scripts/install.sh --uninstall
+```
+
+What is installed:
+
+| Location | Content |
+|---|---|
+| `$PREFIX/bin/` | 9 CLI tools (`csv2bcsv`, `bcsv2csv`, `bcsvHead`, `bcsvTail`, `bcsvHeader`, `bcsvSampler`, `bcsvGenerator`, `bcsvValidate`, `bcsvRepair`) |
+| `$PREFIX/lib/libbcsv_c_api.so` | Shared C API library (registered with ldconfig) |
+| `$PREFIX/include/bcsv/` | Full C++ + C API headers |
+| `$PREFIX/lib/cmake/bcsv/` | CMake config for `find_package(bcsv)` |
+
+The script also calls `ldconfig` so `libbcsv_c_api.so` is immediately available for linking in other projects.
+
 ## Public API Classes
 
 Users interact with these types (declared in `include/bcsv/`):

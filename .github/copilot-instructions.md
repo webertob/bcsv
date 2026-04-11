@@ -41,7 +41,15 @@ cmake --build --preset ninja-release-build --target bcsvSampler -j$(nproc)
 
 # Clean rebuild
 rm -rf build/ninja-debug && cmake --preset ninja-debug && cmake --build --preset ninja-debug-build -j$(nproc)
+
+# System-wide install (Ubuntu / CachyOS — requires sudo)
+bash scripts/install.sh                  # installs to /usr/local
+bash scripts/install.sh --prefix ~/local # user-local install
+bash scripts/install.sh --uninstall      # remove installed files
 ```
+
+The install script builds the `ninja-release` preset, then runs `cmake --install` and `ldconfig`.
+Installed locations: `$PREFIX/bin/` (9 CLI tools), `$PREFIX/lib/libbcsv_c_api.so`, `$PREFIX/include/bcsv/`, `$PREFIX/lib/cmake/bcsv/`.
 
 ## Project Layout
 
