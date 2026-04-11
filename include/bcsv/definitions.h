@@ -81,8 +81,9 @@ namespace bcsv {
     constexpr size_t MAX_COLUMN_LENGTH = std::numeric_limits<uint16_t>::max();  // Maximum width of column content
     constexpr size_t MAX_STRING_LENGTH = std::numeric_limits<uint16_t>::max(); // Maximum length of string data (wire format uses uint16_t lengths)
     constexpr size_t MAX_ROW_LENGTH    = (1ULL << 24) - 2 ;                     // ~16 MB maximum row size, 4b BLE encoding (2 bits for length), reserve 0xFFFF for terminator.
-    constexpr size_t MIN_PACKET_SIZE   = 64 * 1024;                             // 64KB minimum packet size    
-    constexpr size_t MAX_PACKET_SIZE   = 1024 * 1024 * 1024;                    // 1GB maximum packet size
+    constexpr size_t MIN_PACKET_SIZE         = 64 * 1024;                       // 64KB minimum packet size
+    constexpr size_t DEFAULT_PACKET_SIZE_KB  = 8192;                            // 8MB default packet size (in KB, for Writer::open blockSizeKB param)
+    constexpr size_t MAX_PACKET_SIZE         = 1024 * 1024 * 1024;              // 1GB maximum packet size
     /**
      * @brief Feature flag bit positions (Reserved for future optional features)
      * 

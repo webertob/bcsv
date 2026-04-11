@@ -12,6 +12,13 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.4] - 2026-04-12
+
+### Fixed
+- C++/Python: Default packet size corrected from 64 KB to 8 MB (`DEFAULT_PACKET_SIZE_KB = 8192`)
+  — `Writer::open()` `blockSizeKB` default, pybcsv `Writer.open()` default, and `write_columnar_core`
+    all now consistently use the new named constant
+
 ## [1.5.3] - 2026-03-22
 
 ### Fixed

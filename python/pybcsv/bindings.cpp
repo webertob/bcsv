@@ -278,7 +278,7 @@ namespace {
         PyWriter pw(layout, row_codec);
         pw.visit([&](auto& w) {
             nb::gil_scoped_release release;
-            if (!w.open(filename, true, compression_level, 64, flags))
+            if (!w.open(filename, true, compression_level, bcsv::DEFAULT_PACKET_SIZE_KB, flags))
                 throw std::runtime_error("Failed to open file for writing: " + filename);
             for (size_t r = 0; r < num_rows; ++r) {
                 auto& row = w.row();
@@ -580,7 +580,7 @@ NB_MODULE(_bcsv, m) {
             }
             return success;
         }, nb::arg("filename"), nb::arg("overwrite") = false, nb::arg("compression_level") = 1,
-           nb::arg("block_size_kb") = 64, nb::arg("flags") = DEFAULT_FILE_FLAGS)
+           nb::arg("block_size_kb") = bcsv::DEFAULT_PACKET_SIZE_KB, nb::arg("flags") = DEFAULT_FILE_FLAGS)
         .def("write_row", [](PyWriter& pw, const nb::list& values) {
             const auto& layout = pw.visit([](auto& w) -> const bcsv::Layout& { return w.layout(); });
             if (values.size() != layout.columnCount())
