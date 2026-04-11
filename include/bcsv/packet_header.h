@@ -35,7 +35,7 @@ namespace bcsv {
      * ```
      * Offset | Size | Field                  | Description
      * -------|------|------------------------|----------------------------------------
-     *   0    |  4   | magic[4]               | "PCKT" (0x50 0x43 0x4B 0x54)
+     *   0    |  4   | magic[4]               | PCKT_MAGIC (0x50 0x4B 0x43 0x54 on disk)
      *   4    |  8   | firstRowIndex          | Absolute row index (0-based, file-wide)
      *  12    |  4   | headerChecksum         | xxHash32 of bytes 0-12 (magic + firstRowIndex)
      * 
@@ -46,7 +46,7 @@ namespace bcsv {
     #pragma pack(push, 1)
     struct PacketHeader {
         
-        uint32_t magic;           ///< Magic number: "PCKT" (0x50 0x43 0x4B 0x54)
+        uint32_t magic;           ///< Magic number: PCKT_MAGIC (0x50 0x4B 0x43 0x54 on disk)
         uint64_t first_row_index; ///< Absolute row index (0-based, file-wide)
         uint32_t checksum;        ///< xxHash32 of bytes 0-19 (magic + firstRowIndex + prevPayloadChecksum)
         
@@ -73,7 +73,7 @@ namespace bcsv {
         
         /**
          * @brief Validate magic number
-         * @return true if magic number is "PCKT"
+         * @return true if magic number matches PCKT_MAGIC
          */
         bool isValidMagic() const {
             return magic == PCKT_MAGIC;
@@ -168,9 +168,11 @@ namespace bcsv {
                     break;  // Not enough data for a complete header
                 }
                 
-                // Search for "PCKT" in the buffer using string_view
+                // Search for PCKT_MAGIC bytes in the buffer
+                static constexpr auto pckt_le = std::bit_cast<std::array<char, 4>>(PCKT_MAGIC);
+                const std::string_view magic_sv(pckt_le.data(), 4);
                 std::string_view view(buffer.data(), static_cast<size_t>(validBytes));
-                size_t pos = view.find("PCKT");
+                size_t pos = view.find(magic_sv);
                 
                 while (pos != std::string_view::npos) {
                     // Check if we have enough bytes for complete header
@@ -204,7 +206,7 @@ namespace bcsv {
                     }
                     
                     // Invalid header, search for next occurrence after this position
-                    pos = view.find("PCKT", pos + 1);
+                    pos = view.find(magic_sv, pos + 1);
                 }
                 
                 // If no match found and we read a full chunk, prepare for next iteration

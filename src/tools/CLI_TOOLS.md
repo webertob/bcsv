@@ -15,6 +15,7 @@ All tools are built from `src/tools/` and output to `build/bin/`.
 | **bcsvSampler** | Filter & project rows | BCSV | BCSV |
 | **bcsvGenerator** | Generate synthetic datasets | — | BCSV |
 | **bcsvValidate** | Validate structure & content | BCSV (+CSV) | Report |
+| **bcsvRepair** | Repair damaged/interrupted files | BCSV | BCSV |
 
 ## Quick Start
 
@@ -28,6 +29,8 @@ bcsvSampler -c 'X[0][0] > 100' data.bcsv filtered.bcsv  # Filter rows
 bcsvGenerator -p sensor_noisy -n 100000 -o sensor.bcsv   # Generate test data
 bcsvValidate -i data.bcsv               # Validate structure
 bcsvValidate -i data.bcsv --compare source.csv           # Compare files
+bcsvRepair -i broken.bcsv --dry-run                      # Analyze damage
+bcsvRepair -i broken.bcsv -o repaired.bcsv               # Repair to new file
 ```
 
 ## Pipeline Examples
@@ -68,8 +71,9 @@ cmake --build --preset ninja-release-build --target bcsvSampler -j$(nproc)
 | `bcsvSampler.cpp` | Expression-based filter & project |
 | `bcsvGenerator.cpp` | Synthetic dataset generator |
 | `bcsvValidate.cpp` | Structure & content validation |
+| `bcsvRepair.cpp` | Repair damaged/interrupted BCSV files |
 | `cli_common.h` | Shared CLI utilities (codec dispatch, validation, formatting) |
-| `CMakeLists.txt` | Build definitions for all 8 tools |
+| `CMakeLists.txt` | Build definitions for all 9 tools |
 
 ---
 
@@ -397,3 +401,51 @@ bcsvValidate --list                                          # List profiles
 | 0 | Validation passed |
 | 1 | Validation failed (mismatches found) |
 | 2 | Error (file not found, bad arguments) |
+
+---
+
+## bcsvRepair — Repair Damaged BCSV Files
+
+Recover data from BCSV files where the writer was interrupted before completing the write (crash, power loss, killed process). Supports all five file codecs and all three row codecs.
+
+**Packet-mode** files (packet, packet_lz4, packet_lz4_batch): walks packet-by-packet, rebuilds the packet index, attempts partial recovery of the last incomplete packet, writes a valid footer.
+
+**Stream-mode** files (stream, stream_lz4): walks row-by-row using per-row XXH32 checksums, truncates at the last valid row.
+
+### Usage
+
+```bash
+bcsvRepair -i broken.bcsv --dry-run                      # Analyze — report damage without modifying
+bcsvRepair -i broken.bcsv --dry-run --json               # Machine-readable damage report
+bcsvRepair -i broken.bcsv -o repaired.bcsv               # Copy repaired data to new file
+bcsvRepair -i broken.bcsv -o repaired.bcsv --deep -v     # Deep checksum validation + progress
+bcsvRepair -i broken.bcsv --in-place --backup            # Truncate + rewrite footer in place
+```
+
+### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-i, --input FILE` | Input BCSV file (required) | |
+| `-o, --output FILE` | Write repaired file to new location (copy mode) | |
+| `--in-place` | Modify input file directly (truncate + append footer) | |
+| `--backup` | With `--in-place`: copy original to `FILE.bak` first | |
+| `--deep` | Validate packet payload checksums (slower, more thorough) | |
+| `--dry-run` | Analyze only — no files modified (auto-enables `--deep`) | |
+| `--json` | Machine-readable JSON output to stdout | |
+| `-v, --verbose` | Print progress (packets scanned, rows counted) | |
+| `-h, --help` | Show help message | |
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Repair successful (or file already valid) |
+| 1 | Repair failed or file not repairable |
+| 2 | Argument error |
+
+### Notes
+
+- The `packet_lz4_batch` codec wraps entire packets in a single LZ4 frame; if the frame is truncated, zero rows can be recovered from that packet. Non-batch codecs recover individual rows.
+- Use `--dry-run --json` in CI pipelines to detect interrupted writes.
+- `recovery_pct` in JSON output shows the percentage of rows successfully recovered.

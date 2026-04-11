@@ -882,6 +882,54 @@ background:
         Python 143). Add targeted tests for LayoutSubset (partial column read/write
         round-trips, performance comparison vs full-row read).
 
+23.b bcsvRepair — CLI tool to repair BCSV files from interrupted writes
+    Status: COMPLETE — tool + tests implemented, Phase 3 review items below
+
+    Completed:
+    [x] Packet-mode repair: walk packet-by-packet, rebuild index, partial recovery
+    [x] Stream-mode repair: row-by-row XXH32 validation, truncate at last valid row
+    [x] All 5 file codecs: packet, packet_lz4, packet_lz4_batch, stream, stream_lz4
+    [x] All 3 row codecs: flat, ZoH, delta
+    [x] Copy mode (-o), in-place mode (--in-place --backup), dry-run, --deep, --json
+    [x] Bulk I/O: walkStreamRows (1MB sliding buffer), walkPacketPayload (bulk read),
+        recoverPartialPacket (bulk read). Replaced per-row read() calls.
+    [x] Code reduction: 2124 → 1817 lines (–14.5%). Unified output phase,
+        copyFileRange/backupAndTruncate helpers, removed walkStreamLZ4Rows.
+    [x] 46 tests (72-column layout, 8MB packets, 100K rows = 4+ packets)
+    [x] Phase 3 review: dynamic buffer resize, MAX_PACKET_SIZE caps, rows_discarded,
+        deep-validate bulk I/O, recovery_pct JSON field, middle-packet corruption test
+    [x] All 767 tests passing (721 existing + 46 repair)
+    Files: src/tools/bcsvRepair.cpp (~1290 lines), tests/repair_test.cpp (~650 lines)
+
+    Remaining — deferred to future iterations:
+    [ ] Scan past damaged packets: skip broken packet, find next valid PacketHeader
+        magic to recover data beyond the first damaged packet. HIGH complexity —
+        heuristic scan, risk of false positives, row-index discontinuities.
+        Requires design spike and changes repair semantics.
+    [ ] Progress callbacks: for GUI/dashboard integration. Callback interface through
+        Config or separate API. Makes sense when bcsvRepair is used as library, not CLI.
+    [ ] Memory-mapped I/O: library-wide read performance optimisation.
+        mmap maps a file into the process virtual address space. The OS handles paging
+        transparently — no explicit read() calls, no user-space buffering, zero-copy
+        from page cache. OS prefetch (madvise MADV_SEQUENTIAL) accelerates sequential reads.
+        Typical benefit: 10–40% for sequential read-heavy workloads.
+        Availability: Linux (mmap/munmap), macOS (mmap, POSIX), Windows
+        (CreateFileMapping + MapViewOfFile). All current BCSV targets support it.
+        NOT available on baremetal Cortex-M (no MMU/OS) — future embedded target.
+        Approach: implement MmapStreamBuf (custom std::streambuf backed by mmap region,
+        ~80–100 lines). Plug into Reader::open() as alternative to std::ifstream.
+        All file codecs take std::istream& so no codec changes needed.
+        Conditionally compile via #ifdef BCSV_HAS_MMAP (like BCSV_HAS_BATCH_CODEC).
+        Falls back to std::ifstream on unsupported platforms.
+        Not suitable for write path: streaming append + crash resilience requires
+        controlled flushing, which conflicts with mmap write semantics.
+        bcsvRepair already captures most mmap benefit via manual bulk buffers.
+        Main value is the hot Reader decode path (millions of rows).
+    [ ] Share validation logic with bcsvValidate: both tools walk the same file
+        structures. Extract shared packet-walking + checksum code into a common
+        utility. MEDIUM-HIGH complexity — refactoring into shared library code.
+        Risk of divergence increases as both tools evolve independently.
+
 24 Compare against (document and benchmarks):
         parquet
         csv

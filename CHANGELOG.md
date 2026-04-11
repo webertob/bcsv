@@ -167,7 +167,7 @@ This project uses [Semantic Versioning](https://semver.org/).
 - C API (`bcsv_c_api`) for language bindings
 - Flat001 and ZoH001 row codecs
 - Stream and packet file codecs
-- 8 CLI tools (csv2bcsv, bcsv2csv, bcsvSampler, bcsvGenerator, bcsvValidate, bcsvHead, bcsvTail, bcsvHeader)
+- 9 CLI tools (csv2bcsv, bcsv2csv, bcsvSampler, bcsvGenerator, bcsvValidate, bcsvHead, bcsvTail, bcsvHeader, bcsvRepair)
 - Sampler bytecode VM for row filtering and column projection
 - GTest suite with crash resilience tests
 

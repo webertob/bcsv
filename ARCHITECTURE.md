@@ -202,7 +202,7 @@ Technical design, requirements, and implementation roadmap
 │                 Packet 1                                │
 │ ┌─────────────────────────────────────────────────────┐ │
 │ │ Packet Header (16 bytes)                            │ │
-│ │  Magic: "PCKT" (0x54434B50)          4 bytes        │ │
+│ │  Magic: "PKCT" (0x54434B50)          4 bytes        │ │
 │ │  First row index: UINT64             8 bytes        │ │
 │ │  Checksum: xxHash32                  4 bytes        │ │
 │ └─────────────────────────────────────────────────────┘ │
@@ -432,7 +432,7 @@ include/bcsv/           C++ header-only library (all core types)
 
 src/
   bcsv_c_api.cpp         C API shared library implementation
-  tools/                 CLI tools (8 utilities: csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvSampler, bcsvGenerator, bcsvValidate)
+  tools/                 CLI tools (9 utilities: csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvSampler, bcsvGenerator, bcsvValidate, bcsvRepair)
 
 examples/               Usage examples (flexible, static, ZoH, visitors, sampler)
 tests/                  GTest suite, C API tests, Row API tests

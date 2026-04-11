@@ -56,7 +56,11 @@ add_executable(bcsvValidate bcsvValidate.cpp)
 target_link_libraries(bcsvValidate PRIVATE bcsv)
 target_include_directories(bcsvValidate PRIVATE ${CMAKE_SOURCE_DIR}/src/shared)
 
+# Repair tool
+add_executable(bcsvRepair bcsvRepair.cpp)
+target_link_libraries(bcsvRepair PRIVATE bcsv)
+
 # Set output directory for all tools
-set_target_properties(csv2bcsv bcsv2csv bcsvHead bcsvTail bcsvHeader bcsvSampler bcsvGenerator bcsvValidate PROPERTIES
+set_target_properties(csv2bcsv bcsv2csv bcsvHead bcsvTail bcsvHeader bcsvSampler bcsvGenerator bcsvValidate bcsvRepair PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )

@@ -65,14 +65,17 @@ namespace bcsv {
     // See VERSIONING.md for compatibility rules (A/B/C).
 
     // Constants for the binary file format
+    // uint32 constants store magic as little-endian integers; char arrays hold the on-disk byte order.
+    constexpr uint32_t BCSV_MAGIC = 0x56534342;         // LE bytes: "BCSV"
+    // NOTE: PCKT_MAGIC on-disk bytes read "PKCT" (K/C transposed vs the intended "PCKT").
+    // Kept as-is to avoid invalidating all existing files; correct in the next breaking change.
+    constexpr uint32_t PCKT_MAGIC = 0x54434B50;         // LE bytes: "PKCT"
+    constexpr uint32_t FOOTER_BIDX_MAGIC = 0x58444942;  // LE bytes: "BIDX"
+    constexpr uint32_t FOOTER_EIDX_MAGIC = 0x58444945;  // LE bytes: "EIDX"
     constexpr char MAGIC_BYTES_BCSV[4] = { 'B', 'C', 'S', 'V' };
-    constexpr char MAGIC_BYTES_PCKT[4] = { 'P', 'C', 'K', 'T' };
+    constexpr char MAGIC_BYTES_PCKT[4] = { 'P', 'K', 'C', 'T' };  // matches LE of PCKT_MAGIC
     constexpr char MAGIC_BYTES_FOOTER_BIDX[4] = { 'B', 'I', 'D', 'X' };
-    constexpr char MAGIC_BYTES_FOOTER_EIDX[4] = { 'E', 'I', 'D', 'X' }; 
-    constexpr uint32_t BCSV_MAGIC = 0x56534342;   // "BCSV" in little-endian
-    constexpr uint32_t PCKT_MAGIC = 0x54434B50;   // "PCKT" in little-endian
-    constexpr uint32_t FOOTER_BIDX_MAGIC = 0x58444942;   // "BIDX" in little-endian
-    constexpr uint32_t FOOTER_EIDX_MAGIC = 0x58444945;   // "EIDX" in little-endian
+    constexpr char MAGIC_BYTES_FOOTER_EIDX[4] = { 'E', 'I', 'D', 'X' };
     constexpr uint32_t PCKT_TERMINATOR = 0x3FFFFFFF ;    // Marker value to indicate end of packet data (no more rows to come)
     constexpr size_t MAX_COLUMN_COUNT  = std::numeric_limits<uint16_t>::max();  // Maximum number of columns
     constexpr size_t MAX_COLUMN_LENGTH = std::numeric_limits<uint16_t>::max();  // Maximum width of column content

@@ -50,7 +50,7 @@ include/bcsv/         # Header-only C++ library (.h = declarations, .hpp = imple
   codec_row/           # Row codecs (flat001, zoh001, delta002)
   codec_file/          # File codecs (stream, packet, LZ4 variants)
   sampler/             # Bytecode VM for row filtering/projection
-src/tools/             # 8 CLI tools (csv2bcsv, bcsv2csv, bcsvHead/Tail/Header, bcsvSampler, bcsvGenerator, bcsvValidate)
+src/tools/             # 9 CLI tools (csv2bcsv, bcsv2csv, bcsvHead/Tail/Header, bcsvSampler, bcsvGenerator, bcsvValidate, bcsvRepair)
 tests/                 # GTest suite (25 .cpp) + C API tests (3 .c) + shell integration tests
 benchmark/             # Python orchestrator + Google Benchmark executables
 python/                # nanobind bindings + pandas integration
@@ -104,7 +104,7 @@ Follow [Keep a Changelog](https://keepachangelog.com/) format (Added/Changed/Fix
 
 - `SKILLS.md` — full AI skills reference (API classes, source inventory, all conventions)
 - `ARCHITECTURE.md` — design philosophy, binary format spec, roadmap
-- `src/tools/CLI_TOOLS.md` — all 8 CLI tools with options and examples
+- `src/tools/CLI_TOOLS.md` — all 9 CLI tools with options and examples
 - `tests/README.md` — test infrastructure details
 - `benchmark/README.md` — benchmark orchestrator and profiles
 - `ToDo.txt` — active task list with priorities

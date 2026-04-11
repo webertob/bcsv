@@ -37,7 +37,7 @@ bcsv/
 │   ├── sampler/           # Sampler API headers
 │   ├── codec_file/        # File codec headers
 │   └── codec_row/         # Row codec headers
-├── src/tools/             # CLI tools (8 targets: csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvSampler, bcsvGenerator, bcsvValidate)
+├── src/tools/             # CLI tools (9 targets: csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvSampler, bcsvGenerator, bcsvValidate, bcsvRepair)
 ├── examples/              # Usage examples (7 targets)
 ├── tests/                 # Google Test suite + benchmark executables
 ├── benchmark/             # Python orchestrator, report generator, regression detector
@@ -320,7 +320,7 @@ Deep reference: `benchmark/README.md`, `benchmark/REFERENCE_WORKLOADS.md`.
 ### CLI Tools (`src/tools/`)
 
 ```bash
-# Build all 8 tools
+# Build all 9 tools
 cmake --build --preset ninja-release-build -j$(nproc)
 
 # Core pipeline
@@ -332,9 +332,10 @@ bcsvTail -n 5 data.bcsv
 bcsvSampler -c 'X[0][0] > 100' data.bcsv filtered.bcsv
 bcsvGenerator -p sensor_noisy -n 100000 -o sensor.bcsv
 bcsvValidate -i data.bcsv
+bcsvRepair -i broken.bcsv --dry-run --json
 ```
 
-Targets: `csv2bcsv`, `bcsv2csv`, `bcsvHead`, `bcsvTail`, `bcsvHeader`, `bcsvSampler`, `bcsvGenerator`, `bcsvValidate`.
+Targets: `csv2bcsv`, `bcsv2csv`, `bcsvHead`, `bcsvTail`, `bcsvHeader`, `bcsvSampler`, `bcsvGenerator`, `bcsvValidate`, `bcsvRepair`.
 Deep reference: `src/tools/CLI_TOOLS.md`.
 
 ### Examples (`examples/`)

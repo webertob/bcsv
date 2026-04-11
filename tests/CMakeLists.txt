@@ -49,6 +49,7 @@ set(TEST_SOURCES
     stream_operator_test.cpp
     sampler_test.cpp
     bcsv_coverage_gaps_test.cpp
+    repair_test.cpp
 )
 
 if(BCSV_ENABLE_STRESS_TESTS)
