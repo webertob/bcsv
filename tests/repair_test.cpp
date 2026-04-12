@@ -442,7 +442,6 @@ TEST_F(RepairTest, Packet_Flat_CorruptMiddlePacket) {
         PacketHeader ph;
         ASSERT_TRUE(ph.read(is)) << "Cannot read packet " << pkt;
         // Walk the payload to find end
-        size_t rows = 0;
         while (true) {
             uint64_t rowLen = 0;
             try {
@@ -454,7 +453,6 @@ TEST_F(RepairTest, Packet_Flat_CorruptMiddlePacket) {
                 break;
             }
             if (rowLen > 0) is.seekg(static_cast<std::streamoff>(rowLen), std::ios::cur);
-            rows++;
         }
     }
     pkt2_offset = static_cast<uint64_t>(is.tellg());
