@@ -29,6 +29,21 @@
 #include <bcsv/bcsv.h>
 #include <bcsv/vle.hpp>
 
+#ifdef _WIN32
+#  include <windows.h>
+#  define REPAIR_POPEN  _popen
+#  define REPAIR_PCLOSE _pclose
+#elif defined(__APPLE__)
+#  include <mach-o/dyld.h>
+#  define REPAIR_POPEN  popen
+#  define REPAIR_PCLOSE pclose
+#  include <sys/wait.h>
+#else
+#  define REPAIR_POPEN  popen
+#  define REPAIR_PCLOSE pclose
+#  include <sys/wait.h>
+#endif
+
 using namespace bcsv;
 namespace fs = std::filesystem;
 
@@ -44,14 +59,37 @@ enum class RowCodec { Flat, ZoH, Delta };
 
 class RepairTest : public ::testing::Test {
 protected:
+    static fs::path getExecutableDir() {
+#ifdef _WIN32
+        char buf[MAX_PATH];
+        DWORD len = GetModuleFileNameA(nullptr, buf, MAX_PATH);
+        if (len == 0 || len >= MAX_PATH)
+            throw std::runtime_error("GetModuleFileNameA failed");
+        return fs::path(buf).parent_path();
+#elif defined(__APPLE__)
+        uint32_t size = 0;
+        _NSGetExecutablePath(nullptr, &size);
+        std::string buf(size, '\0');
+        if (_NSGetExecutablePath(buf.data(), &size) != 0)
+            throw std::runtime_error("_NSGetExecutablePath failed");
+        return fs::canonical(buf).parent_path();
+#else
+        return fs::canonical("/proc/self/exe").parent_path();
+#endif
+    }
+
     void SetUp() override {
         const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
         test_dir_ = (fs::temp_directory_path() / "bcsv_repair_test"
                      / (std::string(info->test_suite_name()) + "_" + info->name())).string();
         fs::create_directories(test_dir_);
 
-        auto exe_path = fs::canonical("/proc/self/exe").parent_path();
+        auto exe_path = getExecutableDir();
+#ifdef _WIN32
+        repair_binary_ = (exe_path / "bcsvRepair.exe").string();
+#else
         repair_binary_ = (exe_path / "bcsvRepair").string();
+#endif
         ASSERT_TRUE(fs::exists(repair_binary_))
             << "bcsvRepair binary not found at: " << repair_binary_;
     }
@@ -183,15 +221,19 @@ protected:
         cmd += " 2>" + stderr_path;
 
         RepairOutput out;
-        FILE* pipe = popen(cmd.c_str(), "r");
+        FILE* pipe = REPAIR_POPEN(cmd.c_str(), "r");
         EXPECT_NE(pipe, nullptr);
         if (!pipe) { out.exit_code = -1; return out; }
 
         std::array<char, 4096> buf;
         while (fgets(buf.data(), static_cast<int>(buf.size()), pipe))
             out.stdout_text += buf.data();
-        int status = pclose(pipe);
+        int status = REPAIR_PCLOSE(pipe);
+#ifdef _WIN32
+        out.exit_code = status;  // _pclose returns the process exit code directly
+#else
         out.exit_code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+#endif
 
         std::ifstream err_file(stderr_path);
         if (err_file) {
