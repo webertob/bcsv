@@ -179,7 +179,7 @@ Technical design, requirements, and implementation roadmap
 
 ## File Format Specification
 
-### Version 1.4.0 (Current)
+### Version 1.5.7 (Current)
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -508,7 +508,7 @@ Clamped to `MIN_PACKET_SIZE` (64 KB) – `MAX_PACKET_SIZE` (1 GB).
 
 ---
 
-### Phase 4: File Codecs & Backward Compatibility (v1.4.0) 🔄
+### Phase 4: File Codecs & Backward Compatibility (v1.4.0) ✅
 
 **Goal**: Support multiple compression/packaging strategies and read older file formats
 

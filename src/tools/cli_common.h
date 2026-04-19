@@ -279,7 +279,7 @@ void withWriter(const LayoutType& layout,
         bcsv::WriterZoH<LayoutType> writer(layout);
         action(writer);
     } else {
-        bcsv::Writer<LayoutType> writer(layout);
+        bcsv::WriterFlat<LayoutType> writer(layout);
         action(writer);
     }
 }

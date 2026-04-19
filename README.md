@@ -5,11 +5,11 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://isocpp.org/)
-[![Version](https://img.shields.io/badge/version-1.5.0-orange.svg)](VERSIONING.md)
+[![Version](https://img.shields.io/badge/version-1.5.7-orange.svg)](VERSIONING.md)
 
-> **Versioning:** Library version (e.g. v1.3.0) tracks API/code changes.
-> File format version (e.g. v1.4.0) tracks binary wire format changes.
-> Package versions (PyPI, NuGet) may advance independently.
+> **Versioning:** Since v1.5.0, library version and file format version are **unified**.
+> A single version (from git tags) is stamped into every `.bcsv` file header.
+> Package versions (PyPI, NuGet) track the same version.
 > See [VERSIONING.md](VERSIONING.md) for details.
 
 ---
@@ -190,9 +190,9 @@ BCSV requires **C++20** with full library support for `<span>`, `<bit>`, `<conce
 
 ## Project Status
 
-**Current Version:** v1.3.0
+**Current Version:** v1.5.7
 
-### Delivered in v1.3.0
+### Delivered
 
 - ✅ Streaming LZ4 compression with constant write latency
 - ✅ File indexing (`FileFooter`) for O(log N) random access (`ReaderDirectAccess`)
@@ -200,6 +200,10 @@ BCSV requires **C++20** with full library support for `<span>`, `<bit>`, `<conce
 - ✅ Five file codec strategies (stream, stream-LZ4, packet, packet-LZ4, packet-LZ4-batch)
 - ✅ Sampler API — bytecode VM for row filtering and column projection
 - ✅ 9 CLI tools including `bcsvSampler`, `bcsvGenerator`, `bcsvValidate`, `bcsvRepair`
+- ✅ Python (pybcsv) with pandas/Polars integration
+- ✅ C# NuGet package with Sampler, CSV interop, columnar I/O
+- ✅ Unity UPM package with native binaries
+- ✅ Unified versioning (library = file format = packages)
 
 ### Roadmap
 
@@ -224,10 +228,11 @@ bcsv/
 │   ├── ERROR_HANDLING.md  #    Error handling guide
 │   └── INTEROPERABILITY.md#    Cross-language compatibility
 │
-├── examples/              # 🎯 Usage examples (7 programs)
+├── examples/              # 🎯 Usage examples (11 programs)
+│   ├── quickstart.cpp     #    Minimal 5-minute example
 │   ├── example.cpp        #    Basic flexible-layout usage
 │   ├── example_static.cpp #    Static-layout usage
-│   └── example_sampler.cpp#    Sampler API demonstration
+│   └── ...                #    delta, ZoH, direct access, error handling, sampler, visitor
 │
 ├── src/tools/             # 🔧 CLI tools (9 utilities)
 │   ├── csv2bcsv.cpp       #    CSV → BCSV converter
@@ -235,9 +240,11 @@ bcsv/
 │   ├── bcsvSampler.cpp    #    Filter & project rows
 │   └── ...                #    bcsvHead, bcsvTail, bcsvHeader, bcsvGenerator, bcsvValidate, bcsvRepair
 │
-├── tests/                 # ✅ Comprehensive test suite (694 tests)
-├── python/                # 🐍 Python package (pip install)
-├── unity/                 # 🎮 C# Unity integration
+├── tests/                 # ✅ Comprehensive test suite (784 tests)
+├── python/                # 🐍 Python package (pip install pybcsv)
+├── csharp/                # 💼 C# NuGet package (dotnet add package Bcsv)
+├── unity/                 # 🎮 Unity UPM integration
+├── docs/                  # 📖 Thread safety, error handling, interop, lean checklist
 ├── cmake/                 # 🔧 Build system utilities
 │
 ├── ARCHITECTURE.md        # 🏗️  Design and technical specification

@@ -114,6 +114,12 @@ namespace bcsv {
         return static_cast<FileFlags>(~static_cast<uint16_t>(flag));
     }
 
+    /// Mask of flags that select the row codec.  Writer strips these from
+    /// user-provided flags and sets them exclusively via RowCodecFileFlags
+    /// to guarantee the file header matches the compile-time codec.
+    inline constexpr FileFlags ROW_CODEC_FLAGS_MASK =
+        FileFlags::ZERO_ORDER_HOLD | FileFlags::DELTA_ENCODING;
+
     /**
      * @brief Identifies the row-level codec used for serialization/deserialization.
      *

@@ -159,14 +159,20 @@ namespace bcsv {
             // Store file path
             file_path_ = absolutePath;
             file_header_ = FileHeader(layout().columnCount(), compressionLevel);
-            file_header_.setFlags(flags | RowCodecFileFlags<CodecType>::value);
+
+            // Row-codec flags are determined by the compile-time codec type,
+            // not by the user.  Strip any row-codec flags the caller passed
+            // and let RowCodecFileFlags set the correct ones.
+            const FileFlags safeFlags = (flags & ~ROW_CODEC_FLAGS_MASK)
+                                      | RowCodecFileFlags<CodecType>::value;
+            file_header_.setFlags(safeFlags);
             file_header_.setPacketSize(std::clamp(blockSizeKB*1024, size_t(MIN_PACKET_SIZE), size_t(MAX_PACKET_SIZE)));  // limit packet size to 64KB-1GB
             file_header_.writeToBinary(stream_, layout());
             row_cnt_ = 0;
 
             // Initialize file-level codec (framing, compression, checksums)
             file_codec_.select(static_cast<uint8_t>(version::MINOR),
-                               static_cast<uint8_t>(compressionLevel), flags);
+                               static_cast<uint8_t>(compressionLevel), safeFlags);
             file_codec_.setupWrite(stream_, file_header_);
 
             row_.clear();

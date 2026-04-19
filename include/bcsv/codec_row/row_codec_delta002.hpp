@@ -372,6 +372,7 @@ std::span<std::byte> RowCodecDelta002<LayoutType>::serialize(
     }
 
     row_header_.writeTo(buffer.data(), headBytes);
+    assert(bufIdx <= buffer.size() && "Delta002 serialize: bufIdx exceeded pessimistic allocation");
     buffer.resize(bufIdx);
     rows_seen_++;
     return std::span<std::byte>(buffer.data(), bufIdx);

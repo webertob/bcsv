@@ -46,7 +46,7 @@ struct Config {
     std::string row_codec    = bcsv_cli::DEFAULT_ROW_CODEC;      // --row-codec
     std::string file_codec   = bcsv_cli::DEFAULT_FILE_CODEC;     // --file-codec
     size_t      compression_level = 1;
-    size_t      block_size_kb     = 64;
+    size_t      block_size_kb     = bcsv::DEFAULT_PACKET_SIZE_KB;
 
     // Flags
     bool        overwrite         = false;  // -f / --overwrite

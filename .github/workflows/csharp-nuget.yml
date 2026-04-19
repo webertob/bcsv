@@ -62,7 +62,7 @@ jobs:
             lib-dir: build
 
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Install Ninja (Linux)
         if: runner.os == 'Linux'
@@ -74,10 +74,10 @@ jobs:
 
       - name: Setup MSVC
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
 
       - name: Cache CMake dependencies
-        uses: actions/cache@v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: build/_deps
           key: native-deps-${{ matrix.rid }}-${{ hashFiles('CMakeLists.txt') }}
@@ -101,7 +101,7 @@ jobs:
           cmake --build build --target bcsv_c_api --parallel
 
       - name: Upload native library
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: native-${{ matrix.rid }}
           path: ${{ matrix.lib-dir }}/${{ matrix.lib-name }}
@@ -113,17 +113,17 @@ jobs:
     needs: build-native
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: |
             8.0.x
             10.0.x
 
       - name: Download all native artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: native-artifacts
           pattern: native-*
@@ -162,7 +162,7 @@ jobs:
           unzip -l nupkg/*.nupkg | grep -E "runtimes|\.dll|\.so|\.dylib|README"
 
       - name: Upload .nupkg
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nuget-package
           path: nupkg/*.nupkg
@@ -182,17 +182,17 @@ jobs:
           - os: windows-latest
           - os: macos-15
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: |
             8.0.x
             10.0.x
 
       - name: Download .nupkg
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: nuget-package
           path: nupkg
@@ -250,13 +250,13 @@ jobs:
       packages: write
     steps:
       - name: Download .nupkg
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: nuget-package
           path: nupkg
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '8.0.x'
 
@@ -278,13 +278,13 @@ jobs:
       id-token: write  # For future Trusted Publishing
     steps:
       - name: Download .nupkg
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: nuget-package
           path: nupkg
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
         with:
           dotnet-version: '8.0.x'
 

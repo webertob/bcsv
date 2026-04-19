@@ -18,9 +18,9 @@ If you discover a security vulnerability in BCSV, please report it responsibly:
 
 | Version | Supported          |
 |---------|--------------------|
-| 1.4.x   | ✅ Active          |
-| 1.3.x   | ⚠️ Security fixes only |
-| < 1.3   | ❌ End of life     |
+| 1.5.x   | ✅ Active          |
+| 1.4.x   | ⚠️ Security fixes only |
+| < 1.4   | ❌ End of life     |
 
 ## Scope
 

@@ -23,11 +23,11 @@ jobs:
     name: Build source distribution
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: '3.13'
 
@@ -39,7 +39,7 @@ jobs:
           pip install build
           python -m build --sdist python/ --outdir dist/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: built-sdist
           path: dist/*.tar.gz
@@ -58,11 +58,11 @@ jobs:
           - os: ubuntu-24.04-arm    # Native ARM64 runner (no QEMU)
             arch: aarch64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: '3.13'
 
@@ -75,7 +75,7 @@ jobs:
           CIBW_BUILD_FRONTEND: "build[uv]"
         run: python -m cibuildwheel python --output-dir dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: built-wheels-linux-${{ matrix.arch }}
           path: dist/*.whl
@@ -89,11 +89,11 @@ jobs:
       matrix:
         arch: [AMD64]  # Add x86, ARM64 for releases when needed
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: '3.13'
 
@@ -106,7 +106,7 @@ jobs:
           CIBW_BUILD_FRONTEND: "build[uv]"
         run: python -m cibuildwheel python --output-dir dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: built-wheels-windows-${{ matrix.arch }}
           path: dist/*.whl
@@ -124,11 +124,11 @@ jobs:
           - os: macos-15      # Apple Silicon arm64 (Xcode 16.4 / Apple Clang 16)
             arch: arm64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: '3.13'
 
@@ -142,7 +142,7 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: "13.3"
         run: python -m cibuildwheel python --output-dir dist
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: built-wheels-macos-${{ matrix.arch }}
           path: dist/*.whl
@@ -169,14 +169,14 @@ jobs:
             os: macos-15
             artifact: built-wheels-macos-arm64
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with:
           python-version: '3.12'
 
       - name: Download wheel
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: ${{ matrix.artifact }}
           path: dist
@@ -200,7 +200,7 @@ jobs:
       id-token: write  # Required for trusted publishing
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist-artifacts
           pattern: built-*
@@ -214,7 +214,7 @@ jobs:
           ls -lh dist/
 
       - name: Publish to TestPyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
           skip-existing: true
@@ -229,7 +229,7 @@ jobs:
       id-token: write  # Required for trusted publishing
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist-artifacts
           pattern: built-*
@@ -243,7 +243,7 @@ jobs:
           ls -lh dist/
 
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           skip-existing: true
 

@@ -43,7 +43,7 @@ struct Config {
     std::string row_codec  = bcsv_cli::DEFAULT_ROW_CODEC;   // delta | zoh | flat
     std::string file_codec = bcsv_cli::DEFAULT_FILE_CODEC;  // packet_lz4_batch | ...
     size_t compression_level = 1;
-    size_t block_size_kb     = 64;
+    size_t block_size_kb     = bcsv::DEFAULT_PACKET_SIZE_KB;
 };
 
 // Enhanced data type detection with range analysis

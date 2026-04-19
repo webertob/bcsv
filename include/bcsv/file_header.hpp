@@ -113,6 +113,13 @@ namespace bcsv {
                                        std::to_string(BCSV_MAGIC) + ", Got: 0x" + std::to_string(const_section_.magic));
             }
             
+            // Validate packet size (0 is allowed for stream-mode files)
+            if (const_section_.packet_size > MAX_PACKET_SIZE) {
+                throw std::runtime_error("Invalid packet size in BCSV header: " + 
+                                       std::to_string(const_section_.packet_size) + 
+                                       " (maximum: " + std::to_string(MAX_PACKET_SIZE) + ")");
+            }
+
             // Validate column count
             if (const_section_.column_count > MAX_COLUMN_COUNT) {
                 throw std::runtime_error("Column count (" + std::to_string(const_section_.column_count) + 
@@ -124,6 +131,15 @@ namespace bcsv {
             stream.read(reinterpret_cast<char*>(columnTypes.data()), const_section_.column_count * sizeof(ColumnType));
             if (stream.gcount() != static_cast<std::streamsize>(const_section_.column_count * sizeof(ColumnType))) {
                 throw std::runtime_error("Failed to read column data types");
+            }
+
+            // Validate column types are within known range
+            for (uint16_t i = 0; i < const_section_.column_count; ++i) {
+                if (columnTypes[i] > ColumnType::STRING && columnTypes[i] != ColumnType::VOID) [[unlikely]] {
+                    throw std::runtime_error("Invalid column type (" + 
+                                           std::to_string(static_cast<uint8_t>(columnTypes[i])) + 
+                                           ") at column index " + std::to_string(i));
+                }
             }
 
 

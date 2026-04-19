@@ -42,7 +42,7 @@ struct Config {
     std::string file_codec    = "packet_lz4_batch"; // packet_lz4_batch | packet_lz4 | packet | stream_lz4 | stream
     std::string row_codec     = "delta";             // delta | zoh | flat
     size_t      compression_level = 1;
-    size_t      block_size_kb     = 64;
+    size_t      block_size_kb     = bcsv::DEFAULT_PACKET_SIZE_KB;
 
     // Flags
     bool        overwrite         = false;

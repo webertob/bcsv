@@ -43,7 +43,8 @@ bcsv/
 ├── benchmark/             # Python orchestrator, report generator, regression detector
 ├── python/                # Python bindings (nanobind) + pandas integration
 ├── unity/                 # C# / Unity bindings (P/Invoke via bcsv_c_api)
-├── docs/                  # API overview, error handling, interoperability docs
+├── docs/                  # API overview, error handling, interoperability, ADRs
+├── docs/adr/              # Architectural Decision Records (settled design choices)
 ├── cmake/                 # Git-based versioning scripts
 ├── .github/workflows/     # CI: benchmark, release, Python wheel publishing
 ├── ARCHITECTURE.md        # Design philosophy, file format spec, roadmap
@@ -397,6 +398,12 @@ NuGet package: `Bcsv` — multi-target net8.0 + net10.0, native binaries for 5 R
 Key files: `csharp/src/Bcsv/NativeMethods.cs` (P/Invoke), `BcsvReader.cs`, `BcsvWriter.cs`, `BcsvColumns.cs`, `BcsvSampler.cs`, `BcsvRow.cs`.
 CI/CD: `.github/workflows/csharp-nuget.yml` — builds native libs per platform, packs .nupkg, tests, publishes to NuGet.org + GitHub Packages on version tags.
 Deep reference: `csharp/README.md`.
+
+## Architectural Decision Records (ADRs)
+
+Settled design decisions (error handling, wire format, type widths, buffer strategies)
+are recorded in `docs/adr/`. Before proposing changes to these areas, **read the
+relevant ADR first**. See `docs/adr/README.md` for the full index.
 
 ## Lean Architecture Gate
 

@@ -108,10 +108,18 @@ Use `tmp/` under project root for scratch work — it's gitignored.
 When tagging a release version, update `CHANGELOG.md` with the changes since the last tag.
 Follow [Keep a Changelog](https://keepachangelog.com/) format (Added/Changed/Fixed/Removed sections).
 
+## Architectural Decision Records (ADRs)
+
+Design decisions that were explicitly evaluated and accepted (or deferred) are
+recorded in `docs/adr/`. Before proposing changes to error handling, wire format,
+buffer strategies, or type widths, **read the relevant ADR first** to avoid
+re-litigating settled decisions.
+
 ## Deep Reference
 
 - `SKILLS.md` — full AI skills reference (API classes, source inventory, all conventions)
 - `ARCHITECTURE.md` — design philosophy, binary format spec, roadmap
+- `docs/adr/README.md` — architectural decision records (ADRs)
 - `src/tools/CLI_TOOLS.md` — all 9 CLI tools with options and examples
 - `tests/README.md` — test infrastructure details
 - `benchmark/README.md` — benchmark orchestrator and profiles

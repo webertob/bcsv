@@ -49,7 +49,7 @@ jobs:
 
     steps:
     - name: Checkout PR
-      uses: actions/checkout@v5
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       with:
         fetch-depth: 0
 
@@ -102,7 +102,7 @@ jobs:
         test -f "${{ steps.resolve_pr.outputs.run_dir }}/report.md"
 
     - name: Upload benchmark results
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
         name: benchmark-results-pr-${{ github.event.number }}
         path: |
@@ -132,7 +132,7 @@ jobs:
 
     steps:
     - name: Checkout release
-      uses: actions/checkout@v5
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       with:
         fetch-depth: 0
 
@@ -182,7 +182,7 @@ jobs:
         echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
 
     - name: Upload benchmark results
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
         name: benchmark-results-${{ github.ref_name }}
         path: |
@@ -208,7 +208,7 @@ jobs:
 
     steps:
     - name: Checkout
-      uses: actions/checkout@v5
+      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       with:
         fetch-depth: 0
 
@@ -255,7 +255,7 @@ jobs:
         echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
 
     - name: Upload results
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
       with:
         name: benchmark-results-manual
         path: |

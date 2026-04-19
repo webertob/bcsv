@@ -12,6 +12,58 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.7] - 2026-04-19
+
+### Fixed
+- **C++: Writer codec/flag mismatch** — When `DELTA_ENCODING` was passed in `FileFlags` but the
+  Writer's compile-time codec was `RowCodecFlat001`, the file header advertised delta encoding
+  while rows were serialized as flat. The Reader's runtime dispatch (`RowCodecDispatch`) would
+  select Delta002 for deserialization, causing data corruption after ~128 rows and
+  "Buffer too small for string payload" crashes. `Writer::open()` now strips row-codec flags
+  from user input and sets them exclusively via `RowCodecFileFlags<CodecType>`, guaranteeing the
+  header always matches the actual codec.
+- CLI: `withWriter()` in `cli_common.h` now uses explicit `WriterFlat<>` for the flat codec
+  path instead of bare `Writer<>`, ensuring `--row-codec flat` produces flat-encoded files
+- Tests: `CoverageGapsTest.Delta002SpecialFloats_FullFileIO` now uses explicit
+  `Writer<Layout, RowCodecDelta002<Layout>>` instead of the default Writer (was accidentally
+  testing flat, not delta)
+- Tests: Adjusted file-size regression threshold in `Ref_WriteThroughFileRoundTrip` from 1000
+  to 500 bytes (delta encoding produces smaller files)
+- Python: Synced Python include headers with main library headers
+
+### Changed
+- **C++: Default row codec is now Delta002** — `Writer<Layout>` uses `RowCodecDelta002` as its
+  default template parameter instead of `RowCodecFlat001`. All new files written with the default
+  Writer get delta encoding automatically. Use `WriterFlat<Layout>` for explicit flat encoding.
+- C++: Added `ROW_CODEC_FLAGS_MASK` constant to `definitions.h` for safe flag manipulation
+- Docs: README, ARCHITECTURE.md version references updated to 1.5.7
+
+## [1.5.6] - 2026-04-19
+
+### Added
+- Docs: Architectural Decision Records system (`docs/adr/`) with 5 initial ADRs covering
+  error model, version checks, endianness, uint32_t offsets, and VLE buffer strategy
+- CI: Dependabot configuration for weekly GitHub Actions version updates (`.github/dependabot.yml`)
+- C++: ColumnType bounds validation on file read — rejects values outside the defined enum range
+- C++: Packet size validation on file read — rejects values outside `MIN_PACKET_SIZE..MAX_PACKET_SIZE`
+- C++: Debug assertion in Delta002 serialize loop to catch buffer overruns during development
+
+### Changed
+- C++: `Writer::open()` default flags changed from `NONE` to `BATCH_COMPRESS` — new files
+  use packet-mode compression by default, harmonizing with Python and C# bindings
+- CLI: `csv2bcsv`, `bcsvGenerator`, `bcsvSampler` now use `DEFAULT_PACKET_SIZE_KB` constant
+  instead of hard-coded `64`
+- CI: All 9 GitHub Actions pinned to commit SHAs for supply-chain security
+- CI: Cache keys now use `hashFiles('**/CMakeLists.txt')` to bust on any CMakeLists.txt change
+- CMake: Warning/error flags wrapped with `$<BUILD_INTERFACE:...>` to avoid leaking into
+  downstream consumers (except `-fexperimental-library` needed by Apple targets)
+- Docs: README, ARCHITECTURE.md, SECURITY.md version references updated to 1.5.6
+- Docs: SKILLS.md and copilot-instructions.md updated with ADR references
+
+### Removed
+- CMake: Removed dead-end `ninja-asan` and `ninja-coverage` presets from CMakePresets.json
+  (no CI jobs used them)
+
 ## [1.5.5] - 2026-04-19
 
 ### Fixed
@@ -193,9 +245,14 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ---
 
-[Unreleased]: https://github.com/webertob/bcsv/compare/v1.5.3...HEAD
+[Unreleased]: https://github.com/webertob/bcsv/compare/v1.5.6...HEAD
+[1.5.6]: https://github.com/webertob/bcsv/compare/v1.5.5...v1.5.6
+[1.5.5]: https://github.com/webertob/bcsv/compare/v1.5.4...v1.5.5
+[1.5.4]: https://github.com/webertob/bcsv/compare/v1.5.3...v1.5.4
 [1.5.3]: https://github.com/webertob/bcsv/compare/v1.5.2...v1.5.3
 [1.5.2]: https://github.com/webertob/bcsv/compare/v1.5.1...v1.5.2
+[1.5.1]: https://github.com/webertob/bcsv/compare/v1.5.0...v1.5.1
+[1.5.0]: https://github.com/webertob/bcsv/compare/v1.4.3...v1.5.0
 [1.4.3]: https://github.com/webertob/bcsv/compare/v1.4.2...v1.4.3
 [1.4.2]: https://github.com/webertob/bcsv/compare/v1.4.1...v1.4.2
 [1.4.1]: https://github.com/webertob/bcsv/compare/v1.4.0...v1.4.1

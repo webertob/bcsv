@@ -150,7 +150,7 @@ layout[i]             # ColumnDefinition at index i
 ```python
 writer = pybcsv.Writer(layout: Layout, row_codec: str = "delta")
 writer.open(filename: str, overwrite: bool = False,
-            compression_level: int = 1, block_size_kb: int = 64,
+            compression_level: int = 1, block_size_kb: int = 8192,
             flags: FileFlags = FileFlags.BATCH_COMPRESS)  # raises RuntimeError on failure
 writer.write_row(values: list)
 writer.write_rows(rows: list[list])     # batch write

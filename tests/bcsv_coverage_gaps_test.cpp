@@ -30,6 +30,8 @@
 #include <bcsv/bcsv.h>
 #include <bcsv/codec_row/row_codec_flat001.h>
 #include <bcsv/codec_row/row_codec_flat001.hpp>
+#include <bcsv/codec_row/row_codec_delta002.h>
+#include <bcsv/codec_row/row_codec_delta002.hpp>
 
 using namespace bcsv;
 namespace fs = std::filesystem;
@@ -172,9 +174,9 @@ TEST_F(CoverageGapsTest, Delta002SpecialFloats_FullFileIO) {
     const float  inf_f =  std::numeric_limits<float>::infinity();
     const double inf_d =  std::numeric_limits<double>::infinity();
 
-    // Write using Delta codec (WriterDelta is the default Writer)
+    // Write using Delta codec explicitly
     {
-        Writer<Layout> writer(layout);
+        Writer<Layout, RowCodecDelta002<Layout>> writer(layout);
         ASSERT_TRUE(writer.open(path, true));
 
         // Row 0: normal values
