@@ -80,6 +80,11 @@ jobs:
         } > include/bcsv/version_generated.h
 
         echo "Updated version_generated.h to version $VERSION"
+
+    - name: Update VERSION.txt file
+      run: |
+        echo "${{ steps.version.outputs.version }}" > VERSION.txt
+        echo "Updated VERSION.txt file to ${{ steps.version.outputs.version }}"
     
     - name: Validate updated version
       run: |

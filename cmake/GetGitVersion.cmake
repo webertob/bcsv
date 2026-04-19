@@ -11,17 +11,35 @@
 # Find Git executable
 find_package(Git QUIET)
 
-# Initialize defaults (fallback values when Git is not available)
-set(VERSION_MAJOR "1")
-set(VERSION_MINOR "0") 
-set(VERSION_PATCH "3")
-set(VERSION_STRING "1.0.3")
+# Initialize defaults from VERSION.txt file (single source of truth for non-git builds)
+set(_VERSION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/VERSION.txt")
+if(EXISTS "${_VERSION_FILE}")
+    file(READ "${_VERSION_FILE}" _FALLBACK_VERSION)
+    string(STRIP "${_FALLBACK_VERSION}" _FALLBACK_VERSION)
+    string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)" _FB_MATCH "${_FALLBACK_VERSION}")
+    if(_FB_MATCH)
+        set(VERSION_MAJOR "${CMAKE_MATCH_1}")
+        set(VERSION_MINOR "${CMAKE_MATCH_2}")
+        set(VERSION_PATCH "${CMAKE_MATCH_3}")
+        set(VERSION_STRING "${_FALLBACK_VERSION}")
+    else()
+        set(VERSION_MAJOR "0")
+        set(VERSION_MINOR "0")
+        set(VERSION_PATCH "0")
+        set(VERSION_STRING "0.0.0")
+    endif()
+else()
+    set(VERSION_MAJOR "0")
+    set(VERSION_MINOR "0")
+    set(VERSION_PATCH "0")
+    set(VERSION_STRING "0.0.0")
+endif()
 
 if(GIT_FOUND)
     # Get the latest version tag
     execute_process(
         COMMAND ${GIT_EXECUTABLE} describe --tags --match "v*" --abbrev=0
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         OUTPUT_VARIABLE GIT_LATEST_TAG
         ERROR_QUIET
         OUTPUT_STRIP_TRAILING_WHITESPACE
@@ -30,7 +48,7 @@ if(GIT_FOUND)
     # Get current commit description (includes commits since tag)
     execute_process(
         COMMAND ${GIT_EXECUTABLE} describe --tags --match "v*" --always --dirty
-        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
         OUTPUT_VARIABLE GIT_DESCRIBE
         ERROR_QUIET
         OUTPUT_STRIP_TRAILING_WHITESPACE
@@ -72,7 +90,7 @@ endif()
 
 # Generate version header file into the build tree (not the source tree)
 configure_file(
-    "${CMAKE_SOURCE_DIR}/cmake/version.h.in"
-    "${CMAKE_BINARY_DIR}/include/bcsv/version_generated.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/version.h.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/include/bcsv/version_generated.h"
     @ONLY
 )

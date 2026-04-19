@@ -142,6 +142,14 @@ def sync_headers(project_root=None, force=False, verbose=False):
     if verbose:
         print("Header synchronization complete!")
     
+    # Sync VERSION.txt file for sdist builds (fallback when git is unavailable)
+    source_version_file = project_root / "VERSION.txt"
+    target_version_file = python_dir / "VERSION.txt"
+    if source_version_file.exists():
+        if verbose:
+            print("Syncing VERSION file...")
+        shutil.copy2(source_version_file, target_version_file)
+    
     return True
 
 

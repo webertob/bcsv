@@ -243,11 +243,13 @@ install(TARGETS bcsv_c_api
 )
 
 # Install CLI tools (built by src/tools/CMakeLists.txt)
-install(TARGETS
-        csv2bcsv bcsv2csv bcsvHead bcsvTail bcsvHeader
-        bcsvSampler bcsvGenerator bcsvValidate bcsvRepair
-    RUNTIME DESTINATION bin
-)
+if(BUILD_TOOLS)
+    install(TARGETS
+            csv2bcsv bcsv2csv bcsvHead bcsvTail bcsvHeader
+            bcsvSampler bcsvGenerator bcsvValidate bcsvRepair
+        RUNTIME DESTINATION bin
+    )
+endif()
 
 # ============================================================================
 # Test Programs

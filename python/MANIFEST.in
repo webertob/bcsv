@@ -1,5 +1,6 @@
 include README.md
 include LICENSE
+include VERSION.txt
 include pybcsv/py.typed
 recursive-include pybcsv *.pyi
 

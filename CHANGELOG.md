@@ -12,6 +12,19 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.5] - 2026-04-19
+
+### Fixed
+- CMake: `GetGitVersion.cmake` now uses `CMAKE_CURRENT_SOURCE_DIR` instead of `CMAKE_SOURCE_DIR`,
+  fixing version detection when bcsv is consumed via `FetchContent` or `add_subdirectory`
+- Python: pybcsv wheels on PyPI now embed the correct version instead of `0.0.0` — added `VERSION.txt`
+  file as single source of truth for non-git builds (sdist, FetchContent without git tags)
+- CMake: `install(TARGETS ...)` for CLI tools is now guarded by `if(BUILD_TOOLS)`, preventing
+  configure failure when `BUILD_TOOLS=OFF`
+- CI: Fixed C++ CI failures on Windows MSVC and macOS Apple Clang — `python3` replaced with
+  portable `python` command, and `Python3_ROOT_DIR` hint added to CMake configure step to ensure
+  CTest uses the same Python interpreter as pip
+
 ## [1.5.4] - 2026-04-12
 
 ### Fixed

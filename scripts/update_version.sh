@@ -90,6 +90,11 @@ EOF
     
     # Remove backup if successful
     rm "$version_file.bak"
+    
+    # Update VERSION.txt file (single source of truth for non-git builds)
+    local root_version_file="VERSION.txt"
+    echo "$version" > "$root_version_file"
+    print_success "Updated VERSION.txt file to $version"
 }
 
 # Main script
