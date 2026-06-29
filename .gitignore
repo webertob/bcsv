@@ -110,3 +110,4 @@ benchmark/runs/
 
 # NuGet native staging (populated by CI/CD, not committed)
 csharp/src/Bcsv/runtimes/
+.opencode/agent.json

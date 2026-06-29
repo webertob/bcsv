@@ -60,7 +60,12 @@ target_include_directories(bcsvValidate PRIVATE ${CMAKE_SOURCE_DIR}/src/shared)
 add_executable(bcsvRepair bcsvRepair.cpp)
 target_link_libraries(bcsvRepair PRIVATE bcsv)
 
+# Comparison tool
+add_executable(bcsvCompare bcsvCompare.cpp)
+target_link_libraries(bcsvCompare PRIVATE bcsv)
+target_include_directories(bcsvCompare PRIVATE ${CMAKE_SOURCE_DIR}/src/shared)
+
 # Set output directory for all tools
-set_target_properties(csv2bcsv bcsv2csv bcsvHead bcsvTail bcsvHeader bcsvSampler bcsvGenerator bcsvValidate bcsvRepair PROPERTIES
+set_target_properties(csv2bcsv bcsv2csv bcsvHead bcsvTail bcsvHeader bcsvSampler bcsvGenerator bcsvValidate bcsvRepair bcsvCompare PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )

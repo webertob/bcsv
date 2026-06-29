@@ -1,4 +1,5 @@
 """Pytest configuration and fixtures for BCSV integration tests."""
+
 import os
 import shutil
 import tempfile
@@ -40,11 +41,15 @@ def _find_bin_dir() -> Path:
     for config in ("Debug", "Release"):
         for base_dir in ("build/msvc-debug", "build/msvc-release", "build"):
             d = repo_root / base_dir / "bin" / config
-            if d.is_dir() and ((d / "csv2bcsv.exe").exists() or (d / "csv2bcsv").exists()):
+            if d.is_dir() and (
+                (d / "csv2bcsv.exe").exists() or (d / "csv2bcsv").exists()
+            ):
                 return d
             # Also check directly under the build dir (non-bin layout)
             d = repo_root / base_dir / config
-            if d.is_dir() and ((d / "csv2bcsv.exe").exists() or (d / "csv2bcsv").exists()):
+            if d.is_dir() and (
+                (d / "csv2bcsv.exe").exists() or (d / "csv2bcsv").exists()
+            ):
                 return d
 
     pytest.skip("BCSV binaries not found — build project first")
@@ -60,8 +65,15 @@ def bin_dir() -> Path:
 def tools(bin_dir):
     """Dict mapping tool name -> full Path to executable."""
     names = [
-        "csv2bcsv", "bcsv2csv", "bcsvHead", "bcsvTail",
-        "bcsvHeader", "bcsvGenerator", "bcsvSampler", "bcsvValidate",
+        "csv2bcsv",
+        "bcsv2csv",
+        "bcsvHead",
+        "bcsvTail",
+        "bcsvHeader",
+        "bcsvGenerator",
+        "bcsvSampler",
+        "bcsvValidate",
+        "bcsvCompare",
     ]
     result = {}
     for name in names:

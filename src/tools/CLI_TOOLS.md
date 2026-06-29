@@ -1,6 +1,6 @@
 # BCSV CLI Tools
 
-Command-line utilities for CSV ↔ BCSV conversion, data inspection, filtering, validation, and synthetic dataset generation.
+Command-line utilities for CSV ↔ BCSV conversion, data inspection, filtering, validation, comparison, and synthetic dataset generation.
 All tools are built from `src/tools/` and output to `build/bin/`.
 
 ## Overview
@@ -14,6 +14,7 @@ All tools are built from `src/tools/` and output to `build/bin/`.
 | **bcsvTail** | Display last N rows | BCSV | CSV |
 | **bcsvSampler** | Filter & project rows | BCSV | BCSV |
 | **bcsvGenerator** | Generate synthetic datasets | — | BCSV |
+| **bcsvCompare** | Deterministic file comparison | BCSV × 2 | Exit code + report |
 | **bcsvValidate** | Validate structure & content | BCSV (+CSV) | Report |
 | **bcsvRepair** | Repair damaged/interrupted files | BCSV | BCSV |
 
@@ -27,10 +28,13 @@ bcsvTail data.bcsv -n 5                 # Preview last rows
 bcsv2csv data.bcsv output.csv           # Convert back to CSV
 bcsvSampler -c 'X[0][0] > 100' data.bcsv filtered.bcsv  # Filter rows
 bcsvGenerator -p sensor_noisy -n 100000 -o sensor.bcsv   # Generate test data
-bcsvValidate -i data.bcsv               # Validate structure
-bcsvValidate -i data.bcsv --compare source.csv           # Compare files
-bcsvRepair -i broken.bcsv --dry-run                      # Analyze damage
-bcsvRepair -i broken.bcsv -o repaired.bcsv               # Repair to new file
+bcsvValidate -i data.bcsv                              # Validate structure
+bcsvValidate -i data.bcsv --compare source.csv         # Compare files
+bcsvCompare a.bcsv b.bcsv                              # Deterministic comparison
+bcsvCompare --mode compatible a.bcsv b.bcsv             # Ignore column names
+bcsvCompare --mode value --tolerance 1e-6 a.bcsv b.bcsv  # Cross-type, float tolerance
+bcsvRepair -i broken.bcsv --dry-run                    # Analyze damage
+bcsvRepair -i broken.bcsv -o repaired.bcsv             # Repair to new file
 ```
 
 ## Pipeline Examples
@@ -72,8 +76,9 @@ cmake --build --preset ninja-release-build --target bcsvSampler -j$(nproc)
 | `bcsvGenerator.cpp` | Synthetic dataset generator |
 | `bcsvValidate.cpp` | Structure & content validation |
 | `bcsvRepair.cpp` | Repair damaged/interrupted BCSV files |
+| `bcsvCompare.cpp` | Deterministic file comparison (strict/compatible/value modes) |
 | `cli_common.h` | Shared CLI utilities (codec dispatch, validation, formatting) |
-| `CMakeLists.txt` | Build definitions for all 9 tools |
+| `CMakeLists.txt` | Build definitions for all 10 tools |
 
 ---
 
@@ -449,3 +454,89 @@ bcsvRepair -i broken.bcsv --in-place --backup            # Truncate + rewrite fo
 - The `packet_lz4_batch` codec wraps entire packets in a single LZ4 frame; if the frame is truncated, zero rows can be recovered from that packet. Non-batch codecs recover individual rows.
 - Use `--dry-run --json` in CI pipelines to detect interrupted writes.
 - `recovery_pct` in JSON output shows the percentage of rows successfully recovered.
+
+---
+
+## bcsvCompare — Deterministic File Comparison
+
+Compare two BCSV files and return exit code 0 (identical) or 1 (different) with three comparison strictness modes.  Designed for CI guards, snapshot comparisons, and quick verification that two binary files contain the same data.
+
+### Comparison Modes
+
+| Mode | Column names | Column types | Cell values |
+|------|-------------|-------------|-------------|
+| **strict** (default) | must match | must match | same-type, exact (+ tolerance) |
+| **compatible** | ignored | must match | same-type, exact (+ tolerance) |
+| **value** | ignored | ignored | coerced to double (or string) |
+
+In **value** mode, numeric types (INT*, UINT*, FLOAT, DOUBLE, BOOL) are coerced to double and compared with tolerance.  STRING columns are compared as strings only — STRING vs numeric is always a mismatch.  Columns are compared positionally (index N vs index N), not by name.
+
+NaN values in FLOAT/DOUBLE columns are handled consistently: identical files with matching NaN positions compare as identical.  Tolerance is always absolute (not relative) and applies only to FLOAT/DOUBLE columns.
+
+Out-of-bounds `--rows` or `--cols` ranges exit with code 2.
+
+### Usage
+
+```bash
+bcsvCompare a.bcsv b.bcsv                              # strict, all data
+bcsvCompare --mode compatible a.bcsv b.bcsv            # ignore column names
+bcsvCompare --mode value --tolerance 1e-6 a.bcsv b.bcsv # value coercion
+bcsvCompare --rows 0:99 --cols 2:5 a.bcsv b.bcsv      # compare subset
+bcsvCompare -v a.bcsv b.bcsv                            # verbose mismatch report
+bcsvCompare --mode value --tolerance 1e-6 a.bcsv b.bcsv  # cross-type value comparison
+```
+
+### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--mode MODE` | `strict`, `compatible`, or `value` | `strict` |
+| `--tolerance TOL` | Float/double comparison epsilon | `0.0` |
+| `--rows RANGES` | Row indices to compare (inclusive, e.g. `0:99,-10:`) | all rows |
+| `--cols RANGES` | Column indices to compare (inclusive, e.g. `2:5`) | all columns |
+| `-v, --verbose` | Report mismatch details to stdout | summary only |
+| `-h, --help` | Show help message | — |
+
+### Range Syntax
+
+Ranges use inclusive indexing and support comma-separated, disjoint ranges:
+
+| Example | Meaning |
+|---------|---------|
+| `5` | Single index 5 |
+| `0:99` | Indices 0 through 99 |
+| `:100` | First 101 indices (0:100) |
+| `-10:` | Last 10 indices |
+| `0:9,50:59` | Two disjoint ranges |
+
+### Exit Codes
+
+0 (identical), 1 (different), 2 (argument / file error).
+
+### Examples
+
+```bash
+# CI guard: fail the pipeline if outputs differ
+bcsvCompare --mode compatible release.bcsv staging.bcsv
+
+# Compare only the first 100 rows, columns 0-4
+bcsvCompare --rows :99 --cols 0:4 a.bcsv b.bcsv
+
+# Cross-type value comparison
+bcsvCompare --mode value --tolerance 0.001 a.bcsv b.bcsv
+
+# Verbose report of which columns are different
+bcsvCompare --mode strict -v a.bcsv b.bcsv
+```
+
+### Differences from bcsvValidate --compare
+
+`bcsvValidate --compare` is a sub-mode of the validation tool, focused on structural validation and pattern matching.  `bcsvCompare` is a dedicated, faster diff tool with:
+
+- Three comparison modes (strict, compatible, value) for semantic flexibility
+- Row/column range scoping for targeted comparisons
+- Cross-type value coercion (value mode allows int(1) to match double(1.0))
+- Cleaner exit-code semantics (0 = same, 1 = different)
+- No CSV input support (both files must be BCSV)
+- NaN values compare equal (NaN == NaN)
+- Out-of-range `--rows`/`--cols` exits with code 2
