@@ -15,6 +15,7 @@ All tools are built from `src/tools/` and output to `build/bin/`.
 | **bcsvSampler** | Filter & project rows | BCSV | BCSV |
 | **bcsvGenerator** | Generate synthetic datasets | — | BCSV |
 | **bcsvCompare** | Deterministic file comparison | BCSV × 2 | Exit code + report |
+| **bcsvNarrowType** | Scan/convert to narrower types | BCSV | BCSV |
 | **bcsvValidate** | Validate structure & content | BCSV (+CSV) | Report |
 | **bcsvRepair** | Repair damaged/interrupted files | BCSV | BCSV |
 
@@ -33,6 +34,9 @@ bcsvValidate -i data.bcsv --compare source.csv         # Compare files
 bcsvCompare a.bcsv b.bcsv                              # Deterministic comparison
 bcsvCompare --mode compatible a.bcsv b.bcsv             # Ignore column names
 bcsvCompare --mode value --tolerance 1e-6 a.bcsv b.bcsv  # Cross-type, float tolerance
+bcsvNarrowType data.bcsv                                # Scan for narrowing
+bcsvNarrowType --convert -o narrow.bcsv data.bcsv        # Apply narrowing
+bcsvNarrowType --convert -f data.bcsv                    # In-place overwrite
 bcsvRepair -i broken.bcsv --dry-run                    # Analyze damage
 bcsvRepair -i broken.bcsv -o repaired.bcsv             # Repair to new file
 ```
@@ -77,8 +81,9 @@ cmake --build --preset ninja-release-build --target bcsvSampler -j$(nproc)
 | `bcsvValidate.cpp` | Structure & content validation |
 | `bcsvRepair.cpp` | Repair damaged/interrupted BCSV files |
 | `bcsvCompare.cpp` | Deterministic file comparison (strict/compatible/value modes) |
+| `bcsvNarrowType.cpp` | Type-narrowing scanner and converter |
 | `cli_common.h` | Shared CLI utilities (codec dispatch, validation, formatting) |
-| `CMakeLists.txt` | Build definitions for all 10 tools |
+| `CMakeLists.txt` | Build definitions for all 11 tools |
 
 ---
 
@@ -540,3 +545,77 @@ bcsvCompare --mode strict -v a.bcsv b.bcsv
 - No CSV input support (both files must be BCSV)
 - NaN values compare equal (NaN == NaN)
 - Out-of-range `--rows`/`--cols` exits with code 2
+
+---
+
+## bcsvNarrowType — Type-Narrowing Scanner & Converter
+
+Scan BCSV files for columns that can be stored in a narrower type without losing information, and optionally rewrite the file with reduced per-column types.
+
+**Note:** With the default codec (delta + packet_lz4_batch), narrowing may yield little or no on-disk savings because integers use zigzag + VLE and floats use XOR + zero-stripping before LZ4. The primary beneficiaries are files encoded with the **flat** codec, or fixed-width consumers (C API, Unity P/Invoke, mmap) where in-memory struct sizes depend on declared types. All reported savings are **max theoretical (flat codec)**.
+
+### Usage
+
+```bash
+bcsvNarrowType data.bcsv                                  # Analyze only (default)
+bcsvNarrowType --convert -o output.bcsv data.bcsv         # Scan + rewrite
+bcsvNarrowType --convert -f data.bcsv                     # In-place overwrite
+bcsvNarrowType --stringsToValue data.bcsv                 # Also probe string columns
+bcsvNarrowType -v data.bcsv                               # Verbose progress (stderr)
+```
+
+### Options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `-o, --output FILE` | Write converted file to new location | — |
+| `-f, --force` | Overwrite INPUT_FILE in place (temp + atomic rename) | — |
+| `--analyze` | Scan-only, print findings (default) | analyze |
+| `--convert` | Scan + rewrite file with narrower types | analyze |
+| `--stringsToValue` | Also attempt string→numeric/bool conversion | off |
+| `-v, --verbose` | Per-column details and progress to stderr | — |
+| `-h, --help` | Show help message | — |
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | Error (invalid file, conversion failed) |
+| 2 | Argument error |
+
+### Type Narrowing Rules
+
+| Original | Possible narrowings |
+|----------|-------------------|
+| INT64 / UINT64 | → narrower int/uint, or bool (if 0/1 only) |
+| INT32 / UINT32 | → narrower int/uint, or bool |
+| DOUBLE | → float (if roundtrips), → integer (if all whole), → bool |
+| FLOAT | → integer (if all whole), → bool |
+| STRING | → numeric/bool (only with `--stringsToValue`) |
+| BOOL | Already minimal — no probing |
+
+### Conversion Safety
+
+- **Debug builds:** Every cast from source to target type asserts that the value doesn't overflow or lose precision. If an assertion fires, the conversion aborts and the temp file is deleted.
+- **Release builds:** Trust the scan-phase invariant. No per-value runtime checks.
+- **In-place (`-f`):** Writes to a temp file in the same directory, then atomically renames. Crash-resilient.
+
+### Examples
+
+```bash
+# Analyze a file — find what can be narrowed
+bcsvNarrowType sensor.bcsv
+
+# Apply narrowing and compare values
+bcsvNarrowType --convert -o narrow.bcsv sensor.bcsv
+bcsvCompare --mode value sensor.bcsv narrow.bcsv
+
+# For flat codec files, check actual size reduction
+bcsvGenerator -p sensor_noisy -n 100000 --row-codec flat -o flat.bcsv
+bcsvNarrowType --convert -f flat.bcsv
+ls -la flat.bcsv
+
+# String-opt-in: try string→numeric conversion
+bcsvNarrowType --stringsToValue labels.bcsv
+```

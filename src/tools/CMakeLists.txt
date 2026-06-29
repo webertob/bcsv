@@ -65,7 +65,11 @@ add_executable(bcsvCompare bcsvCompare.cpp)
 target_link_libraries(bcsvCompare PRIVATE bcsv)
 target_include_directories(bcsvCompare PRIVATE ${CMAKE_SOURCE_DIR}/src/shared)
 
+# Type-narrowing scanner and converter
+add_executable(bcsvNarrowType bcsvNarrowType.cpp)
+target_link_libraries(bcsvNarrowType PRIVATE bcsv)
+
 # Set output directory for all tools
-set_target_properties(csv2bcsv bcsv2csv bcsvHead bcsvTail bcsvHeader bcsvSampler bcsvGenerator bcsvValidate bcsvRepair bcsvCompare PROPERTIES
+set_target_properties(csv2bcsv bcsv2csv bcsvHead bcsvTail bcsvHeader bcsvSampler bcsvGenerator bcsvValidate bcsvRepair bcsvCompare bcsvNarrowType PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
