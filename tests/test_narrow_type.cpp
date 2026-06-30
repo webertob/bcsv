@@ -155,7 +155,7 @@ TEST_F(NarrowTypeTest, Int64ToBool) {
 
     auto        out = path.parent_path() / "out.bcsv";
     std::string sout, serr;
-    int         rc = runNarrow({"--convert", "-o", out.string(), path.string()},
+    int         rc = runNarrow({"-o", out.string(), path.string()},
                                sout, serr);
     ASSERT_EQ(rc, 0);
 
@@ -171,7 +171,7 @@ TEST_F(NarrowTypeTest, Int64ToUint8) {
 
     auto        out = path.parent_path() / "out.bcsv";
     std::string sout, serr;
-    int         rc = runNarrow({"--convert", "-o", out.string(), path.string()},
+    int         rc = runNarrow({"-o", out.string(), path.string()},
                                sout, serr);
     ASSERT_EQ(rc, 0);
 
@@ -187,7 +187,7 @@ TEST_F(NarrowTypeTest, Int64ToUint16) {
 
     auto        out = path.parent_path() / "out.bcsv";
     std::string sout, serr;
-    int         rc = runNarrow({"--convert", "-o", out.string(), path.string()},
+    int         rc = runNarrow({"-o", out.string(), path.string()},
                                sout, serr);
     ASSERT_EQ(rc, 0);
 
@@ -203,7 +203,7 @@ TEST_F(NarrowTypeTest, Int64ToInt8) {
 
     auto        out = path.parent_path() / "out.bcsv";
     std::string sout, serr;
-    int         rc = runNarrow({"--convert", "-o", out.string(), path.string()},
+    int         rc = runNarrow({"-o", out.string(), path.string()},
                                sout, serr);
     ASSERT_EQ(rc, 0);
 
@@ -219,7 +219,7 @@ TEST_F(NarrowTypeTest, Int64ToInt32) {
 
     auto        out = path.parent_path() / "out.bcsv";
     std::string sout, serr;
-    int         rc = runNarrow({"--convert", "-o", out.string(), path.string()},
+    int         rc = runNarrow({"-o", out.string(), path.string()},
                                sout, serr);
     ASSERT_EQ(rc, 0);
 
@@ -247,7 +247,7 @@ TEST_F(NarrowTypeTest, DoubleWithNegativeToSigned) {
 
     auto        out = path.parent_path() / "out.bcsv";
     std::string sout, serr;
-    int         rc = runNarrow({"--convert", "-o", out.string(), path.string()}, sout, serr);
+    int         rc = runNarrow({"-o", out.string(), path.string()}, sout, serr);
     ASSERT_EQ(rc, 0);
 
     bcsv::Reader<bcsv::Layout> reader;
@@ -287,7 +287,7 @@ TEST_F(NarrowTypeTest, Uint64ToUint32) {
 
     auto        out = path.parent_path() / "out.bcsv";
     std::string sout, serr;
-    int         rc = runNarrow({"--convert", "-o", out.string(), path.string()},
+    int         rc = runNarrow({"-o", out.string(), path.string()},
                                sout, serr);
     ASSERT_EQ(rc, 0);
 
@@ -305,7 +305,7 @@ TEST_F(NarrowTypeTest, DoubleToFloat) {
 
     auto        out = path.parent_path() / "out.bcsv";
     std::string sout, serr;
-    int         rc = runNarrow({"--convert", "-o", out.string(), path.string()},
+    int         rc = runNarrow({"-o", out.string(), path.string()},
                                sout, serr);
     ASSERT_EQ(rc, 0);
 
@@ -323,7 +323,7 @@ TEST_F(NarrowTypeTest, DoubleToInt32) {
 
     auto        out = path.parent_path() / "out.bcsv";
     std::string sout, serr;
-    int         rc = runNarrow({"--convert", "-o", out.string(), path.string()},
+    int         rc = runNarrow({"-o", out.string(), path.string()},
                                sout, serr);
     ASSERT_EQ(rc, 0);
 
@@ -342,7 +342,7 @@ TEST_F(NarrowTypeTest, DoubleToBool) {
 
     auto        out = path.parent_path() / "out.bcsv";
     std::string sout, serr;
-    int         rc = runNarrow({"--convert", "-o", out.string(), path.string()},
+    int         rc = runNarrow({"-o", out.string(), path.string()},
                                sout, serr);
     ASSERT_EQ(rc, 0);
 
@@ -359,7 +359,7 @@ TEST_F(NarrowTypeTest, DoubleWithNaN) {
 
     auto        out = path.parent_path() / "out.bcsv";
     std::string sout, serr;
-    int         rc = runNarrow({"--convert", "-o", out.string(), path.string()},
+    int         rc = runNarrow({"-o", out.string(), path.string()},
                                sout, serr);
     ASSERT_EQ(rc, 0);
 
@@ -391,7 +391,7 @@ TEST_F(NarrowTypeTest, StringToInt32) {
 
     auto        out = path.parent_path() / "out.bcsv";
     std::string sout, serr;
-    int         rc = runNarrow({"--stringsToValue", "--convert", "-o", out.string(),
+    int         rc = runNarrow({"--stringsToValue", "-o", out.string(),
                                 path.string()},
                                sout, serr);
     ASSERT_EQ(rc, 0);
@@ -411,7 +411,7 @@ TEST_F(NarrowTypeTest, StringToBool) {
 
     auto        out = path.parent_path() / "out.bcsv";
     std::string sout, serr;
-    int         rc = runNarrow({"--stringsToValue", "--convert", "-o", out.string(),
+    int         rc = runNarrow({"--stringsToValue", "-o", out.string(),
                                 path.string()},
                                sout, serr);
     ASSERT_EQ(rc, 0);
@@ -460,7 +460,7 @@ TEST_F(NarrowTypeTest, StringLeads) {
 
     auto        out = path.parent_path() / "out.bcsv";
     std::string sout, serr;
-    int         rc = runNarrow({"--stringsToValue", "--convert", "-o", out.string(),
+    int         rc = runNarrow({"--stringsToValue", "-o", out.string(),
                                 path.string()},
                                sout, serr);
     ASSERT_EQ(rc, 0);
@@ -493,18 +493,20 @@ TEST_F(NarrowTypeTest, ShortOutputIsCaptured) {
         << "Expected 'narrowest' in output; got: " << sout;
 }
 
-// ── Regression: --convert -o input input must be rejected ──
+// ── Regression: output == input must be rejected (suggest --in-place) ──
 // Without the same-path guard, bcsvNarrowType opens the input for reading
 // while simultaneously truncating and writing to the same path, silently
-// corrupting the file.
+// corrupting the file. The error should point the user at --in-place.
 TEST_F(NarrowTypeTest, ConvertSameInputOutput) {
     auto path = fs::path(test_dir_) / "data.bcsv";
     writeInt64File(path.string(), {0, 1, 2});
 
     std::string sout, serr;
-    int         rc = runNarrow({"--convert", "-o", path.string(), path.string()},
+    int         rc = runNarrow({"-o", path.string(), path.string()},
                                sout, serr);
     EXPECT_NE(rc, 0) << "Must reject output == input to prevent corruption";
+    EXPECT_NE(sout.find("--in-place"), std::string::npos)
+        << "Error should suggest --in-place; got: " << sout;
 
     // Verify the original file was not corrupted
     bcsv::Reader<bcsv::Layout> reader;
@@ -544,7 +546,7 @@ TEST_F(NarrowTypeTest, MixedColumns) {
 
     auto        out = path.parent_path() / "out.bcsv";
     std::string sout, serr;
-    int         rc = runNarrow({"--convert", "-o", out.string(), path.string()},
+    int         rc = runNarrow({"-o", out.string(), path.string()},
                                sout, serr);
     ASSERT_EQ(rc, 0);
 
@@ -565,7 +567,7 @@ TEST_F(NarrowTypeTest, SignedZero) {
 
     auto        out = path.parent_path() / "out.bcsv";
     std::string sout, serr;
-    int         rc = runNarrow({"--convert", "-o", out.string(), path.string()},
+    int         rc = runNarrow({"-o", out.string(), path.string()},
                                sout, serr);
     ASSERT_EQ(rc, 0);
 
@@ -583,7 +585,7 @@ TEST_F(NarrowTypeTest, RoundTripIntToUint8) {
 
     auto        out = path.parent_path() / "out.bcsv";
     std::string sout, serr;
-    int         rc = runNarrow({"--convert", "-o", out.string(), path.string()},
+    int         rc = runNarrow({"-o", out.string(), path.string()},
                                sout, serr);
     ASSERT_EQ(rc, 0);
 
@@ -609,7 +611,7 @@ TEST_F(NarrowTypeTest, RoundTripStringToInt) {
 
     auto        out = path.parent_path() / "out.bcsv";
     std::string sout, serr;
-    int         rc = runNarrow({"--stringsToValue", "--convert", "-o", out.string(),
+    int         rc = runNarrow({"--stringsToValue", "-o", out.string(),
                                 path.string()},
                                sout, serr);
     ASSERT_EQ(rc, 0);
@@ -644,13 +646,17 @@ TEST_F(NarrowTypeTest, NoArgs) {
     EXPECT_NE(rc, 0);
 }
 
-TEST_F(NarrowTypeTest, ConvertNoOutput) {
+// Removed flags (--convert / --analyze / -f) must be rejected as unknown options.
+TEST_F(NarrowTypeTest, RemovedConvertFlagRejected) {
     auto path = fs::path(test_dir_) / "data.bcsv";
     writeInt64File(path.string(), {0, 1, 2});
 
     std::string sout, serr;
-    int         rc = runNarrow({"--convert", path.string()}, sout, serr);
-    EXPECT_NE(rc, 0);
+    EXPECT_NE(runNarrow({"--convert", path.string()}, sout, serr), 0);
+    sout.clear();
+    EXPECT_NE(runNarrow({"--analyze", path.string()}, sout, serr), 0);
+    sout.clear();
+    EXPECT_NE(runNarrow({"-f", path.string()}, sout, serr), 0);
 }
 
 TEST_F(NarrowTypeTest, NonexistentFile) {
@@ -686,7 +692,7 @@ TEST_F(NarrowTypeTest, Int64ToUint32BigValues) {
 
     auto        out = path.parent_path() / "out.bcsv";
     std::string sout, serr;
-    int         rc = runNarrow({"--convert", "-o", out.string(), path.string()}, sout, serr);
+    int         rc = runNarrow({"-o", out.string(), path.string()}, sout, serr);
     ASSERT_EQ(rc, 0);
 
     bcsv::Reader<bcsv::Layout> reader;
@@ -704,3 +710,178 @@ TEST_F(NarrowTypeTest, Int64ToUint32BigValues) {
     EXPECT_EQ(idx, 5);
     reader.close();
 }
+
+// ── New CLI: positional output, --in-place, --overwrite ──
+
+// Write a 3-column INT64 file: col0 in {0,1}, col1 in {0,50000}, col2 wide.
+static void writeThreeColFile(const std::string& path) {
+    bcsv::Layout layout;
+    layout.addColumn({"a", bcsv::ColumnType::INT64});
+    layout.addColumn({"b", bcsv::ColumnType::INT64});
+    layout.addColumn({"c", bcsv::ColumnType::INT64});
+    bcsv::Writer<bcsv::Layout> writer(layout);
+    writer.open(path, true);
+    const int64_t a[]  = {0, 1};
+    const int64_t b[]  = {0, 50000};
+    const int64_t c[]  = {INT64_MIN, INT64_MAX};
+    for (int r = 0; r < 2; ++r) {
+        writer.row().set(0, a[r]);
+        writer.row().set(1, b[r]);
+        writer.row().set(2, c[r]);
+        writer.writeRow();
+    }
+    writer.close();
+}
+
+TEST_F(NarrowTypeTest, PositionalConvert) {
+    auto path = fs::path(test_dir_) / "data.bcsv";
+    writeInt64File(path.string(), {0, 100, 255});
+
+    auto        out = path.parent_path() / "out.bcsv";
+    std::string sout, serr;
+    // Two positionals → convert, no flags required.
+    int rc = runNarrow({path.string(), out.string()}, sout, serr);
+    ASSERT_EQ(rc, 0);
+
+    bcsv::Reader<bcsv::Layout> reader;
+    ASSERT_TRUE(reader.open(out.string()));
+    EXPECT_EQ(reader.layout().columnType(0), bcsv::ColumnType::UINT8);
+    reader.close();
+}
+
+TEST_F(NarrowTypeTest, OutputAliasStillWorks) {
+    auto path = fs::path(test_dir_) / "data.bcsv";
+    writeInt64File(path.string(), {0, 100, 255});
+
+    auto        out = path.parent_path() / "out.bcsv";
+    std::string sout, serr;
+    int         rc = runNarrow({"-o", out.string(), path.string()}, sout, serr);
+    ASSERT_EQ(rc, 0);
+    EXPECT_TRUE(fs::exists(out));
+}
+
+TEST_F(NarrowTypeTest, InPlaceConvert) {
+    auto path = fs::path(test_dir_) / "data.bcsv";
+    writeInt64File(path.string(), {0, 100, 255});
+
+    std::string sout, serr;
+    int         rc = runNarrow({"--in-place", path.string()}, sout, serr);
+    ASSERT_EQ(rc, 0) << sout;
+
+    bcsv::Reader<bcsv::Layout> reader;
+    ASSERT_TRUE(reader.open(path.string()));
+    EXPECT_EQ(reader.layout().columnType(0), bcsv::ColumnType::UINT8);
+    reader.close();
+}
+
+TEST_F(NarrowTypeTest, InPlaceRejectsOutput) {
+    auto path = fs::path(test_dir_) / "data.bcsv";
+    writeInt64File(path.string(), {0, 100, 255});
+    auto out = path.parent_path() / "out.bcsv";
+
+    std::string sout, serr;
+    int         rc = runNarrow({"--in-place", path.string(), out.string()}, sout, serr);
+    EXPECT_EQ(rc, 2) << "Expected arg error when --in-place is combined with an output";
+}
+
+TEST_F(NarrowTypeTest, OverwriteRequiredForExistingOutput) {
+    auto path = fs::path(test_dir_) / "data.bcsv";
+    writeInt64File(path.string(), {0, 100, 255});
+
+    auto out = path.parent_path() / "out.bcsv";
+    // Pre-create the output file.
+    writeInt64File(out.string(), {7});
+
+    std::string sout, serr;
+    int         rc = runNarrow({path.string(), out.string()}, sout, serr);
+    EXPECT_NE(rc, 0) << "Existing output without --overwrite must fail";
+    EXPECT_NE(sout.find("--overwrite"), std::string::npos)
+        << "Error should suggest --overwrite; got: " << sout;
+
+    // With --overwrite it succeeds.
+    sout.clear();
+    rc = runNarrow({"--overwrite", path.string(), out.string()}, sout, serr);
+    ASSERT_EQ(rc, 0) << sout;
+    bcsv::Reader<bcsv::Layout> reader;
+    ASSERT_TRUE(reader.open(out.string()));
+    EXPECT_EQ(reader.layout().columnType(0), bcsv::ColumnType::UINT8);
+    reader.close();
+}
+
+// ── New CLI: --cols column selection ──
+
+TEST_F(NarrowTypeTest, ColsRestrictConvertSingle) {
+    auto path = fs::path(test_dir_) / "data.bcsv";
+    writeThreeColFile(path.string());
+
+    auto        out = path.parent_path() / "out.bcsv";
+    std::string sout, serr;
+    // Only narrow column 0; columns 1 and 2 stay at original INT64.
+    int rc = runNarrow({"--cols", "0", path.string(), out.string()}, sout, serr);
+    ASSERT_EQ(rc, 0) << sout;
+
+    bcsv::Reader<bcsv::Layout> reader;
+    ASSERT_TRUE(reader.open(out.string()));
+    EXPECT_EQ(reader.layout().columnType(0), bcsv::ColumnType::BOOL);
+    EXPECT_EQ(reader.layout().columnType(1), bcsv::ColumnType::INT64);
+    EXPECT_EQ(reader.layout().columnType(2), bcsv::ColumnType::INT64);
+    reader.close();
+}
+
+TEST_F(NarrowTypeTest, ColsRestrictConvertList) {
+    auto path = fs::path(test_dir_) / "data.bcsv";
+    writeThreeColFile(path.string());
+
+    auto        out = path.parent_path() / "out.bcsv";
+    std::string sout, serr;
+    // Narrow columns 0 and 1; column 2 stays INT64.
+    int rc = runNarrow({"--cols", "0,1", path.string(), out.string()}, sout, serr);
+    ASSERT_EQ(rc, 0) << sout;
+
+    bcsv::Reader<bcsv::Layout> reader;
+    ASSERT_TRUE(reader.open(out.string()));
+    EXPECT_EQ(reader.layout().columnType(0), bcsv::ColumnType::BOOL);
+    EXPECT_EQ(reader.layout().columnType(1), bcsv::ColumnType::UINT16);
+    EXPECT_EQ(reader.layout().columnType(2), bcsv::ColumnType::INT64);
+    reader.close();
+}
+
+TEST_F(NarrowTypeTest, ColsNegativeIndex) {
+    auto path = fs::path(test_dir_) / "data.bcsv";
+    writeThreeColFile(path.string());
+
+    auto        out = path.parent_path() / "out.bcsv";
+    std::string sout, serr;
+    // -2 → index 1 (the narrowable middle column); columns 0 and 2 untouched.
+    int rc = runNarrow({"--cols", "-2", path.string(), out.string()}, sout, serr);
+    ASSERT_EQ(rc, 0) << sout;
+
+    bcsv::Reader<bcsv::Layout> reader;
+    ASSERT_TRUE(reader.open(out.string()));
+    EXPECT_EQ(reader.layout().columnType(0), bcsv::ColumnType::INT64);
+    EXPECT_EQ(reader.layout().columnType(1), bcsv::ColumnType::UINT16);
+    EXPECT_EQ(reader.layout().columnType(2), bcsv::ColumnType::INT64);
+    reader.close();
+}
+
+TEST_F(NarrowTypeTest, ColsAnalyzeRestricts) {
+    auto path = fs::path(test_dir_) / "data.bcsv";
+    writeThreeColFile(path.string());
+
+    std::string sout, serr;
+    int         rc = runNarrow({"--cols", "0", path.string()}, sout, serr);
+    ASSERT_EQ(rc, 0) << sout;
+    // Only one column is in scope.
+    EXPECT_NE(sout.find("Columns: 1"), std::string::npos)
+        << "Expected 'Columns: 1' with --cols 0; got: " << sout;
+}
+
+TEST_F(NarrowTypeTest, ColsOutOfRange) {
+    auto path = fs::path(test_dir_) / "data.bcsv";
+    writeThreeColFile(path.string());
+
+    std::string sout, serr;
+    int         rc = runNarrow({"--cols", "99", path.string()}, sout, serr);
+    EXPECT_EQ(rc, 2) << "Out-of-range column selection must be an arg error";
+}
+

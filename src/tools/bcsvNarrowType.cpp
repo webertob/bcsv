@@ -43,29 +43,37 @@ struct ArgError : std::invalid_argument {
 struct Config {
     std::string input_file;
     std::string output_file;
-    bool        analyze        = true;
-    bool        convert        = false;
-    bool        force          = false;
+    std::string cols_spec;                  // --cols column index ranges/list
+    bool        convert        = false;     // inferred: output set or in-place
+    bool        in_place       = false;     // --in-place
+    bool        overwrite      = false;     // --overwrite
     bool        stringsToValue = false;
     bool        verbose        = false;
     bool        help           = false;
 };
 
 static void printUsage(const char* program_name) {
-    std::cout << "Usage: " << program_name << " [OPTIONS] INPUT_FILE\n"
+    std::cout << "Usage: " << program_name << " [OPTIONS] INPUT_FILE [OUTPUT_FILE]\n"
                                               "\n"
                                               "Scan BCSV file for type-narrowing opportunities and optionally convert.\n"
                                               "\n"
+                                              "Mode is inferred from the arguments:\n"
+                                              "  INPUT_FILE only          Analyze (scan-only, print findings)\n"
+                                              "  INPUT_FILE OUTPUT_FILE   Convert (write narrowed file to OUTPUT_FILE)\n"
+                                              "  INPUT_FILE --in-place    Convert INPUT_FILE in place (temp + atomic rename)\n"
+                                              "\n"
                                               "Arguments:\n"
                                               "  INPUT_FILE         Input BCSV file\n"
+                                              "  OUTPUT_FILE        Output BCSV file (enables convert mode)\n"
                                               "\n"
                                               "Output:\n"
-                                              "  -o, --output FILE  Write converted file to new location\n"
-                                              "  -f, --force        Overwrite INPUT_FILE in place (temp + atomic rename)\n"
+                                              "  -o, --output FILE  Alias for the OUTPUT_FILE positional argument\n"
+                                              "  --in-place         Convert INPUT_FILE in place (no OUTPUT_FILE allowed)\n"
+                                              "  --overwrite        Allow overwriting an existing OUTPUT_FILE\n"
                                               "\n"
                                               "Options:\n"
-                                              "  --analyze          Scan-only, print findings (default, explicit alias)\n"
-                                              "  --convert          Scan + rewrite file with narrower types\n"
+                                              "  --cols SPEC        Restrict to columns by index (e.g. '0:3,5,7:-1').\n"
+                                              "                     Ranges are inclusive; negative indices count from the end.\n"
                                               "  --stringsToValue   Also attempt string->numeric/bool conversion (opt-in)\n"
                                               "  -v, --verbose      Per-column details and progress to stderr\n"
                                               "  -h, --help         Show help message\n"
@@ -87,31 +95,46 @@ static Config parseArgs(int argc, char* argv[]) {
             return config;
         } else if (arg == "-v" || arg == "--verbose") {
             config.verbose = true;
-        } else if (arg == "--analyze") {
-            config.analyze = true;
-        } else if (arg == "--convert") {
-            config.convert = true;
-            config.analyze = true;
+        } else if (arg == "--in-place") {
+            config.in_place = true;
+        } else if (arg == "--overwrite") {
+            config.overwrite = true;
         } else if (arg == "--stringsToValue") {
             config.stringsToValue = true;
-        } else if (arg == "-f" || arg == "--force") {
-            config.force = true;
-        } else if ((arg == "-o" || arg == "--output") && i + 1 < argc) {
+        } else if (arg == "--cols") {
+            if (i + 1 >= argc)
+                throw ArgError("--cols requires an argument");
+            config.cols_spec = argv[++i];
+        } else if (arg == "-o" || arg == "--output") {
+            if (i + 1 >= argc)
+                throw ArgError("-o/--output requires an argument");
+            if (!config.output_file.empty())
+                throw ArgError("Output specified more than once");
             config.output_file = argv[++i];
         } else if (arg.starts_with("-")) {
             throw ArgError("Unknown option: " + arg);
         } else {
             if (config.input_file.empty()) {
                 config.input_file = arg;
+            } else if (config.output_file.empty()) {
+                config.output_file = arg;
             } else {
-                throw ArgError("Too many arguments. Only one input file expected.");
+                throw ArgError("Too many positional arguments. Expected INPUT_FILE [OUTPUT_FILE].");
             }
         }
     }
 
-    if (config.input_file.empty() && !config.help) {
+    if (config.help)
+        return config;
+
+    if (config.input_file.empty())
         throw ArgError("Input file is required");
-    }
+
+    if (config.in_place && !config.output_file.empty())
+        throw ArgError("--in-place does not accept an OUTPUT_FILE");
+
+    // Convert mode is inferred from a distinct output or --in-place.
+    config.convert = config.in_place || !config.output_file.empty();
 
     return config;
 }
@@ -570,13 +593,16 @@ static bool anyNarrowed(const std::vector<ColumnProbeState>& probes) {
 // ── Scan phase ──────────────────────────────────────────────────────
 
 static std::vector<ColumnProbeState> scanFile(
-    const std::string&        input_path,
-    bool                      stringsToValue,
-    bool                      verbose,
-    size_t&                   total_rows_out,
-    bcsv::FileFlags&          flags_out,
-    uint8_t&                  comp_out,
-    std::vector<std::string>& col_names_out) {
+    const std::string&            input_path,
+    const std::string&            cols_spec,
+    bool                          stringsToValue,
+    bool                          verbose,
+    size_t&                       total_rows_out,
+    bcsv::FileFlags&              flags_out,
+    uint8_t&                      comp_out,
+    std::vector<std::string>&     col_names_out,
+    std::vector<size_t>&          selected_cols_out,
+    bool&                         scope_active_out) {
 
     bcsv::Reader<bcsv::Layout> reader;
     if (!reader.open(input_path)) {
@@ -592,14 +618,28 @@ static std::vector<ColumnProbeState> scanFile(
     for (size_t i = 0; i < num_cols; ++i)
         col_names_out.push_back(layout.columnName(i));
 
+    // Resolve the optional --cols selection now that the column count is known.
+    // Invalid specs surface as ArgError (exit code 2).
+    bcsv_cli::IndexRangeSet ranges;
+    try {
+        ranges = bcsv_cli::parseIndexRanges(cols_spec, num_cols);
+    } catch (const std::exception& e) {
+        throw ArgError(std::string("--cols: ") + e.what());
+    }
+    scope_active_out  = ranges.active();
+    selected_cols_out = ranges.toIndices(num_cols);
+
     std::vector<ColumnProbeState> probes(num_cols);
     size_t                        alive_count = 0;
 
-    for (size_t i = 0; i < num_cols; ++i) {
+    // Initialise every probe — convert needs original_type for all columns.
+    // Only the selected columns are ever probed; the rest keep
+    // optimal_type == original_type and are copied verbatim during convert.
+    for (size_t i = 0; i < num_cols; ++i)
         probes[i].init(layout.columnType(i), i, stringsToValue);
+    for (size_t i : selected_cols_out)
         if (probes[i].alive)
             ++alive_count;
-    }
 
     if (verbose) {
         std::cerr << "Scanning file: " << input_path << " ("
@@ -611,7 +651,7 @@ static std::vector<ColumnProbeState> scanFile(
     while (reader.readNext() && alive_count > 0) {
         ++total_rows;
 
-        for (size_t i = 0; i < num_cols; ++i) {
+        for (size_t i : selected_cols_out) {
             auto& p = probes[i];
             if (!p.alive)
                 continue;
@@ -657,7 +697,7 @@ static std::vector<ColumnProbeState> scanFile(
             }
         }
 
-        for (size_t i = 0; i < num_cols; ++i) {
+        for (size_t i : selected_cols_out) {
             auto& p = probes[i];
             if (!p.alive)
                 continue;
@@ -701,9 +741,16 @@ static bool printAnalysis(
     size_t                               rows_scanned,
     bcsv::FileFlags                      flags,
     uint8_t                              comp,
+    const std::vector<size_t>&           selected_cols,
+    bool                                 scope_active,
     bool /*verbose*/) {
 
     const size_t num_cols = col_names.size();
+
+    // Only the selected columns are reported/counted. selected_cols already
+    // holds every in-scope column (all columns when no --cols was given).
+    const size_t scope_cols = selected_cols.size();
+    const char*  col_word   = scope_active ? "selected columns" : "columns";
 
     auto names = bcsv_cli::codecNamesFromFlags(flags, comp);
 
@@ -729,19 +776,19 @@ static bool printAnalysis(
         if (early_terminated) {
             std::cout << "Rows scanned: " << rows_scanned << " (out of " << total_possible
                       << ", terminated early)\n";
-            std::cout << "Columns: " << num_cols << "\n";
-            std::cout << "\nAll " << num_cols << " columns are already at their narrowest type.\n";
+            std::cout << "Columns: " << scope_cols << "\n";
+            std::cout << "\nAll " << scope_cols << " " << col_word << " are already at their narrowest type.\n";
             std::cout << "No conversion possible.\n";
             return false;
         }
 
-        std::cout << "Rows scanned: " << rows_scanned << ", Columns: " << num_cols << "\n";
-        std::cout << "\nAll " << num_cols << " columns are already at their narrowest type.\n";
+        std::cout << "Rows scanned: " << rows_scanned << ", Columns: " << scope_cols << "\n";
+        std::cout << "\nAll " << scope_cols << " " << col_word << " are already at their narrowest type.\n";
         std::cout << "No conversion possible.\n";
         return false;
     }
 
-    std::cout << "Rows scanned: " << rows_scanned << ", Columns: " << num_cols << "\n";
+    std::cout << "Rows scanned: " << rows_scanned << ", Columns: " << scope_cols << "\n";
 
     // Table widths
     size_t max_idx = 3;
@@ -752,13 +799,13 @@ static bool printAnalysis(
     }
 
     size_t max_name = 4;
-    for (size_t i = 0; i < num_cols; ++i) {
+    for (size_t i : selected_cols) {
         if (col_names[i].size() > max_name)
             max_name = col_names[i].size();
     }
 
     size_t opt_width = 0;
-    for (size_t i = 0; i < num_cols; ++i) {
+    for (size_t i : selected_cols) {
         std::string s = bcsv_cli::columnTypeStr(probes[i].optimal_type);
         if (probes[i].optimal_type == probes[i].original_type)
             s += "       (unchanged)";
@@ -779,7 +826,7 @@ static bool printAnalysis(
               << "\n";
 
     size_t narrowable = 0;
-    for (size_t i = 0; i < num_cols; ++i) {
+    for (size_t i : selected_cols) {
         auto& p = probes[i];
         std::cout << "  " << std::right << std::setw(static_cast<int>(max_idx)) << i
                   << "  " << std::left << std::setw(static_cast<int>(max_name))
@@ -800,19 +847,19 @@ static bool printAnalysis(
     }
 
     size_t orig_bytes = 0, opt_bytes = 0;
-    for (const auto& p : probes) {
-        orig_bytes += bcsv::sizeOf(p.original_type);
-        opt_bytes += bcsv::sizeOf(p.optimal_type);
+    for (size_t i : selected_cols) {
+        orig_bytes += bcsv::sizeOf(probes[i].original_type);
+        opt_bytes += bcsv::sizeOf(probes[i].optimal_type);
     }
     double savings_pct = (orig_bytes > 0)
                              ? 100.0 * (1.0 - static_cast<double>(opt_bytes) / static_cast<double>(orig_bytes))
                              : 0.0;
 
-    std::cout << "\nNarrowable columns: " << narrowable << " / " << num_cols << "\n";
+    std::cout << "\nNarrowable columns: " << narrowable << " / " << scope_cols << "\n";
     std::cout << "Max theoretical savings (flat codec): " << std::fixed
               << std::setprecision(1) << savings_pct
               << "% (estimated type widths only)\n";
-    std::cout << "\nUse --convert -o output.bcsv to apply, or --convert -f to overwrite.\n";
+    std::cout << "\nProvide an OUTPUT_FILE to apply, or use --in-place to overwrite the input.\n";
 
     return true; // has narrowed columns
 }
@@ -953,26 +1000,21 @@ int main(int argc, char* argv[]) {
             throw std::runtime_error("Input file does not exist: " + config.input_file);
         }
 
-        if (config.convert && !config.force && config.output_file.empty()) {
-            throw ArgError("--convert requires -o FILE or -f");
-        }
-
-        if (config.convert && config.force && !config.output_file.empty()) {
-            std::cerr << "Warning: -f and -o both specified; using -o output path" << std::endl;
-        }
-
         // Scan phase — also captures flags/comp and column names to avoid redundant re-opens
         size_t                   total_rows = 0;
         bcsv::FileFlags          flags;
         uint8_t                  comp;
         std::vector<std::string> col_names;
-        auto                     probes = scanFile(config.input_file, config.stringsToValue,
-                                                   config.verbose, total_rows, flags, comp,
-                                                   col_names);
+        std::vector<size_t>      selected_cols;
+        bool                     scope_active = false;
+        auto                     probes = scanFile(config.input_file, config.cols_spec,
+                                                   config.stringsToValue, config.verbose,
+                                                   total_rows, flags, comp, col_names,
+                                                   selected_cols, scope_active);
 
         // Analyze output
         bool has_narrowed = printAnalysis(config.input_file, col_names, probes, total_rows,
-                                          flags, comp, config.verbose);
+                                          flags, comp, selected_cols, scope_active, config.verbose);
 
         // Convert phase
         if (config.convert) {
@@ -980,7 +1022,7 @@ int main(int argc, char* argv[]) {
                 std::string effective_output;
                 fs::path    input_fs(config.input_file);
 
-                if (config.force && config.output_file.empty()) {
+                if (config.in_place) {
                     // In-place: write to a temp file then atomically rename over the
                     // input. The temp file must live on the same filesystem so that
                     // fs::rename is always atomic.
@@ -1035,14 +1077,19 @@ int main(int argc, char* argv[]) {
                         (fs::current_path() / out_fs).lexically_normal())
                         throw std::runtime_error(
                             "Output path resolves to same file as input: " +
-                            effective_output);
+                            effective_output + " — use --in-place to overwrite the input.");
 
-                    // Warn before overwriting existing output file
+                    // Existing output requires explicit --overwrite
                     if (fs::exists(out_fs)) {
                         if (!fs::is_regular_file(out_fs)) {
                             throw std::runtime_error(
                                 "Output path exists and is not a regular file: " +
                                 effective_output);
+                        }
+                        if (!config.overwrite) {
+                            throw std::runtime_error(
+                                "Output file already exists: " + effective_output +
+                                " — use --overwrite to replace it.");
                         }
                         std::cerr << "Warning: overwriting existing output file: "
                                   << effective_output << std::endl;

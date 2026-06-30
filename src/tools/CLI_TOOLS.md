@@ -35,8 +35,8 @@ bcsvCompare a.bcsv b.bcsv                              # Deterministic compariso
 bcsvCompare --mode compatible a.bcsv b.bcsv             # Ignore column names
 bcsvCompare --mode value --tolerance 1e-6 a.bcsv b.bcsv  # Cross-type, float tolerance
 bcsvNarrowType data.bcsv                                # Scan for narrowing
-bcsvNarrowType --convert -o narrow.bcsv data.bcsv        # Apply narrowing
-bcsvNarrowType --convert -f data.bcsv                    # In-place overwrite
+bcsvNarrowType data.bcsv narrow.bcsv                     # Apply narrowing
+bcsvNarrowType --in-place data.bcsv                      # In-place overwrite
 bcsvRepair -i broken.bcsv --dry-run                    # Analyze damage
 bcsvRepair -i broken.bcsv -o repaired.bcsv             # Repair to new file
 ```
@@ -557,21 +557,27 @@ Scan BCSV files for columns that can be stored in a narrower type without losing
 ### Usage
 
 ```bash
-bcsvNarrowType data.bcsv                                  # Analyze only (default)
-bcsvNarrowType --convert -o output.bcsv data.bcsv         # Scan + rewrite
-bcsvNarrowType --convert -f data.bcsv                     # In-place overwrite
+bcsvNarrowType data.bcsv                                  # Analyze only (1 arg)
+bcsvNarrowType data.bcsv output.bcsv                      # Scan + rewrite (2 args)
+bcsvNarrowType --in-place data.bcsv                       # Overwrite input in place
+bcsvNarrowType --overwrite data.bcsv output.bcsv          # Replace existing output
+bcsvNarrowType --cols 0:3,5 data.bcsv output.bcsv         # Only narrow selected columns
 bcsvNarrowType --stringsToValue data.bcsv                 # Also probe string columns
 bcsvNarrowType -v data.bcsv                               # Verbose progress (stderr)
 ```
+
+Mode is inferred from the arguments: a single `INPUT_FILE` runs **analyze**;
+adding an `OUTPUT_FILE` (or `--in-place`) runs **convert**.
 
 ### Options
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `-o, --output FILE` | Write converted file to new location | — |
-| `-f, --force` | Overwrite INPUT_FILE in place (temp + atomic rename) | — |
-| `--analyze` | Scan-only, print findings (default) | analyze |
-| `--convert` | Scan + rewrite file with narrower types | analyze |
+| `OUTPUT_FILE` (positional) | Write converted file here (enables convert mode) | — |
+| `-o, --output FILE` | Alias for the `OUTPUT_FILE` positional | — |
+| `--in-place` | Convert `INPUT_FILE` in place (temp + atomic rename); no `OUTPUT_FILE` allowed | — |
+| `--overwrite` | Allow overwriting an existing `OUTPUT_FILE` | — |
+| `--cols SPEC` | Restrict to columns by index (`0:3,5,7:-1`); negative indices count from the end | all |
 | `--stringsToValue` | Also attempt string→numeric/bool conversion | off |
 | `-v, --verbose` | Per-column details and progress to stderr | — |
 | `-h, --help` | Show help message | — |
@@ -599,7 +605,7 @@ bcsvNarrowType -v data.bcsv                               # Verbose progress (st
 
 - **Debug builds:** Every cast from source to target type asserts that the value doesn't overflow or lose precision. If an assertion fires, the conversion aborts and the temp file is deleted.
 - **Release builds:** Trust the scan-phase invariant. No per-value runtime checks.
-- **In-place (`-f`):** Writes to a temp file in the same directory, then atomically renames. Crash-resilient.
+- **In-place (`--in-place`):** Writes to a temp file in the same directory, then atomically renames. Crash-resilient.
 
 ### Examples
 
@@ -608,12 +614,15 @@ bcsvNarrowType -v data.bcsv                               # Verbose progress (st
 bcsvNarrowType sensor.bcsv
 
 # Apply narrowing and compare values
-bcsvNarrowType --convert -o narrow.bcsv sensor.bcsv
+bcsvNarrowType sensor.bcsv narrow.bcsv
 bcsvCompare --mode value sensor.bcsv narrow.bcsv
+
+# Only narrow specific columns (indices 0..3 and 5)
+bcsvNarrowType --cols 0:3,5 sensor.bcsv narrow.bcsv
 
 # For flat codec files, check actual size reduction
 bcsvGenerator -p sensor_noisy -n 100000 --row-codec flat -o flat.bcsv
-bcsvNarrowType --convert -f flat.bcsv
+bcsvNarrowType --in-place flat.bcsv
 ls -la flat.bcsv
 
 # String-opt-in: try string→numeric conversion

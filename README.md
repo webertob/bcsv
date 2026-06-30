@@ -199,7 +199,7 @@ BCSV requires **C++20** with full library support for `<span>`, `<bit>`, `<conce
 - ✅ Delta + VLE row codec (`RowCodecDelta002`) — 2.3% of CSV size
 - ✅ Five file codec strategies (stream, stream-LZ4, packet, packet-LZ4, packet-LZ4-batch)
 - ✅ Sampler API — bytecode VM for row filtering and column projection
-- ✅ 9 CLI tools including `bcsvSampler`, `bcsvGenerator`, `bcsvValidate`, `bcsvRepair`
+- ✅ 11 CLI tools including `bcsvSampler`, `bcsvGenerator`, `bcsvValidate`, `bcsvRepair`, `bcsvNarrowType`, `bcsvCompare`
 - ✅ Python (pybcsv) with pandas/Polars integration
 - ✅ C# NuGet package with Sampler, CSV interop, columnar I/O
 - ✅ Unity UPM package with native binaries
@@ -234,7 +234,7 @@ bcsv/
 │   ├── example_static.cpp #    Static-layout usage
 │   └── ...                #    delta, ZoH, direct access, error handling, sampler, visitor
 │
-├── src/tools/             # 🔧 CLI tools (9 utilities)
+├── src/tools/             # 🔧 CLI tools (11 utilities)
 │   ├── csv2bcsv.cpp       #    CSV → BCSV converter
 │   ├── bcsv2csv.cpp       #    BCSV → CSV converter
 │   ├── bcsvSampler.cpp    #    Filter & project rows

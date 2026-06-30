@@ -49,7 +49,7 @@ bash scripts/install.sh --uninstall      # remove installed files
 ```
 
 The install script builds the `ninja-release` preset, then runs `cmake --install` and `ldconfig`.
-Installed locations: `$PREFIX/bin/` (9 CLI tools), `$PREFIX/lib/libbcsv_c_api.so`, `$PREFIX/include/bcsv/`, `$PREFIX/lib/cmake/bcsv/`.
+Installed locations: `$PREFIX/bin/` (11 CLI tools), `$PREFIX/lib/libbcsv_c_api.so`, `$PREFIX/include/bcsv/`, `$PREFIX/lib/cmake/bcsv/`.
 
 ## Project Layout
 
@@ -58,7 +58,7 @@ include/bcsv/         # Header-only C++ library (.h = declarations, .hpp = imple
   codec_row/           # Row codecs (flat001, zoh001, delta002)
   codec_file/          # File codecs (stream, packet, LZ4 variants)
   sampler/             # Bytecode VM for row filtering/projection
-src/tools/             # 9 CLI tools (csv2bcsv, bcsv2csv, bcsvHead/Tail/Header, bcsvSampler, bcsvGenerator, bcsvValidate, bcsvRepair)
+src/tools/             # 11 CLI tools (csv2bcsv, bcsv2csv, bcsvHead/Tail/Header, bcsvSampler, bcsvGenerator, bcsvValidate, bcsvRepair, bcsvNarrowType, bcsvCompare)
 tests/                 # GTest suite (25 .cpp) + C API tests (3 .c) + shell integration tests
 benchmark/             # Python orchestrator + Google Benchmark executables
 python/                # nanobind bindings + pandas integration
@@ -120,7 +120,7 @@ re-litigating settled decisions.
 - `SKILLS.md` — full AI skills reference (API classes, source inventory, all conventions)
 - `ARCHITECTURE.md` — design philosophy, binary format spec, roadmap
 - `docs/adr/README.md` — architectural decision records (ADRs)
-- `src/tools/CLI_TOOLS.md` — all 9 CLI tools with options and examples
+- `src/tools/CLI_TOOLS.md` — all 11 CLI tools with options and examples
 - `tests/README.md` — test infrastructure details
 - `benchmark/README.md` — benchmark orchestrator and profiles
 - `ToDo.txt` — active task list with priorities

@@ -71,9 +71,10 @@ class TestHelp:
     def test_help_flag(self, narrow_data):
         r = run_tool(narrow_data["narrow"], "--help")
         assert "bcsvNarrowType" in r.stdout
-        assert "--convert" in r.stdout
+        assert "--in-place" in r.stdout
+        assert "--overwrite" in r.stdout
+        assert "--cols" in r.stdout
         assert "--stringsToValue" in r.stdout
-        assert "-f" in r.stdout
 
 
 class TestAnalyze:
@@ -93,8 +94,9 @@ class TestAnalyze:
 class TestConvert:
     def test_convert_to_new_file(self, narrow_data):
         out = narrow_data["dir"] / "converted.bcsv"
+        # Two positionals → convert mode (no flag required).
         r = run_tool(
-            narrow_data["narrow"], "--convert", "-o", str(out), narrow_data["sensor"]
+            narrow_data["narrow"], narrow_data["sensor"], str(out)
         )
         assert r.returncode == 0
         assert out.exists()
@@ -106,7 +108,7 @@ class TestConvert:
     def test_convert_value_correctness(self, narrow_data, tools):
         out = narrow_data["dir"] / "value_test.bcsv"
         run_tool(
-            narrow_data["narrow"], "--convert", "-o", str(out), narrow_data["sensor"]
+            narrow_data["narrow"], "-o", str(out), narrow_data["sensor"]
         )
 
         # Values should match in value mode
@@ -123,7 +125,7 @@ class TestConvert:
     def test_convert_delta_codec(self, narrow_data, tools):
         out = narrow_data["dir"] / "delta_out.bcsv"
         run_tool(
-            narrow_data["narrow"], "--convert", "-o", str(out), narrow_data["delta"]
+            narrow_data["narrow"], "-o", str(out), narrow_data["delta"]
         )
 
         # Delta codec: values should match (size may not shrink)
@@ -142,7 +144,7 @@ class TestConvert:
         in_size = narrow_data["flat"].stat().st_size
 
         run_tool(
-            narrow_data["narrow"], "--convert", "-o", str(out), narrow_data["flat"]
+            narrow_data["narrow"], "-o", str(out), narrow_data["flat"]
         )
 
         out_size = out.stat().st_size
@@ -159,9 +161,18 @@ class TestInPlace:
 
         orig_size = inp.stat().st_size
         assert orig_size > 0
-        r = run_tool(narrow_data["narrow"], "--convert", "-f", str(inp))
+        r = run_tool(narrow_data["narrow"], "--in-place", str(inp))
         assert r.returncode == 0
         assert inp.exists()
+
+    def test_inplace_rejects_output(self, narrow_data):
+        inp = narrow_data["dir"] / "inplace_reject.bcsv"
+        shutil.copy(narrow_data["sensor"], inp)
+        out = narrow_data["dir"] / "inplace_reject_out.bcsv"
+        r = run_tool(
+            narrow_data["narrow"], "--in-place", str(inp), str(out), check=False
+        )
+        assert r.returncode == 2
 
 
 class TestNoNarrowing:
@@ -169,7 +180,7 @@ class TestNoNarrowing:
         """When all columns are already narrowest, should indicate that."""
         out = narrow_data["dir"] / "no_narrow.bcsv"
         r = run_tool(
-            narrow_data["narrow"], "--convert", "-o", str(out), narrow_data["sensor"]
+            narrow_data["narrow"], "-o", str(out), narrow_data["sensor"]
         )
         assert r.returncode == 0
         # Should run without error even if narrowing is partial
@@ -201,11 +212,27 @@ class TestErrors:
         r = run_tool(narrow_data["narrow"], "/nonexistent/path/file.bcsv", check=False)
         assert r.returncode != 0
 
-    def test_convert_requires_output(self, narrow_data):
+    def test_removed_convert_flag(self, narrow_data):
+        # --convert / --analyze were removed; they are now unknown options.
         r = run_tool(
             narrow_data["narrow"], "--convert", narrow_data["sensor"], check=False
         )
+        assert r.returncode == 2
+
+    def test_overwrite_required(self, narrow_data):
+        # Existing distinct output without --overwrite must fail.
+        out = narrow_data["dir"] / "overwrite_target.bcsv"
+        shutil.copy(narrow_data["sensor"], out)
+        r = run_tool(
+            narrow_data["narrow"], narrow_data["sensor"], str(out), check=False
+        )
         assert r.returncode != 0
+        assert "--overwrite" in r.stderr
+        # With --overwrite it succeeds.
+        r2 = run_tool(
+            narrow_data["narrow"], "--overwrite", narrow_data["sensor"], str(out)
+        )
+        assert r2.returncode == 0
 
 
 class TestAnalyzeOutput:
@@ -225,3 +252,26 @@ class TestAnalyzeOutput:
         r = run_tool(narrow_data["narrow"], narrow_data["sensor"])
         assert r.returncode == 0
         assert "Rows scanned:" in r.stdout
+
+
+class TestColumnSelection:
+    def test_cols_restricts_analysis(self, narrow_data):
+        # Restrict analysis to a single column.
+        r = run_tool(narrow_data["narrow"], "--cols", "0", narrow_data["sensor"])
+        assert r.returncode == 0
+        assert "Columns: 1" in r.stdout
+
+    def test_cols_out_of_range(self, narrow_data):
+        r = run_tool(
+            narrow_data["narrow"], "--cols", "9999", narrow_data["sensor"], check=False
+        )
+        assert r.returncode == 2
+
+    def test_cols_convert_subset(self, narrow_data):
+        out = narrow_data["dir"] / "cols_subset.bcsv"
+        r = run_tool(
+            narrow_data["narrow"], "--cols", "0:1", narrow_data["flat"], str(out)
+        )
+        assert r.returncode == 0
+        assert out.exists()
+

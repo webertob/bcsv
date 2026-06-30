@@ -19,9 +19,6 @@
  * Exit codes: 0 = identical, 1 = different, 2 = error
  */
 
-#include <algorithm>
-#include <cctype>
-#include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
@@ -34,101 +31,15 @@
 #include "../shared/comparison.h"
 
 // ================================================================
-// Range specification
+// Range specification — shared helper in cli_common.h
 // ================================================================
 
-struct RangeSpec {
-    std::vector<std::pair<size_t, size_t>> ranges; // sorted, non-overlapping
-
-    /// Returns true if `idx` falls within at least one range.
-    /// Empty ranges → match-all (no user scope requested).
-    bool contains(size_t idx) const noexcept {
-        if (ranges.empty())
-            return true;
-        for (const auto& [lo, hi] : ranges)
-            if (idx >= lo && idx <= hi)
-                return true;
-        return false;
-    }
-};
+using RangeSpec = bcsv_cli::IndexRangeSet;
 
 /** Parse "0:99,200:-10" → sorted, merged, inclusive ranges.
- * Empty spec or total == 0 → empty ranges (match-all).
- * Throws std::runtime_error if user provided a spec but no ranges are valid. */
+ * Thin wrapper over bcsv_cli::parseIndexRanges (shared with other tools). */
 static RangeSpec parseRanges(const std::string& spec, size_t total) {
-    RangeSpec r;
-    bool      specified = !spec.empty();
-    if (!specified || total == 0)
-        return r;
-
-    std::vector<std::string> parts;
-    {
-        std::string cur;
-        for (char c : spec) {
-            if (c == ',') {
-                parts.push_back(cur);
-                cur.clear();
-                continue;
-            }
-            cur += c;
-        }
-        parts.push_back(cur);
-    }
-
-    for (auto& p : parts) {
-        auto p0 = p;
-        // inline trim
-        size_t a = 0, b = p0.size();
-        while (a < b && std::isspace(static_cast<unsigned char>(p0[a])))
-            ++a;
-        while (b > a && std::isspace(static_cast<unsigned char>(p0[b - 1])))
-            --b;
-        p0 = p0.substr(a, b - a);
-        if (p0.empty())
-            continue;
-
-        int64_t lo, hi;
-        auto    colon = p0.find(':');
-        if (colon == std::string::npos) {
-            lo = hi = std::stoll(p0);
-        } else {
-            std::string ls = p0.substr(0, colon);
-            std::string hs = p0.substr(colon + 1);
-            lo             = ls.empty() ? 0 : std::stoll(ls);
-            hi             = hs.empty() ? static_cast<int64_t>(total) - 1 : std::stoll(hs);
-        }
-
-        if (lo < 0)
-            lo += static_cast<int64_t>(total);
-        if (hi < 0)
-            hi += static_cast<int64_t>(total);
-
-        if (lo < 0 || lo > hi || hi >= static_cast<int64_t>(total)) {
-            throw std::runtime_error("Range [" + std::to_string(lo) + ":" + std::to_string(hi) +
-                                     "] is out of bounds (0-" + std::to_string(total - 1) + ")");
-        }
-        r.ranges.emplace_back(static_cast<size_t>(lo), static_cast<size_t>(hi));
-    }
-
-    if (r.ranges.empty()) {
-        throw std::runtime_error("No valid " + std::string(specified && parts.size() > 1 ? "range elements" : "ranges") +
-                                 " found for spec '" + spec + "'");
-    }
-
-    std::sort(r.ranges.begin(), r.ranges.end());
-    {
-        std::vector<std::pair<size_t, size_t>> merged;
-        for (auto& el : r.ranges) {
-            if (merged.empty())
-                merged.push_back(el);
-            else if (el.first <= merged.back().second + 1)
-                merged.back().second = std::max(merged.back().second, el.second);
-            else
-                merged.push_back(el);
-        }
-        r.ranges = std::move(merged);
-    }
-    return r;
+    return bcsv_cli::parseIndexRanges(spec, total);
 }
 
 // ================================================================
@@ -148,7 +59,7 @@ static void printUsage(const char* prog) {
         << "Usage: " << prog << " [OPTIONS] FILE_A FILE_B\n\n"
         << "Compare two BCSV files and report whether they are identical.\n\n"
         << "Modes:\n"
-        << "  strict      (default) - names + types + values must match\n"
+        << "  strict (default)  - names + types + values must match\n"
         << "  compatible        - types + values must match, names ignored\n"
         << "  value             - only values must match (cross-type coercion)\n\n"
         << "Arguments:\n"
@@ -317,17 +228,7 @@ static int compareFiles(const Config& cfg) {
 
     // Extract column indices upfront so the inner loop iterates only
     // the columns that matter (avoids per-row contains() scan).
-    std::vector<size_t> cols_to_check;
-    if (col_spec.ranges.empty()) {
-        cols_to_check.reserve(ncols);
-        for (size_t c = 0; c < ncols; ++c)
-            cols_to_check.push_back(c);
-    } else {
-        cols_to_check.reserve(ncols);
-        for (const auto& [lo, hi] : col_spec.ranges)
-            for (size_t c = lo; c <= hi; ++c)
-                cols_to_check.push_back(c);
-    }
+    std::vector<size_t> cols_to_check = col_spec.toIndices(ncols);
 
     // --- cell loop ---
     size_t max_val_mismatches   = cfg.verbose ? 100u : 10u;

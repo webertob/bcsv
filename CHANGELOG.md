@@ -12,6 +12,22 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- `bcsvNarrowType` and `bcsvCompare` were missing from the CMake `install()` target;
+  `bash scripts/install.sh` now deploys both tools.
+
+### Changed
+- **CLI: `bcsvNarrowType` argument redesign** — Mode is now inferred from positional
+  arguments: `bcsvNarrowType INPUT` analyzes, `bcsvNarrowType INPUT OUTPUT` converts.
+  The `--analyze` and `--convert` flags and `-f/--force` were removed (`-o/--output`
+  is kept as an alias for the output positional). Added `--in-place` for in-place
+  conversion (temp + atomic rename), `--overwrite` to permit replacing an existing
+  output (an existing output now errors without it), and `--cols SPEC` to restrict
+  narrowing to selected column indices (e.g. `0:3,5,7:-1`, negative indices count
+  from the end).
+- CLI: Promoted the index-range parser (`IndexRangeSet` / `parseIndexRanges`) into
+  `cli_common.h`; `bcsvCompare` now shares it.
+
 ## [1.5.7] - 2026-04-19
 
 ### Fixed
