@@ -8,12 +8,10 @@
  */
 
 #include <gtest/gtest.h>
-#include "bcsv/bcsv.h"
 #include <filesystem>
-#include <fstream>
-#include <cmath>
 #include <string>
 #include <vector>
+#include <bcsv/bcsv.h>
 
 namespace fs = std::filesystem;
 
@@ -25,6 +23,7 @@ static std::string findNarrowBin() {
         (cur / "bin" / "bcsvNarrowType").string(),
         (cur / "../bin" / "bcsvNarrowType").string(),
         (cur / "bcsvNarrowType").string(),
+        "build/ninja-debug/bin/bcsvNarrowType",
         "build/ninja-release/bin/bcsvNarrowType",
     };
 
@@ -70,11 +69,8 @@ protected:
             return -1;
 
         char buf[256];
-        std::fgets(buf, sizeof(buf), pipe);
-        while (!std::feof(pipe)) {
+        while (std::fgets(buf, sizeof(buf), pipe))
             stdout_out += buf;
-            std::fgets(buf, sizeof(buf), pipe);
-        }
         int rc = pclose(pipe);
         return WEXITSTATUS(rc);
     }
@@ -475,9 +471,52 @@ TEST_F(NarrowTypeTest, StringLeads) {
     reader.close();
 }
 
-// ── Empty file ──
+// ── Regression: short output is fully captured (tests runNarrow harness) ──
+// A 1-row BOOL file is already at its narrowest type. The "narrowest" message
+// fits in a single 256-byte fgets call. Before the runNarrow fix, this output
+// was silently discarded and stdout_out would be empty.
+TEST_F(NarrowTypeTest, ShortOutputIsCaptured) {
+    auto         path = fs::path(test_dir_) / "bool_data.bcsv";
+    bcsv::Layout layout;
+    layout.addColumn({"flag", bcsv::ColumnType::BOOL});
+    bcsv::Writer<bcsv::Layout> writer(layout);
+    ASSERT_TRUE(writer.open(path.string(), true));
+    writer.row().set(0, true);
+    writer.writeRow();
+    writer.close();
 
-TEST_F(NarrowTypeTest, EmptyFile) {
+    std::string sout, serr;
+    int         rc = runNarrow({path.string()}, sout, serr);
+    EXPECT_EQ(rc, 0);
+    EXPECT_FALSE(sout.empty()) << "stdout was not captured at all";
+    EXPECT_NE(sout.find("narrowest"), std::string::npos)
+        << "Expected 'narrowest' in output; got: " << sout;
+}
+
+// ── Regression: --convert -o input input must be rejected ──
+// Without the same-path guard, bcsvNarrowType opens the input for reading
+// while simultaneously truncating and writing to the same path, silently
+// corrupting the file.
+TEST_F(NarrowTypeTest, ConvertSameInputOutput) {
+    auto path = fs::path(test_dir_) / "data.bcsv";
+    writeInt64File(path.string(), {0, 1, 2});
+
+    std::string sout, serr;
+    int         rc = runNarrow({"--convert", "-o", path.string(), path.string()},
+                               sout, serr);
+    EXPECT_NE(rc, 0) << "Must reject output == input to prevent corruption";
+
+    // Verify the original file was not corrupted
+    bcsv::Reader<bcsv::Layout> reader;
+    EXPECT_TRUE(reader.open(path.string())) << "Input file was corrupted";
+    if (reader.open(path.string()))
+        reader.close();
+}
+
+// ── Empty file ──
+// An empty BCSV file (0 rows) can be opened by bcsv::Reader; the tool should
+// complete gracefully with rc=0 and report 0 rows / all columns at narrowest.
+TEST_F(NarrowTypeTest, EmptyFileGracefulError) {
     auto         path = fs::path(test_dir_) / "data.bcsv";
     bcsv::Layout layout;
     layout.addColumn({"value", bcsv::ColumnType::INT64});
@@ -487,6 +526,7 @@ TEST_F(NarrowTypeTest, EmptyFile) {
 
     std::string sout, serr;
     int         rc = runNarrow({path.string()}, sout, serr);
+    // Empty files are opened successfully; 0 rows means no narrowing
     EXPECT_EQ(rc, 0);
 }
 

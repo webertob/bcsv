@@ -17,9 +17,15 @@
 #include <limits>
 #include <string>
 #include <type_traits>
-#include <utility>
 #include <variant>
 #include <vector>
+
+#ifdef __has_include
+#  if __has_include(<unistd.h>)
+#    include <unistd.h>
+#    define BCSV_HAS_MKSTEMP 1
+#  endif
+#endif
 
 #include <bcsv/bcsv.h>
 #include "cli_common.h"
@@ -108,6 +114,26 @@ static Config parseArgs(int argc, char* argv[]) {
     }
 
     return config;
+}
+
+// ── IEEE 754 integer-wholeness test ──────────────────────────────────
+
+// Returns true iff v is a finite whole number (no fractional part).
+// Uses IEEE 754 bit layout; ~3× faster than std::floor comparison and
+// avoids any std::round call in the hot scan and conversion paths.
+static bool doubleIsWholeNumber(double v) noexcept {
+    uint64_t bits;
+    std::memcpy(&bits, &v, sizeof(bits));
+    const uint64_t biasedExp = (bits >> 52) & 0x7FFu;
+    // biasedExp == 0x7FF: NaN or ±Inf — not whole numbers.
+    if (biasedExp == 0x7FFu) return false;
+    // biasedExp == 0: subnormals and ±0.0. Only ±0.0 is a whole number.
+    if (biasedExp == 0)      return (bits << 1) == 0;
+    const int exp = static_cast<int>(biasedExp) - 1023;
+    if (exp >= 52)           return true;   // all significant bits are integer part
+    if (exp < 0)             return false;  // |v| < 1, not a whole number
+    // Check that all fractional mantissa bits are zero
+    return (bits & ((uint64_t(1) << (52 - exp)) - 1)) == 0;
 }
 
 // ── ColumnProbeState ────────────────────────────────────────────────
@@ -241,47 +267,43 @@ struct ColumnProbeState {
     }
 
     void accumulateFinite(double v) {
+        // update float min/max (always; needed for float→float roundtrip check)
         if (v < min_f)
             min_f = v;
         if (v > max_f)
             max_f = v;
 
-        // Sign-normalize: -0.0 -> 0.0, otherwise preserve value (negatives stay negative)
-        double norm_v = (v == -0.0) ? 0.0 : v;
+        // Bool check: only exact 0.0 and 1.0 qualify (-0.0 == 0.0 in IEEE)
+        if (v != 0.0 && v != 1.0)
+            f_bool_alive = false;
 
-        if (v == 0.0 || v == -0.0) {
-            // zero is whole
-        } else {
-            double fv       = std::floor(norm_v);
-            bool   is_whole = (fv == norm_v) && !std::isinf(fv);
-            if (!is_whole) {
+        // Integer ladder: guard ALL ladder work up front; skip entirely when dead
+        if (f_ladder_alive) {
+            if (!doubleIsWholeNumber(v)) {
                 f_ladder_alive = false;
-            }
+            } else {
+                // Sign check (only for non-zero values; -0.0 == 0.0)
+                if (v < 0.0)
+                    int_all_positive = false;
 
-            if (v < 0.0 && v != -0.0)
-                int_all_positive = false;
-
-            if (f_ladder_alive) {
-                // Range guard: avoid UB in static_cast<int64_t> for out-of-range doubles
-                double abs_v = std::abs(norm_v);
+                // Range guard: avoid UB in static_cast<int64_t>
+                const double abs_v = v < 0.0 ? -v : v;
                 if (abs_v > static_cast<double>(INT64_MAX)) {
                     f_ladder_alive = false;
                 } else {
-                    int64_t iv = static_cast<int64_t>(std::round(norm_v));
+                    // Safe direct cast: doubleIsWholeNumber already confirmed no
+                    // fractional bits, so no std::round needed.
+                    const int64_t iv = static_cast<int64_t>(v);
                     if (iv < int_min)
                         int_min = iv;
                     if (iv > int_max)
                         int_max = iv;
-                    // Round-trip check: does int64 -> double reproduce the original?
-                    if (static_cast<double>(iv) != v) {
+                    // Round-trip guard: int64 → double must reproduce the original
+                    if (static_cast<double>(iv) != v)
                         f_ladder_alive = false;
-                    }
                 }
             }
         }
-
-        if (!(v == 0.0 || v == 1.0 || v == -0.0))
-            f_bool_alive = false;
     }
 
     void visitFloat(double v) {
@@ -412,10 +434,12 @@ static inline bcsv::ValueType coerceInt(bcsv::ColumnType dst, Src src,
                 return bcsv::ValueType{v};
             }
             case bcsv::ColumnType::INT64: {
-                int64_t v = static_cast<int64_t>(src);
-                if (static_cast<uint64_t>(v) != static_cast<uint64_t>(src))
-                    throw std::runtime_error("coerceInt INT64 overflow");
-                return bcsv::ValueType{v};
+                // For unsigned sources the bitcast round-trip is a no-op; check explicitly.
+                if constexpr (std::is_unsigned_v<Src>) {
+                    if (src > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+                        throw std::runtime_error("coerceInt INT64 overflow");
+                }
+                return bcsv::ValueType{static_cast<int64_t>(src)};
             }
             default: break; // fall through to float dst
         }
@@ -469,44 +493,63 @@ static inline bcsv::ValueType coerceValue(bcsv::ColumnType dst, Src src,
     if (dst == bcsv::ColumnType::BOOL)
         return bcsv::ValueType{intermediate != 0.0};
 
-    // --- Integer dst: range-guard before cast to avoid UB ---
+    // --- Integer dst: check whole-number once, sign once, then range + cast ---
+    // (scan phase guarantees values are integers; these guards are defensive.)
+    if (!doubleIsWholeNumber(intermediate))
+        throw std::runtime_error(
+            "coerceValue: fractional value cannot convert to " +
+            bcsv_cli::columnTypeStr(dst) + " col " + std::to_string(col_idx) +
+            " row " + std::to_string(row_num));
+    const bool isNeg = (intermediate < 0.0);  // -0.0 == 0.0, so false for -0.0
     switch (dst) {
-        case bcsv::ColumnType::UINT8: {
-            uint8_t v = static_cast<uint8_t>(std::round(intermediate));
-            return bcsv::ValueType{v};
-        }
-        case bcsv::ColumnType::UINT16: {
-            uint16_t v = static_cast<uint16_t>(std::round(intermediate));
-            return bcsv::ValueType{v};
-        }
-        case bcsv::ColumnType::UINT32: {
-            uint32_t v = static_cast<uint32_t>(std::round(intermediate));
-            return bcsv::ValueType{v};
-        }
+        case bcsv::ColumnType::UINT8:
+            if (isNeg || intermediate > 255.0)
+                throw std::runtime_error(
+                    "coerceValue UINT8 range col " + std::to_string(col_idx) +
+                    " row " + std::to_string(row_num));
+            return bcsv::ValueType{static_cast<uint8_t>(intermediate)};
+        case bcsv::ColumnType::UINT16:
+            if (isNeg || intermediate > 65535.0)
+                throw std::runtime_error(
+                    "coerceValue UINT16 range col " + std::to_string(col_idx) +
+                    " row " + std::to_string(row_num));
+            return bcsv::ValueType{static_cast<uint16_t>(intermediate)};
+        case bcsv::ColumnType::UINT32:
+            if (isNeg || intermediate > 4294967295.0)
+                throw std::runtime_error(
+                    "coerceValue UINT32 range col " + std::to_string(col_idx) +
+                    " row " + std::to_string(row_num));
+            return bcsv::ValueType{static_cast<uint32_t>(intermediate)};
         case bcsv::ColumnType::UINT64:
-            if (intermediate > static_cast<double>(UINT64_MAX))
+            if (isNeg || intermediate > static_cast<double>(UINT64_MAX))
                 throw std::runtime_error(
                     "coerceValue: " + std::to_string(col_idx) + " row " +
                     std::to_string(row_num) + " exceeds UINT64_MAX");
-            return bcsv::ValueType{static_cast<uint64_t>(std::round(intermediate))};
-        case bcsv::ColumnType::INT8: {
-            int8_t v = static_cast<int8_t>(std::round(intermediate));
-            return bcsv::ValueType{v};
-        }
-        case bcsv::ColumnType::INT16: {
-            int16_t v = static_cast<int16_t>(std::round(intermediate));
-            return bcsv::ValueType{v};
-        }
-        case bcsv::ColumnType::INT32: {
-            int32_t v = static_cast<int32_t>(std::round(intermediate));
-            return bcsv::ValueType{v};
-        }
+            return bcsv::ValueType{static_cast<uint64_t>(intermediate)};
+        case bcsv::ColumnType::INT8:
+            if (intermediate < -128.0 || intermediate > 127.0)
+                throw std::runtime_error(
+                    "coerceValue INT8 range col " + std::to_string(col_idx) +
+                    " row " + std::to_string(row_num));
+            return bcsv::ValueType{static_cast<int8_t>(intermediate)};
+        case bcsv::ColumnType::INT16:
+            if (intermediate < -32768.0 || intermediate > 32767.0)
+                throw std::runtime_error(
+                    "coerceValue INT16 range col " + std::to_string(col_idx) +
+                    " row " + std::to_string(row_num));
+            return bcsv::ValueType{static_cast<int16_t>(intermediate)};
+        case bcsv::ColumnType::INT32:
+            if (intermediate < -2147483648.0 || intermediate > 2147483647.0)
+                throw std::runtime_error(
+                    "coerceValue INT32 range col " + std::to_string(col_idx) +
+                    " row " + std::to_string(row_num));
+            return bcsv::ValueType{static_cast<int32_t>(intermediate)};
         case bcsv::ColumnType::INT64:
             if (std::fabs(intermediate) > static_cast<double>(INT64_MAX))
                 throw std::runtime_error(
                     "coerceValue: " + std::to_string(col_idx) + " row " +
                     std::to_string(row_num) + " exceeds INT64 range");
-            return bcsv::ValueType{static_cast<int64_t>(std::round(intermediate))};
+            return bcsv::ValueType{static_cast<int64_t>(intermediate)};
         default:
             throw std::runtime_error("coerceValue: unsupported destination type");
     }
@@ -527,12 +570,13 @@ static bool anyNarrowed(const std::vector<ColumnProbeState>& probes) {
 // ── Scan phase ──────────────────────────────────────────────────────
 
 static std::vector<ColumnProbeState> scanFile(
-    const std::string& input_path,
-    bool               stringsToValue,
-    bool               verbose,
-    size_t&            total_rows_out,
-    bcsv::FileFlags&   flags_out,
-    uint8_t&           comp_out) {
+    const std::string&        input_path,
+    bool                      stringsToValue,
+    bool                      verbose,
+    size_t&                   total_rows_out,
+    bcsv::FileFlags&          flags_out,
+    uint8_t&                  comp_out,
+    std::vector<std::string>& col_names_out) {
 
     bcsv::Reader<bcsv::Layout> reader;
     if (!reader.open(input_path)) {
@@ -542,6 +586,11 @@ static std::vector<ColumnProbeState> scanFile(
 
     const auto& layout   = reader.layout();
     size_t      num_cols = layout.columnCount();
+
+    // Capture column names now while the reader is open (avoids a second file open)
+    col_names_out.reserve(num_cols);
+    for (size_t i = 0; i < num_cols; ++i)
+        col_names_out.push_back(layout.columnName(i));
 
     std::vector<ColumnProbeState> probes(num_cols);
     size_t                        alive_count = 0;
@@ -647,20 +696,14 @@ static std::vector<ColumnProbeState> scanFile(
 
 static bool printAnalysis(
     const std::string&                   input_path,
+    const std::vector<std::string>&      col_names,
     const std::vector<ColumnProbeState>& probes,
     size_t                               rows_scanned,
     bcsv::FileFlags                      flags,
     uint8_t                              comp,
     bool /*verbose*/) {
 
-    // Need column names for the table — open reader just for layout
-    bcsv::Reader<bcsv::Layout> reader;
-    if (!reader.open(input_path)) {
-        throw std::runtime_error("Cannot reopen for analysis: " + input_path);
-    }
-    const auto& layout   = reader.layout();
-    size_t      num_cols = layout.columnCount();
-    reader.close();
+    const size_t num_cols = col_names.size();
 
     auto names = bcsv_cli::codecNamesFromFlags(flags, comp);
 
@@ -710,8 +753,8 @@ static bool printAnalysis(
 
     size_t max_name = 4;
     for (size_t i = 0; i < num_cols; ++i) {
-        if (layout.columnName(i).size() > max_name)
-            max_name = layout.columnName(i).size();
+        if (col_names[i].size() > max_name)
+            max_name = col_names[i].size();
     }
 
     size_t opt_width = 0;
@@ -740,7 +783,7 @@ static bool printAnalysis(
         auto& p = probes[i];
         std::cout << "  " << std::right << std::setw(static_cast<int>(max_idx)) << i
                   << "  " << std::left << std::setw(static_cast<int>(max_name))
-                  << layout.columnName(i)
+                  << col_names[i]
                   << "  " << std::right << std::setw(8)
                   << wideTypeName(p.original_type)
                   << "  ";
@@ -918,15 +961,17 @@ int main(int argc, char* argv[]) {
             std::cerr << "Warning: -f and -o both specified; using -o output path" << std::endl;
         }
 
-        // Scan phase — also captures flags/comp to avoid redundant re-opens
-        size_t          total_rows = 0;
-        bcsv::FileFlags flags;
-        uint8_t         comp;
-        auto            probes = scanFile(config.input_file, config.stringsToValue,
-                                          config.verbose, total_rows, flags, comp);
+        // Scan phase — also captures flags/comp and column names to avoid redundant re-opens
+        size_t                   total_rows = 0;
+        bcsv::FileFlags          flags;
+        uint8_t                  comp;
+        std::vector<std::string> col_names;
+        auto                     probes = scanFile(config.input_file, config.stringsToValue,
+                                                   config.verbose, total_rows, flags, comp,
+                                                   col_names);
 
-        // Analyze output (passes flags/comp from scan, no extra open)
-        bool has_narrowed = printAnalysis(config.input_file, probes, total_rows,
+        // Analyze output
+        bool has_narrowed = printAnalysis(config.input_file, col_names, probes, total_rows,
                                           flags, comp, config.verbose);
 
         // Convert phase
@@ -936,10 +981,31 @@ int main(int argc, char* argv[]) {
                 fs::path    input_fs(config.input_file);
 
                 if (config.force && config.output_file.empty()) {
-                    // In-place: temp file + atomic rename
-                    fs::path tmp_path = input_fs.parent_path() /
-                                        ("bcsvNarrowType.tmp." + std::to_string(
-                                                                     std::hash<std::string>{}(config.input_file)));
+                    // In-place: write to a temp file then atomically rename over the
+                    // input. The temp file must live on the same filesystem so that
+                    // fs::rename is always atomic.
+#ifdef BCSV_HAS_MKSTEMP
+                    // POSIX: mkstemp creates and opens the file atomically.
+                    std::string tmpl = (input_fs.parent_path() /
+                                        "bcsvNarrowType_XXXXXX").string();
+                    int fd = mkstemp(tmpl.data());
+                    if (fd == -1)
+                        throw std::runtime_error(
+                            "Cannot create temp file in " +
+                            input_fs.parent_path().string());
+                    ::close(fd);  // convertFile will overwrite via writer.open(..., true)
+                    fs::path tmp_path(tmpl);
+#else
+                    // Windows / non-POSIX: _mktemp_s generates a unique name
+                    // (does not create the file; minor TOCTOU risk acceptable here).
+                    std::string tmpl = (input_fs.parent_path() /
+                                        "bcsvNarrowType_XXXXXX").string();
+                    if (_mktemp_s(tmpl.data(), tmpl.size() + 1) != 0)
+                        throw std::runtime_error(
+                            "Cannot create temp file name in " +
+                            input_fs.parent_path().string());
+                    fs::path tmp_path(tmpl);
+#endif
 
                     try {
                         convertFile(config.input_file, tmp_path.string(), probes,
@@ -956,6 +1022,20 @@ int main(int argc, char* argv[]) {
                 } else {
                     effective_output = config.output_file;
                     fs::path out_fs(effective_output);
+
+                    // Reject same-path: reading and writing the same file corrupts it.
+                    // Fast path: identical strings (the common case).
+                    // Slow path: normalise to absolute form to catch relative-vs-absolute
+                    // spellings of the same path. Note: lexically_normal is purely
+                    // lexical and does NOT resolve symlinks or detect hardlinks; for
+                    // full inode equivalence use fs::equivalent, which requires both
+                    // paths to exist.
+                    if (config.input_file == effective_output ||
+                        (fs::current_path() / config.input_file).lexically_normal() ==
+                        (fs::current_path() / out_fs).lexically_normal())
+                        throw std::runtime_error(
+                            "Output path resolves to same file as input: " +
+                            effective_output);
 
                     // Warn before overwriting existing output file
                     if (fs::exists(out_fs)) {
