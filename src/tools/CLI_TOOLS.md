@@ -31,9 +31,9 @@ bcsvSampler -c 'X[0][0] > 100' data.bcsv filtered.bcsv  # Filter rows
 bcsvGenerator -p sensor_noisy -n 100000 -o sensor.bcsv   # Generate test data
 bcsvValidate -i data.bcsv                              # Validate structure
 bcsvValidate -i data.bcsv --compare source.csv         # Compare files
-bcsvCompare a.bcsv b.bcsv                              # Deterministic comparison
-bcsvCompare --mode compatible a.bcsv b.bcsv             # Ignore column names
-bcsvCompare --mode value --tolerance 1e-6 a.bcsv b.bcsv  # Cross-type, float tolerance
+bcsvCompare a.bcsv b.bcsv                              # Deterministic comparison (strict)
+bcsvCompare --mode values a.bcsv b.bcsv                 # Compare values only (coercion)
+bcsvCompare --mode types,values --tolerance 1e-6 a.bcsv b.bcsv # Compatible mode
 bcsvNarrowType data.bcsv                                # Scan for narrowing
 bcsvNarrowType data.bcsv narrow.bcsv                     # Apply narrowing
 bcsvNarrowType --in-place data.bcsv                      # In-place overwrite
@@ -80,7 +80,7 @@ cmake --build --preset ninja-release-build --target bcsvSampler -j$(nproc)
 | `bcsvGenerator.cpp` | Synthetic dataset generator |
 | `bcsvValidate.cpp` | Structure & content validation |
 | `bcsvRepair.cpp` | Repair damaged/interrupted BCSV files |
-| `bcsvCompare.cpp` | Deterministic file comparison (strict/compatible/value modes) |
+| `bcsvCompare.cpp` | Deterministic file comparison (combining modes: names, types, values) |
 | `bcsvNarrowType.cpp` | Type-narrowing scanner and converter |
 | `cli_common.h` | Shared CLI utilities (codec dispatch, validation, formatting) |
 | `CMakeLists.txt` | Build definitions for all 11 tools |
@@ -464,42 +464,80 @@ bcsvRepair -i broken.bcsv --in-place --backup            # Truncate + rewrite fo
 
 ## bcsvCompare — Deterministic File Comparison
 
-Compare two BCSV files and return exit code 0 (identical) or 1 (different) with three comparison strictness modes.  Designed for CI guards, snapshot comparisons, and quick verification that two binary files contain the same data.
+Compare two BCSV files and return exit code 0 (identical) or 1 (different). Supports combining check modes (names, types, values) for flexible comparison.
 
-### Comparison Modes
+### Mode Selection
 
-| Mode | Column names | Column types | Cell values |
-|------|-------------|-------------|-------------|
-| **strict** (default) | must match | must match | same-type, exact (+ tolerance) |
-| **compatible** | ignored | must match | same-type, exact (+ tolerance) |
-| **value** | ignored | ignored | coerced to double (or string) |
+Modes are comma-separated (no spaces):
 
-In **value** mode, numeric types (INT*, UINT*, FLOAT, DOUBLE, BOOL) are coerced to double and compared with tolerance.  STRING columns are compared as strings only — STRING vs numeric is always a mismatch.  Columns are compared positionally (index N vs index N), not by name.
+| Aspect | What it checks |
+|--------|---------------|
+| `names` | Column names must match (header-only, fast) |
+| `types` | Column types must match (header-only, fast) |
+| `values` | Cell values must match (streams row data) |
 
-NaN values in FLOAT/DOUBLE columns are handled consistently: identical files with matching NaN positions compare as identical.  Tolerance is always absolute (not relative) and applies only to FLOAT/DOUBLE columns.
+**Default** (no `--mode` flag): `all` — equivalent to `names,types,values` (legacy `strict`).
 
-Out-of-bounds `--rows` or `--cols` ranges exit with code 2.
+Any combination is valid: `names`, `types`, `values`, `names,types`, `names,values`,
+`types,values`, `names,types,values` (or `all`).
+
+Legacy aliases cannot be combined:
+
+| Alias | Expands to |
+|-------|-----------|
+| `strict` | `all` (names,types,values) |
+| `compatible` | `types,values` |
+| `value` | `values` |
+
+### Value Coercion Semantics
+
+Whether values are compared strictly or with cross-type coercion depends on whether `types` is also selected:
+
+| `types` selected? | Value comparison strategy |
+|------------------|--------------------------|
+| **Yes** (`types,values` or `all`) | Types already match — use **strict** per-cell comparison |
+| **No** (`values` alone or `names,values`) | Types may differ — use **coerced** cross-type comparison |
+
+### Value Coercion Matrix (when types may differ)
+
+| Comparison | Mechanism | Precision |
+|-----------|-----------|-----------|
+| int vs int | `std::cmp_equal` (C++20) | Lossless, handles all signedness |
+| INT8–UINT16 vs FLOAT | Both compared in `float` | Always exact |
+| INT32/UINT32 vs FLOAT/DOUBLE | Both promoted to `double` | Always exact |
+| INT64/UINT64 vs FLOAT/DOUBLE | Both promoted to `double` | Exact only within ±2^53 |
+| FLOAT vs DOUBLE | Widen float to `double` | Always exact |
+| STRING vs STRING | Exact string match | — |
+| STRING vs numeric | Mismatch (use `--string-to-value` to parse string as number) | — |
+
+For INT64/UINT64 vs float/double: if the integer exceeds `±2^53`, default behavior is to report as mismatch. Use `--allow-imprecise` to proceed with double comparison.
+
+String-to-value (`--string-to-value`): trims leading/trailing whitespace, then attempts to parse as number. If parse fails (e.g. `"12x"`), the cells are a mismatch.
 
 ### Usage
 
 ```bash
-bcsvCompare a.bcsv b.bcsv                              # strict, all data
-bcsvCompare --mode compatible a.bcsv b.bcsv            # ignore column names
-bcsvCompare --mode value --tolerance 1e-6 a.bcsv b.bcsv # value coercion
+bcsvCompare a.bcsv b.bcsv                              # default: all (strict)
+bcsvCompare --mode names a.bcsv b.bcsv                 # names only (header-only)
+bcsvCompare --mode names,types a.bcsv b.bcsv           # names + types only
+bcsvCompare --mode values a.bcsv b.bcsv                # values only (cross-type coercion)
+bcsvCompare --mode values --string-to-value a.bcsv b.bcsv # allow string↔number
+bcsvCompare --mode types,values a.bcsv b.bcsv          # types + values (compatible)
 bcsvCompare --rows 0:99 --cols 2:5 a.bcsv b.bcsv      # compare subset
-bcsvCompare -v a.bcsv b.bcsv                            # verbose mismatch report
-bcsvCompare --mode value --tolerance 1e-6 a.bcsv b.bcsv  # cross-type value comparison
+bcsvCompare -v a.bcsv b.bcsv                           # verbose mismatch report
 ```
 
 ### Options
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--mode MODE` | `strict`, `compatible`, or `value` | `strict` |
+| `--mode MODE` | Comma-separated: `names`, `types`, `values`, `all`, `strict`, `compatible`, `value` | `all` |
+| `--string-to-value` | In values mode: parse STRING cells as numbers for comparison | off |
+| `--allow-imprecise` | Allow INT64/UINT64 vs float/double beyond ±2^53 | off |
 | `--tolerance TOL` | Float/double comparison epsilon | `0.0` |
 | `--rows RANGES` | Row indices to compare (inclusive, e.g. `0:99,-10:`) | all rows |
 | `--cols RANGES` | Column indices to compare (inclusive, e.g. `2:5`) | all columns |
-| `-v, --verbose` | Report mismatch details to stdout | summary only |
+| `-v, --verbose` | Report mismatch details to stdout | off |
 | `-h, --help` | Show help message | — |
 
 ### Range Syntax
@@ -524,23 +562,29 @@ Ranges use inclusive indexing and support comma-separated, disjoint ranges:
 # CI guard: fail the pipeline if outputs differ
 bcsvCompare --mode compatible release.bcsv staging.bcsv
 
+# Compare only column names (fast, header-only — ignores row data)
+bcsvCompare --mode names a.bcsv b.bcsv
+
 # Compare only the first 100 rows, columns 0-4
 bcsvCompare --rows :99 --cols 0:4 a.bcsv b.bcsv
 
-# Cross-type value comparison
+# Cross-type value comparison with tolerance
 bcsvCompare --mode value --tolerance 0.001 a.bcsv b.bcsv
 
 # Verbose report of which columns are different
-bcsvCompare --mode strict -v a.bcsv b.bcsv
+bcsvCompare -v a.bcsv b.bcsv
 ```
 
 ### Differences from bcsvValidate --compare
 
 `bcsvValidate --compare` is a sub-mode of the validation tool, focused on structural validation and pattern matching.  `bcsvCompare` is a dedicated, faster diff tool with:
 
-- Three comparison modes (strict, compatible, value) for semantic flexibility
+- Combining mode selection (names, types, values) for flexible checking
+- Header-only fast path when only names and/or types are checked
+- Cross-type value coercion with precise lossless comparison (`std::cmp_equal`, float vs double widening)
+- String-to-value parsing for STRING ↔ numeric comparisons
+- Precision guard for INT64/UINT64 vs float/double (`--allow-imprecise`)
 - Row/column range scoping for targeted comparisons
-- Cross-type value coercion (value mode allows int(1) to match double(1.0))
 - Cleaner exit-code semantics (0 = same, 1 = different)
 - No CSV input support (both files must be BCSV)
 - NaN values compare equal (NaN == NaN)

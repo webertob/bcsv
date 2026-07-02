@@ -11,10 +11,12 @@
  * @file bcsvCompare.cpp
  * @brief Deterministic file comparison tool for BCSV
  *
- * Compares two BCSV files in three modes:
- *   strict     - column names, types, and values must match
- *   compatible - types and values must match, names ignored
- *   value      - only values must match (cross-type coercion)
+ * Compares two BCSV files with combining check modes:
+ *   names  - column names must match (header-only)
+ *   types  - column types must match (header-only)
+ *   values - cell values must match (with cross-type coercion)
+ *
+ * Modes are combined with commas: --mode "names,types,values" or alias "--mode all".
  *
  * Exit codes: 0 = identical, 1 = different, 2 = error
  */
@@ -29,6 +31,7 @@
 #include <bcsv/bcsv.h>
 #include "cli_common.h"
 #include "../shared/comparison.h"
+#include <sstream>
 
 // ================================================================
 // Range specification — shared helper in cli_common.h
@@ -43,47 +46,106 @@ static RangeSpec parseRanges(const std::string& spec, size_t total) {
 }
 
 // ================================================================
-// Config
+// Config & CheckFlags
 // ================================================================
+
+struct CheckFlags {
+    bool checkNames     = true;
+    bool checkTypes     = true;
+    bool checkValues    = true;
+    bool stringToValue  = false;
+    bool allowImprecise = false;
+
+    bool getCoerce() const noexcept { return checkValues && !checkTypes; }
+};
 
 struct Config {
     std::string file_a, file_b;
-    std::string mode_str  = "strict";
+    CheckFlags  flags;
     double      tolerance = 0.0;
     std::string rows_str, cols_str;
     bool        verbose = false, help = false;
 };
 
+struct CheckMode {
+    bool names = true, types = true, values = true;
+};
+
+static CheckMode parseMode(const std::string& spec) {
+    CheckMode c;
+
+    if (spec.empty())
+        return c;
+
+    if (spec == "all")
+        return {true, true, true};
+    if (spec == "strict")
+        return {true, true, true};
+    if (spec == "compatible")
+        return {false, true, true};
+    if (spec == "value")
+        return {false, false, true};
+
+    CheckMode          zeroed{false, false, false};
+    std::istringstream iss(spec);
+    std::string        token;
+    bool               any = false;
+    while (std::getline(iss, token, ',')) {
+        if (token == "names") {
+            zeroed.names = true;
+            any          = true;
+        } else if (token == "types") {
+            zeroed.types = true;
+            any          = true;
+        } else if (token == "values") {
+            zeroed.values = true;
+            any           = true;
+        } else {
+            throw std::runtime_error(
+                "Unknown mode '" + token +
+                "'. Allowed: names, types, values, all, strict, compatible, value");
+        }
+    }
+    if (!any)
+        throw std::runtime_error("Empty mode specification");
+    return zeroed;
+}
+
 static void printUsage(const char* prog) {
     std::cout
         << "Usage: " << prog << " [OPTIONS] FILE_A FILE_B\n\n"
         << "Compare two BCSV files and report whether they are identical.\n\n"
-        << "Modes:\n"
-        << "  strict (default)  - names + types + values must match\n"
-        << "  compatible        - types + values must match, names ignored\n"
-        << "  value             - only values must match (cross-type coercion)\n\n"
-        << "Arguments:\n"
-        << "  FILE_A          First BCSV file\n"
-        << "  FILE_B          Second BCSV file\n\n"
+        << "Mode selection (comma-separated, no spaces):\n"
+        << "  names          check column names only (header-only, fast)\n"
+        << "  types          check column types only (header-only, fast)\n"
+        << "  values         check cell values (cross-type coercion)\n"
+        << "  all            check names + types + values (default)\n"
+        << "  strict         alias: same as 'all'\n"
+        << "  compatible     alias: same as 'types,values'\n"
+        << "  value          alias: same as 'values'\n\n"
         << "Options:\n"
-        << "  --mode MODE       strict | compatible | value\n"
-        << "  --tolerance TOL   float/double epsilon (default: 0.0)\n"
-        << "  --rows RANGES     row indices to compare, e.g. 0:99,-10:\n"
-        << "  --cols RANGES     column indices to compare\n"
-        << "  -v, --verbose     report mismatch details\n"
-        << "  -h, --help        show this help\n\n"
-        << "Range syntax (inclusive):\n"
-        << "  5               single index\n"
-        << "  0:99            indices 0-99\n"
-        << "  :100            0-100\n"
-        << "  -10:            last 10\n"
-        << "  0:99,200:       multiple ranges\n\n"
-        << "Exit codes: 0 = identical, 1 = different, 2 = error\n\n"
-        << "Examples:\n"
-        << "  " << prog << " a.bcsv b.bcsv\n"
-        << "  " << prog << " --mode compatible a.bcsv b.bcsv\n"
-        << "  " << prog << " --mode value --tolerance 1e-6 a.bcsv b.bcsv\n"
-        << "  " << prog << " --rows 0:99 --cols 2:5 a.bcsv b.bcsv\n";
+        << "  --mode MODE            comma-separated check modes (default: all)\n"
+        << "  --string-to-value      in values mode: parse STRING cells as numbers\n"
+        << "                          for comparison with numeric counterparts\n"
+        << "  --allow-imprecise      allow integer-vs-float comparison when the integer\n"
+        << "                          value exceeds the floating-point mantissa range:\n"
+        << "                            INT64/UINT64 vs float/double  (> +/-2^53)\n"
+        << "                          Default: refuse such comparisons, report as mismatch\n"
+        << "  --tolerance TOL        absolute epsilon for float/double (default: 0.0)\n"
+        << "  --rows RANGES          row indices to compare, e.g. 0:99,-10:\n"
+        << "  --cols RANGES          column indices to compare\n"
+        << "  -v, --verbose          report mismatch details to stdout\n"
+        << "  -h, --help             show this help\n\n"
+        << "Value coercion rules (when types may differ):\n"
+        << "  int vs int              std::cmp_equal — lossless, handles signedness\n"
+        << "  int16 or smaller vs float  compare in float — always exact\n"
+        << "  int32/uint32 vs float/double promote both to double — always exact\n"
+        << "  int64/uint64 vs float/double promote to double — exact only within +/-2^53\n"
+        << "    (beyond that: mismatch unless --allow-imprecise is set)\n"
+        << "  float vs double         widen to double — always exact\n"
+        << "  string vs string        exact match\n"
+        << "  string vs numeric       mismatch (unless --string-to-value)\n\n"
+        << "Exit codes: 0 = identical, 1 = different, 2 = error\n";
 }
 
 static Config parseArgs(int argc, char* argv[]) {
@@ -95,8 +157,15 @@ static Config parseArgs(int argc, char* argv[]) {
             return cfg;
         } else if (a == "-v" || a == "--verbose") {
             cfg.verbose = true;
+        } else if (a == "--string-to-value") {
+            cfg.flags.stringToValue = true;
+        } else if (a == "--allow-imprecise") {
+            cfg.flags.allowImprecise = true;
         } else if ((a == "--mode") && (i + 1 < argc)) {
-            cfg.mode_str = argv[++i];
+            auto m                = parseMode(argv[++i]);
+            cfg.flags.checkNames  = m.names;
+            cfg.flags.checkTypes  = m.types;
+            cfg.flags.checkValues = m.values;
         } else if ((a == "--tolerance") && (i + 1 < argc)) {
             cfg.tolerance = std::stod(argv[++i]);
         } else if ((a == "--rows") && (i + 1 < argc)) {
@@ -122,7 +191,7 @@ static Config parseArgs(int argc, char* argv[]) {
 }
 
 // ================================================================
-// Emit result (verbose: stdout, otherwise silent)
+// Emit result
 // ================================================================
 
 static void emitResult(const bcsv_compare::FileComparisonResult& result, bool verbose) {
@@ -135,21 +204,9 @@ static void emitResult(const bcsv_compare::FileComparisonResult& result, bool ve
 // ================================================================
 
 static int compareFiles(const Config& cfg) {
-    // --- mode ---
-    bool                      is_value_mode = false;
-    bcsv_compare::CompareMode mode;
-    if (cfg.mode_str == "strict") {
-        mode = bcsv_compare::CompareMode::STRICT;
-    } else if (cfg.mode_str == "compatible") {
-        mode = bcsv_compare::CompareMode::COMPATIBLE;
-    } else if (cfg.mode_str == "value") {
-        mode          = bcsv_compare::CompareMode::VALUE;
-        is_value_mode = true;
-    } else
-        throw std::runtime_error("Unknown mode '" + cfg.mode_str +
-                                 "'. Expected: strict, compatible, value.");
+    const auto& f      = cfg.flags;
+    bool        coerce = f.getCoerce();
 
-    // --- existence ---
     if (!std::filesystem::exists(cfg.file_a)) {
         std::cerr << "Error: File not found: " << cfg.file_a << "\n";
         return 2;
@@ -159,115 +216,132 @@ static int compareFiles(const Config& cfg) {
         return 2;
     }
 
-    // --- open files ---
-    // NOTE: ReaderDirectAccess scans the footer on open() to populate rowCount().
-    // This is O(1) for packet-mode files with a valid footer, but for stream-mode
-    // files it requires a full read.  The subsequent cell loop is always
-    // sequential (readNext).  TODO: for --rows 0:99 on large files, use the
-    // footer to check row count and skip early if counts differ, or use
-    // random-access read(index) for tight ranges to avoid streaming the full file.
-    bcsv::ReaderDirectAccess<bcsv::Layout> reader_a, reader_b;
-    if (!reader_a.open(cfg.file_a)) {
-        std::cerr << "Error: Cannot open file A: " << cfg.file_a
-                  << "\n  " << reader_a.getErrorMsg() << "\n";
+    bcsv::ReaderDirectAccess<bcsv::Layout> readerA, readerB;
+    if (!readerA.open(cfg.file_a)) {
+        std::cerr << "Error: Cannot open: " << cfg.file_a
+                  << "\n  " << readerA.getErrorMsg() << "\n";
         return 2;
     }
-    if (!reader_b.open(cfg.file_b)) {
-        std::cerr << "Error: Cannot open file B: " << cfg.file_b
-                  << "\n  " << reader_b.getErrorMsg() << "\n";
-        reader_a.close();
+    if (!readerB.open(cfg.file_b)) {
+        std::cerr << "Error: Cannot open: " << cfg.file_b
+                  << "\n  " << readerB.getErrorMsg() << "\n";
+        readerA.close();
         return 2;
     }
 
-    const auto& layout_a     = reader_a.layout();
-    const auto& layout_b     = reader_b.layout();
-    size_t      ncols        = layout_a.columnCount();
-    size_t      total_rows_a = reader_a.rowCount();
-    size_t      total_rows_b = reader_b.rowCount();
+    const auto& layoutA = readerA.layout();
+    const auto& layoutB = readerB.layout();
+    size_t      ncols   = layoutA.columnCount();
 
     bcsv_compare::FileComparisonResult result;
     result.identical = true;
     result.tolerance = cfg.tolerance;
-    result.mode      = mode;
-    result.rows_a    = total_rows_a;
-    result.rows_b    = total_rows_b;
-    result.cols_a    = layout_a.columnCount();
-    result.cols_b    = layout_b.columnCount();
+    result.mode      = coerce
+                           ? bcsv_compare::CompareMode::VALUE
+                           : (f.checkNames ? bcsv_compare::CompareMode::STRICT
+                                           : bcsv_compare::CompareMode::COMPATIBLE);
+    result.rows_a    = readerA.rowCount();
+    result.rows_b    = readerB.rowCount();
+    result.cols_a    = layoutA.columnCount();
+    result.cols_b    = layoutB.columnCount();
 
-    // --- layout check (constant — only names/types, not values) ---
-    auto lchk = bcsv_compare::compareLayouts(layout_a, layout_b, mode);
-    result.mismatches.insert(result.mismatches.end(),
-                             lchk.structural.begin(), lchk.structural.end());
-    if (!lchk.ok) {
-        result.identical = false;
-        emitResult(result, cfg.verbose);
-        reader_a.close();
-        reader_b.close();
-        return 1;
+    {
+        auto lchk = bcsv_compare::compareLayouts(layoutA, layoutB,
+                                                 f.checkNames, f.checkTypes);
+        result.mismatches.insert(result.mismatches.end(),
+                                 lchk.structural.begin(), lchk.structural.end());
+        if (!lchk.ok) {
+            result.identical = false;
+            emitResult(result, cfg.verbose);
+            readerA.close();
+            readerB.close();
+            return 1;
+        }
     }
 
-    // --- row count ---
-    if (total_rows_a != total_rows_b) {
+    if (f.checkValues && readerA.rowCount() != readerB.rowCount()) {
         result.identical = false;
         bcsv_compare::Mismatch m;
         m.kind       = bcsv_compare::MismatchKind::ROW_COUNT_MISMATCH;
         m.row        = ~size_t{0};
         m.col        = ~size_t{0};
-        m.file_a_val = std::to_string(total_rows_a);
-        m.file_b_val = std::to_string(total_rows_b);
+        m.file_a_val = std::to_string(readerA.rowCount());
+        m.file_b_val = std::to_string(readerB.rowCount());
         result.mismatches.push_back(std::move(m));
         emitResult(result, cfg.verbose);
-        reader_a.close();
-        reader_b.close();
+        readerA.close();
+        readerB.close();
         return 1;
     }
 
-    // --- ranges ---
-    auto row_spec = parseRanges(cfg.rows_str, total_rows_a);
-    auto col_spec = parseRanges(cfg.cols_str, ncols);
+    if (!f.checkValues) {
+        emitResult(result, cfg.verbose);
+        readerA.close();
+        readerB.close();
+        return result.identical ? 0 : 1;
+    }
 
-    // Extract column indices upfront so the inner loop iterates only
-    // the columns that matter (avoids per-row contains() scan).
-    std::vector<size_t> cols_to_check = col_spec.toIndices(ncols);
+    auto rowSpec     = parseRanges(cfg.rows_str, readerA.rowCount());
+    auto colSpec     = parseRanges(cfg.cols_str, ncols);
+    auto colsToCheck = colSpec.toIndices(ncols);
 
-    // --- cell loop ---
-    size_t max_val_mismatches   = cfg.verbose ? 100u : 10u;
-    size_t row_idx              = 0;
-    size_t value_mismatch_count = 0;
+    struct ColStrategy {
+        size_t                      col;
+        bcsv::ColumnType            ta, tb;
+        bcsv_compare::CompareTarget target;
+    };
+    std::vector<ColStrategy> strategies;
+    strategies.reserve(colsToCheck.size());
 
-    while (reader_a.readNext() && reader_b.readNext()) {
-        if (row_spec.contains(row_idx)) {
-            for (size_t c : cols_to_check) {
-                bool ok = is_value_mode
-                              ? bcsv_compare::compareCellValue(reader_a.row(), reader_b.row(), c, c,
-                                                               layout_a, layout_b, cfg.tolerance)
-                              : bcsv_compare::compareCellStrict(reader_a.row(), reader_b.row(), c,
-                                                                layout_a, cfg.tolerance);
+    for (size_t c : colsToCheck) {
+        ColStrategy s{c, layoutA.columnType(c), layoutB.columnType(c),
+                      bcsv_compare::CompareTarget::MISMATCH};
+        s.target = bcsv_compare::promoteType(s.ta, s.tb);
+        if (s.target == bcsv_compare::CompareTarget::STR_VS_NUM)
+            s.target = f.stringToValue
+                           ? bcsv_compare::CompareTarget::STR_VS_NUM
+                           : bcsv_compare::CompareTarget::MISMATCH;
+        strategies.push_back(std::move(s));
+    }
+
+    size_t rowIdx = 0, valMismatchCount = 0;
+    size_t maxMismatches = cfg.verbose ? 100 : 10;
+
+    while (readerA.readNext() && readerB.readNext()) {
+        if (rowSpec.contains(rowIdx)) {
+            for (auto& s : strategies) {
+                bool ok = bcsv_compare::compareCellWithStrategy(
+                    readerA.row(), s.col,
+                    readerB.row(), s.col,
+                    s.ta, s.tb, s.target,
+                    cfg.tolerance,
+                    f.allowImprecise,
+                    f.stringToValue);
                 if (!ok) {
-                    ++value_mismatch_count;
+                    ++valMismatchCount;
                     result.identical              = false;
-                    result.total_value_mismatches = value_mismatch_count;
-                    if (value_mismatch_count <= max_val_mismatches) {
-                        bcsv_compare::Mismatch m;
-                        if (is_value_mode)
+                    result.total_value_mismatches = valMismatchCount;
+                    if (valMismatchCount <= maxMismatches) {
+                        bcsv_compare::Mismatch mm;
+                        if (coerce) {
                             bcsv_compare::recordValueMismatch(
-                                row_idx, c, reader_a.row(), reader_b.row(),
-                                layout_a, layout_b, m);
-                        else
+                                rowIdx, s.col, readerA.row(), readerB.row(),
+                                layoutA, layoutB, mm);
+                        } else {
                             bcsv_compare::recordStrictValueMismatch(
-                                row_idx, c, reader_a.row(), reader_b.row(),
-                                layout_a, m);
-                        result.mismatches.push_back(std::move(m));
+                                rowIdx, s.col, readerA.row(), readerB.row(),
+                                layoutA, mm);
+                        }
+                        result.mismatches.push_back(std::move(mm));
                     }
                 }
             }
         }
-        ++row_idx;
+        ++rowIdx;
     }
 
-    reader_a.close();
-    reader_b.close();
-
+    readerA.close();
+    readerB.close();
     emitResult(result, cfg.verbose);
     return result.identical ? 0 : 1;
 }
