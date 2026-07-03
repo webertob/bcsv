@@ -17,14 +17,20 @@ import tempfile
 import time
 
 import numpy as np
-import pandas as pd
 import pytest
+
+try:
+    import pandas as pd  # noqa: F401
+except ImportError:
+    pytest.skip("pandas not installed", allow_module_level=True)
+
 import pybcsv
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _tmp(suffix=".bcsv"):
     fd, path = tempfile.mkstemp(suffix=suffix, prefix="pybcsv_perf_")
@@ -41,10 +47,10 @@ def _tmp(suffix=".bcsv"):
 def test_optimized_operations():
     """Test optimized read/write operations."""
     test_data = {
-        'bool_col': [True, False, True] * 1000,
-        'int_col': list(range(3000)),
-        'float_col': [1.1, 2.2, 3.3] * 1000,
-        'string_col': ['test', 'data', 'row'] * 1000,
+        "bool_col": [True, False, True] * 1000,
+        "int_col": list(range(3000)),
+        "float_col": [1.1, 2.2, 3.3] * 1000,
+        "string_col": ["test", "data", "row"] * 1000,
     }
     df = pd.DataFrame(test_data)
     test_file = _tmp()
@@ -66,8 +72,9 @@ def test_optimized_operations():
         writer.open(batch_file)
         for i in range(1000):
             writer.write_row([i, float(i) * 1.5, f"row_{i}"])
-        batch_data = [[i + 1000, float(i + 1000) * 1.5, f"batch_{i}"]
-                      for i in range(1000)]
+        batch_data = [
+            [i + 1000, float(i + 1000) * 1.5, f"batch_{i}"] for i in range(1000)
+        ]
         writer.write_rows(batch_data)
     finally:
         writer.close()
@@ -147,12 +154,14 @@ def test_batch_operations():
 
 def test_dataframe_integration():
     """Test optimized pandas DataFrame integration."""
-    df = pd.DataFrame({
-        'id': [1, 2, 3, 4, 5],
-        'name': ['Alice', 'Bob', 'Charlie', 'David', 'Eve'],
-        'value': [123.45, 678.90, 111.22, 444.55, 999.99],
-        'active': [True, False, True, True, False],
-    })
+    df = pd.DataFrame(
+        {
+            "id": [1, 2, 3, 4, 5],
+            "name": ["Alice", "Bob", "Charlie", "David", "Eve"],
+            "value": [123.45, 678.90, 111.22, 444.55, 999.99],
+            "active": [True, False, True, True, False],
+        }
+    )
 
     filename = _tmp()
     try:
@@ -160,9 +169,9 @@ def test_dataframe_integration():
         df_read = pybcsv.read_dataframe(filename)
 
         assert len(df_read) == len(df)
-        assert list(df_read.columns) == ['id', 'name', 'value', 'active']
-        assert df_read['id'].tolist() == [1, 2, 3, 4, 5]
-        assert df_read['name'].tolist() == ['Alice', 'Bob', 'Charlie', 'David', 'Eve']
+        assert list(df_read.columns) == ["id", "name", "value", "active"]
+        assert df_read["id"].tolist() == [1, 2, 3, 4, 5]
+        assert df_read["name"].tolist() == ["Alice", "Bob", "Charlie", "David", "Eve"]
     finally:
         if os.path.exists(filename):
             os.unlink(filename)
@@ -208,12 +217,14 @@ def test_performance_comparison():
 def test_memory_optimization():
     """Test that optimizations work with larger datasets."""
     n_rows = 5000
-    df = pd.DataFrame({
-        'id': np.arange(n_rows, dtype=np.int32),
-        'value1': np.random.random(n_rows).astype(np.float64),
-        'value2': np.random.random(n_rows).astype(np.float64),
-        'category': [f'cat_{i % 10}' for i in range(n_rows)],
-    })
+    df = pd.DataFrame(
+        {
+            "id": np.arange(n_rows, dtype=np.int32),
+            "value1": np.random.random(n_rows).astype(np.float64),
+            "value2": np.random.random(n_rows).astype(np.float64),
+            "category": [f"cat_{i % 10}" for i in range(n_rows)],
+        }
+    )
 
     filename = _tmp()
     try:
@@ -221,7 +232,7 @@ def test_memory_optimization():
         df_read = pybcsv.read_dataframe(filename)
 
         assert len(df_read) == n_rows
-        assert np.array_equal(df_read['id'].values, df['id'].values)
+        assert np.array_equal(df_read["id"].values, df["id"].values)
     finally:
         if os.path.exists(filename):
             os.unlink(filename)

@@ -17,8 +17,12 @@ import tempfile
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import pytest
+
+try:
+    import pandas as pd  # noqa: F401
+except ImportError:
+    pytest.skip("pandas not installed", allow_module_level=True)
 
 import pybcsv
 
@@ -27,37 +31,44 @@ import pybcsv
 # Strict NaN mode tests
 # ---------------------------------------------------------------------------
 
+
 class TestStrictNaN:
     """Tests for the strict= parameter in write_dataframe."""
 
     def test_strict_nan_float_raises(self, tmp_path):
         """strict=True should raise ValueError when float column has NaN."""
         filepath = str(tmp_path / "strict_nan.bcsv")
-        df = pd.DataFrame({
-            'id': [1, 2, 3],
-            'value': [1.0, float('nan'), 3.0],
-        })
+        df = pd.DataFrame(
+            {
+                "id": [1, 2, 3],
+                "value": [1.0, float("nan"), 3.0],
+            }
+        )
         with pytest.raises(ValueError, match="NaN/None"):
             pybcsv.write_dataframe(df, filepath, strict=True)
 
     def test_strict_nan_string_raises(self, tmp_path):
         """strict=True should raise ValueError when string column has None."""
         filepath = str(tmp_path / "strict_nan_str.bcsv")
-        df = pd.DataFrame({
-            'id': [1, 2, 3],
-            'name': ['Alice', None, 'Charlie'],
-        })
+        df = pd.DataFrame(
+            {
+                "id": [1, 2, 3],
+                "name": ["Alice", None, "Charlie"],
+            }
+        )
         with pytest.raises(ValueError, match="NaN/None"):
             pybcsv.write_dataframe(df, filepath, strict=True)
 
     def test_strict_nan_reports_columns(self, tmp_path):
         """strict=True error message should list affected column names."""
         filepath = str(tmp_path / "strict_cols.bcsv")
-        df = pd.DataFrame({
-            'good': [1, 2, 3],
-            'bad_float': [1.0, np.nan, 3.0],
-            'bad_str': ['a', None, 'c'],
-        })
+        df = pd.DataFrame(
+            {
+                "good": [1, 2, 3],
+                "bad_float": [1.0, np.nan, 3.0],
+                "bad_str": ["a", None, "c"],
+            }
+        )
         with pytest.raises(ValueError, match="bad_float") as exc_info:
             pybcsv.write_dataframe(df, filepath, strict=True)
         assert "bad_str" in str(exc_info.value)
@@ -65,10 +76,12 @@ class TestStrictNaN:
     def test_strict_false_default_coerces(self, tmp_path):
         """Default strict=False should coerce NaN to zero (existing behavior)."""
         filepath = str(tmp_path / "default_nan.bcsv")
-        df = pd.DataFrame({
-            'id': [1, 2, 3],
-            'value': [1.0, float('nan'), 3.0],
-        })
+        df = pd.DataFrame(
+            {
+                "id": [1, 2, 3],
+                "value": [1.0, float("nan"), 3.0],
+            }
+        )
         # Should succeed without error (with warning)
         with pytest.warns(UserWarning, match="NaN/None"):
             pybcsv.write_dataframe(df, filepath, strict=False)
@@ -76,16 +89,18 @@ class TestStrictNaN:
         df_read = pybcsv.read_dataframe(filepath)
         assert len(df_read) == 3
         # NaN was coerced to 0.0
-        assert df_read.iloc[1]['value'] == 0.0
+        assert df_read.iloc[1]["value"] == 0.0
 
     def test_strict_clean_data_passes(self, tmp_path):
         """strict=True should pass with clean data (no NaN)."""
         filepath = str(tmp_path / "clean.bcsv")
-        df = pd.DataFrame({
-            'id': [1, 2, 3],
-            'value': [1.0, 2.0, 3.0],
-            'name': ['a', 'b', 'c'],
-        })
+        df = pd.DataFrame(
+            {
+                "id": [1, 2, 3],
+                "value": [1.0, 2.0, 3.0],
+                "name": ["a", "b", "c"],
+            }
+        )
         pybcsv.write_dataframe(df, filepath, strict=True)
         df_read = pybcsv.read_dataframe(filepath)
         assert len(df_read) == 3
@@ -96,16 +111,19 @@ class TestStrictNaN:
 # pathlib.Path support tests
 # ---------------------------------------------------------------------------
 
+
 class TestPathlibSupport:
     """Tests for pathlib.Path acceptance in file path parameters."""
 
     def test_write_read_dataframe_pathlib(self, tmp_path):
         """write_dataframe and read_dataframe should accept pathlib.Path."""
         filepath = tmp_path / "pathlib_test.bcsv"
-        df = pd.DataFrame({
-            'id': [1, 2, 3],
-            'value': [10.0, 20.0, 30.0],
-        })
+        df = pd.DataFrame(
+            {
+                "id": [1, 2, 3],
+                "value": [10.0, 20.0, 30.0],
+            }
+        )
         pybcsv.write_dataframe(df, filepath)
         df_read = pybcsv.read_dataframe(filepath)
         assert len(df_read) == 3
@@ -117,7 +135,7 @@ class TestPathlibSupport:
         csv_path = tmp_path / "pathlib.csv"
         csv_back_path = tmp_path / "pathlib_back.bcsv"
 
-        df = pd.DataFrame({'x': [1, 2, 3], 'y': ['a', 'b', 'c']})
+        df = pd.DataFrame({"x": [1, 2, 3], "y": ["a", "b", "c"]})
         pybcsv.write_dataframe(df, bcsv_path)
 
         # BCSV → CSV with pathlib
@@ -135,6 +153,7 @@ class TestPathlibSupport:
 # ---------------------------------------------------------------------------
 # __repr__ tests
 # ---------------------------------------------------------------------------
+
 
 class TestRepr:
     """Tests for __repr__ methods on Writer, Reader, ReaderDirectAccess."""
@@ -214,12 +233,14 @@ class TestRepr:
 # Stub / .pyi validation
 # ---------------------------------------------------------------------------
 
+
 class TestTypeStubs:
     """Verify .pyi type stubs exist in the package."""
 
     def test_pyi_stub_exists(self):
         """_bcsv.pyi should exist alongside the compiled extension."""
         import importlib.resources
+
         pkg = importlib.resources.files("pybcsv")
         # Check that the stub file exists
         stub = pkg / "_bcsv.pyi"
@@ -228,5 +249,6 @@ class TestTypeStubs:
     def test_py_typed_marker_exists(self):
         """py.typed marker must exist for PEP 561 compliance."""
         import importlib.resources
+
         pkg = importlib.resources.files("pybcsv")
         assert (pkg / "py.typed").is_file()

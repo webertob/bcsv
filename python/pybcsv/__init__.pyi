@@ -48,15 +48,12 @@ def write_dataframe(
     type_hints: Optional[Dict[str, ColumnType]] = None,
     strict: bool = False,
 ) -> None: ...
-
 def read_dataframe(
     filename: str,
     columns: Optional[list] = None,
     optimize_dtypes: bool = True,
 ) -> object: ...
-
 def to_csv(bcsv_filename: str, csv_filename: str, **csv_kwargs: object) -> None: ...
-
 def from_csv(
     csv_filename: str,
     bcsv_filename: str,
@@ -64,16 +61,21 @@ def from_csv(
     type_hints: Optional[Dict[str, ColumnType]] = None,
     **csv_kwargs: object,
 ) -> None: ...
-
 def read_polars(
     filename: str,
     columns: object = None,
     chunk_size: int = 0,
 ) -> object: ...
-
 def write_polars(
     df: object,
     filename: str,
     row_codec: str = "delta",
     compression_level: int = 1,
 ) -> None: ...
+def iter_arrow_batches(
+    reader: ReaderDirectAccess,
+    *,
+    batch_size: int = 512000,
+    columns: Optional[list] = None,
+    start_row: int = 0,
+) -> object: ...  # yields pa.RecordBatch

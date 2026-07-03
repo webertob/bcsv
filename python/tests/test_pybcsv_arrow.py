@@ -19,26 +19,28 @@ import pybcsv
 
 try:
     import pyarrow as pa
+
     HAS_ARROW = True
 except ImportError:
     HAS_ARROW = False
 
 
 def _tmp():
-    return tempfile.mktemp(suffix='.bcsv', dir=os.path.join(
-        os.path.dirname(__file__), '..', '..', 'tmp'))
+    return tempfile.mktemp(
+        suffix=".bcsv", dir=os.path.join(os.path.dirname(__file__), "..", "..", "tmp")
+    )
 
 
 def _write_test_file(path, n=50):
     """Write a test BCSV file with int32, double, and string columns."""
     layout = pybcsv.Layout()
-    layout.add_column('i', pybcsv.INT32)
-    layout.add_column('x', pybcsv.DOUBLE)
-    layout.add_column('name', pybcsv.STRING)
+    layout.add_column("i", pybcsv.INT32)
+    layout.add_column("x", pybcsv.DOUBLE)
+    layout.add_column("name", pybcsv.STRING)
     w = pybcsv.Writer(layout)
     w.open(path, overwrite=True)
     for i in range(n):
-        w.write_row([i, i * 1.5, f'row_{i}'])
+        w.write_row([i, i * 1.5, f"row_{i}"])
     w.close()
     return layout
 
@@ -56,7 +58,7 @@ class TestReadToArrow(unittest.TestCase):
             self.assertIsInstance(table, pa.Table)
             self.assertEqual(table.num_rows, 50)
             self.assertEqual(table.num_columns, 3)
-            self.assertEqual(table.column_names, ['i', 'x', 'name'])
+            self.assertEqual(table.column_names, ["i", "x", "name"])
         finally:
             os.unlink(path)
 
@@ -65,9 +67,9 @@ class TestReadToArrow(unittest.TestCase):
         path = _tmp()
         try:
             _write_test_file(path, 30)
-            table = pybcsv.read_to_arrow(path, columns=['i', 'name'])
+            table = pybcsv.read_to_arrow(path, columns=["i", "name"])
             self.assertEqual(table.num_columns, 2)
-            self.assertEqual(table.column_names, ['i', 'name'])
+            self.assertEqual(table.column_names, ["i", "name"])
             self.assertEqual(table.num_rows, 30)
         finally:
             os.unlink(path)
@@ -77,9 +79,9 @@ class TestReadToArrow(unittest.TestCase):
         path = _tmp()
         try:
             _write_test_file(path, 10)
-            table = pybcsv.read_to_arrow(path, columns=['x'])
+            table = pybcsv.read_to_arrow(path, columns=["x"])
             self.assertEqual(table.num_columns, 1)
-            self.assertEqual(table.column_names, ['x'])
+            self.assertEqual(table.column_names, ["x"])
             self.assertEqual(table.num_rows, 10)
         finally:
             os.unlink(path)
@@ -101,13 +103,13 @@ class TestReadToArrow(unittest.TestCase):
         try:
             _write_test_file(path, 10)
             table = pybcsv.read_to_arrow(path)
-            col_i = table.column('i').to_pylist()
-            col_x = table.column('x').to_pylist()
-            col_name = table.column('name').to_pylist()
+            col_i = table.column("i").to_pylist()
+            col_x = table.column("x").to_pylist()
+            col_name = table.column("name").to_pylist()
             self.assertEqual(col_i, list(range(10)))
             for i in range(10):
                 self.assertAlmostEqual(col_x[i], i * 1.5)
-            self.assertEqual(col_name, [f'row_{i}' for i in range(10)])
+            self.assertEqual(col_name, [f"row_{i}" for i in range(10)])
         finally:
             os.unlink(path)
 
@@ -117,9 +119,9 @@ class TestReadToArrow(unittest.TestCase):
         try:
             _write_test_file(path, 5)
             table = pybcsv.read_to_arrow(path)
-            self.assertEqual(table.schema.field('i').type, pa.int32())
-            self.assertEqual(table.schema.field('x').type, pa.float64())
-            self.assertEqual(table.schema.field('name').type, pa.utf8())
+            self.assertEqual(table.schema.field("i").type, pa.int32())
+            self.assertEqual(table.schema.field("x").type, pa.float64())
+            self.assertEqual(table.schema.field("name").type, pa.utf8())
         finally:
             os.unlink(path)
 
@@ -139,35 +141,37 @@ class TestReadToArrow(unittest.TestCase):
         path = _tmp()
         try:
             layout = pybcsv.Layout()
-            layout.add_column('b', pybcsv.BOOL)
-            layout.add_column('i8', pybcsv.INT8)
-            layout.add_column('u8', pybcsv.UINT8)
-            layout.add_column('i16', pybcsv.INT16)
-            layout.add_column('u16', pybcsv.UINT16)
-            layout.add_column('i32', pybcsv.INT32)
-            layout.add_column('u32', pybcsv.UINT32)
-            layout.add_column('i64', pybcsv.INT64)
-            layout.add_column('u64', pybcsv.UINT64)
-            layout.add_column('f32', pybcsv.FLOAT)
-            layout.add_column('f64', pybcsv.DOUBLE)
+            layout.add_column("b", pybcsv.BOOL)
+            layout.add_column("i8", pybcsv.INT8)
+            layout.add_column("u8", pybcsv.UINT8)
+            layout.add_column("i16", pybcsv.INT16)
+            layout.add_column("u16", pybcsv.UINT16)
+            layout.add_column("i32", pybcsv.INT32)
+            layout.add_column("u32", pybcsv.UINT32)
+            layout.add_column("i64", pybcsv.INT64)
+            layout.add_column("u64", pybcsv.UINT64)
+            layout.add_column("f32", pybcsv.FLOAT)
+            layout.add_column("f64", pybcsv.DOUBLE)
 
             w = pybcsv.Writer(layout)
             w.open(path)
-            w.write_row([True, -1, 2, -300, 400, -50000, 60000, -7000000, 8000000, 1.5, 2.5])
+            w.write_row(
+                [True, -1, 2, -300, 400, -50000, 60000, -7000000, 8000000, 1.5, 2.5]
+            )
             w.close()
 
             table = pybcsv.read_to_arrow(path)
-            self.assertEqual(table.schema.field('b').type, pa.bool_())
-            self.assertEqual(table.schema.field('i8').type, pa.int8())
-            self.assertEqual(table.schema.field('u8').type, pa.uint8())
-            self.assertEqual(table.schema.field('i16').type, pa.int16())
-            self.assertEqual(table.schema.field('u16').type, pa.uint16())
-            self.assertEqual(table.schema.field('i32').type, pa.int32())
-            self.assertEqual(table.schema.field('u32').type, pa.uint32())
-            self.assertEqual(table.schema.field('i64').type, pa.int64())
-            self.assertEqual(table.schema.field('u64').type, pa.uint64())
-            self.assertEqual(table.schema.field('f32').type, pa.float32())
-            self.assertEqual(table.schema.field('f64').type, pa.float64())
+            self.assertEqual(table.schema.field("b").type, pa.bool_())
+            self.assertEqual(table.schema.field("i8").type, pa.int8())
+            self.assertEqual(table.schema.field("u8").type, pa.uint8())
+            self.assertEqual(table.schema.field("i16").type, pa.int16())
+            self.assertEqual(table.schema.field("u16").type, pa.uint16())
+            self.assertEqual(table.schema.field("i32").type, pa.int32())
+            self.assertEqual(table.schema.field("u32").type, pa.uint32())
+            self.assertEqual(table.schema.field("i64").type, pa.int64())
+            self.assertEqual(table.schema.field("u64").type, pa.uint64())
+            self.assertEqual(table.schema.field("f32").type, pa.float32())
+            self.assertEqual(table.schema.field("f64").type, pa.float64())
         finally:
             os.unlink(path)
 
@@ -180,10 +184,12 @@ class TestWriteFromArrow(unittest.TestCase):
         """Write an Arrow Table to BCSV and read back."""
         path = _tmp()
         try:
-            table = pa.table({
-                'a': pa.array([1, 2, 3], type=pa.int32()),
-                'b': pa.array([1.0, 2.0, 3.0], type=pa.float64()),
-            })
+            table = pa.table(
+                {
+                    "a": pa.array([1, 2, 3], type=pa.int32()),
+                    "b": pa.array([1.0, 2.0, 3.0], type=pa.float64()),
+                }
+            )
             pybcsv.write_from_arrow(path, table)
 
             # Verify by reading back
@@ -200,17 +206,19 @@ class TestWriteFromArrow(unittest.TestCase):
         """Write Arrow Table with string column."""
         path = _tmp()
         try:
-            table = pa.table({
-                'id': pa.array([10, 20], type=pa.int32()),
-                'label': pa.array(['hello', 'world']),
-            })
+            table = pa.table(
+                {
+                    "id": pa.array([10, 20], type=pa.int32()),
+                    "label": pa.array(["hello", "world"]),
+                }
+            )
             pybcsv.write_from_arrow(path, table)
 
             with pybcsv.Reader() as r:
                 r.open(path)
                 rows = r.read_all()
-            self.assertEqual(rows[0], [10, 'hello'])
-            self.assertEqual(rows[1], [20, 'world'])
+            self.assertEqual(rows[0], [10, "hello"])
+            self.assertEqual(rows[1], [20, "world"])
         finally:
             os.unlink(path)
 
@@ -245,7 +253,7 @@ class TestArrowRoundTrip(unittest.TestCase):
             pybcsv.write_from_arrow(path2, t1)
             t2 = pybcsv.read_to_arrow(path2)
             self.assertEqual(t2.num_rows, 10000)
-            self.assertEqual(t1.column('i').to_pylist(), t2.column('i').to_pylist())
+            self.assertEqual(t1.column("i").to_pylist(), t2.column("i").to_pylist())
         finally:
             for p in (path1, path2):
                 if os.path.exists(p):
@@ -253,18 +261,22 @@ class TestArrowRoundTrip(unittest.TestCase):
 
     def test_arrow_to_pandas(self):
         """Read to Arrow, convert to pandas DataFrame."""
+        try:
+            import pandas  # noqa: F401
+        except ImportError:
+            self.skipTest("pandas not installed")
         path = _tmp()
         try:
             _write_test_file(path, 20)
             table = pybcsv.read_to_arrow(path)
             df = table.to_pandas()
             self.assertEqual(len(df), 20)
-            self.assertListEqual(list(df.columns), ['i', 'x', 'name'])
-            self.assertEqual(df['i'].iloc[0], 0)
-            self.assertEqual(df['name'].iloc[5], 'row_5')
+            self.assertListEqual(list(df.columns), ["i", "x", "name"])
+            self.assertEqual(df["i"].iloc[0], 0)
+            self.assertEqual(df["name"].iloc[5], "row_5")
         finally:
             os.unlink(path)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()

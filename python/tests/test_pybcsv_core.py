@@ -17,7 +17,13 @@ import tempfile
 import os
 
 import numpy as np
-import pandas as pd
+import pytest
+
+try:
+    import pandas as pd  # noqa: F401
+except ImportError:
+    pytest.skip("pandas not installed", allow_module_level=True)
+
 import pybcsv
 
 
@@ -72,7 +78,7 @@ class TestSimpleWriteRead(unittest.TestCase):
             if os.path.exists(fp):
                 os.unlink(fp)
 
-    def _tmp(self, suffix='.bcsv'):
+    def _tmp(self, suffix=".bcsv"):
         fd, fp = tempfile.mkstemp(suffix=suffix)
         os.close(fd)
         os.unlink(fp)
@@ -128,14 +134,62 @@ class TestSimpleWriteRead(unittest.TestCase):
         layout.add_column("string_val", pybcsv.STRING)
 
         test_data = [
-            [True, -128, -32768, -2147483648, -9223372036854775808,
-             0, 0, 0, 0, 1.5, 2.5, "hello"],
-            [False, 127, 32767, 2147483647, 9223372036854775807,
-             255, 65535, 4294967295, 18446744073709551615, -1.5, -2.5, "world"],
-            [True, 0, 0, 0, 0, 128, 32768, 2147483648, 9223372036854775808,
-             0.0, 0.0, ""],
-            [False, -1, -1, -1, -1, 1, 1, 1, 1,
-             float('inf'), float('-inf'), "unicode: \U0001f680 \u6d4b\u8bd5"],
+            [
+                True,
+                -128,
+                -32768,
+                -2147483648,
+                -9223372036854775808,
+                0,
+                0,
+                0,
+                0,
+                1.5,
+                2.5,
+                "hello",
+            ],
+            [
+                False,
+                127,
+                32767,
+                2147483647,
+                9223372036854775807,
+                255,
+                65535,
+                4294967295,
+                18446744073709551615,
+                -1.5,
+                -2.5,
+                "world",
+            ],
+            [
+                True,
+                0,
+                0,
+                0,
+                0,
+                128,
+                32768,
+                2147483648,
+                9223372036854775808,
+                0.0,
+                0.0,
+                "",
+            ],
+            [
+                False,
+                -1,
+                -1,
+                -1,
+                -1,
+                1,
+                1,
+                1,
+                1,
+                float("inf"),
+                float("-inf"),
+                "unicode: \U0001f680 \u6d4b\u8bd5",
+            ],
         ]
 
         writer = pybcsv.Writer(layout)
@@ -291,8 +345,8 @@ class TestSimpleWriteRead(unittest.TestCase):
         self.assertIn("exceeds maximum length", str(context.exception))
 
     def test_compression_levels(self):
-        filepath_low = self._tmp('.low.bcsv')
-        filepath_high = self._tmp('.high.bcsv')
+        filepath_low = self._tmp(".low.bcsv")
+        filepath_high = self._tmp(".high.bcsv")
 
         layout = pybcsv.Layout()
         layout.add_column("data", pybcsv.STRING)
@@ -330,7 +384,7 @@ def test_basic_operations():
     layout.add_column("id", pybcsv.ColumnType.INT32)
     layout.add_column("name", pybcsv.ColumnType.STRING)
 
-    fd, test_file = tempfile.mkstemp(suffix='.bcsv')
+    fd, test_file = tempfile.mkstemp(suffix=".bcsv")
     os.close(fd)
     os.unlink(test_file)
 
@@ -351,12 +405,14 @@ def test_basic_operations():
     finally:
         reader.close()
 
-    df = pd.DataFrame({
-        'id': [1, 2, 3, 4, 5],
-        'value': [1.1, 2.2, 3.3, 4.4, 5.5],
-        'name': ['a', 'b', 'c', 'd', 'e'],
-    })
-    fd2, df_file = tempfile.mkstemp(suffix='.bcsv')
+    df = pd.DataFrame(
+        {
+            "id": [1, 2, 3, 4, 5],
+            "value": [1.1, 2.2, 3.3, 4.4, 5.5],
+            "name": ["a", "b", "c", "d", "e"],
+        }
+    )
+    fd2, df_file = tempfile.mkstemp(suffix=".bcsv")
     os.close(fd2)
     os.unlink(df_file)
     pybcsv.write_dataframe(df, df_file)
@@ -369,5 +425,5 @@ def test_basic_operations():
         os.unlink(df_file)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     unittest.main()
