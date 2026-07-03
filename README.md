@@ -5,7 +5,7 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)](https://isocpp.org/)
-[![Version](https://img.shields.io/badge/version-1.5.7-orange.svg)](VERSIONING.md)
+[![Version](https://img.shields.io/badge/version-1.5.8-orange.svg)](VERSIONING.md)
 
 > **Versioning:** Since v1.5.0, library version and file format version are **unified**.
 > A single version (from git tags) is stamped into every `.bcsv` file header.
@@ -190,7 +190,7 @@ BCSV requires **C++20** with full library support for `<span>`, `<bit>`, `<conce
 
 ## Project Status
 
-**Current Version:** v1.5.7
+**Current Version:** v1.5.8
 
 ### Delivered
 

@@ -179,7 +179,7 @@ Technical design, requirements, and implementation roadmap
 
 ## File Format Specification
 
-### Version 1.5.7 (Current)
+### Version 1.5.8 (Current)
 
 ```
 ┌─────────────────────────────────────────────────────────┐

@@ -12,6 +12,8 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.8] - 2026-07-04
+
 ### Added
 - **CLI: `parquet2bcsv` and `bcsv2parquet`** — Streaming Parquet <-> BCSV conversion
   tools. `parquet2bcsv` converts Parquet files to BCSV with schema flattening,
