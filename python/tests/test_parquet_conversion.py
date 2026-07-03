@@ -436,6 +436,57 @@ class TestCodecFlags(unittest.TestCase):
             _resolve_codec_flags("invalid_codec", 1)
 
 
+class TestUnderscoreNameRejection(unittest.TestCase):
+    """Regression: column names ending in '_' must be rejected to prevent
+    silent data corruption during escape-suffix stripping on roundtrip."""
+
+    def test_parse_layout_rejects_trailing_underscore(self):
+        with self.assertRaises(ValueError) as ctx:
+            parse_layout("data_:int64")
+        self.assertIn("ends with '_'", str(ctx.exception))
+
+    def test_parse_layout_allows_internal_underscore(self):
+        # Loc_.lat is OK — only trailing underscore on the FULL name is rejected
+        result = parse_layout("loc_.lat:float")
+        self.assertEqual(len(result), 1)
+
+    def test_flatten_schema_rejects_trailing_underscore(self):
+        schema = pa.schema([pa.field("data_", pa.int64())])
+        with self.assertRaises(ValueError) as ctx:
+            flatten_parquet_schema(schema)
+        self.assertIn("ends with '_'", str(ctx.exception))
+
+    def test_flatten_schema_allows_internal_underscore(self):
+        schema = pa.schema([pa.field("my_data", pa.int64())])
+        flat = flatten_parquet_schema(schema)
+        self.assertEqual(flat, [("my_data", pa.int64())])
+
+    def test_unflatten_schema_rejects_trailing_underscore(self):
+        names = ["data_"]
+        types = [pybcsv.ColumnType.INT64]
+        with self.assertRaises(ValueError) as ctx:
+            unflatten_schema_to_arrow(names, types)
+        self.assertIn("ends with '_'", str(ctx.exception))
+
+
+class TestFP16FixedSizeList(unittest.TestCase):
+    """Regression: FixedSizeList<halffloat, N> must widen to float32, not crash."""
+
+    def test_flatten_fp16_fixed_list(self):
+        schema = pa.schema([pa.field("vals", pa.list_(pa.float16(), 3))])
+        flat = flatten_parquet_schema(schema)
+        expected = [
+            ("vals[0]", pa.float32()),
+            ("vals[1]", pa.float32()),
+            ("vals[2]", pa.float32()),
+        ]
+        self.assertEqual(flat, expected)
+
+    def test_check_fp16_fixed_list_supported(self):
+        field = pa.field("vals", pa.list_(pa.float16(), 3))
+        _check_arrow_type_supported(field)  # should not raise
+
+
 class TestFlatArrowSchema(unittest.TestCase):
     """Test _flat_arrow_schema produces correct schemas."""
 

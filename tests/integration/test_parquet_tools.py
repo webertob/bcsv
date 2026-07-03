@@ -329,5 +329,246 @@ class TestBenchmark:
         assert "Converting" in captured.err
 
 
+# ---- Regression tests for critical bugs ----
+
+
+class TestStructRoundtrip:
+    """Regression: struct fields must survive Parquet->BCSV->Parquet."""
+
+    def test_struct_roundtrip(self, tmp_path):
+        lats = pa.array([10.0, 20.0, 30.0], type=pa.float32())
+        lons = pa.array([40.0, 50.0, 60.0], type=pa.float32())
+        structs = pa.StructArray.from_arrays([lats, lons], names=["lat", "lon"])
+        table = pa.table(
+            {"id": pa.array([1, 2, 3], type=pa.int64()), "location": structs}
+        )
+        pq_path = tmp_path / "loc.parquet"
+        bcsv_path = tmp_path / "loc.bcsv"
+        rt_path = tmp_path / "loc_rt.parquet"
+        pq.write_table(table, str(pq_path))
+        parquet_to_bcsv(
+            str(pq_path),
+            str(bcsv_path),
+            "id:int64,location.lat:float,location.lon:float",
+        )
+        result = bcsv_to_parquet(str(bcsv_path), str(rt_path), force=True)
+        assert result["rows"] == 3
+
+        rt = pq.read_table(str(rt_path))
+        assert rt.num_rows == 3
+        assert rt.num_columns == 2
+        assert rt.column("id").to_pylist() == [1, 2, 3]
+        orig_lats = table.column("location").combine_chunks().field("lat").to_pylist()
+        rt_lats = rt.column("location").combine_chunks().field("lat").to_pylist()
+        assert rt_lats == orig_lats
+        orig_lons = table.column("location").combine_chunks().field("lon").to_pylist()
+        rt_lons = rt.column("location").combine_chunks().field("lon").to_pylist()
+        assert rt_lons == orig_lons
+
+
+class TestFixedSizeListRoundtrip:
+    """Regression: FixedSizeList extraction must use .values slice, not row index."""
+
+    def test_list_roundtrip(self, tmp_path):
+        values = [float(i) for i in range(9)]
+        arr = pa.FixedSizeListArray.from_arrays(pa.array(values, type=pa.float64()), 3)
+        table = pa.table({"id": pa.array([1, 2, 3], type=pa.int64()), "vals": arr})
+        pq_path = tmp_path / "list.parquet"
+        bcsv_path = tmp_path / "list.bcsv"
+        rt_path = tmp_path / "list_rt.parquet"
+        pq.write_table(table, str(pq_path))
+        parquet_to_bcsv(
+            str(pq_path),
+            str(bcsv_path),
+            "id:int64,vals[0]:double,vals[1]:double,vals[2]:double",
+        )
+        result = bcsv_to_parquet(str(bcsv_path), str(rt_path), force=True)
+        assert result["rows"] == 3
+
+        rt = pq.read_table(str(rt_path))
+        orig_values = table.column("vals").combine_chunks().values.to_pylist()
+        rt_values = rt.column("vals").combine_chunks().values.to_pylist()
+        assert rt_values == orig_values
+
+
+class TestColumnSubsetUnflatten:
+    """Regression: --columns subset must not crash or drop data during unflatten."""
+
+    def test_subset_flat_columns(self, tmp_path):
+        table = pa.table(
+            {
+                "id": pa.array([1, 2, 3], type=pa.int64()),
+                "val": pa.array([10.0, 20.0, 30.0], type=pa.float64()),
+            }
+        )
+        pq_path = tmp_path / "s.parquet"
+        bcsv_path = tmp_path / "s.bcsv"
+        rq_path = tmp_path / "s.sub.parquet"
+        pq.write_table(table, str(pq_path))
+        parquet_to_bcsv(str(pq_path), str(bcsv_path), "id:int64,val:double")
+        result = bcsv_to_parquet(
+            str(bcsv_path), str(rq_path), columns=["id"], force=True
+        )
+        assert result["rows"] == 3
+        rt = pq.read_table(str(rq_path))
+        assert rt.num_columns == 1
+        assert rt.column("id").to_pylist() == [1, 2, 3]
+
+    def test_subset_struct_columns(self, tmp_path):
+        lats = pa.array([10.0, 20.0, 30.0], type=pa.float32())
+        lons = pa.array([40.0, 50.0, 60.0], type=pa.float32())
+        structs = pa.StructArray.from_arrays([lats, lons], names=["lat", "lon"])
+        table = pa.table(
+            {"id": pa.array([1, 2, 3], type=pa.int64()), "location": structs}
+        )
+        pq_path = tmp_path / "s2.parquet"
+        bcsv_path = tmp_path / "s2.bcsv"
+        rq_path = tmp_path / "s2.sub.parquet"
+        pq.write_table(table, str(pq_path))
+        parquet_to_bcsv(
+            str(pq_path),
+            str(bcsv_path),
+            "id:int64,location.lat:float,location.lon:float",
+        )
+        result = bcsv_to_parquet(
+            str(bcsv_path),
+            str(rq_path),
+            columns=["id", "location.lat"],
+            force=True,
+        )
+        assert result["rows"] == 3
+        rt = pq.read_table(str(rq_path))
+        assert "id" in [rt.schema.field(i).name for i in range(len(rt.schema))]
+        assert "location" in [rt.schema.field(i).name for i in range(len(rt.schema))]
+
+
+class TestFP16Widening:
+    """Regression: float16 columns must be widened to float32 without data loss."""
+
+    def test_fp16_roundtrip_values(self, tmp_path):
+        original = [1.5, 2.5, 3.75]
+        arr = pa.array(original, type=pa.float16())
+        table = pa.table({"x": arr})
+        pq_path = tmp_path / "fp16.parquet"
+        bcsv_path = tmp_path / "fp16.bcsv"
+        rq_path = tmp_path / "fp16_rt.parquet"
+        pq.write_table(table, str(pq_path))
+        parquet_to_bcsv(str(pq_path), str(bcsv_path), "x:float")
+        result = bcsv_to_parquet(str(bcsv_path), str(rq_path), force=True)
+        assert result["rows"] == 3
+        rt = pq.read_table(str(rq_path))
+        rt_vals = rt.column("x").to_pylist()
+        assert rt_vals == original
+
+
+class TestCLIVersion:
+    """Regression: --version flag must be available on both CLIs."""
+
+    def test_parquet2bcsv_version(self, tmp_path):
+        import subprocess, sys
+
+        r = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.argv=['parquet2bcsv','--version']; "
+                "from pybcsv.parquet_utils import parquet2bcsv_cli; parquet2bcsv_cli()",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0
+        assert pybcsv.__version__ in r.stdout
+
+    def test_bcvs2parquet_version(self, tmp_path):
+        import subprocess, sys
+
+        r = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; sys.argv=['bcsv2parquet','--version']; "
+                "from pybcsv.parquet_utils import bcsv2parquet_cli; bcsv2parquet_cli()",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        assert r.returncode == 0
+        assert pybcsv.__version__ in r.stdout
+
+
+class TestBenchmarkOutputConsistency:
+    """Regression: text benchmark → stderr, JSON benchmark → stdout."""
+
+    def test_benchmark_json_to_stdout(self, tmp_path, capsys):
+        table = _flat_table(10)
+        pq_path = tmp_path / "b3.parquet"
+        bcsv_path = tmp_path / "b3.bcsv"
+        pq.write_table(table, str(pq_path))
+        parquet_to_bcsv(
+            str(pq_path),
+            str(bcsv_path),
+            _flat_layout(),
+            benchmark=True,
+            json_output=True,
+        )
+        captured = capsys.readouterr()
+        assert captured.out.strip()  # JSON benchmark goes to stdout
+        data = json.loads(captured.out.strip())
+        assert data["rows"] == 10
+
+
+class TestUnderscoreRejection:
+    """Regression: column names ending in '_' are rejected to prevent
+    silent corruption during escape-suffix stripping on roundtrip."""
+
+    def test_trailing_underscore_rejected_layout(self, tmp_path):
+        table = pa.table({"id": pa.array([1])})
+        pq.write_table(table, str(tmp_path / "u.parquet"))
+        with pytest.raises(ValueError, match="ends with '_'"):
+            parquet_to_bcsv(
+                str(tmp_path / "u.parquet"),
+                str(tmp_path / "u.bcsv"),
+                "id_:int64",
+            )
+
+    def test_trailing_underscore_rejected_parquet(self, tmp_path):
+        # Column name ending in _ in the original Parquet schema
+        table = pa.table({"data_": pa.array([1.0], type=pa.float64())})
+        pq.write_table(table, str(tmp_path / "u2.parquet"))
+        with pytest.raises(ValueError, match="ends with '_'"):
+            parquet_to_bcsv(
+                str(tmp_path / "u2.parquet"),
+                str(tmp_path / "u2.bcsv"),
+                "data_:double",
+            )
+
+
+class TestFP16FixedSizeListRoundtrip:
+    """Regression: FixedSizeList<halffloat, N> widens to float32."""
+
+    def test_fp16_list_roundtrip(self, tmp_path):
+        values = [float(i) for i in range(9)]
+        arr = pa.FixedSizeListArray.from_arrays(pa.array(values, type=pa.float16()), 3)
+        table = pa.table({"id": pa.array([1, 2, 3], type=pa.int64()), "vals": arr})
+        pq_path = tmp_path / "fp16_list.parquet"
+        bcsv_path = tmp_path / "fp16_list.bcsv"
+        rt_path = tmp_path / "fp16_list_rt.parquet"
+        pq.write_table(table, str(pq_path))
+
+        parquet_to_bcsv(
+            str(pq_path),
+            str(bcsv_path),
+            "id:int64,vals[0]:float,vals[1]:float,vals[2]:float",
+        )
+        result = bcsv_to_parquet(str(bcsv_path), str(rt_path), force=True)
+        assert result["rows"] == 3
+
+        rt = pq.read_table(str(rt_path))
+        orig = table.column("vals").combine_chunks().values.to_pylist()
+        rtv = rt.column("vals").combine_chunks().values.to_pylist()
+        assert rtv == orig
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

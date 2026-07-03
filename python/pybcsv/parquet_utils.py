@@ -5,10 +5,10 @@ Core conversion logic and CLI entry points for parquet2bcsv and bcsv2parquet.
 
 import argparse
 import json
+import os
 import sys
 import time
 import warnings
-from collections import OrderedDict
 from typing import List, Optional, Set, Tuple, Union
 
 import pyarrow as pa
@@ -51,6 +51,11 @@ _ARROW_TO_BCSV = {
 }
 
 _FP16_TYPES = {pa.float16()}
+try:
+    _FP16_TYPES.add(pa.bfloat16())
+except AttributeError:
+    # bfloat16 not available in this PyArrow build
+    pass
 
 _BCSV_TO_ARROW = {
     pybcsv.ColumnType.BOOL: pa.bool_(),
@@ -86,6 +91,21 @@ _MAX_FLATTEN_DEPTH = 64
 _MAX_FIXED_LIST_SIZE = 64
 _MAX_ESCAPES = 64
 
+# Escape protocol: trailing underscores on parent identifier resolve name collisions.
+# Consequence: column names ending with '_' are ambiguous — we cannot distinguish a
+# legitimate trailing underscore from escape suffixes during unflattening.
+# Enforcement: reject column names that end with '_' at every entry point.
+
+
+def _check_underscore_name(name: str) -> None:
+    """Raise if name ends with '_' (incompatible with escape protocol)."""
+    if name.endswith("_"):
+        raise ValueError(
+            f"Column name '{name}' ends with '_'. Column names ending with "
+            "underscore are not supported because the unflatten algorithm uses "
+            "trailing underscores to resolve name collisions in nested schemas."
+        )
+
 
 # ---- Schema flattening (Parquet -> BCSV) ----
 
@@ -94,7 +114,7 @@ def _collect_reserved_names(schema: pa.Schema) -> Set[str]:
     """Collect top-level flat column names that reserve dot-notation paths."""
     reserved: Set[str] = set()
     for field in schema:
-        if field.type in _FLAT_ARROW_TYPES:
+        if field.type in _FLAT_ARROW_TYPES or field.type in _FP16_TYPES:
             reserved.add(field.name)
     return reserved
 
@@ -175,10 +195,11 @@ def _flatten_node(
                     result.extend(_flatten_node(child, bracket, reserved, depth + 1))
             return result
 
-        if value_type not in _FLAT_ARROW_TYPES:
+        if value_type not in _FLAT_ARROW_TYPES and value_type not in _FP16_TYPES:
             raise _unsupported_type_error(name, field.type)
 
-        items = [(f"{name}[{i}]", value_type) for i in range(list_size)]
+        widened_type = pa.float32() if value_type in _FP16_TYPES else value_type
+        items = [(f"{name}[{i}]", widened_type) for i in range(list_size)]
         for n, _ in items:
             reserved.add(n)
         return items
@@ -201,6 +222,7 @@ def flatten_parquet_schema(schema: pa.Schema) -> List[Tuple[str, pa.DataType]]:
     result: List[Tuple[str, pa.DataType]] = []
     for field in schema:
         if field.type in _FLAT_ARROW_TYPES or field.type in _FP16_TYPES:
+            _check_underscore_name(field.name)
             actual_type = pa.float32() if field.type in _FP16_TYPES else field.type
             result.append((field.name, actual_type))
         else:
@@ -214,10 +236,18 @@ def flatten_parquet_schema(schema: pa.Schema) -> List[Tuple[str, pa.DataType]]:
 def flatten_batch(
     batch: pa.RecordBatch,
     flat_schema: List[Tuple[str, pa.DataType]],
+    cached_schema: Optional[pa.Schema] = None,
 ) -> pa.RecordBatch:
-    """Extract and reorder columns from a batch to match flat_schema."""
+    """Extract and reorder columns from a batch to match flat_schema.
+
+    Passing a pre-built `cached_schema` avoids rebuilding a pa.Schema on every call.
+    """
     output_arrays: List[pa.Array] = []
-    output_schema = pa.schema([(name, dtype) for name, dtype in flat_schema])
+    output_schema = (
+        cached_schema
+        if cached_schema is not None
+        else pa.schema([(name, dtype) for name, dtype in flat_schema])
+    )
 
     for name, _dtype in flat_schema:
         arr = _extract_flat_array(batch, name)
@@ -243,7 +273,18 @@ def _extract_flat_array(batch: pa.RecordBatch, flat_name: str) -> pa.Array:
 
     for part in parts[1:]:
         if isinstance(part, int):
-            arr = arr[part]
+            if pa.types.is_fixed_size_list(arr.type):
+                list_size = arr.type.list_size
+                if part < 0 or part >= list_size:
+                    raise ValueError(
+                        f"List index {part} out of range [0, {list_size}) "
+                        f"for column '{flat_name}'."
+                    )
+                num_rows = len(arr)
+                child_arr = arr.values
+                arr = child_arr.slice(part * num_rows, num_rows)
+            else:
+                arr = arr[part]
         else:
             if pa.types.is_struct(arr.type):
                 for j in range(arr.type.num_fields):
@@ -310,6 +351,11 @@ def _decompose_name(name: str) -> List[Union[str, int]]:
 def _strip_escape_suffixes(parts: List[Union[str, int]]) -> List[Union[str, int]]:
     """Remove trailing underscores from each string part."""
     return [p.rstrip("_") if isinstance(p, str) else p for p in parts]
+
+
+def _find_flat_column(lookup_key: str, col_map: dict) -> Optional[pa.Array]:
+    """Look up a column in col_map by exact name."""
+    return col_map.get(lookup_key)
 
 
 # ---- Unflattening (BCSV -> Parquet) ----
@@ -399,7 +445,17 @@ def unflatten_schema_to_arrow(
     types: List[pybcsv.ColumnType],
 ) -> pa.Schema:
     """Build Arrow schema from BCSV layout, reconstructing nesting."""
-    arrow_types = [_BCSV_TO_ARROW[t] for t in types]
+    arrow_types: List[pa.DataType] = []
+    for t in types:
+        if t in _BCSV_TO_ARROW:
+            arrow_types.append(_BCSV_TO_ARROW[t])
+        else:
+            raise ValueError(
+                f"Cannot map BCSV type '{t.name.lower()}' to Arrow. "
+                f"Supported: {', '.join(sorted(k.name.lower() for k in _BCSV_TO_ARROW))}."
+            )
+    for n in names:
+        _check_underscore_name(n)
     trie = _build_trie(names, arrow_types)
     fields = _trie_to_arrow_field(trie)
     return pa.schema(fields)
@@ -408,13 +464,27 @@ def unflatten_schema_to_arrow(
 def unflatten_batch(
     batch: pa.RecordBatch,
     bcsv_layout: pybcsv.Layout,
+    *,
+    cached_schema: Optional[pa.Schema] = None,
 ) -> pa.RecordBatch:
-    """Reconstruct nested Arrow structures from flat BCSV columns."""
+    """Reconstruct nested Arrow structures from flat BCSV columns.
+
+    When called in a tight loop, pass `cached_schema` (pre-computed via
+    unflatten_schema_to_arrow) to avoid rebuilding the schema on every batch.
+    """
     names = bcsv_layout.get_column_names()
     types = bcsv_layout.get_column_types()
-    arrow_types = [_BCSV_TO_ARROW[t] for t in types]
 
-    target_schema = unflatten_schema_to_arrow(names, types)
+    if cached_schema is not None:
+        target_schema = cached_schema
+    else:
+        arrow_types: List[pa.DataType] = []
+        for t in types:
+            if t in _BCSV_TO_ARROW:
+                arrow_types.append(_BCSV_TO_ARROW[t])
+            else:
+                raise ValueError(f"Cannot map BCSV type '{t.name.lower()}' to Arrow.")
+        target_schema = unflatten_schema_to_arrow(names, types)
 
     col_map: dict = {}
     for i in range(len(batch.schema)):
@@ -429,7 +499,7 @@ def unflatten_batch(
     output_arrays: List[pa.Array] = []
     for i in range(len(target_schema)):
         field = target_schema.field(i)
-        arr = _build_nested_array(field, col_map)
+        arr = _build_nested_array(field, col_map, field.name)
         output_arrays.append(arr)
 
     return pa.RecordBatch.from_arrays(output_arrays, schema=target_schema)
@@ -438,33 +508,27 @@ def unflatten_batch(
 def _build_nested_array(
     field: pa.Field,
     col_map: dict,
+    lookup_key: str = "",
 ) -> pa.Array:
     """Build a nested array (struct or list) from flat columns."""
     if not pa.types.is_struct(field.type) and not pa.types.is_fixed_size_list(
         field.type
     ):
-        if field.name in col_map:
-            return col_map[field.name]
-        for k, v in col_map.items():
-            if k.startswith(field.name + ".") or k.startswith(field.name + "["):
-                return v
-        raise ValueError(f"Cannot find array for column '{field.name}'")
+        arr = _find_flat_column(lookup_key, col_map)
+        if arr is not None:
+            return arr
+        raise ValueError(f"Cannot find array for column '{lookup_key}'")
 
     if pa.types.is_fixed_size_list(field.type):
         list_size = field.type.list_size
-        value_type = field.type.value_type
         chunks: List[pa.Array] = []
         for idx in range(list_size):
-            bracket = f"{field.name}[{idx}]"
-            if bracket in col_map:
-                chunks.append(col_map[bracket])
+            bracket = f"{lookup_key}[{idx}]"
+            arr = _find_flat_column(bracket, col_map)
+            if arr is not None:
+                chunks.append(arr)
             else:
-                for k, v in col_map.items():
-                    if f"__{bracket}" == k:
-                        chunks.append(v)
-                        break
-                if len(chunks) <= idx:
-                    raise ValueError(f"Cannot find array for '{bracket}'")
+                raise ValueError(f"Cannot find array for '{bracket}'")
         merged = pa.concat_arrays(chunks)
         return pa.FixedSizeListArray.from_arrays(merged, list_size)
 
@@ -472,8 +536,8 @@ def _build_nested_array(
     child_arrays: List[pa.Array] = []
     for i in range(struct_fields.num_fields):
         sf = struct_fields.field(i)
-        child_name = f"{field.name}.{sf.name}"
-        child_arr = _build_nested_array(sf, col_map)
+        child_key = f"{lookup_key}.{sf.name}"
+        child_arr = _build_nested_array(sf, col_map, child_key)
         child_arrays.append(child_arr)
 
     return pa.StructArray.from_arrays(child_arrays, fields=struct_fields)
@@ -513,7 +577,7 @@ def _check_arrow_type_supported(field: pa.Field) -> None:
 
     if pa.types.is_fixed_size_list(t):
         vt = t.value_type
-        if vt in _FLAT_ARROW_TYPES:
+        if vt in _FLAT_ARROW_TYPES or vt in _FP16_TYPES:
             return
         if pa.types.is_struct(vt):
             for i in range(vt.num_fields):
@@ -551,6 +615,7 @@ def parse_layout(layout_str: str) -> List[Tuple[str, pybcsv.ColumnType]]:
         if type_str not in _TYPE_NAME_TO_BCSV:
             valid = ", ".join(sorted(_TYPE_NAME_TO_BCSV))
             raise ValueError(f"Unknown type '{type_str}' in layout. Valid: {valid}")
+        _check_underscore_name(name)
         result.append((name, _TYPE_NAME_TO_BCSV[type_str]))
     return result
 
@@ -574,24 +639,9 @@ def validate_layout_against_parquet(
         raise ValueError(f"Layout mismatch: {'; '.join(parts)}")
 
     parquet_types: dict = dict(flat_schema)
-    fp16_warnings: List[str] = []
 
     for name, btype in layout_defs:
         pq_type = parquet_types[name]
-
-        if pq_type in _FP16_TYPES:
-            expected = pybcsv.ColumnType.FLOAT
-            if btype != expected:
-                raise ValueError(
-                    f"Layout mismatch for '{name}': Parquet has float16 "
-                    f"(widened to float32) but layout specifies "
-                    f"'{btype.name.lower()}'. Use 'float'."
-                )
-            fp16_warnings.append(
-                f"Column '{name}' type float16 widened to float32 "
-                f"(lossless, 2x storage)."
-            )
-            continue
 
         bcsv_type = _ARROW_TO_BCSV.get(pq_type)
         if bcsv_type is None:
@@ -607,12 +657,11 @@ def validate_layout_against_parquet(
                 f"'{btype.name.lower()}'. Expected '{bcsv_type.name.lower()}'. "
             )
 
-    for w in fp16_warnings:
-        warnings.warn(w)
-
 
 def validate_parquet_schema(pf: pq.ParquetFile) -> None:
     """Reject Parquet files with schema evolution across row groups."""
+    import pyarrow as pa
+
     meta = pf.metadata
     if meta.num_row_groups <= 1:
         return
@@ -620,6 +669,7 @@ def validate_parquet_schema(pf: pq.ParquetFile) -> None:
     rg0 = meta.row_group(0)
     base_cols = rg0.num_columns
     base_names = [rg0.column(i).path_in_schema for i in range(base_cols)]
+    base_types = [rg0.column(i).physical_type for i in range(base_cols)]
 
     for gi in range(1, meta.num_row_groups):
         rg = meta.row_group(gi)
@@ -635,6 +685,13 @@ def validate_parquet_schema(pf: pq.ParquetFile) -> None:
                 raise ValueError(
                     f"Schema evolution: col {ci} in rg {gi} is "
                     f"'{actual}', expected '{expected}'. "
+                    f"BCSV requires constant schema."
+                )
+            actual_type = rg.column(ci).physical_type
+            if actual_type != base_types[ci]:
+                raise ValueError(
+                    f"Schema evolution: col '{expected}' in rg {gi} has type "
+                    f"{actual_type}, expected {base_types[ci]}. "
                     f"BCSV requires constant schema."
                 )
 
@@ -727,7 +784,15 @@ def _parse_selection(
 
 def _flat_arrow_schema(names: List[str], types: List[pybcsv.ColumnType]) -> pa.Schema:
     """Build a flat Arrow schema (no nesting) from column names + BCSV types."""
-    return pa.schema([pa.field(n, _BCSV_TO_ARROW[t]) for n, t in zip(names, types)])
+    fields: List[pa.Field] = []
+    for n, t in zip(names, types):
+        if t not in _BCSV_TO_ARROW:
+            raise ValueError(
+                f"Cannot map BCSV type '{t.name.lower()}' to Arrow. "
+                f"Supported: {', '.join(sorted(k.name.lower() for k in _BCSV_TO_ARROW))}."
+            )
+        fields.append(pa.field(n, _BCSV_TO_ARROW[t]))
+    return pa.schema(fields)
 
 
 def _resolve_codec_flags(
@@ -792,6 +857,7 @@ def parquet_to_bcsv(
     flat_schema = flatten_parquet_schema(pf.schema_arrow)
     validate_layout_against_parquet(layout_defs, flat_schema)
 
+    flat_arrow_schema = pa.schema(flat_schema)
     bcsv_layout = pybcsv.Layout()
     for name, btype in layout_defs:
         bcsv_layout.add_column(name, btype)
@@ -817,7 +883,7 @@ def parquet_to_bcsv(
             flags=flags,
         )
         for batch in pf.iter_batches(batch_size=chunk_size):
-            flat = flatten_batch(batch, flat_schema)
+            flat = flatten_batch(batch, flat_schema, flat_arrow_schema)
             _check_nulls(flat, total_rows)
             writer.write_batch(flat)
             total_rows += len(flat)
@@ -838,7 +904,7 @@ def bcsv_to_parquet(
     columns: Optional[List[str]] = None,
     row_slice: Optional[str] = None,
     parquet_compression: str = "snappy",
-    row_group_size: int = 512000,
+    row_group_size: Optional[int] = None,
     unflatten: bool = True,
     chunk_size: int = 512000,
     force: bool = False,
@@ -872,6 +938,24 @@ def bcsv_to_parquet(
         else _flat_arrow_schema(col_names, col_types)
     )
 
+    # Pre-compute subset layout + cached Arrow schema once (outside the batch loop)
+    subset_layout: Optional[pybcsv.Layout] = None
+    unflatten_schema: Optional[pa.Schema] = None
+    if unflatten:
+        if col_names and set(col_names) != set(bcsv_layout.get_column_names()):
+            subset_layout = pybcsv.Layout()
+            col_set = set(col_names)
+            for n, t in zip(
+                bcsv_layout.get_column_names(), bcsv_layout.get_column_types()
+            ):
+                if n in col_set:
+                    subset_layout.add_column(n, t)
+        else:
+            subset_layout = bcsv_layout
+        layout_names = list(subset_layout.get_column_names())
+        layout_types = list(subset_layout.get_column_types())
+        unflatten_schema = unflatten_schema_to_arrow(layout_names, layout_types)
+
     total_written = 0
     rows_to_write: Optional[int] = (
         (slice_end - slice_start) if slice_end is not None else None
@@ -889,6 +973,19 @@ def bcsv_to_parquet(
             file=sys.stderr,
         )
 
+    def _create_writer(schema: pa.Schema) -> pq.ParquetWriter:
+        if row_group_size is not None:
+            warnings.warn(
+                "row_group_size is not supported by ParquetWriter in streaming "
+                "mode. The parameter is accepted for API compatibility but has no effect.",
+                UserWarning,
+            )
+        return pq.ParquetWriter(
+            output_path,
+            schema,
+            compression=parquet_compression,
+        )
+
     with pybcsv.ReaderDirectAccess() as reader:
         reader.open(input_path, rebuild_footer=True)
         gen = pybcsv.iter_arrow_batches(
@@ -903,14 +1000,14 @@ def bcsv_to_parquet(
                 break
 
             if unflatten:
-                batch = _select_and_unflatten(batch, bcsv_layout, col_names)
+                batch = unflatten_batch(
+                    batch,
+                    subset_layout,  # type: ignore[arg-type]
+                    cached_schema=unflatten_schema,
+                )
 
             if pq_writer is None:
-                pq_writer = pq.ParquetWriter(
-                    output_path,
-                    batch.schema,
-                    compression=parquet_compression,
-                )
+                pq_writer = _create_writer(batch.schema)
 
             if rows_to_write is not None:
                 remaining = rows_to_write - total_written
@@ -924,10 +1021,8 @@ def bcsv_to_parquet(
     if pq_writer:
         pq_writer.close()
     else:
-        pq_writer = pq.ParquetWriter(
-            output_path, arrow_schema, compression=parquet_compression
-        )
-        pq_writer.close()
+        writer = _create_writer(arrow_schema)
+        writer.close()
 
     elapsed = time.monotonic() - t0
     _emit_benchmark(benchmark, json_output, total_written, elapsed)
@@ -937,21 +1032,7 @@ def bcsv_to_parquet(
 
     return {"rows": total_written, "elapsed_s": round(elapsed, 4)}
 
-
-def _select_and_unflatten(
-    batch: pa.RecordBatch,
-    layout: pybcsv.Layout,
-    col_names: List[str],
-) -> pa.RecordBatch:
-    """Unflatten a batch, selecting only the requested columns."""
-    result = unflatten_batch(batch, layout)
-    if col_names:
-        existing = [result.schema.field(i).name for i in range(len(result.schema))]
-        subset = [n for n in col_names if n in existing]
-        if subset and len(subset) < len(result.schema):
-            indices = [existing.index(n) for n in subset]
-            result = result.select(indices)
-    return result
+    return unflatten_batch(batch, subset_layout)
 
 
 def _emit_benchmark(
@@ -960,13 +1041,14 @@ def _emit_benchmark(
     total_rows: int,
     elapsed: float,
 ) -> None:
-    """Print benchmark output to stderr or stdout."""
+    """Print benchmark output to stderr."""
     if not benchmark:
         return
     rate = total_rows / elapsed if elapsed > 0 else 0
     if json_output:
         print(
             json.dumps({"rows": total_rows, "elapsed_s": round(elapsed, 4)}),
+            file=sys.stdout,
             flush=True,
         )
     else:
@@ -995,6 +1077,11 @@ def parquet2bcsv_cli() -> None:
     parser = argparse.ArgumentParser(
         prog="parquet2bcsv",
         description="Convert Parquet files to BCSV format.",
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {pybcsv.__version__}",
     )
     parser.add_argument("input", help="Input Parquet file")
     parser.add_argument(
@@ -1111,6 +1198,11 @@ def bcsv2parquet_cli() -> None:
         prog="bcsv2parquet",
         description="Convert BCSV files to Parquet format.",
     )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {pybcsv.__version__}",
+    )
     parser.add_argument("input", help="Input BCSV file")
     parser.add_argument(
         "-o",
@@ -1127,7 +1219,7 @@ def bcsv2parquet_cli() -> None:
     parser.add_argument(
         "--columns",
         default=None,
-        help='Column selection: "col1,col2,..."',
+        help='Column selection by name: "col1,col2,..."',
     )
     parser.add_argument(
         "--slice",
@@ -1143,19 +1235,20 @@ def bcsv2parquet_cli() -> None:
     parser.add_argument(
         "--row-group-size",
         type=int,
-        default=512000,
-        help="Row group size in rows (default: 512000)",
+        default=None,
+        help="Row group size in PyArrow write_table (not supported in ParquetWriter streaming mode)",
     )
-    parser.add_argument(
+    mut_unflatten = parser.add_mutually_exclusive_group()
+    mut_unflatten.add_argument(
         "--unflatten",
         action="store_true",
         default=True,
-        help="Reconstruct nested structs (default: ON)",
+        help="Reconstruct nested structs (default)",
     )
-    parser.add_argument(
+    mut_unflatten.add_argument(
         "--no-unflatten",
-        action="store_true",
-        default=False,
+        action="store_false",
+        dest="unflatten",
         help="Export flat columns without nesting",
     )
     parser.add_argument(
@@ -1184,7 +1277,7 @@ def bcsv2parquet_cli() -> None:
 
     args = parser.parse_args()
     output = args.output or f"{args.input}.parquet"
-    do_unflatten = not args.no_unflatten
+    do_unflatten = args.unflatten
 
     col_list: Optional[List[str]] = None
     if args.columns:
