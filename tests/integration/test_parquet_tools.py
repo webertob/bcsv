@@ -25,10 +25,6 @@ def _flat_table(num_rows=100):
     )
 
 
-def _flat_layout():
-    return "id:int64,val:double,name:string"
-
-
 def _struct_table(num_rows=10):
     lats = pa.array([10.0 + i for i in range(num_rows)], type=pa.float32())
     lons = pa.array([20.0 + i for i in range(num_rows)], type=pa.float32())
@@ -62,13 +58,27 @@ class TestBasic:
         bcsv_path = tmp_path / "out.bcsv"
         rt_path = tmp_path / "rt.parquet"
         pq.write_table(table, str(pq_path))
-        parquet_to_bcsv(str(pq_path), str(bcsv_path), _flat_layout())
+        parquet_to_bcsv(str(pq_path), str(bcsv_path))
         result = bcsv_to_parquet(str(bcsv_path), str(rt_path), force=True)
         assert result["rows"] == 100
 
         rt = pq.read_table(str(rt_path))
         assert rt.num_rows == 100
         assert rt.num_columns == table.num_columns
+
+    def test_roundtrip_large_string(self, tmp_path):
+        """large_string Parquet columns must convert without error (regression)."""
+        table = pa.table(
+            {
+                "id": pa.array([1, 2, 3], type=pa.int64()),
+                "label": pa.array(["a", "bb", "ccc"], type=pa.large_utf8()),
+            }
+        )
+        pq_path = tmp_path / "ls.parquet"
+        bcsv_path = tmp_path / "ls.bcsv"
+        pq.write_table(table, str(pq_path))
+        result = parquet_to_bcsv(str(pq_path), str(bcsv_path))
+        assert result["rows"] == 3
 
 
 class TestNullRejection:
@@ -82,7 +92,7 @@ class TestNullRejection:
         bcsv_path = tmp_path / "null.bcsv"
         pq.write_table(table, str(pq_path))
         with pytest.raises(ValueError):
-            parquet_to_bcsv(str(pq_path), str(bcsv_path), "id:int64")
+            parquet_to_bcsv(str(pq_path), str(bcsv_path))
 
     def test_null_first_row(self, tmp_path):
         table = pa.table(
@@ -94,7 +104,7 @@ class TestNullRejection:
         bcsv_path = tmp_path / "null1.bcsv"
         pq.write_table(table, str(pq_path))
         with pytest.raises(ValueError, match="row 0"):
-            parquet_to_bcsv(str(pq_path), str(bcsv_path), "id:int64")
+            parquet_to_bcsv(str(pq_path), str(bcsv_path))
 
     def test_unsupported_timestamp(self, tmp_path):
         table = pa.table(
@@ -106,36 +116,7 @@ class TestNullRejection:
         bcsv_path = tmp_path / "ts.bcsv"
         pq.write_table(table, str(pq_path))
         with pytest.raises(ValueError, match="Unsupported"):
-            parquet_to_bcsv(str(pq_path), str(bcsv_path), "ts:int64")
-
-
-class TestLayoutValidation:
-    def test_missing_layout(self, tmp_path):
-        pq_path = tmp_path / "m.parquet"
-        bcsv_path = tmp_path / "m.bcsv"
-        pq.write_table(pa.table({"id": pa.array([1])}), str(pq_path))
-        with pytest.raises(ValueError, match="cannot be empty"):
-            parquet_to_bcsv(str(pq_path), str(bcsv_path), "")
-
-    def test_type_mismatch(self, tmp_path):
-        pq_path = tmp_path / "m2.parquet"
-        bcsv_path = tmp_path / "m2.bcsv"
-        pq.write_table(pa.table({"id": pa.array([1], type=pa.int64())}), str(pq_path))
-        with pytest.raises(ValueError, match="mismatch"):
-            parquet_to_bcsv(str(pq_path), str(bcsv_path), "id:string")
-
-    def test_missing_columns(self, tmp_path):
-        pq_path = tmp_path / "m3.parquet"
-        bcsv_path = tmp_path / "m3.bcsv"
-        table = pa.table(
-            {
-                "id": pa.array([1], type=pa.int64()),
-                "val": pa.array([1.0], type=pa.float64()),
-            }
-        )
-        pq.write_table(table, str(pq_path))
-        with pytest.raises(ValueError, match="Missing"):
-            parquet_to_bcsv(str(pq_path), str(bcsv_path), "id:int64")
+            parquet_to_bcsv(str(pq_path), str(bcsv_path))
 
 
 class TestSlicing:
@@ -144,7 +125,7 @@ class TestSlicing:
         pq_path = tmp_path / "s.parquet"
         bcsv_path = tmp_path / "s.bcsv"
         pq.write_table(table, str(pq_path))
-        parquet_to_bcsv(str(pq_path), str(bcsv_path), _flat_layout())
+        parquet_to_bcsv(str(pq_path), str(bcsv_path))
         result = bcsv_to_parquet(
             str(bcsv_path),
             str(tmp_path / "s_rt.parquet"),
@@ -158,7 +139,7 @@ class TestSlicing:
         pq_path = tmp_path / "s2.parquet"
         bcsv_path = tmp_path / "s2.bcsv"
         pq.write_table(table, str(pq_path))
-        parquet_to_bcsv(str(pq_path), str(bcsv_path), _flat_layout())
+        parquet_to_bcsv(str(pq_path), str(bcsv_path))
         result = bcsv_to_parquet(
             str(bcsv_path),
             str(tmp_path / "s2_rt.parquet"),
@@ -176,7 +157,6 @@ class TestCodecs:
         result = parquet_to_bcsv(
             str(pq_path),
             str(bcsv_path),
-            _flat_layout(),
             file_codec="packet_lz4_batch",
         )
         assert result["rows"] == 5
@@ -188,7 +168,6 @@ class TestCodecs:
         result = parquet_to_bcsv(
             str(pq_path),
             str(bcsv_path),
-            _flat_layout(),
             file_codec="packet_lz4",
         )
         assert result["rows"] == 5
@@ -200,7 +179,6 @@ class TestCodecs:
         result = parquet_to_bcsv(
             str(pq_path),
             str(bcsv_path),
-            _flat_layout(),
             file_codec="packet",
         )
         assert result["rows"] == 5
@@ -213,7 +191,6 @@ class TestCodecs:
             result = parquet_to_bcsv(
                 str(pq_path),
                 str(bcsv_path),
-                _flat_layout(),
                 row_codec=codec,
             )
             assert result["rows"] == 5
@@ -222,7 +199,7 @@ class TestCodecs:
         pq_path = tmp_path / "c5.parquet"
         bcsv_path = tmp_path / "c5.bcsv"
         pq.write_table(_flat_table(5), str(pq_path))
-        parquet_to_bcsv(str(pq_path), str(bcsv_path), _flat_layout())
+        parquet_to_bcsv(str(pq_path), str(bcsv_path))
         result = bcsv_to_parquet(
             str(bcsv_path),
             str(tmp_path / "c5_rt.parquet"),
@@ -235,7 +212,7 @@ class TestCodecs:
         pq_path = tmp_path / "c6.parquet"
         bcsv_path = tmp_path / "c6.bcsv"
         pq.write_table(_flat_table(5), str(pq_path))
-        parquet_to_bcsv(str(pq_path), str(bcsv_path), _flat_layout())
+        parquet_to_bcsv(str(pq_path), str(bcsv_path))
         result = bcsv_to_parquet(
             str(bcsv_path),
             str(tmp_path / "c6_rt.parquet"),
@@ -250,7 +227,7 @@ class TestFlags:
         pq_path = tmp_path / "f.parquet"
         bcsv_path = tmp_path / "f.bcsv"
         pq.write_table(_flat_table(5), str(pq_path))
-        parquet_to_bcsv(str(pq_path), str(bcsv_path), _flat_layout())
+        parquet_to_bcsv(str(pq_path), str(bcsv_path))
         result = bcsv_to_parquet(
             str(bcsv_path),
             str(tmp_path / "f_rt.parquet"),
@@ -263,7 +240,7 @@ class TestFlags:
         pq_path = tmp_path / "f2.parquet"
         bcsv_path = tmp_path / "f2.bcsv"
         pq.write_table(_flat_table(5), str(pq_path))
-        parquet_to_bcsv(str(pq_path), str(bcsv_path), _flat_layout())
+        parquet_to_bcsv(str(pq_path), str(bcsv_path))
         result = bcsv_to_parquet(
             str(bcsv_path),
             str(tmp_path / "f2_rt.parquet"),
@@ -276,7 +253,7 @@ class TestFlags:
         bcsv_path = tmp_path / "f3.bcsv"
         rt_path = tmp_path / "f3_rt.parquet"
         pq.write_table(_flat_table(5), str(pq_path))
-        parquet_to_bcsv(str(pq_path), str(bcsv_path), _flat_layout())
+        parquet_to_bcsv(str(pq_path), str(bcsv_path))
         rt_path.touch()  # pre-create output file
         with pytest.raises(FileExistsError, match="already exists"):
             bcsv_to_parquet(
@@ -294,7 +271,6 @@ class TestBenchmark:
         result = parquet_to_bcsv(
             str(pq_path),
             str(bcsv_path),
-            _flat_layout(),
             benchmark=True,
         )
         assert "rows" in result
@@ -307,7 +283,6 @@ class TestBenchmark:
         result = parquet_to_bcsv(
             str(pq_path),
             str(bcsv_path),
-            _flat_layout(),
             benchmark=True,
             json_output=True,
         )
@@ -322,7 +297,6 @@ class TestBenchmark:
         parquet_to_bcsv(
             str(pq_path),
             str(bcsv_path),
-            _flat_layout(),
             verbose=True,
         )
         captured = capsys.readouterr()
@@ -349,7 +323,6 @@ class TestStructRoundtrip:
         parquet_to_bcsv(
             str(pq_path),
             str(bcsv_path),
-            "id:int64,location.lat:float,location.lon:float",
         )
         result = bcsv_to_parquet(str(bcsv_path), str(rt_path), force=True)
         assert result["rows"] == 3
@@ -380,7 +353,6 @@ class TestFixedSizeListRoundtrip:
         parquet_to_bcsv(
             str(pq_path),
             str(bcsv_path),
-            "id:int64,vals[0]:double,vals[1]:double,vals[2]:double",
         )
         result = bcsv_to_parquet(str(bcsv_path), str(rt_path), force=True)
         assert result["rows"] == 3
@@ -405,7 +377,7 @@ class TestColumnSubsetUnflatten:
         bcsv_path = tmp_path / "s.bcsv"
         rq_path = tmp_path / "s.sub.parquet"
         pq.write_table(table, str(pq_path))
-        parquet_to_bcsv(str(pq_path), str(bcsv_path), "id:int64,val:double")
+        parquet_to_bcsv(str(pq_path), str(bcsv_path))
         result = bcsv_to_parquet(
             str(bcsv_path), str(rq_path), columns=["id"], force=True
         )
@@ -428,7 +400,6 @@ class TestColumnSubsetUnflatten:
         parquet_to_bcsv(
             str(pq_path),
             str(bcsv_path),
-            "id:int64,location.lat:float,location.lon:float",
         )
         result = bcsv_to_parquet(
             str(bcsv_path),
@@ -453,7 +424,7 @@ class TestFP16Widening:
         bcsv_path = tmp_path / "fp16.bcsv"
         rq_path = tmp_path / "fp16_rt.parquet"
         pq.write_table(table, str(pq_path))
-        parquet_to_bcsv(str(pq_path), str(bcsv_path), "x:float")
+        parquet_to_bcsv(str(pq_path), str(bcsv_path))
         result = bcsv_to_parquet(str(bcsv_path), str(rq_path), force=True)
         assert result["rows"] == 3
         rt = pq.read_table(str(rq_path))
@@ -508,7 +479,6 @@ class TestBenchmarkOutputConsistency:
         parquet_to_bcsv(
             str(pq_path),
             str(bcsv_path),
-            _flat_layout(),
             benchmark=True,
             json_output=True,
         )
@@ -522,16 +492,6 @@ class TestUnderscoreRejection:
     """Regression: column names ending in '_' are rejected to prevent
     silent corruption during escape-suffix stripping on roundtrip."""
 
-    def test_trailing_underscore_rejected_layout(self, tmp_path):
-        table = pa.table({"id": pa.array([1])})
-        pq.write_table(table, str(tmp_path / "u.parquet"))
-        with pytest.raises(ValueError, match="ends with '_'"):
-            parquet_to_bcsv(
-                str(tmp_path / "u.parquet"),
-                str(tmp_path / "u.bcsv"),
-                "id_:int64",
-            )
-
     def test_trailing_underscore_rejected_parquet(self, tmp_path):
         # Column name ending in _ in the original Parquet schema
         table = pa.table({"data_": pa.array([1.0], type=pa.float64())})
@@ -540,7 +500,6 @@ class TestUnderscoreRejection:
             parquet_to_bcsv(
                 str(tmp_path / "u2.parquet"),
                 str(tmp_path / "u2.bcsv"),
-                "data_:double",
             )
 
 
@@ -559,7 +518,6 @@ class TestFP16FixedSizeListRoundtrip:
         parquet_to_bcsv(
             str(pq_path),
             str(bcsv_path),
-            "id:int64,vals[0]:float,vals[1]:float,vals[2]:float",
         )
         result = bcsv_to_parquet(str(bcsv_path), str(rt_path), force=True)
         assert result["rows"] == 3
@@ -579,7 +537,7 @@ class TestRowGroupSize:
         bcsv_path = tmp_path / "rg.bcsv"
         rt_path = tmp_path / "rg_rt.parquet"
         pq.write_table(table, str(pq_path))
-        parquet_to_bcsv(str(pq_path), str(bcsv_path), _flat_layout())
+        parquet_to_bcsv(str(pq_path), str(bcsv_path))
         bcsv_to_parquet(str(bcsv_path), str(rt_path), row_group_size=3, force=True)
         rt_meta = pq.read_metadata(str(rt_path))
         assert rt_meta.num_row_groups == 4  # 10 rows / 3 = 4 groups (3,3,3,1)
@@ -596,26 +554,7 @@ class TestNestedUnderscore:
         bcsv_path = tmp_path / "nu.bcsv"
         pq.write_table(table, str(pq_path))
         with pytest.raises(ValueError, match="ends with '_'"):
-            parquet_to_bcsv(str(pq_path), str(bcsv_path), "loc_.lat:float")
-
-
-class TestDuplicateLayoutColumns:
-    """Regression: duplicate column names in --layout must be rejected."""
-
-    def test_duplicate_columns_rejected(self, tmp_path):
-        pq_path = tmp_path / "dup.parquet"
-        bcsv_path = tmp_path / "dup.bcsv"
-        table = pa.table(
-            {
-                "id": pa.array([1], type=pa.int64()),
-                "val": pa.array([1.0], type=pa.float32()),
-            }
-        )
-        pq.write_table(table, str(pq_path))
-        with pytest.raises(ValueError, match="Duplicate"):
-            parquet_to_bcsv(
-                str(pq_path), str(bcsv_path), "id:int64,val:float,id:double"
-            )
+            parquet_to_bcsv(str(pq_path), str(bcsv_path))
 
 
 if __name__ == "__main__":

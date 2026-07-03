@@ -5,7 +5,6 @@ type mapping, and NULL detection.
 """
 
 import unittest
-import warnings
 from typing import List, Tuple
 
 import pyarrow as pa
@@ -16,29 +15,24 @@ from pybcsv.parquet_utils import (
     _check_nulls,
     _decompose_name,
     _flat_arrow_schema,
+    _flat_schema_to_bcsv_layout,
     _resolve_codec_flags,
     _strip_escape_suffixes,
     bcsv_to_parquet,
     flatten_batch,
     flatten_parquet_schema,
-    parse_layout,
     parquet_to_bcsv,
     unflatten_batch,
     unflatten_schema_to_arrow,
-    validate_layout_against_parquet,
     validate_parquet_schema,
     _MAX_FLATTEN_DEPTH,
     _MAX_FIXED_LIST_SIZE,
-    _FP16_TYPES,
+    _ARROW_TO_BCSV,
 )
 
 
 def _make_parquet(tmp: str, table: pa.Table) -> None:
     pq.write_table(table, tmp)
-
-
-def _make_layout(*cols: str):
-    return ",".join(cols)
 
 
 class TestDecomposeName(unittest.TestCase):
@@ -246,102 +240,51 @@ class TestUnflattenSchema(unittest.TestCase):
         self.assertEqual(schema.field(0).name, "a")
 
 
-class TestParseLayout(unittest.TestCase):
-    """Test parse_layout CLI layout string parser."""
+class TestFlatSchemaToBcsvLayout(unittest.TestCase):
+    """Test _flat_schema_to_bcsv_layout builds layout from flattened schema."""
 
-    def test_parse_layout_valid(self):
-        result = parse_layout("a:int64,b:float")
-        self.assertEqual(len(result), 2)
-        self.assertEqual(result[0], ("a", pybcsv.ColumnType.INT64))
-        self.assertEqual(result[1], ("b", pybcsv.ColumnType.FLOAT))
+    def test_basic_types(self):
+        flat = [("id", pa.int64()), ("val", pa.float32()), ("name", pa.string())]
+        layout = _flat_schema_to_bcsv_layout(flat)
+        names = layout.get_column_names()
+        types = layout.get_column_types()
+        self.assertEqual(names, ["id", "val", "name"])
+        self.assertEqual(types[0], pybcsv.ColumnType.INT64)
+        self.assertEqual(types[1], pybcsv.ColumnType.FLOAT)
+        self.assertEqual(types[2], pybcsv.ColumnType.STRING)
 
-    def test_parse_layout_invalid_type(self):
+    def test_unsupported_type_rejected(self):
+        flat = [("ts", pa.timestamp("us"))]
         with self.assertRaises(ValueError) as ctx:
-            parse_layout("a:bigint")
-        self.assertIn("Unknown type", str(ctx.exception))
+            _flat_schema_to_bcsv_layout(flat)
+        self.assertIn("Cannot map Parquet type", str(ctx.exception))
 
-    def test_parse_layout_empty(self):
-        with self.assertRaises(ValueError):
-            parse_layout("")
+    def test_empty_schema(self):
+        layout = _flat_schema_to_bcsv_layout([])
+        self.assertEqual(len(layout.get_column_names()), 0)
 
-    def test_parse_layout_duplicate_columns(self):
-        with self.assertRaises(ValueError) as ctx:
-            parse_layout("a:int64,b:float,a:string")
-        self.assertIn("Duplicate", str(ctx.exception))
+    def test_all_mapped_types(self):
+        """Every Arrow type that the flatten step can produce must map to BCSV.
 
-    def test_parse_layout_with_brackets(self):
-        result = parse_layout("vals[0]:double,vals[1]:double")
-        names = [n for n, _ in result]
-        self.assertIn("vals[0]", names)
-        self.assertIn("vals[1]", names)
+        Iterates _FLAT_ARROW_TYPES (the accepted input set) rather than
+        _ARROW_TO_BCSV.keys() to catch missing entries.  fp16/bfloat16 are
+        widened to float32 by the flatten step, so they are not in the flat
+        schema; those are excluded here.
+        """
+        from pybcsv.parquet_utils import _FLAT_ARROW_TYPES, _FP16_TYPES
 
-    def test_parse_layout_with_dots(self):
-        result = parse_layout("loc.lat:float,loc.lon:float")
-        self.assertEqual(len(result), 2)
+        for arrow_type in _FLAT_ARROW_TYPES:
+            if arrow_type in _FP16_TYPES:
+                continue  # widened to float32 before reaching this function
+            flat = [("x", arrow_type)]
+            layout = _flat_schema_to_bcsv_layout(flat)
+            self.assertEqual(len(layout.get_column_names()), 1,
+                             f"Missing mapping for {arrow_type}")
 
-    def test_parse_layout_all_types(self):
-        valid_types = {
-            "bool",
-            "int8",
-            "int16",
-            "int32",
-            "int64",
-            "uint8",
-            "uint16",
-            "uint32",
-            "uint64",
-            "float",
-            "double",
-            "string",
-        }
-        for tname in valid_types:
-            result = parse_layout(f"x:{tname}")
-            self.assertEqual(len(result), 1)
-
-
-class TestLayoutValidation(unittest.TestCase):
-    """Test validate_layout_against_parquet."""
-
-    def test_validate_matching(self):
-        layout = [("a", pybcsv.ColumnType.INT64), ("b", pybcsv.ColumnType.FLOAT)]
-        flat = [("a", pa.int64()), ("b", pa.float32())]
-        validate_layout_against_parquet(layout, flat)  # should not raise
-
-    def test_validate_type_mismatch(self):
-        layout = [("a", pybcsv.ColumnType.INT64)]
-        flat = [("a", pa.float64())]
-        with self.assertRaises(ValueError) as ctx:
-            validate_layout_against_parquet(layout, flat)
-        self.assertIn("mismatch", str(ctx.exception))
-
-    def test_validate_missing_column(self):
-        layout = [("a", pybcsv.ColumnType.INT64)]
-        flat = [("a", pa.int64()), ("b", pa.float64())]
-        with self.assertRaises(ValueError) as ctx:
-            validate_layout_against_parquet(layout, flat)
-        self.assertIn("Missing", str(ctx.exception))
-
-    def test_validate_extra_column(self):
-        layout = [("a", pybcsv.ColumnType.INT64), ("b", pybcsv.ColumnType.FLOAT)]
-        flat = [("a", pa.int64())]
-        with self.assertRaises(ValueError) as ctx:
-            validate_layout_against_parquet(layout, flat)
-        self.assertIn("Extra", str(ctx.exception))
-
-    def test_type_float16_widened(self):
-        layout = [("x", pybcsv.ColumnType.FLOAT)]
-        flat = [("x", pa.float32())]
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            validate_layout_against_parquet(layout, flat)
-        # Should warn about float16 widening
-        self.assertTrue(len(w) == 0)
-
-    def test_type_float16_bfloat16(self):
-        layout = [("x", pybcsv.ColumnType.FLOAT)]
-        flat = [("x", pa.float32())]
-        # BFloat16 is treated same as float16
-        validate_layout_against_parquet(layout, flat)
+    def test_large_string_maps_to_string(self):
+        """pa.large_string() must map to BCSV STRING (not raise)."""
+        layout = _flat_schema_to_bcsv_layout([("txt", pa.large_string())])
+        self.assertEqual(layout.get_column_types()[0], pybcsv.ColumnType.STRING)
 
 
 class TestUnsupportedTypes(unittest.TestCase):
@@ -444,16 +387,6 @@ class TestUnderscoreNameRejection(unittest.TestCase):
     """Regression: column names ending in '_' must be rejected to prevent
     silent data corruption during escape-suffix stripping on roundtrip."""
 
-    def test_parse_layout_rejects_trailing_underscore(self):
-        with self.assertRaises(ValueError) as ctx:
-            parse_layout("data_:int64")
-        self.assertIn("ends with '_'", str(ctx.exception))
-
-    def test_parse_layout_allows_internal_underscore(self):
-        # Loc_.lat is OK — only trailing underscore on the FULL name is rejected
-        result = parse_layout("loc_.lat:float")
-        self.assertEqual(len(result), 1)
-
     def test_flatten_schema_rejects_trailing_underscore(self):
         schema = pa.schema([pa.field("data_", pa.int64())])
         with self.assertRaises(ValueError) as ctx:
@@ -461,7 +394,6 @@ class TestUnderscoreNameRejection(unittest.TestCase):
         self.assertIn("ends with '_'", str(ctx.exception))
 
     def test_flatten_schema_rejects_nested_trailing_underscore(self):
-        # Regression: struct field name ending with '_' must be caught
         schema = pa.schema(
             [pa.field("loc_", pa.struct([pa.field("lat", pa.float32())]))]
         )

@@ -8,7 +8,6 @@ import json
 import os
 import sys
 import time
-import warnings
 from typing import List, Optional, Set, Tuple, Union
 
 import pyarrow as pa
@@ -17,6 +16,13 @@ import pyarrow.parquet as pq
 import pybcsv
 
 # ---- Constants ----
+#
+# Type-mapping notes
+# ------------------
+# Parquet types without a 1:1 BCSV equivalent are widened or collapsed:
+#   • float16 / bfloat16  ->  BCSV FLOAT  (widened to IEEE 754 binary32)
+#   • string / large_string  ->  BCSV STRING  (BCSV has no length distinction)
+
 
 _FLAT_ARROW_TYPES = {
     pa.bool_(),
@@ -57,6 +63,8 @@ except AttributeError:
     # bfloat16 not available in this PyArrow build
     pass
 
+# Maps BCSV types to Arrow for the unflatten path (BCSV -> Parquet).
+# BCSV STRING maps to Arrow string (not large_string) — the common case.
 _BCSV_TO_ARROW = {
     pybcsv.ColumnType.BOOL: pa.bool_(),
     pybcsv.ColumnType.INT8: pa.int8(),
@@ -70,21 +78,6 @@ _BCSV_TO_ARROW = {
     pybcsv.ColumnType.FLOAT: pa.float32(),
     pybcsv.ColumnType.DOUBLE: pa.float64(),
     pybcsv.ColumnType.STRING: pa.string(),
-}
-
-_TYPE_NAME_TO_BCSV = {
-    "bool": pybcsv.ColumnType.BOOL,
-    "int8": pybcsv.ColumnType.INT8,
-    "int16": pybcsv.ColumnType.INT16,
-    "int32": pybcsv.ColumnType.INT32,
-    "int64": pybcsv.ColumnType.INT64,
-    "uint8": pybcsv.ColumnType.UINT8,
-    "uint16": pybcsv.ColumnType.UINT16,
-    "uint32": pybcsv.ColumnType.UINT32,
-    "uint64": pybcsv.ColumnType.UINT64,
-    "float": pybcsv.ColumnType.FLOAT,
-    "double": pybcsv.ColumnType.DOUBLE,
-    "string": pybcsv.ColumnType.STRING,
 }
 
 _MAX_FLATTEN_DEPTH = 64
@@ -565,67 +558,25 @@ def _unsupported_type_error(name: str, arrow_type: pa.DataType) -> ValueError:
     return ValueError(f"Unsupported Parquet type '{type_name}' for column '{name}'.")
 
 
-def parse_layout(layout_str: str) -> List[Tuple[str, pybcsv.ColumnType]]:
-    """Parse '--layout col1:type1,col2:type2,...' into (name, ColumnType) pairs."""
-    if not layout_str.strip():
-        raise ValueError("--layout cannot be empty.")
-
-    result: List[Tuple[str, pybcsv.ColumnType]] = []
-    seen_names: Set[str] = set()
-    for item in layout_str.split(","):
-        item = item.strip()
-        if not item:
-            continue
-        colon_idx = item.rindex(":")
-        name = item[:colon_idx].strip()
-        type_str = item[colon_idx + 1 :].strip()
-        if type_str not in _TYPE_NAME_TO_BCSV:
-            valid = ", ".join(sorted(_TYPE_NAME_TO_BCSV))
-            raise ValueError(f"Unknown type '{type_str}' in layout. Valid: {valid}")
-        if name in seen_names:
-            raise ValueError(f"Duplicate column name '{name}' in layout.")
-        seen_names.add(name)
-        _check_underscore_name(name)
-        result.append((name, _TYPE_NAME_TO_BCSV[type_str]))
-    return result
-
-
-def validate_layout_against_parquet(
-    layout_defs: List[Tuple[str, pybcsv.ColumnType]],
+def _flat_schema_to_bcsv_layout(
     flat_schema: List[Tuple[str, pa.DataType]],
-) -> None:
-    """Ensure user-provided layout matches the flattened Parquet schema."""
-    layout_names = {n for n, _ in layout_defs}
-    parquet_names = {n for n, _ in flat_schema}
+) -> pybcsv.Layout:
+    """Build a pybcsv.Layout from a flattened Parquet schema.
 
-    if layout_names != parquet_names:
-        extra = layout_names - parquet_names
-        missing = parquet_names - layout_names
-        parts = []
-        if extra:
-            parts.append(f"Extra in layout: {', '.join(sorted(extra))}")
-        if missing:
-            parts.append(f"Missing in layout: {', '.join(sorted(missing))}")
-        raise ValueError(f"Layout mismatch: {'; '.join(parts)}")
-
-    parquet_types: dict = dict(flat_schema)
-
-    for name, btype in layout_defs:
-        pq_type = parquet_types[name]
-
-        bcsv_type = _ARROW_TO_BCSV.get(pq_type)
-        if bcsv_type is None:
+    Arrow types are mapped to BCSV types using _ARROW_TO_BCSV.  Types
+    without a mapping are rejected with a clear error.
+    """
+    layout = pybcsv.Layout()
+    for name, arrow_type in flat_schema:
+        btype = _ARROW_TO_BCSV.get(arrow_type)
+        if btype is None:
             raise ValueError(
-                f"Layout mismatch for '{name}': Parquet type '{pq_type}' "
-                f"cannot be mapped to BCSV."
+                f"Cannot map Parquet type '{arrow_type}' to BCSV for column "
+                f"'{name}'. Supported leaf types: bool, int8/16/32/64, "
+                "uint8/16/32/64, float32/64, string, large_string."
             )
-
-        if btype != bcsv_type:
-            raise ValueError(
-                f"Layout mismatch for '{name}': Parquet type is "
-                f"'{pq_type}' but layout specifies "
-                f"'{btype.name.lower()}'. Expected '{bcsv_type.name.lower()}'. "
-            )
+        layout.add_column(name, btype)
+    return layout
 
 
 def validate_parquet_schema(pf: pq.ParquetFile) -> None:
@@ -794,7 +745,6 @@ def _resolve_codec_flags(
 def parquet_to_bcsv(
     input_path: str,
     output_path: str,
-    layout: str,
     row_codec: str = "delta",
     file_codec: str = "packet_lz4_batch",
     compression_level: int = 1,
@@ -805,26 +755,25 @@ def parquet_to_bcsv(
     benchmark: bool = False,
     json_output: bool = False,
 ) -> dict:
-    """Convert a Parquet file to BCSV with streaming batches."""
+    """Convert a Parquet file to BCSV with streaming batches.
+
+    The BCSV layout is derived automatically from the Parquet schema.
+    """
     if not force and os.path.exists(output_path):
         raise FileExistsError(
             f"Output file '{output_path}' already exists. Use --force to overwrite."
         )
 
     t0 = time.monotonic()
-    layout_defs = parse_layout(layout)
     pf = pq.ParquetFile(input_path)
 
     validate_parquet_schema(pf)
 
     flat_schema = flatten_parquet_schema(pf.schema_arrow)
-    validate_layout_against_parquet(layout_defs, flat_schema)
-
     flat_arrow_schema = pa.schema(flat_schema)
-    bcsv_layout = pybcsv.Layout()
-    for name, btype in layout_defs:
-        bcsv_layout.add_column(name, btype)
+    bcsv_layout = _flat_schema_to_bcsv_layout(flat_schema)
 
+    num_cols = len(bcsv_layout.get_column_names())
     total_rows = 0
     rg_count = pf.metadata.num_row_groups
     flags, effective_level = _resolve_codec_flags(file_codec, compression_level)
@@ -833,7 +782,7 @@ def parquet_to_bcsv(
         print(
             f"Converting {pf.metadata.num_rows} rows, "
             f"{rg_count} row group(s) -> "
-            f"{len(layout_defs)} BCSV columns",
+            f"{num_cols} BCSV columns",
             file=sys.stderr,
         )
 
@@ -1057,15 +1006,6 @@ def parquet2bcsv_cli() -> None:
         help="Overwrite existing output",
     )
     parser.add_argument(
-        "--layout",
-        required=True,
-        help=(
-            "Column layout (REQUIRED). "
-            '"col1:type1,col2:type2,..."  '
-            "Types: bool, int8-64, uint8-64, float, double, string"
-        ),
-    )
-    parser.add_argument(
         "--row-codec",
         default="delta",
         choices=["delta", "zoh", "flat"],
@@ -1126,7 +1066,6 @@ def parquet2bcsv_cli() -> None:
         parquet_to_bcsv(
             input_path=args.input,
             output_path=output,
-            layout=args.layout,
             row_codec=args.row_codec,
             file_codec=args.file_codec,
             compression_level=args.compression_level,
