@@ -14,7 +14,6 @@ import pyarrow.parquet as pq
 import pybcsv
 from pybcsv.parquet_utils import (
     _check_nulls,
-    _check_arrow_type_supported,
     _decompose_name,
     _flat_arrow_schema,
     _resolve_codec_flags,
@@ -265,6 +264,11 @@ class TestParseLayout(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_layout("")
 
+    def test_parse_layout_duplicate_columns(self):
+        with self.assertRaises(ValueError) as ctx:
+            parse_layout("a:int64,b:float,a:string")
+        self.assertIn("Duplicate", str(ctx.exception))
+
     def test_parse_layout_with_brackets(self):
         result = parse_layout("vals[0]:double,vals[1]:double")
         names = [n for n, _ in result]
@@ -344,22 +348,22 @@ class TestUnsupportedTypes(unittest.TestCase):
     """Test rejection of unsupported Parquet types."""
 
     def test_unsupported_timestamp(self):
-        field = pa.field("ts", pa.timestamp("us"))
+        schema = pa.schema([pa.field("ts", pa.timestamp("us"))])
         with self.assertRaises(ValueError) as ctx:
-            _check_arrow_type_supported(field)
+            flatten_parquet_schema(schema)
         self.assertIn("Unsupported", str(ctx.exception))
 
     def test_unsupported_decimal(self):
-        field = pa.field("d", pa.decimal128(10, 2))
+        schema = pa.schema([pa.field("d", pa.decimal128(10, 2))])
         with self.assertRaises(ValueError) as ctx:
-            _check_arrow_type_supported(field)
+            flatten_parquet_schema(schema)
         msg = str(ctx.exception)
         self.assertTrue("Unsupported" in msg or "decimal" in msg.lower())
 
     def test_unsupported_map(self):
-        field = pa.field("m", pa.map_(pa.string(), pa.int64()))
+        schema = pa.schema([pa.field("m", pa.map_(pa.string(), pa.int64()))])
         with self.assertRaises(ValueError) as ctx:
-            _check_arrow_type_supported(field)
+            flatten_parquet_schema(schema)
         msg = str(ctx.exception)
         self.assertTrue("Map" in msg or "unsupported" in msg.lower())
 
@@ -456,6 +460,15 @@ class TestUnderscoreNameRejection(unittest.TestCase):
             flatten_parquet_schema(schema)
         self.assertIn("ends with '_'", str(ctx.exception))
 
+    def test_flatten_schema_rejects_nested_trailing_underscore(self):
+        # Regression: struct field name ending with '_' must be caught
+        schema = pa.schema(
+            [pa.field("loc_", pa.struct([pa.field("lat", pa.float32())]))]
+        )
+        with self.assertRaises(ValueError) as ctx:
+            flatten_parquet_schema(schema)
+        self.assertIn("ends with '_'", str(ctx.exception))
+
     def test_flatten_schema_allows_internal_underscore(self):
         schema = pa.schema([pa.field("my_data", pa.int64())])
         flat = flatten_parquet_schema(schema)
@@ -483,8 +496,8 @@ class TestFP16FixedSizeList(unittest.TestCase):
         self.assertEqual(flat, expected)
 
     def test_check_fp16_fixed_list_supported(self):
-        field = pa.field("vals", pa.list_(pa.float16(), 3))
-        _check_arrow_type_supported(field)  # should not raise
+        schema = pa.schema([pa.field("vals", pa.list_(pa.float16(), 3))])
+        flatten_parquet_schema(schema)  # should not raise
 
 
 class TestFlatArrowSchema(unittest.TestCase):

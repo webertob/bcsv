@@ -570,5 +570,53 @@ class TestFP16FixedSizeListRoundtrip:
         assert rtv == orig
 
 
+class TestRowGroupSize:
+    """Regression: --row-group-size must produce multiple row groups."""
+
+    def test_row_group_size_produces_groups(self, tmp_path):
+        table = _flat_table(10)
+        pq_path = tmp_path / "rg.parquet"
+        bcsv_path = tmp_path / "rg.bcsv"
+        rt_path = tmp_path / "rg_rt.parquet"
+        pq.write_table(table, str(pq_path))
+        parquet_to_bcsv(str(pq_path), str(bcsv_path), _flat_layout())
+        bcsv_to_parquet(str(bcsv_path), str(rt_path), row_group_size=3, force=True)
+        rt_meta = pq.read_metadata(str(rt_path))
+        assert rt_meta.num_row_groups == 4  # 10 rows / 3 = 4 groups (3,3,3,1)
+
+
+class TestNestedUnderscore:
+    """Regression: nested struct field names ending in '_' must be rejected."""
+
+    def test_nested_underscore_rejected_parquet(self, tmp_path):
+        lats = pa.array([10.0, 20.0], type=pa.float32())
+        structs = pa.StructArray.from_arrays([lats], names=["lat"])
+        table = pa.table({"loc_": structs})
+        pq_path = tmp_path / "nu.parquet"
+        bcsv_path = tmp_path / "nu.bcsv"
+        pq.write_table(table, str(pq_path))
+        with pytest.raises(ValueError, match="ends with '_'"):
+            parquet_to_bcsv(str(pq_path), str(bcsv_path), "loc_.lat:float")
+
+
+class TestDuplicateLayoutColumns:
+    """Regression: duplicate column names in --layout must be rejected."""
+
+    def test_duplicate_columns_rejected(self, tmp_path):
+        pq_path = tmp_path / "dup.parquet"
+        bcsv_path = tmp_path / "dup.bcsv"
+        table = pa.table(
+            {
+                "id": pa.array([1], type=pa.int64()),
+                "val": pa.array([1.0], type=pa.float32()),
+            }
+        )
+        pq.write_table(table, str(pq_path))
+        with pytest.raises(ValueError, match="Duplicate"):
+            parquet_to_bcsv(
+                str(pq_path), str(bcsv_path), "id:int64,val:float,id:double"
+            )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

@@ -12,9 +12,25 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **CLI: `parquet2bcsv` and `bcsv2parquet`** — Streaming Parquet <-> BCSV conversion
+  tools. `parquet2bcsv` converts Parquet files to BCSV with schema flattening,
+  type widening (float16 -> float32), and NULL rejection. `bcsv2parquet` converts
+  BCSV back to Parquet with optional schema unflattening, column selection, and
+  row slicing. Both support `--benchmark` and `--json` timing output.
+
 ### Fixed
 - `bcsvNarrowType` and `bcsvCompare` were missing from the CMake `install()` target;
   `bash scripts/install.sh` now deploys both tools.
+- **bcsv2parquet: `--row-group-size` was ignored** — The CLI flag was accepted but
+  silently discarded with a warning. The parameter is now passed through to
+  `ParquetWriter.write_batch()`.
+- **parquet2bcsv: nested field names ending with '_' were not rejected** — A Parquet
+  struct field like `loc_` with child `lat` would flatten to `loc_.lat` which bypassed
+  the trailing-underscore check. The check is now enforced on every path component
+  in both flat and nested schemas.
+- **bcsv2parquet: dead code after return** — Removed unreachable `unflatten_batch`
+  call after function return.
 
 ### Changed
 - **CLI: `bcsvNarrowType` argument redesign** — Mode is now inferred from positional

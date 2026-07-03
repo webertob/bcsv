@@ -43,7 +43,7 @@ protected:
 
     void SetUp() override {
         const auto* info = ::testing::UnitTest::GetInstance()->current_test_info();
-        test_dir_        = (fs::path("test_temp") /
+        test_dir_        = (fs::path("tmp") /
                             (std::string(info->test_suite_name()) + "_" +
                              info->name()))
                                .string();
