@@ -75,6 +75,27 @@ except ImportError:
         )
 
 
+# Try to import Parquet utilities if pyarrow is available
+try:
+    from .parquet_utils import parquet_to_bcsv, bcsv_to_parquet
+
+    _PARQUET_AVAILABLE = True
+except ImportError:
+    _PARQUET_AVAILABLE = False
+
+    def parquet_to_bcsv(*args, **kwargs):
+        raise ImportError(
+            "pyarrow is required for Parquet conversion. "
+            "Install with: pip install pybcsv[arrow]"
+        )
+
+    def bcsv_to_parquet(*args, **kwargs):
+        raise ImportError(
+            "pyarrow is required for Parquet conversion. "
+            "Install with: pip install pybcsv[arrow]"
+        )
+
+
 def iter_arrow_batches(reader, *, batch_size=512000, columns=None, start_row=0):
     """Yield pa.RecordBatch objects from an already-open ReaderDirectAccess.
 
@@ -113,6 +134,9 @@ __all__ = [
     "read_to_arrow",
     "write_from_arrow",
     "iter_arrow_batches",
+    # Parquet interop
+    "parquet_to_bcsv",
+    "bcsv_to_parquet",
     # Polars interop
     "read_polars",
     "write_polars",
