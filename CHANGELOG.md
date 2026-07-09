@@ -12,6 +12,43 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- **parquet2bcsv/bcsv2parquet: FixedSizeList columns were transposed** — element
+  `i` of a fixed-size list was extracted as a contiguous block
+  (`child[i*N:(i+1)*N]`) instead of a strided per-element gather, scrambling the
+  flat BCSV columns and corrupting streamed round-trips when read/write batch
+  boundaries differ. Both the flatten and unflatten paths now use the correct
+  (offset-safe) strided transform.
+- **parquet2bcsv: name-collision escaping was one-way** — a struct path escaped to
+  `a_.b` (because a literal `a.b` column existed) failed to extract with
+  `Column 'a_' not found`. Escape suffixes are now stripped when navigating.
+  `bcsv2parquet --unflatten` now fails loudly on truly ambiguous collisions instead
+  of silently merging columns.
+- **bcsv2parquet: `--columns` reordering was ignored on the default (unflatten)
+  path** — output followed file order and disagreed with `--no-unflatten` and the
+  empty-file fallback. The requested column order is now honored consistently.
+- **parquet2bcsv: null-rejection reported a wrong (sometimes negative) row number**
+  for sliced arrays with a non-zero offset. Null location is now offset-safe.
+- **bcsvNarrowType: `--stringsToValue` could narrow strings to `FLOAT` losing
+  precision** — the string path skipped the `double->float` round-trip check, so e.g.
+  `"0.1"` became `0.1f`. It now falls back to `DOUBLE` when a value doesn't survive
+  float32.
+- **bcsvNarrowType: signed columns flipped to same-width unsigned for 0 bytes saved**
+  — an all-non-negative `INT8/16/32` was "narrowed" to `UINT8/16/32` (a pointless
+  signedness change). Same-width lateral flips are now suppressed (mirrors the
+  existing `INT64->UINT64` guard).
+- **bcsvNarrowType: source packet/block size was not preserved** — conversion reset
+  the packet size to the default; it now reuses the input file's packet size,
+  honoring the encoding-preservation invariant.
+
+### Changed
+- `bcsv2parquet`: corrected the `--row-group-size` help text (the parameter is
+  applied per streamed batch and is honored, not ignored).
+- Documented `parquet2bcsv`/`bcsv2parquet` (usage, schema mapping, limitations) in
+  the Python README; hardened the conversion + narrowing test suites with
+  per-element, multi-batch, collision, ordering, empty-file, type/value-fidelity,
+  and packet-size regression tests.
+
 ## [1.5.8] - 2026-07-04
 
 ### Added

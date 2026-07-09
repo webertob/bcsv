@@ -278,7 +278,15 @@ struct ColumnProbeState {
             min_s = v;
         if (max_s < v)
             max_s = v;
-        optimal_type = deriveIntSigned(min_s, max_s);
+        bcsv::ColumnType cand = deriveIntSigned(min_s, max_s);
+        // Don't flip a signed column to a same-width unsigned type: it saves 0
+        // bytes and only changes signedness (mirrors the explicit INT64→UINT64
+        // guard in deriveIntSigned).  BOOL (values in {0,1}) is a genuine
+        // narrowing and is always kept.
+        if (cand != bcsv::ColumnType::BOOL &&
+            bcsv::sizeOf(cand) >= bcsv::sizeOf(original_type))
+            cand = original_type;
+        optimal_type = cand;
     }
 
     void visitIntegerUnsigned(uint64_t v) {
@@ -327,19 +335,23 @@ struct ColumnProbeState {
                 }
             }
         }
+
+        // Float round-trip: does v survive a double→float→double cast bit-exactly?
+        // Consulted when narrowing DOUBLE columns AND string→numeric columns to
+        // FLOAT.  Tracking it here (not only in visitFloat) is what prevents
+        // lossy string→FLOAT narrowing such as "0.1" → 0.1f.
+        if (f_float_roundtrip) {
+            const float  as_float = static_cast<float>(v);
+            const double back     = static_cast<double>(as_float);
+            if (std::memcmp(&v, &back, sizeof(double)) != 0)
+                f_float_roundtrip = false;
+        }
     }
 
     void visitFloat(double v) {
         if (std::isfinite(v)) {
+            // accumulateFinite updates the float round-trip flag for all origins.
             accumulateFinite(v);
-
-            if (original_type == bcsv::ColumnType::DOUBLE) {
-                float  as_float  = static_cast<float>(v);
-                double back      = static_cast<double>(as_float);
-                bool   same_bits = (std::memcmp(&v, &back, sizeof(double)) == 0);
-                if (!same_bits)
-                    f_float_roundtrip = false;
-            }
         } else {
             // Non-finite values (NaN, ±Inf) cannot narrow to integer or bool
             f_ladder_alive = false;
@@ -600,6 +612,7 @@ static std::vector<ColumnProbeState> scanFile(
     size_t&                       total_rows_out,
     bcsv::FileFlags&              flags_out,
     uint8_t&                      comp_out,
+    uint32_t&                     packet_size_out,
     std::vector<std::string>&     col_names_out,
     std::vector<size_t>&          selected_cols_out,
     bool&                         scope_active_out) {
@@ -716,8 +729,9 @@ static std::vector<ColumnProbeState> scanFile(
         }
     }
     // Capture file metadata while reader is still open
-    flags_out = reader.fileHeader().getFlags();
-    comp_out  = reader.fileHeader().getCompressionLevel();
+    flags_out       = reader.fileHeader().getFlags();
+    comp_out        = reader.fileHeader().getCompressionLevel();
+    packet_size_out = reader.fileHeader().getPacketSize();
     reader.close();
 
     // Empty-column guard
@@ -872,6 +886,7 @@ static void convertFile(
     const std::vector<ColumnProbeState>& probes,
     bcsv::FileFlags                      flags,
     uint8_t                              comp_level,
+    size_t                               block_size_kb,
     bool                                 verbose) {
 
     bcsv::Reader<bcsv::Layout> reader;
@@ -897,7 +912,7 @@ static void convertFile(
 
     size_t total_rows = 0;
     bcsv_cli::withWriter(dst_layout, names.row_codec, [&](auto& writer) {
-        writer.open(output_path, true, comp_level, bcsv::DEFAULT_PACKET_SIZE_KB, flags);
+        writer.open(output_path, true, comp_level, block_size_kb, flags);
 
         while (reader.readNext()) {
             ++total_rows;
@@ -1004,13 +1019,21 @@ int main(int argc, char* argv[]) {
         size_t                   total_rows = 0;
         bcsv::FileFlags          flags;
         uint8_t                  comp;
+        uint32_t                 packet_size = 0;
         std::vector<std::string> col_names;
         std::vector<size_t>      selected_cols;
         bool                     scope_active = false;
         auto                     probes = scanFile(config.input_file, config.cols_spec,
                                                    config.stringsToValue, config.verbose,
-                                                   total_rows, flags, comp, col_names,
-                                                   selected_cols, scope_active);
+                                                   total_rows, flags, comp, packet_size,
+                                                   col_names, selected_cols, scope_active);
+
+        // Preserve the source packet/block size (bytes → KB; it was written as
+        // blockSizeKB*1024, so this recovers it exactly).  Fall back to the
+        // default only for degenerate/zero values.
+        const size_t block_size_kb = packet_size >= 1024
+                                         ? packet_size / 1024
+                                         : bcsv::DEFAULT_PACKET_SIZE_KB;
 
         // Analyze output
         bool has_narrowed = printAnalysis(config.input_file, col_names, probes, total_rows,
@@ -1051,7 +1074,7 @@ int main(int argc, char* argv[]) {
 
                     try {
                         convertFile(config.input_file, tmp_path.string(), probes,
-                                    flags, comp, config.verbose);
+                                    flags, comp, block_size_kb, config.verbose);
                         fs::rename(tmp_path, input_fs);
                         if (config.verbose) {
                             std::cerr << "In-place overwrite complete." << std::endl;
@@ -1097,7 +1120,7 @@ int main(int argc, char* argv[]) {
 
                     try {
                         convertFile(config.input_file, effective_output, probes,
-                                    flags, comp, config.verbose);
+                                    flags, comp, block_size_kb, config.verbose);
                         if (config.verbose) {
                             std::cerr << "Converted file written to " << effective_output << std::endl;
                         }

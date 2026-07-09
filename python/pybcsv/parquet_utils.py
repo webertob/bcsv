@@ -11,6 +11,7 @@ import time
 from typing import List, Optional, Set, Tuple, Union
 
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 
 import pybcsv
@@ -252,8 +253,24 @@ def flatten_batch(
 
 
 def _extract_flat_array(batch: pa.RecordBatch, flat_name: str) -> pa.Array:
-    """Navigate into nested columns to extract a flat array."""
-    parts = _decompose_name(flat_name)
+    """Navigate into nested columns to extract a flat array.
+
+    For already-flattened Parquet files whose column names contain literal
+    dots, tries an exact match first.  If found, returns the column
+    directly without decomposition.
+    """
+    # Fast path: flat_name matches a literal column name (common for
+    # pre-flattened Parquet files with dot-separated identifiers).
+    for i in range(len(batch.schema)):
+        if batch.schema.field(i).name == flat_name:
+            return batch.column(i)
+
+    # Undo collision-escape underscores before navigating: a struct path whose
+    # flattened name collided with a literal dotted column was escaped (e.g.
+    # 'a.b' -> 'a_.b') during flattening.  The batch's actual struct is named
+    # 'a', so strip the escape suffixes to navigate it.  Real identifiers can
+    # never end with '_' (rejected at flatten time), so this is unambiguous.
+    parts = _strip_escape_suffixes(_decompose_name(flat_name))
     root_name: str = parts[0]  # type: ignore[assignment]
 
     col_idx = -1
@@ -275,9 +292,17 @@ def _extract_flat_array(batch: pa.RecordBatch, flat_name: str) -> pa.Array:
                         f"List index {part} out of range [0, {list_size}) "
                         f"for column '{flat_name}'."
                     )
+                # FixedSizeList values are row-major: element `i` of row `r` lives
+                # at child[r*list_size + i].  Extracting element `part` across all
+                # rows is therefore a *strided* gather, not a contiguous slice.
+                # flatten() yields the logical, offset-adjusted row-major child.
                 num_rows = len(arr)
-                child_arr = arr.values
-                arr = child_arr.slice(part * num_rows, num_rows)
+                flat_values = arr.flatten()
+                gather = pa.array(
+                    [r * list_size + part for r in range(num_rows)],
+                    type=pa.int64(),
+                )
+                arr = flat_values.take(gather)
             else:
                 arr = arr[part]
         else:
@@ -451,6 +476,21 @@ def unflatten_schema_to_arrow(
             )
     for n in names:
         _check_underscore_name(n)
+    # Two distinct flat names that collapse to the same nested path (e.g. a
+    # literal 'a.b' column and a struct path escaped to 'a_.b') cannot be
+    # reconstructed unambiguously — the trie would silently merge them and drop
+    # data.  Detect this and fail loudly; --no-unflatten preserves the columns.
+    _seen_paths: dict = {}
+    for n in names:
+        key = tuple(_strip_escape_suffixes(_decompose_name(n)))
+        if key in _seen_paths:
+            path_str = ".".join(str(p) for p in key)
+            raise ValueError(
+                f"Cannot unflatten: columns '{_seen_paths[key]}' and '{n}' both "
+                f"map to nested path '{path_str}'. Re-run with --no-unflatten to "
+                "keep the flat columns."
+            )
+        _seen_paths[key] = n
     trie = _build_trie(names, arrow_types)
     fields = _trie_to_arrow_field(trie)
     return pa.schema(fields)
@@ -524,8 +564,20 @@ def _build_nested_array(
                 chunks.append(arr)
             else:
                 raise ValueError(f"Cannot find array for '{bracket}'")
+        # `chunks[i]` holds element `i` of every row (element-major).  The Arrow
+        # FixedSizeList child must be row-major (child[r*list_size + i]), so
+        # re-interleave: child[r*list_size + i] = chunks[i][r] = merged[i*num_rows + r].
         merged = pa.concat_arrays(chunks)
-        return pa.FixedSizeListArray.from_arrays(merged, list_size)
+        num_rows = len(chunks[0])
+        gather = pa.array(
+            [
+                (p % list_size) * num_rows + (p // list_size)
+                for p in range(num_rows * list_size)
+            ],
+            type=pa.int64(),
+        )
+        child = merged.take(gather)
+        return pa.FixedSizeListArray.from_arrays(child, list_size)
 
     struct_fields = field.type
     child_arrays: List[pa.Array] = []
@@ -616,41 +668,28 @@ def validate_parquet_schema(pf: pq.ParquetFile) -> None:
 
 
 def _check_nulls(batch: pa.RecordBatch, row_offset: int) -> None:
-    """Raise ValueError on first null using bitmap scan clamped to batch rows."""
+    """Raise ValueError on the first null in any column of the batch.
+
+    Uses pyarrow-native null location, which is offset-safe for sliced arrays
+    (a hand-rolled bitmap scan mis-attributes the row number when the array has
+    a non-zero offset, e.g. an element extracted from a FixedSizeList).
+    """
     for i in range(len(batch.schema)):
         col = batch.column(i)
         if col.null_count == 0:
             continue
 
         field_name = batch.schema.field(i).name
-        offset = col.offset
-        validity_buffer = col.buffers()[0]
-
-        if validity_buffer is not None:
-            bitmap = validity_buffer.to_pybytes()
-            max_bits = offset + len(col)
-            max_bytes = (max_bits + 7) // 8
-
-            for byte_idx in range(max_bytes):
-                byte_val = bitmap[byte_idx]
-                if byte_val != 0xFF:
-                    for bit_pos in range(8):
-                        absolute_bit = byte_idx * 8 + bit_pos
-                        if absolute_bit >= max_bits:
-                            break
-                        logical_row = absolute_bit - offset
-                        if not (byte_val & (1 << bit_pos)):
-                            raise ValueError(
-                                f"Null value detected in column '{field_name}' "
-                                f"at row {row_offset + logical_row}. "
-                                "BCSV does not support nulls. Filter before conversion."
-                            )
-        else:
-            raise ValueError(
-                f"Null value detected in column '{field_name}' "
-                f"(null_count={col.null_count}). "
-                "BCSV does not support nulls."
-            )
+        first_null = pc.index(pc.is_null(col), True).as_py()
+        location = (
+            f" at row {row_offset + first_null}"
+            if first_null is not None and first_null >= 0
+            else ""
+        )
+        raise ValueError(
+            f"Null value detected in column '{field_name}'{location}. "
+            "BCSV does not support nulls. Filter before conversion."
+        )
 
 
 # ---- Selection & helpers ----
@@ -859,14 +898,20 @@ def bcsv_to_parquet(
     subset_layout: Optional[pybcsv.Layout] = None
     unflatten_schema: Optional[pa.Schema] = None
     if unflatten:
-        if col_names and set(col_names) != set(bcsv_layout.get_column_names()):
+        if col_names and col_names != list(bcsv_layout.get_column_names()):
+            # Build the subset layout in the user-requested column order (col_names),
+            # NOT file order — otherwise the streamed output and the empty-file
+            # fallback (which uses arrow_schema, built from col_names) disagree, and
+            # a requested reordering is silently ignored.
+            type_by_name = dict(
+                zip(
+                    bcsv_layout.get_column_names(),
+                    bcsv_layout.get_column_types(),
+                )
+            )
             subset_layout = pybcsv.Layout()
-            col_set = set(col_names)
-            for n, t in zip(
-                bcsv_layout.get_column_names(), bcsv_layout.get_column_types()
-            ):
-                if n in col_set:
-                    subset_layout.add_column(n, t)
+            for n in col_names:
+                subset_layout.add_column(n, type_by_name[n])
         else:
             subset_layout = bcsv_layout
         layout_names = list(subset_layout.get_column_names())
@@ -1135,7 +1180,8 @@ def bcsv2parquet_cli() -> None:
         "--row-group-size",
         type=int,
         default=None,
-        help="Row group size in PyArrow write_table (not supported in ParquetWriter streaming mode)",
+        help="Max rows per Parquet row group (applied per streamed batch; "
+        "values larger than --chunk-size are bounded by the batch size)",
     )
     mut_unflatten = parser.add_mutually_exclusive_group()
     mut_unflatten.add_argument(

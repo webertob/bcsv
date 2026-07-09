@@ -885,3 +885,94 @@ TEST_F(NarrowTypeTest, ColsOutOfRange) {
     EXPECT_EQ(rc, 2) << "Out-of-range column selection must be an arg error";
 }
 
+// ── Regression: string decimals that don't survive float32 must stay DOUBLE ──
+// (Bug: the string path skipped the double→float round-trip check and narrowed
+//  "0.1" to FLOAT, corrupting it to 0.10000000149...)
+TEST_F(NarrowTypeTest, StringDecimalKeepsDoubleNotFloat) {
+    auto path = fs::path(test_dir_) / "data.bcsv";
+    writeStringFile(path.string(), {"0.1", "0.2", "3.14159265358979"});
+
+    auto        out = path.parent_path() / "out.bcsv";
+    std::string sout, serr;
+    int         rc = runNarrow({"--stringsToValue", "-o", out.string(),
+                                path.string()},
+                               sout, serr);
+    ASSERT_EQ(rc, 0) << sout;
+
+    bcsv::Reader<bcsv::Layout> reader;
+    ASSERT_TRUE(reader.open(out.string()));
+    EXPECT_EQ(reader.layout().columnType(0), bcsv::ColumnType::DOUBLE);
+
+    double expected[] = {0.1, 0.2, 3.14159265358979};
+    size_t idx        = 0;
+    while (reader.readNext()) {
+        double val;
+        ASSERT_TRUE(reader.row().get<double>(0, val));
+        EXPECT_DOUBLE_EQ(val, expected[idx]);  // lossless vs the parsed double
+        ++idx;
+    }
+    EXPECT_EQ(idx, 3u);
+    reader.close();
+}
+
+// ── Regression: a signed column must NOT flip to same-width unsigned (0 bytes) ──
+TEST_F(NarrowTypeTest, Int32NonNegativeNoUnsignedFlip) {
+    auto path = fs::path(test_dir_) / "data.bcsv";
+    {
+        bcsv::Layout layout;
+        layout.addColumn({"value", bcsv::ColumnType::INT32});
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        writer.open(path.string(), true);
+        for (int32_t v : {0, 1000000, 500, 42}) {
+            writer.row().set(0, v);
+            writer.writeRow();
+        }
+        writer.close();
+    }
+
+    std::string sout, serr;
+    int         rc = runNarrow({path.string()}, sout, serr);  // analyze only
+    ASSERT_EQ(rc, 0) << sout;
+    // INT32 -> UINT32 is a 0-byte lateral flip and must be suppressed.
+    EXPECT_NE(sout.find("narrowest"), std::string::npos) << sout;
+    EXPECT_EQ(sout.find("uint32"), std::string::npos) << sout;
+}
+
+// ── Regression: convert must preserve the source packet/block size ──
+TEST_F(NarrowTypeTest, PreservesPacketSize) {
+    auto path = fs::path(test_dir_) / "data.bcsv";
+    {
+        bcsv::Layout layout;
+        layout.addColumn({"value", bcsv::ColumnType::INT64});
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        // Non-default 256 KB packet size; values narrow INT64 -> INT8.
+        writer.open(path.string(), true, 1, 256);
+        for (int64_t v : {-128, 0, 127}) {
+            writer.row().set(0, v);
+            writer.writeRow();
+        }
+        writer.close();
+    }
+
+    uint32_t in_packet = 0;
+    {
+        bcsv::Reader<bcsv::Layout> reader;
+        ASSERT_TRUE(reader.open(path.string()));
+        in_packet = reader.fileHeader().getPacketSize();
+        reader.close();
+    }
+    ASSERT_EQ(in_packet, 256u * 1024u);
+
+    auto        out = path.parent_path() / "out.bcsv";
+    std::string sout, serr;
+    int         rc = runNarrow({"-o", out.string(), path.string()}, sout, serr);
+    ASSERT_EQ(rc, 0) << sout;
+
+    bcsv::Reader<bcsv::Layout> reader;
+    ASSERT_TRUE(reader.open(out.string()));
+    EXPECT_EQ(reader.layout().columnType(0), bcsv::ColumnType::INT8);
+    // Preserved, not reset to DEFAULT_PACKET_SIZE_KB.
+    EXPECT_EQ(reader.fileHeader().getPacketSize(), in_packet);
+    reader.close();
+}
+

@@ -110,6 +110,44 @@ with pybcsv.ReaderDirectAccess() as da:
     print(da.read(100))  # alternative syntax
 ```
 
+## Parquet Conversion Tools (CLI)
+
+Installing `pybcsv` provides two streaming command-line converters (require the
+`arrow` extra: `pip install pybcsv[arrow]`). They stream in bounded batches, so
+they handle files larger than memory.
+
+```bash
+# Parquet → BCSV
+parquet2bcsv input.parquet -o output.bcsv
+#   --row-codec {delta,zoh,flat}          row codec (default: delta)
+#   --file-codec {packet_lz4_batch,...}   file codec (default: packet_lz4_batch)
+#   --chunk-size N                        rows per streamed batch (default: 512000)
+#   -f/--force                            overwrite an existing output
+
+# BCSV → Parquet
+bcsv2parquet input.bcsv -o output.parquet
+#   --columns "a,b,c"       select/reorder columns (order is honored)
+#   --slice 10:100          Python-style row slice
+#   --unflatten (default)   reconstruct nested structs from dotted/bracketed names
+#   --no-unflatten          keep flat columns (names like 'a.b', 'vals[0]')
+#   --parquet-compression {none,snappy,gzip,zstd,lz4}
+```
+
+**Schema mapping.** Parquet structs and fixed-size lists are *flattened* to BCSV
+columns using dotted (`location.lat`) and bracketed (`vals[0]`) names;
+`bcsv2parquet --unflatten` reverses this. Notes and limitations:
+
+- **No nulls:** BCSV has no null representation — a null in any converted column
+  is rejected with the offending row number. Filter nulls before converting.
+- **Type widening:** `float16`/`bfloat16` widen to `float32`; `large_string`
+  maps to `string`.
+- **Unsupported types** (variable-length lists, maps, timestamps, decimals,
+  dictionaries) are rejected with a clear error.
+- **Column names ending in `_`** are rejected (the unflatten escape protocol
+  reserves trailing underscores).
+- **Colliding names:** if a literal dotted column (`a.b`) and a struct path both
+  map to the same nested path, `--unflatten` fails loudly; use `--no-unflatten`.
+
 ## Available Types
 
 | Constant | Description |

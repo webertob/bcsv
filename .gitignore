@@ -96,6 +96,13 @@ venv/pyvenv.cfg
 # Ignore review notes
 bcsv_review.md
 
+# Ignore AI session transcripts / scratch plans (keep out of the repo)
+session-ses_*.md
+
+# Claude Code local settings and transient temp files (not shared)
+.claude/settings.local.json
+.claude/settings.local.json.tmp.*
+
 # Ignore experimental scratch directory
 .cache/
 scratch/

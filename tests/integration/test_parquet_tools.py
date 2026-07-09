@@ -340,27 +340,60 @@ class TestStructRoundtrip:
 
 
 class TestFixedSizeListRoundtrip:
-    """Regression: FixedSizeList extraction must use .values slice, not row index."""
+    """FixedSizeList element `i` must map to element-i-of-each-row.
+
+    Regression for a transposition bug: element extraction used a contiguous
+    slice (child[i*N:(i+1)*N]) instead of a strided gather, which scrambled the
+    flat BCSV columns.  A `.values`-only assertion is invariant under that
+    (symmetric) scramble and does NOT catch it — assert per-element and per-row.
+    """
+
+    def test_list_element_semantics(self, tmp_path):
+        rows = [[0, 1, 2], [10, 11, 12], [20, 21, 22], [30, 31, 32]]
+        child = pa.array([v for r in rows for v in r], type=pa.int64())
+        arr = pa.FixedSizeListArray.from_arrays(child, 3)
+        table = pa.table({"vals": arr})
+        pq_path = tmp_path / "sem.parquet"
+        bcsv_path = tmp_path / "sem.bcsv"
+        pq.write_table(table, str(pq_path))
+        parquet_to_bcsv(str(pq_path), str(bcsv_path), force=True)
+        t = pybcsv.read_to_arrow(str(bcsv_path))
+        # column vals[i] must hold element i of every row, not a contiguous block
+        assert t.column("vals[0]").to_pylist() == [r[0] for r in rows]
+        assert t.column("vals[1]").to_pylist() == [r[1] for r in rows]
+        assert t.column("vals[2]").to_pylist() == [r[2] for r in rows]
 
     def test_list_roundtrip(self, tmp_path):
-        values = [float(i) for i in range(9)]
-        arr = pa.FixedSizeListArray.from_arrays(pa.array(values, type=pa.float64()), 3)
+        rows = [[0.0, 1.0, 2.0], [3.0, 4.0, 5.0], [6.0, 7.0, 8.0]]
+        child = pa.array([v for r in rows for v in r], type=pa.float64())
+        arr = pa.FixedSizeListArray.from_arrays(child, 3)
         table = pa.table({"id": pa.array([1, 2, 3], type=pa.int64()), "vals": arr})
         pq_path = tmp_path / "list.parquet"
         bcsv_path = tmp_path / "list.bcsv"
         rt_path = tmp_path / "list_rt.parquet"
         pq.write_table(table, str(pq_path))
-        parquet_to_bcsv(
-            str(pq_path),
-            str(bcsv_path),
-        )
+        parquet_to_bcsv(str(pq_path), str(bcsv_path))
         result = bcsv_to_parquet(str(bcsv_path), str(rt_path), force=True)
         assert result["rows"] == 3
-
         rt = pq.read_table(str(rt_path))
-        orig_values = table.column("vals").combine_chunks().values.to_pylist()
-        rt_values = rt.column("vals").combine_chunks().values.to_pylist()
-        assert rt_values == orig_values
+        # Row-level fidelity — not just .values, which survives a transposition.
+        assert rt.column("vals").to_pylist() == rows
+
+    def test_list_asymmetric_batch_roundtrip(self, tmp_path):
+        """Streaming with different write/read batch sizes — the realistic case
+        a transposition bug corrupts even when single-batch round-trips look ok."""
+        rows = [[i * 10, i * 10 + 1, i * 10 + 2] for i in range(7)]
+        child = pa.array([v for r in rows for v in r], type=pa.int64())
+        arr = pa.FixedSizeListArray.from_arrays(child, 3)
+        table = pa.table({"vals": arr})
+        pq_path = tmp_path / "asym.parquet"
+        bcsv_path = tmp_path / "asym.bcsv"
+        rt_path = tmp_path / "asym_rt.parquet"
+        pq.write_table(table, str(pq_path))
+        parquet_to_bcsv(str(pq_path), str(bcsv_path), force=True, chunk_size=3)
+        bcsv_to_parquet(str(bcsv_path), str(rt_path), force=True, chunk_size=2)
+        rt = pq.read_table(str(rt_path))
+        assert rt.column("vals").to_pylist() == rows
 
 
 class TestColumnSubsetUnflatten:
@@ -523,9 +556,11 @@ class TestFP16FixedSizeListRoundtrip:
         assert result["rows"] == 3
 
         rt = pq.read_table(str(rt_path))
-        orig = table.column("vals").combine_chunks().values.to_pylist()
-        rtv = rt.column("vals").combine_chunks().values.to_pylist()
-        assert rtv == orig
+        # Row-level fidelity (a .values-only check misses element transposition).
+        assert rt.column("vals").to_pylist() == [
+            [float(v) for v in r]
+            for r in [values[i : i + 3] for i in range(0, 9, 3)]
+        ]
 
 
 class TestRowGroupSize:
@@ -555,6 +590,184 @@ class TestNestedUnderscore:
         pq.write_table(table, str(pq_path))
         with pytest.raises(ValueError, match="ends with '_'"):
             parquet_to_bcsv(str(pq_path), str(bcsv_path))
+
+
+class TestNameCollisionData:
+    """Struct path colliding with a literal dotted column.
+
+    parquet2bcsv must not crash and must keep both columns distinct (forward);
+    the unflatten direction must fail loudly rather than silently merge them.
+    """
+
+    def _colliding_table(self):
+        struct = pa.StructArray.from_arrays(
+            [pa.array([1, 2, 3], type=pa.int32())], names=["b"]
+        )
+        schema = pa.schema(
+            [pa.field("a", struct.type), pa.field("a.b", pa.float64())]
+        )
+        return pa.Table.from_arrays(
+            [struct, pa.array([1.5, 2.5, 3.5], type=pa.float64())], schema=schema
+        )
+
+    def test_collision_forward_distinct_columns(self, tmp_path):
+        pq_path = tmp_path / "c.parquet"
+        bcsv_path = tmp_path / "c.bcsv"
+        pq.write_table(self._colliding_table(), str(pq_path))
+        parquet_to_bcsv(str(pq_path), str(bcsv_path), force=True)  # must not raise
+        t = pybcsv.read_to_arrow(str(bcsv_path))
+        assert t.column("a_.b").to_pylist() == [1, 2, 3]  # struct a.b (escaped)
+        assert t.column("a.b").to_pylist() == [1.5, 2.5, 3.5]  # literal flat column
+
+    def test_collision_unflatten_raises(self, tmp_path):
+        pq_path = tmp_path / "c2.parquet"
+        bcsv_path = tmp_path / "c2.bcsv"
+        rt_path = tmp_path / "c2_rt.parquet"
+        pq.write_table(self._colliding_table(), str(pq_path))
+        parquet_to_bcsv(str(pq_path), str(bcsv_path), force=True)
+        with pytest.raises(ValueError, match="map to nested path"):
+            bcsv_to_parquet(str(bcsv_path), str(rt_path), force=True)
+
+    def test_collision_no_unflatten_ok(self, tmp_path):
+        pq_path = tmp_path / "c3.parquet"
+        bcsv_path = tmp_path / "c3.bcsv"
+        rt_path = tmp_path / "c3_rt.parquet"
+        pq.write_table(self._colliding_table(), str(pq_path))
+        parquet_to_bcsv(str(pq_path), str(bcsv_path), force=True)
+        bcsv_to_parquet(str(bcsv_path), str(rt_path), unflatten=False, force=True)
+        rt = pq.read_table(str(rt_path))
+        names = {rt.schema.field(i).name for i in range(len(rt.schema))}
+        assert names == {"a_.b", "a.b"}
+
+
+class TestColumnOrder:
+    """--columns must honor the requested order consistently across the
+    unflatten and no-unflatten paths."""
+
+    def _make_bcsv(self, tmp_path):
+        table = pa.table(
+            {
+                "a": pa.array([1, 2, 3], type=pa.int64()),
+                "b": pa.array([4, 5, 6], type=pa.int64()),
+                "c": pa.array([7, 8, 9], type=pa.int64()),
+            }
+        )
+        pq_path = tmp_path / "o.parquet"
+        bcsv_path = tmp_path / "o.bcsv"
+        pq.write_table(table, str(pq_path))
+        parquet_to_bcsv(str(pq_path), str(bcsv_path), force=True)
+        return bcsv_path
+
+    def test_reorder_unflatten_honored(self, tmp_path):
+        bcsv_path = self._make_bcsv(tmp_path)
+        out = tmp_path / "u.parquet"
+        bcsv_to_parquet(str(bcsv_path), str(out), columns=["c", "a"], force=True)
+        rt = pq.read_table(str(out))
+        assert [rt.schema.field(i).name for i in range(len(rt.schema))] == ["c", "a"]
+        assert rt.column("c").to_pylist() == [7, 8, 9]
+        assert rt.column("a").to_pylist() == [1, 2, 3]
+
+    def test_reorder_matches_across_paths(self, tmp_path):
+        bcsv_path = self._make_bcsv(tmp_path)
+        u = tmp_path / "u2.parquet"
+        f = tmp_path / "f2.parquet"
+        bcsv_to_parquet(str(bcsv_path), str(u), columns=["c", "a"], force=True)
+        bcsv_to_parquet(
+            str(bcsv_path), str(f), columns=["c", "a"], unflatten=False, force=True
+        )
+        un = [pq.read_table(str(u)).schema.field(i).name for i in range(2)]
+        fn = [pq.read_table(str(f)).schema.field(i).name for i in range(2)]
+        assert un == fn == ["c", "a"]
+
+
+class TestFlatRoundtripFidelity:
+    """Flat round-trip must preserve names, types, AND values (incl. strings) —
+    not just row/column counts."""
+
+    def test_values_types_names(self, tmp_path):
+        table = pa.table(
+            {
+                "id": pa.array([1, 2, 3], type=pa.int64()),
+                "val": pa.array([1.5, 2.5, 3.5], type=pa.float64()),
+                "name": pa.array(["a", "bb", "ccc"], type=pa.string()),
+            }
+        )
+        pq_path = tmp_path / "f.parquet"
+        bcsv_path = tmp_path / "f.bcsv"
+        rt_path = tmp_path / "f_rt.parquet"
+        pq.write_table(table, str(pq_path))
+        parquet_to_bcsv(str(pq_path), str(bcsv_path), force=True)
+        bcsv_to_parquet(str(bcsv_path), str(rt_path), force=True)
+        rt = pq.read_table(str(rt_path))
+        assert [rt.schema.field(i).name for i in range(len(rt.schema))] == [
+            "id",
+            "val",
+            "name",
+        ]
+        assert rt.schema.field("id").type == pa.int64()
+        assert rt.schema.field("val").type == pa.float64()
+        assert rt.schema.field("name").type == pa.string()
+        assert rt.column("id").to_pylist() == [1, 2, 3]
+        assert rt.column("val").to_pylist() == [1.5, 2.5, 3.5]
+        assert rt.column("name").to_pylist() == ["a", "bb", "ccc"]
+
+
+class TestEmptyFile:
+    """0-row files must round-trip with schema preserved."""
+
+    def test_empty_roundtrip(self, tmp_path):
+        table = pa.table(
+            {
+                "id": pa.array([], type=pa.int64()),
+                "val": pa.array([], type=pa.float64()),
+            }
+        )
+        pq_path = tmp_path / "e.parquet"
+        bcsv_path = tmp_path / "e.bcsv"
+        rt_path = tmp_path / "e_rt.parquet"
+        pq.write_table(table, str(pq_path))
+        assert parquet_to_bcsv(str(pq_path), str(bcsv_path), force=True)["rows"] == 0
+        assert bcsv_to_parquet(str(bcsv_path), str(rt_path), force=True)["rows"] == 0
+        rt = pq.read_table(str(rt_path))
+        assert rt.num_rows == 0
+        assert [rt.schema.field(i).name for i in range(len(rt.schema))] == ["id", "val"]
+
+
+class TestOverwriteGuard:
+    """parquet_to_bcsv must refuse to overwrite an existing output without force."""
+
+    def test_parquet_to_bcsv_no_overwrite(self, tmp_path):
+        pq_path = tmp_path / "g.parquet"
+        bcsv_path = tmp_path / "g.bcsv"
+        pq.write_table(_flat_table(3), str(pq_path))
+        parquet_to_bcsv(str(pq_path), str(bcsv_path))
+        with pytest.raises(FileExistsError):
+            parquet_to_bcsv(str(pq_path), str(bcsv_path))
+        parquet_to_bcsv(str(pq_path), str(bcsv_path), force=True)  # force overrides
+
+
+class TestBcsvFirstRoundtrip:
+    """A BCSV file authored directly with flat dotted names must round-trip out
+    to Parquet and back (also exercises the literal-dotted-name fast path)."""
+
+    def test_bcsv_parquet_bcsv(self, tmp_path):
+        layout = pybcsv.Layout()
+        layout.add_column("sim.ve.counter", pybcsv.ColumnType.INT64)
+        layout.add_column("sim.ve.value", pybcsv.ColumnType.DOUBLE)
+        bcsv_in = tmp_path / "src.bcsv"
+        w = pybcsv.Writer(layout)
+        w.open(str(bcsv_in), overwrite=True)
+        for i in range(5):
+            w.write_row([i, i * 1.5])
+        w.close()
+        pq_path = tmp_path / "mid.parquet"
+        bcsv_out = tmp_path / "back.bcsv"
+        # Keep flat for a faithful round-trip of literal dotted column names.
+        bcsv_to_parquet(str(bcsv_in), str(pq_path), unflatten=False, force=True)
+        parquet_to_bcsv(str(pq_path), str(bcsv_out), force=True)
+        t = pybcsv.read_to_arrow(str(bcsv_out))
+        assert t.column("sim.ve.counter").to_pylist() == [0, 1, 2, 3, 4]
+        assert t.column("sim.ve.value").to_pylist() == [i * 1.5 for i in range(5)]
 
 
 if __name__ == "__main__":

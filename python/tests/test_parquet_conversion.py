@@ -278,8 +278,9 @@ class TestFlatSchemaToBcsvLayout(unittest.TestCase):
                 continue  # widened to float32 before reaching this function
             flat = [("x", arrow_type)]
             layout = _flat_schema_to_bcsv_layout(flat)
-            self.assertEqual(len(layout.get_column_names()), 1,
-                             f"Missing mapping for {arrow_type}")
+            self.assertEqual(
+                len(layout.get_column_names()), 1, f"Missing mapping for {arrow_type}"
+            )
 
     def test_large_string_maps_to_string(self):
         """pa.large_string() must map to BCSV STRING (not raise)."""
@@ -476,6 +477,41 @@ class TestFlattenBatch(unittest.TestCase):
         result = flatten_batch(batch, flat_schema)
         self.assertEqual(result.schema.field(0).name, "b")
         self.assertEqual(result.schema.field(1).name, "a")
+
+    def test_flatten_already_flat_with_dots(self):
+        """Parquet file where columns are already flat with dot-separated names.
+
+        This is a regression test for column names like 'sim.ve.counter' where
+        the Parquet schema has no nesting but the name contains dots.  The
+        flatten_batch function must recognize the name as a literal column name
+        and not decompose it into a non-existent struct path.
+        """
+        batch = pa.RecordBatch.from_arrays(
+            [
+                pa.array([1, 2, 3]),
+                pa.array([10.0, 20.0, 30.0]),
+                pa.array([100, 200, 300]),
+            ],
+            schema=pa.schema(
+                [
+                    ("sim.ve.counter", pa.int64()),
+                    ("sim.ve.value", pa.float64()),
+                    ("time", pa.int64()),
+                ]
+            ),
+        )
+        flat_schema = [
+            ("sim.ve.counter", pa.int64()),
+            ("sim.ve.value", pa.float64()),
+            ("time", pa.int64()),
+        ]
+        result = flatten_batch(batch, flat_schema)
+        self.assertEqual(result.num_rows, 3)
+        self.assertEqual(result.num_columns, 3)
+        # Values should be identical since no transformation needed
+        self.assertEqual(result.column("sim.ve.counter").to_pylist(), [1, 2, 3])
+        self.assertEqual(result.column("sim.ve.value").to_pylist(), [10.0, 20.0, 30.0])
+        self.assertEqual(result.column("time").to_pylist(), [100, 200, 300])
 
 
 if __name__ == "__main__":
