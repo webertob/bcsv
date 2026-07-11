@@ -432,7 +432,7 @@ include/bcsv/           C++ header-only library (all core types)
 
 src/
   bcsv_c_api.cpp         C API shared library implementation
-  tools/                 CLI tools (9 utilities: csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvSampler, bcsvGenerator, bcsvValidate, bcsvRepair)
+  tools/                 CLI tools (11 utilities: csv2bcsv, bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvSampler, bcsvGenerator, bcsvValidate, bcsvRepair, bcsvCompare, bcsvCast)
 
 examples/               Usage examples (flexible, static, ZoH, visitors, sampler)
 tests/                  GTest suite, C API tests, Row API tests

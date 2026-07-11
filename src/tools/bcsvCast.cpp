@@ -1,0 +1,1578 @@
+/*
+ * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
+ *
+ * This file is part of the BCSV library.
+ *
+ * Licensed under the MIT License. See LICENSE file in the project root
+ * for full license information.
+ */
+
+#include <bit>
+#include <cerrno>
+#include <cmath>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <filesystem>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#ifdef __has_include
+#  if __has_include(<unistd.h>)
+#    include <unistd.h>
+#    define BCSV_HAS_MKSTEMP 1
+#  endif
+#endif
+
+#include <bcsv/bcsv.h>
+#include <bcsv/std_charconv_compat.h>
+#include "cli_common.h"
+
+namespace fs = std::filesystem;
+
+// ── Arg error type — exit code 2 ────────────────────────────────────
+
+struct ArgError : std::invalid_argument {
+    using std::invalid_argument::invalid_argument;
+};
+
+// ── CLI Config ──────────────────────────────────────────────────────
+
+enum class Mode { Scan, Optimize, Dynamic, Static };
+
+struct Config {
+    std::string input_file;
+    std::string output_file;
+    std::string cols_spec;                  // --cols index ranges (auto modes only)
+    std::string type_spec;                  // SPEC for --static / --dynamic
+    Mode        mode            = Mode::Scan;
+    bool        mode_explicit   = false;    // a mode flag was given
+    bool        convert         = false;    // resolved: mode applies AND has output
+    bool        in_place        = false;    // --in-place
+    bool        overwrite       = false;    // --overwrite
+    bool        string_to_value = false;    // --string-to-value (auto modes only)
+    double      tolerance       = 0.0;      // --tolerance (absolute epsilon)
+    bool        json            = false;    // --json
+    bool        verbose         = false;
+    bool        help            = false;
+};
+
+static void printUsage(const char* program_name) {
+    std::cout << "Usage: " << program_name << " [MODE] [OPTIONS] INPUT_FILE [OUTPUT_FILE]\n"
+        "\n"
+        "Change BCSV column types. Auto modes derive the smallest lossless type by\n"
+        "scanning the data; explicit modes apply a caller-supplied type SPEC.\n"
+        "\n"
+        "Modes (choose one; default: --optimize if an output is given, else --scan):\n"
+        "  --scan               Report smallest lossless type per column (read-only)\n"
+        "  --optimize           Auto-derive smallest lossless types and apply\n"
+        "  --dynamic SPEC       Apply SPEC per column, skipping any lossy column\n"
+        "  --static  SPEC       Apply SPEC, clamping lossy values (forced)\n"
+        "\n"
+        "SPEC (quote it — shells expand unquoted { }):\n"
+        "  map form   '0=int32,1=uint64,7:8=float,-1=bool'  (index or i:j range = type)\n"
+        "  list form  'int32,uint64,bool,...'               (one type per column, all)\n"
+        "  types: bool int8..int64 uint8..uint64 float double string\n"
+        "         (aliases: i32 ui64 f d b str; int=int32, long=int64, ch=uint8, ...)\n"
+        "\n"
+        "Output (an output path enables apply):\n"
+        "  -o, --output FILE    Output BCSV file (alias for the OUTPUT_FILE positional)\n"
+        "  --in-place           Rewrite INPUT_FILE in place (temp + atomic rename)\n"
+        "  --overwrite          Allow overwriting an existing OUTPUT_FILE\n"
+        "\n"
+        "Options:\n"
+        "  --cols SPEC          Restrict --scan/--optimize to columns (e.g. '0:3,5,7:-1')\n"
+        "  --tolerance TOL      Absolute epsilon for float/int loss tests (default 0.0)\n"
+        "  --string-to-value    Let --scan/--optimize consider STRING->numeric (opt-in)\n"
+        "  --json               Emit the plan/result as JSON on stdout\n"
+        "  -v, --verbose        Per-column details and progress to stderr\n"
+        "  -h, --help           Show this help message\n"
+        "\n"
+        "Exit codes:\n"
+        "  0  Success\n"
+        "  1  Runtime error (invalid file, conversion failed)\n"
+        "  2  Argument error\n";
+}
+
+static Config parseArgs(int argc, char* argv[]) {
+    Config config;
+    bool   mode_set = false;
+
+    auto setMode = [&](Mode m) {
+        if (mode_set && config.mode != m)
+            throw ArgError("Only one mode may be given "
+                           "(--scan / --optimize / --static / --dynamic)");
+        config.mode          = m;
+        config.mode_explicit = true;
+        mode_set             = true;
+    };
+
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+
+        if (arg == "-h" || arg == "--help") {
+            config.help = true;
+            return config;
+        } else if (arg == "-v" || arg == "--verbose") {
+            config.verbose = true;
+        } else if (arg == "--json") {
+            config.json = true;
+        } else if (arg == "--scan") {
+            setMode(Mode::Scan);
+        } else if (arg == "--optimize") {
+            setMode(Mode::Optimize);
+        } else if (arg == "--static") {
+            if (i + 1 >= argc)
+                throw ArgError("--static requires a type SPEC argument");
+            setMode(Mode::Static);
+            config.type_spec = argv[++i];
+        } else if (arg == "--dynamic") {
+            if (i + 1 >= argc)
+                throw ArgError("--dynamic requires a type SPEC argument");
+            setMode(Mode::Dynamic);
+            config.type_spec = argv[++i];
+        } else if (arg == "--in-place") {
+            config.in_place = true;
+        } else if (arg == "--overwrite") {
+            config.overwrite = true;
+        } else if (arg == "--string-to-value") {
+            config.string_to_value = true;
+        } else if (arg == "--tolerance") {
+            if (i + 1 >= argc)
+                throw ArgError("--tolerance requires a numeric argument");
+            std::string tv = argv[++i];
+            try {
+                size_t pos       = 0;
+                config.tolerance = std::stod(tv, &pos);
+                if (pos != tv.size())
+                    throw std::invalid_argument("trailing characters");
+            } catch (const ArgError&) {
+                throw;
+            } catch (...) {
+                throw ArgError("--tolerance requires a numeric argument, got '" + tv + "'");
+            }
+            if (!std::isfinite(config.tolerance) || config.tolerance < 0.0)
+                throw ArgError("--tolerance must be a finite non-negative number");
+        } else if (arg == "--cols") {
+            if (i + 1 >= argc)
+                throw ArgError("--cols requires an argument");
+            config.cols_spec = argv[++i];
+        } else if (arg == "-o" || arg == "--output") {
+            if (i + 1 >= argc)
+                throw ArgError("-o/--output requires an argument");
+            if (!config.output_file.empty())
+                throw ArgError("Output specified more than once");
+            config.output_file = argv[++i];
+        } else if (arg.starts_with("-") && arg != "-") {
+            throw ArgError("Unknown option: " + arg);
+        } else {
+            // Positional. A bare token containing '=' is almost always a
+            // brace-expanded SPEC (fish/bash split {a=b,c=d} into words).
+            if (arg.find('=') != std::string::npos)
+                throw ArgError("Positional argument '" + arg +
+                               "' looks like a type SPEC — quote the SPEC and pass it "
+                               "with --static/--dynamic (shells expand unquoted { }).");
+            if (config.input_file.empty()) {
+                config.input_file = arg;
+            } else if (config.output_file.empty()) {
+                config.output_file = arg;
+            } else {
+                throw ArgError("Too many positional arguments. Expected INPUT_FILE [OUTPUT_FILE].");
+            }
+        }
+    }
+
+    if (config.help)
+        return config;
+
+    if (config.input_file.empty())
+        throw ArgError("Input file is required");
+
+    const bool has_output = config.in_place || !config.output_file.empty();
+
+    // Default-mode inference: no explicit mode → optimize when an output path is
+    // present (apply), otherwise scan (read-only).
+    if (!config.mode_explicit)
+        config.mode = has_output ? Mode::Optimize : Mode::Scan;
+
+    // ── Conflict matrix (all → argument error) ──
+    if (config.mode == Mode::Scan && has_output)
+        throw ArgError("--scan is read-only; use --optimize to apply "
+                       "(or drop the output path).");
+    if ((config.mode == Mode::Static || config.mode == Mode::Dynamic) &&
+        !config.cols_spec.empty())
+        throw ArgError("--cols is not allowed with --static/--dynamic; "
+                       "the SPEC already defines the column scope.");
+    if (config.in_place && !config.output_file.empty())
+        throw ArgError("--in-place does not accept an OUTPUT_FILE");
+
+    // Apply when a writing mode has somewhere to write.
+    config.convert = (config.mode != Mode::Scan) && has_output;
+
+    return config;
+}
+
+// Exact power-of-two boundaries for double→int64/uint64 range tests.
+// static_cast<double>(INT64_MAX) rounds UP to 2^63 and static_cast<double>(UINT64_MAX)
+// to 2^64, so comparing against those lets a double of exactly 2^63 / 2^64 slip
+// through and overflow (UB) on cast. Compare against the first out-of-range value.
+static constexpr double TWO_POW_63 = 9223372036854775808.0;   // 2^63  (= -INT64_MIN)
+static constexpr double TWO_POW_64 = 18446744073709551616.0;  // 2^64
+
+// ── ColumnProbeState ────────────────────────────────────────────────
+
+struct ColumnProbeState {
+    size_t           col_index     = 0;
+    bcsv::ColumnType original_type = bcsv::ColumnType::VOID;
+    bcsv::ColumnType optimal_type  = bcsv::ColumnType::VOID;
+    bool             alive         = true;
+    size_t           rows_probed   = 0;
+
+    int64_t  min_s = std::numeric_limits<int64_t>::max();
+    int64_t  max_s = std::numeric_limits<int64_t>::lowest();
+    uint64_t min_u = std::numeric_limits<uint64_t>::max();
+    uint64_t max_u = 0;
+
+    bool    f_float_roundtrip = true;
+    bool    f_bool_alive      = true;
+    bool    f_ladder_alive    = true;
+    int64_t int_min           = std::numeric_limits<int64_t>::max();
+    int64_t int_max           = std::numeric_limits<int64_t>::lowest();
+    bool    int_all_positive  = true;
+    double  tol               = 0.0;   // --tolerance (absolute epsilon; float→int/float)
+
+    bool str_done = false;
+
+    void init(bcsv::ColumnType type, size_t idx, bool probeStrings, double tolerance) {
+        col_index     = idx;
+        original_type = type;
+        optimal_type  = type;
+        tol           = tolerance;
+
+        switch (type) {
+            case bcsv::ColumnType::BOOL:
+                alive = false;
+                break;
+            case bcsv::ColumnType::STRING:
+                if (!probeStrings)
+                    alive = false;
+                break;
+            default:
+                break;
+        }
+    }
+
+    static bcsv::ColumnType deriveIntSigned(int64_t min, int64_t max) {
+        if (min >= 0 && max <= 1)
+            return bcsv::ColumnType::BOOL;
+        if (min >= 0) {
+            uint64_t umax = static_cast<uint64_t>(max);
+            if (umax <= 255ULL)
+                return bcsv::ColumnType::UINT8;
+            if (umax <= 65535ULL)
+                return bcsv::ColumnType::UINT16;
+            if (umax <= UINT32_MAX)
+                return bcsv::ColumnType::UINT32;
+            // INT64→UINT64 yields 0% savings and risks precision loss.
+            // Keep as INT64 (no narrowing).
+            return bcsv::ColumnType::INT64;
+        } else {
+            if (min >= INT8_MIN && max <= INT8_MAX)
+                return bcsv::ColumnType::INT8;
+            if (min >= INT16_MIN && max <= INT16_MAX)
+                return bcsv::ColumnType::INT16;
+            if (min >= INT32_MIN && max <= INT32_MAX)
+                return bcsv::ColumnType::INT32;
+            return bcsv::ColumnType::INT64;
+        }
+    }
+
+    static bcsv::ColumnType deriveIntUnsigned(uint64_t /*min*/, uint64_t max) {
+        if (max <= 1)
+            return bcsv::ColumnType::BOOL;
+        if (max <= 255ULL)
+            return bcsv::ColumnType::UINT8;
+        if (max <= 65535ULL)
+            return bcsv::ColumnType::UINT16;
+        if (max <= UINT32_MAX)
+            return bcsv::ColumnType::UINT32;
+        return bcsv::ColumnType::UINT64;
+    }
+
+    // Single shared float/string derivation.  `orig` is the fallback type
+    // (DOUBLE for native float cols, DOUBLE for string→numeric).
+    static bcsv::ColumnType deriveFromFloat(
+        bool bool_alive, bool ladder_alive, bool roundtrip_alive,
+        int64_t i_min, int64_t i_max, bool i_all_positive,
+        bcsv::ColumnType orig) {
+        if (bool_alive)
+            return bcsv::ColumnType::BOOL;
+        if (ladder_alive) {
+            if (i_all_positive) {
+                if (i_max <= 255LL)
+                    return bcsv::ColumnType::UINT8;
+                if (i_max <= 65535LL)
+                    return bcsv::ColumnType::UINT16;
+                uint64_t umax = static_cast<uint64_t>(i_max);
+                if (umax <= UINT32_MAX)
+                    return bcsv::ColumnType::UINT32;
+                return bcsv::ColumnType::UINT64;
+            } else {
+                if (i_min >= INT8_MIN && i_max <= INT8_MAX)
+                    return bcsv::ColumnType::INT8;
+                if (i_min >= INT16_MIN && i_max <= INT16_MAX)
+                    return bcsv::ColumnType::INT16;
+                if (i_min >= INT32_MIN && i_max <= INT32_MAX)
+                    return bcsv::ColumnType::INT32;
+                return bcsv::ColumnType::INT64;
+            }
+        }
+        if (orig == bcsv::ColumnType::DOUBLE && roundtrip_alive)
+            return bcsv::ColumnType::FLOAT;
+        return orig;
+    }
+
+    void visitIntegerSigned(int64_t v) {
+        if (min_s > v)
+            min_s = v;
+        if (max_s < v)
+            max_s = v;
+        bcsv::ColumnType cand = deriveIntSigned(min_s, max_s);
+        // Don't flip a signed column to a same-width unsigned type: it saves 0
+        // bytes and only changes signedness (mirrors the explicit INT64→UINT64
+        // guard in deriveIntSigned).  BOOL (values in {0,1}) is a genuine
+        // narrowing and is always kept.
+        if (cand != bcsv::ColumnType::BOOL &&
+            bcsv::sizeOf(cand) >= bcsv::sizeOf(original_type))
+            cand = original_type;
+        optimal_type = cand;
+    }
+
+    void visitIntegerUnsigned(uint64_t v) {
+        if (min_u > v)
+            min_u = v;
+        if (max_u < v)
+            max_u = v;
+        optimal_type = deriveIntUnsigned(min_u, max_u);
+    }
+
+    void accumulateFinite(double v) {
+        // Bool check: only exact 0.0 and 1.0 qualify (-0.0 == 0.0 in IEEE)
+        if (v != 0.0 && v != 1.0)
+            f_bool_alive = false;
+
+        // Integer ladder: value is a whole number within tol of some integer.
+        // With tol>0 the target int is round(v); the convert path also uses
+        // std::round (coerce()), so probe and convert stay consistent.
+        if (f_ladder_alive) {
+            const double r = std::round(v);
+            if (std::fabs(v - r) > tol) {
+                f_ladder_alive = false;
+            } else {
+                if (r < 0.0)
+                    int_all_positive = false;
+                // Range guard: r must be castable to int64 ([-2^63, 2^63));
+                // bounds are asymmetric (-2^63 valid, +2^63 not).
+                if (r >= TWO_POW_63 || r < -TWO_POW_63) {
+                    f_ladder_alive = false;
+                } else {
+                    const int64_t iv = static_cast<int64_t>(r);
+                    if (iv < int_min)
+                        int_min = iv;
+                    if (iv > int_max)
+                        int_max = iv;
+                }
+            }
+        }
+
+        // Float round-trip: does v survive double→float→double within tol?
+        // Consulted when narrowing DOUBLE columns AND string→numeric columns to
+        // FLOAT.  tol=0 is bit-exact; tol>0 allows lossy-within-tol narrowing.
+        if (f_float_roundtrip) {
+            const float  as_float = static_cast<float>(v);
+            const double back     = static_cast<double>(as_float);
+            if (std::fabs(v - back) > tol)
+                f_float_roundtrip = false;
+        }
+    }
+
+    void visitFloat(double v) {
+        if (std::isfinite(v)) {
+            // accumulateFinite updates the float round-trip flag for all origins.
+            accumulateFinite(v);
+        } else {
+            // Non-finite values (NaN, ±Inf) cannot narrow to integer or bool
+            f_ladder_alive = false;
+            f_bool_alive   = false;
+        }
+
+        optimal_type = deriveFromFloat(
+            f_bool_alive, f_ladder_alive, f_float_roundtrip,
+            int_min, int_max, int_all_positive, original_type);
+    }
+
+    void visitString(const std::string& s) {
+        if (str_done)
+            return;
+
+        if (s.empty()) {
+            str_done        = true;
+            optimal_type    = original_type;
+            return;
+        }
+
+        if (std::isspace(static_cast<unsigned char>(s.front())) ||
+            std::isspace(static_cast<unsigned char>(s.back()))) {
+            str_done        = true;
+            optimal_type    = original_type;
+            return;
+        }
+
+        char*  endptr = nullptr;
+        double d      = std::strtod(s.c_str(), &endptr);
+
+        if (endptr != s.c_str() + s.size()) {
+            str_done        = true;
+            optimal_type    = original_type;
+            return;
+        }
+
+        if (!std::isfinite(d)) {
+            str_done        = true;
+            optimal_type    = original_type;
+            return;
+        }
+
+        accumulateFinite(d);
+
+        optimal_type = deriveFromFloat(
+            f_bool_alive, f_ladder_alive, f_float_roundtrip,
+            int_min, int_max, int_all_positive, bcsv::ColumnType::DOUBLE);
+    }
+
+    void checkStabilization() {
+        if (optimal_type == original_type) {
+            alive = false;
+        } else if (original_type == bcsv::ColumnType::STRING && str_done) {
+            alive = false;
+        }
+    }
+};
+
+// ── Cast machinery: loss model + saturating coercion ────────────────
+//
+// Every applied cast (auto or explicit) goes through coerce() below, which
+// rounds and saturates rather than throwing: the scan phase classifies each
+// column first, so out-of-range / fractional cells only reach coerce() under
+// --static, which clamps by design. Bool sources are mapped to uint8 by the
+// call sites, so the integer paths never instantiate for bool.
+
+// Significant bits of |mag| ≤ mant_bits ?  (exact int→float / int→double test)
+static inline bool magFitsMantissa(uint64_t mag, int mant_bits) {
+    if (mag == 0) return true;
+    const int significant = std::bit_width(mag) - std::countr_zero(mag);
+    return significant <= mant_bits;
+}
+
+template<typename Src>
+static inline uint64_t absMag(Src v) {
+    if constexpr (std::is_signed_v<Src>)
+        return v < 0 ? (0ull - static_cast<uint64_t>(v)) : static_cast<uint64_t>(v);
+    else
+        return static_cast<uint64_t>(v);
+}
+
+// Inclusive double bounds for the ≤32-bit integer types (single source of truth for
+// the loss and clamp paths below). The 64-bit ranges aren't exactly representable as
+// double, so INT64/UINT64 are handled separately via TWO_POW_63/64.
+struct IntRangeD { double lo, hi; };
+static IntRangeD intBoundsD(bcsv::ColumnType t) {
+    switch (t) {
+        case bcsv::ColumnType::INT8:   return {-128.0, 127.0};
+        case bcsv::ColumnType::INT16:  return {-32768.0, 32767.0};
+        case bcsv::ColumnType::INT32:  return {-2147483648.0, 2147483647.0};
+        case bcsv::ColumnType::UINT8:  return {0.0, 255.0};
+        case bcsv::ColumnType::UINT16: return {0.0, 65535.0};
+        case bcsv::ColumnType::UINT32: return {0.0, 4294967295.0};
+        default:                       return {1.0, 0.0};  // empty range (nothing fits)
+    }
+}
+
+// Is integral double r within the inclusive range of integer type dst?
+static bool roundedFitsInt(bcsv::ColumnType dst, double r) {
+    switch (dst) {
+        case bcsv::ColumnType::BOOL:   return r == 0.0 || r == 1.0;
+        case bcsv::ColumnType::INT64:  return r >= -TWO_POW_63 && r < TWO_POW_63;
+        case bcsv::ColumnType::UINT64: return r >= 0.0 && r < TWO_POW_64;
+        case bcsv::ColumnType::INT8:  case bcsv::ColumnType::INT16:
+        case bcsv::ColumnType::INT32: case bcsv::ColumnType::UINT8:
+        case bcsv::ColumnType::UINT16: case bcsv::ColumnType::UINT32: {
+            const IntRangeD b = intBoundsD(dst);
+            return r >= b.lo && r <= b.hi;
+        }
+        default:                       return false;
+    }
+}
+
+// ── Loss model (spec §9) ──
+// True iff casting a cell of value v (source Src) to dst loses data within tol.
+// Increments oor on a range overflow, and unparseable on a non-numeric string cell
+// (which --static cannot clamp — see the fail-fast check in main).
+template<typename Src>
+static bool cellLoses(bcsv::ColumnType dst, const Src& v, double tol,
+                      uint64_t& oor, uint64_t& unparseable) {
+    if constexpr (std::is_same_v<Src, std::string>) {
+        if (dst == bcsv::ColumnType::STRING) return false;
+        if (v.empty()) { ++unparseable; return true; }
+        const char* s   = v.c_str();
+        char*       end = nullptr;
+        double      d   = std::strtod(s, &end);
+        if (end != s + v.size()) { ++unparseable; return true; }  // trailing junk / unparseable
+        return cellLoses<double>(dst, d, tol, oor, unparseable);
+    } else {
+        (void)unparseable;                                 // only string cells can be unparseable
+        if (dst == bcsv::ColumnType::STRING) return false; // any → string is lossless
+        if constexpr (std::is_integral_v<Src>) {           // integer source (never bool)
+            switch (dst) {
+                case bcsv::ColumnType::BOOL:   return !(v == Src(0) || v == Src(1));
+                case bcsv::ColumnType::FLOAT:  return !magFitsMantissa(absMag(v), 24);
+                case bcsv::ColumnType::DOUBLE: return !magFitsMantissa(absMag(v), 53);
+                case bcsv::ColumnType::INT8:   if (!std::in_range<int8_t>(v))   { ++oor; return true; } return false;
+                case bcsv::ColumnType::INT16:  if (!std::in_range<int16_t>(v))  { ++oor; return true; } return false;
+                case bcsv::ColumnType::INT32:  if (!std::in_range<int32_t>(v))  { ++oor; return true; } return false;
+                case bcsv::ColumnType::INT64:  if (!std::in_range<int64_t>(v))  { ++oor; return true; } return false;
+                case bcsv::ColumnType::UINT8:  if (!std::in_range<uint8_t>(v))  { ++oor; return true; } return false;
+                case bcsv::ColumnType::UINT16: if (!std::in_range<uint16_t>(v)) { ++oor; return true; } return false;
+                case bcsv::ColumnType::UINT32: if (!std::in_range<uint32_t>(v)) { ++oor; return true; } return false;
+                case bcsv::ColumnType::UINT64: if (!std::in_range<uint64_t>(v)) { ++oor; return true; } return false;
+                default: return true;
+            }
+        } else {                                           // float / double source
+            const double dv = static_cast<double>(v);
+            switch (dst) {
+                case bcsv::ColumnType::DOUBLE: return false;   // float→double exact
+                case bcsv::ColumnType::FLOAT: {
+                    if (std::isnan(dv)) return false;          // NaN canonicalization accepted
+                    const float  f    = static_cast<float>(dv);
+                    const double back = static_cast<double>(f);
+                    return std::fabs(dv - back) > tol;
+                }
+                case bcsv::ColumnType::BOOL:   return !(dv == 0.0 || dv == 1.0);
+                default: {                                     // integer target
+                    if (!std::isfinite(dv)) return true;       // NaN/±Inf → int = loss
+                    const double r = std::round(dv);
+                    if (std::fabs(dv - r) > tol) return true;  // not whole within tol
+                    if (!roundedFitsInt(dst, r)) { ++oor; return true; }
+                    return false;
+                }
+            }
+        }
+    }
+}
+
+// ── Saturating coercion (used for every applied cast) ──
+template<typename T, typename Src>
+static inline T satToInt(Src v, uint64_t& clamped) {
+    if (std::in_range<T>(v)) return static_cast<T>(v);
+    ++clamped;
+    if constexpr (std::is_signed_v<Src>)
+        return v < 0 ? std::numeric_limits<T>::min() : std::numeric_limits<T>::max();
+    else
+        return std::numeric_limits<T>::max();
+}
+
+static std::string numToString(float v) {
+    char buf[64];
+    auto r = bcsv::compat::to_chars(buf, buf + sizeof(buf), v);
+    return std::string(buf, r.ptr);
+}
+static std::string numToString(double v) {
+    char buf[64];
+    auto r = bcsv::compat::to_chars(buf, buf + sizeof(buf), v);
+    return std::string(buf, r.ptr);
+}
+
+static bcsv::ValueType zeroOf(bcsv::ColumnType dst) {
+    switch (dst) {
+        case bcsv::ColumnType::INT8:   return bcsv::ValueType{int8_t(0)};
+        case bcsv::ColumnType::INT16:  return bcsv::ValueType{int16_t(0)};
+        case bcsv::ColumnType::INT32:  return bcsv::ValueType{int32_t(0)};
+        case bcsv::ColumnType::INT64:  return bcsv::ValueType{int64_t(0)};
+        case bcsv::ColumnType::UINT8:  return bcsv::ValueType{uint8_t(0)};
+        case bcsv::ColumnType::UINT16: return bcsv::ValueType{uint16_t(0)};
+        case bcsv::ColumnType::UINT32: return bcsv::ValueType{uint32_t(0)};
+        case bcsv::ColumnType::UINT64: return bcsv::ValueType{uint64_t(0)};
+        default:                       return bcsv::ValueType{int64_t(0)};
+    }
+}
+
+// double → integer/bool target, saturating. BOOL is handled first (NaN→true, per
+// spec §10, since NaN≠0); then NaN→0, ±Inf/overflow→min/max, else round+clamp. A
+// cell counts as clamped only when the stored value differs from the source by more
+// than tol — so a within-tolerance rounding (used by --optimize/--dynamic) is not
+// flagged, keeping the clamp count consistent with the loss verdict.
+static bcsv::ValueType doubleToIntForced(bcsv::ColumnType dst, double dv, double tol,
+                                         uint64_t& clamped) {
+    if (dst == bcsv::ColumnType::BOOL) {
+        const bool b = (dv != 0.0);   // NaN != 0.0 → true
+        if (!(std::fabs(dv) <= tol || std::fabs(dv - 1.0) <= tol)) ++clamped;
+        return bcsv::ValueType{b};
+    }
+    if (std::isnan(dv)) { ++clamped; return zeroOf(dst); }
+
+    const double r     = std::round(dv);
+    auto         count = [&](double stored) { if (std::fabs(stored - dv) > tol) ++clamped; };
+    auto         clampD = [&](bcsv::ColumnType t) { const IntRangeD b = intBoundsD(t); double c = std::clamp(r, b.lo, b.hi); count(c); return c; };
+
+    switch (dst) {
+        case bcsv::ColumnType::INT8:   return bcsv::ValueType{static_cast<int8_t>(clampD(dst))};
+        case bcsv::ColumnType::INT16:  return bcsv::ValueType{static_cast<int16_t>(clampD(dst))};
+        case bcsv::ColumnType::INT32:  return bcsv::ValueType{static_cast<int32_t>(clampD(dst))};
+        case bcsv::ColumnType::UINT8:  return bcsv::ValueType{static_cast<uint8_t>(clampD(dst))};
+        case bcsv::ColumnType::UINT16: return bcsv::ValueType{static_cast<uint16_t>(clampD(dst))};
+        case bcsv::ColumnType::UINT32: return bcsv::ValueType{static_cast<uint32_t>(clampD(dst))};
+        case bcsv::ColumnType::INT64:
+            if (r < -TWO_POW_63) { count(-TWO_POW_63); return bcsv::ValueType{std::numeric_limits<int64_t>::min()}; }
+            if (r >= TWO_POW_63) { count(TWO_POW_63);  return bcsv::ValueType{std::numeric_limits<int64_t>::max()}; }
+            count(r); return bcsv::ValueType{static_cast<int64_t>(r)};
+        case bcsv::ColumnType::UINT64:
+            if (r < 0.0)         { count(0.0);         return bcsv::ValueType{uint64_t(0)}; }
+            if (r >= TWO_POW_64) { count(TWO_POW_64);  return bcsv::ValueType{std::numeric_limits<uint64_t>::max()}; }
+            count(r); return bcsv::ValueType{static_cast<uint64_t>(r)};
+        default: throw std::runtime_error("doubleToIntForced: bad target");
+    }
+}
+
+// Coerce one numeric cell (Src ∈ int8..uint64, float, double) to dst, saturating.
+// `tol` relaxes the "clamped" count for float/double sources (integer casts are exact).
+template<typename Src>
+static bcsv::ValueType coerce(bcsv::ColumnType dst, Src v, double tol, uint64_t& clamped) {
+    if constexpr (std::is_integral_v<Src>) {           // integer source (never bool)
+        (void)tol;                                     // integer casts are exact
+        switch (dst) {
+            case bcsv::ColumnType::STRING: return bcsv::ValueType{std::to_string(v)};
+            case bcsv::ColumnType::BOOL:
+                if (!(v == Src(0) || v == Src(1))) ++clamped;
+                return bcsv::ValueType{v != Src(0)};
+            case bcsv::ColumnType::INT8:   return bcsv::ValueType{satToInt<int8_t>(v, clamped)};
+            case bcsv::ColumnType::INT16:  return bcsv::ValueType{satToInt<int16_t>(v, clamped)};
+            case bcsv::ColumnType::INT32:  return bcsv::ValueType{satToInt<int32_t>(v, clamped)};
+            case bcsv::ColumnType::INT64:  return bcsv::ValueType{satToInt<int64_t>(v, clamped)};
+            case bcsv::ColumnType::UINT8:  return bcsv::ValueType{satToInt<uint8_t>(v, clamped)};
+            case bcsv::ColumnType::UINT16: return bcsv::ValueType{satToInt<uint16_t>(v, clamped)};
+            case bcsv::ColumnType::UINT32: return bcsv::ValueType{satToInt<uint32_t>(v, clamped)};
+            case bcsv::ColumnType::UINT64: return bcsv::ValueType{satToInt<uint64_t>(v, clamped)};
+            case bcsv::ColumnType::FLOAT:
+                if (!magFitsMantissa(absMag(v), 24)) ++clamped;
+                return bcsv::ValueType{static_cast<float>(v)};
+            case bcsv::ColumnType::DOUBLE:
+                if (!magFitsMantissa(absMag(v), 53)) ++clamped;
+                return bcsv::ValueType{static_cast<double>(v)};
+            default: throw std::runtime_error("coerce: bad integer-source target");
+        }
+    } else {                                           // float / double source
+        switch (dst) {
+            case bcsv::ColumnType::STRING: return bcsv::ValueType{numToString(v)};
+            case bcsv::ColumnType::DOUBLE: return bcsv::ValueType{static_cast<double>(v)};
+            case bcsv::ColumnType::FLOAT: {
+                const double dv = static_cast<double>(v);
+                const float  f  = static_cast<float>(dv);
+                if (!std::isnan(dv) && std::fabs(static_cast<double>(f) - dv) > tol) ++clamped;
+                return bcsv::ValueType{f};
+            }
+            default: return doubleToIntForced(dst, static_cast<double>(v), tol, clamped);
+        }
+    }
+}
+
+// Read column i's typed cell from `row` and invoke vis(value). BOOL is surfaced
+// as uint8 (0/1) so downstream templates (cellLoses/coerce) never instantiate for
+// bool. This is the single dispatch shared by the loss scan and the convert pass.
+template<typename RowT, typename Visitor>
+static void visitTyped(const RowT& row, size_t i, bcsv::ColumnType t, Visitor&& vis) {
+    switch (t) {
+        case bcsv::ColumnType::BOOL:   row.template visitConst<bool>(i, [&](size_t, const bool& b) { vis(static_cast<uint8_t>(b ? 1 : 0)); }, 1); break;
+        case bcsv::ColumnType::INT8:   row.template visitConst<int8_t>(i, [&](size_t, const int8_t& v) { vis(v); }, 1); break;
+        case bcsv::ColumnType::INT16:  row.template visitConst<int16_t>(i, [&](size_t, const int16_t& v) { vis(v); }, 1); break;
+        case bcsv::ColumnType::INT32:  row.template visitConst<int32_t>(i, [&](size_t, const int32_t& v) { vis(v); }, 1); break;
+        case bcsv::ColumnType::INT64:  row.template visitConst<int64_t>(i, [&](size_t, const int64_t& v) { vis(v); }, 1); break;
+        case bcsv::ColumnType::UINT8:  row.template visitConst<uint8_t>(i, [&](size_t, const uint8_t& v) { vis(v); }, 1); break;
+        case bcsv::ColumnType::UINT16: row.template visitConst<uint16_t>(i, [&](size_t, const uint16_t& v) { vis(v); }, 1); break;
+        case bcsv::ColumnType::UINT32: row.template visitConst<uint32_t>(i, [&](size_t, const uint32_t& v) { vis(v); }, 1); break;
+        case bcsv::ColumnType::UINT64: row.template visitConst<uint64_t>(i, [&](size_t, const uint64_t& v) { vis(v); }, 1); break;
+        case bcsv::ColumnType::FLOAT:  row.template visitConst<float>(i, [&](size_t, const float& v) { vis(v); }, 1); break;
+        case bcsv::ColumnType::DOUBLE: row.template visitConst<double>(i, [&](size_t, const double& v) { vis(v); }, 1); break;
+        case bcsv::ColumnType::STRING: row.template visitConst<std::string>(i, [&](size_t, const std::string& s) { vis(s); }, 1); break;
+        default: break;
+    }
+}
+
+// ── Cast plan ───────────────────────────────────────────────────────
+
+struct ColPlan {
+    bcsv::ColumnType original  = bcsv::ColumnType::VOID;
+    bcsv::ColumnType requested = bcsv::ColumnType::VOID;  // SPEC / auto-derived target
+    bcsv::ColumnType effective = bcsv::ColumnType::VOID;  // after dynamic skip
+    bool     lossy       = false;   // requested cast loses data
+    bool     skipped     = false;   // dynamic kept original because lossy
+    uint64_t lossy_cells = 0;       // #cells the cast would lose (scan)
+    uint64_t oor         = 0;       // #cells out of target range (scan)
+    uint64_t unparseable = 0;       // #non-numeric string cells (scan)
+    uint64_t clamped     = 0;       // #cells clamped/rounded (convert)
+};
+
+// Parse a type SPEC (map or positional-list form) against `layout` into a
+// per-column requested target (== original where unspecified). Throws ArgError.
+static std::vector<bcsv::ColumnType> parseSpec(const std::string&  spec_in,
+                                               const bcsv::Layout& layout) {
+    const size_t                  n = layout.columnCount();
+    std::vector<bcsv::ColumnType> req(n);
+    for (size_t i = 0; i < n; ++i) req[i] = layout.columnType(i);
+
+    auto trim = [](std::string& s) {
+        size_t a = 0, b = s.size();
+        while (a < b && std::isspace((unsigned char)s[a])) ++a;
+        while (b > a && std::isspace((unsigned char)s[b - 1])) --b;
+        s = s.substr(a, b - a);
+    };
+
+    std::string spec = spec_in;
+    trim(spec);
+    if (spec.size() >= 2 && spec.front() == '{' && spec.back() == '}')
+        spec = spec.substr(1, spec.size() - 2);
+    trim(spec);
+    if (spec.empty())
+        throw ArgError("Empty type SPEC");
+
+    std::vector<std::string> parts;
+    {
+        std::string cur;
+        for (char c : spec) {
+            if (c == ',') { parts.push_back(cur); cur.clear(); }
+            else cur += c;
+        }
+        parts.push_back(cur);
+    }
+
+    bool is_map = false;
+    for (auto& p : parts)
+        if (p.find('=') != std::string::npos) { is_map = true; break; }
+
+    if (is_map) {
+        std::vector<bool> seen(n, false);
+        for (auto& raw : parts) {
+            std::string p = raw;
+            trim(p);
+            if (p.empty())
+                throw ArgError("Empty entry in SPEC (stray comma?)");
+            auto eq = p.find('=');
+            if (eq == std::string::npos)
+                throw ArgError("Mixed SPEC forms: entry '" + p +
+                               "' has no '=' but others do");
+            std::string key = p.substr(0, eq);
+            std::string typ = p.substr(eq + 1);
+            trim(key);
+            trim(typ);
+            if (key.empty())
+                throw ArgError("Empty column key in SPEC entry '" + p + "'");
+            bcsv::ColumnType t;
+            try { t = bcsv_cli::parseColumnType(typ); }
+            catch (const std::exception& e) { throw ArgError(std::string("SPEC: ") + e.what()); }
+            bcsv_cli::IndexRangeSet ranges;
+            try { ranges = bcsv_cli::parseIndexRanges(key, n); }
+            catch (const std::exception& e) { throw ArgError("SPEC key '" + key + "': " + e.what()); }
+            for (size_t idx : ranges.toIndices(n)) {
+                if (seen[idx])
+                    throw ArgError("Column " + std::to_string(idx) +
+                                   " assigned more than once in SPEC");
+                if (req[idx] == bcsv::ColumnType::VOID)
+                    throw ArgError("Column " + std::to_string(idx) +
+                                   " is VOID and cannot be cast");
+                seen[idx] = true;
+                req[idx]  = t;
+            }
+        }
+    } else {
+        if (parts.size() != n)
+            throw ArgError("Positional SPEC lists " + std::to_string(parts.size()) +
+                           " types but the file has " + std::to_string(n) +
+                           " columns — use the map form (e.g. '0=int32') for a subset");
+        for (size_t i = 0; i < n; ++i) {
+            std::string p = parts[i];
+            trim(p);
+            if (p.empty())
+                throw ArgError("Empty type at position " + std::to_string(i) + " in SPEC");
+            bcsv::ColumnType t;
+            try { t = bcsv_cli::parseColumnType(p, /*allow_void=*/true); }
+            catch (const std::exception& e) {
+                throw ArgError("SPEC position " + std::to_string(i) + ": " + e.what());
+            }
+            if (t == bcsv::ColumnType::VOID && req[i] != bcsv::ColumnType::VOID)
+                throw ArgError("Position " + std::to_string(i) + " is 'void' but column is " +
+                               bcsv_cli::columnTypeStr(req[i]));
+            if (t != bcsv::ColumnType::VOID && req[i] == bcsv::ColumnType::VOID)
+                throw ArgError("Column " + std::to_string(i) + " is VOID and cannot be cast");
+            req[i] = t;
+        }
+    }
+    return req;
+}
+
+// Stream the file and, for every column whose requested target differs from its
+// original type, record whether/how much the cast would lose (spec §9).
+static void scanForLoss(const std::string&     input,
+                        std::vector<ColPlan>&  plan,
+                        double                 tol,
+                        size_t&                total_rows) {
+    bcsv::Reader<bcsv::Layout> reader;
+    if (!reader.open(input))
+        throw std::runtime_error("Cannot open BCSV file: " + input +
+                                 " (" + reader.getErrorMsg() + ")");
+    const size_t n = reader.layout().columnCount();
+    total_rows     = 0;
+
+    // Read every row (so total_rows is accurate even for a no-op SPEC); the inner
+    // loop skips columns whose target equals their original type.
+    while (reader.readNext()) {
+        ++total_rows;
+        for (size_t i = 0; i < n; ++i) {
+            ColPlan& c = plan[i];
+            if (c.requested == c.original) continue;
+            bool lost = false;
+            visitTyped(reader.row(), i, c.original, [&](const auto& v) {
+                lost = cellLoses(c.requested, v, tol, c.oor, c.unparseable);
+            });
+            if (lost) { c.lossy = true; ++c.lossy_cells; }
+        }
+    }
+    reader.close();
+}
+
+static bool anyNarrowed(const std::vector<ColumnProbeState>& probes) {
+    for (const auto& p : probes) {
+        if (p.optimal_type != p.original_type)
+            return true;
+    }
+    return false;
+}
+
+// ── Scan phase ──────────────────────────────────────────────────────
+
+static std::vector<ColumnProbeState> scanFile(
+    const std::string&            input_path,
+    const std::string&            cols_spec,
+    bool                          stringsToValue,
+    double                        tolerance,
+    bool                          verbose,
+    size_t&                       total_rows_out,
+    bcsv::FileFlags&              flags_out,
+    uint8_t&                      comp_out,
+    uint32_t&                     packet_size_out,
+    std::vector<std::string>&     col_names_out,
+    std::vector<size_t>&          selected_cols_out,
+    bool&                         scope_active_out) {
+
+    bcsv::Reader<bcsv::Layout> reader;
+    if (!reader.open(input_path)) {
+        throw std::runtime_error("Cannot open BCSV file: " + input_path +
+                                 " (" + reader.getErrorMsg() + ")");
+    }
+
+    const auto& layout   = reader.layout();
+    size_t      num_cols = layout.columnCount();
+
+    // Capture column names now while the reader is open (avoids a second file open)
+    col_names_out.reserve(num_cols);
+    for (size_t i = 0; i < num_cols; ++i)
+        col_names_out.push_back(layout.columnName(i));
+
+    // Resolve the optional --cols selection now that the column count is known.
+    // Invalid specs surface as ArgError (exit code 2).
+    bcsv_cli::IndexRangeSet ranges;
+    try {
+        ranges = bcsv_cli::parseIndexRanges(cols_spec, num_cols);
+    } catch (const std::exception& e) {
+        throw ArgError(std::string("--cols: ") + e.what());
+    }
+    scope_active_out  = ranges.active();
+    selected_cols_out = ranges.toIndices(num_cols);
+
+    std::vector<ColumnProbeState> probes(num_cols);
+    size_t                        alive_count = 0;
+
+    // Initialise every probe — convert needs original_type for all columns.
+    // Only the selected columns are ever probed; the rest keep
+    // optimal_type == original_type and are copied verbatim during convert.
+    for (size_t i = 0; i < num_cols; ++i)
+        probes[i].init(layout.columnType(i), i, stringsToValue, tolerance);
+    for (size_t i : selected_cols_out)
+        if (probes[i].alive)
+            ++alive_count;
+
+    if (verbose) {
+        std::cerr << "Scanning file: " << input_path << " ("
+                  << num_cols << " columns, " << alive_count << " to probe)" << std::endl;
+    }
+
+    size_t total_rows = 0;
+
+    while (reader.readNext() && alive_count > 0) {
+        ++total_rows;
+
+        for (size_t i : selected_cols_out) {
+            auto& p = probes[i];
+            if (!p.alive)
+                continue;
+
+            switch (p.original_type) {
+                case bcsv::ColumnType::INT8:
+                    reader.row().visitConst<int8_t>(i, [&](size_t, const int8_t& v) { p.visitIntegerSigned(static_cast<int64_t>(v)); }, 1);
+                    break;
+                case bcsv::ColumnType::INT16:
+                    reader.row().visitConst<int16_t>(i, [&](size_t, const int16_t& v) { p.visitIntegerSigned(static_cast<int64_t>(v)); }, 1);
+                    break;
+                case bcsv::ColumnType::INT32:
+                    reader.row().visitConst<int32_t>(i, [&](size_t, const int32_t& v) { p.visitIntegerSigned(static_cast<int64_t>(v)); }, 1);
+                    break;
+                case bcsv::ColumnType::INT64:
+                    reader.row().visitConst<int64_t>(i, [&](size_t, const int64_t& v) { p.visitIntegerSigned(v); }, 1);
+                    break;
+                case bcsv::ColumnType::UINT8:
+                    reader.row().visitConst<uint8_t>(i, [&](size_t, const uint8_t& v) { p.visitIntegerUnsigned(static_cast<uint64_t>(v)); }, 1);
+                    break;
+                case bcsv::ColumnType::UINT16:
+                    reader.row().visitConst<uint16_t>(i, [&](size_t, const uint16_t& v) { p.visitIntegerUnsigned(static_cast<uint64_t>(v)); }, 1);
+                    break;
+                case bcsv::ColumnType::UINT32:
+                    reader.row().visitConst<uint32_t>(i, [&](size_t, const uint32_t& v) { p.visitIntegerUnsigned(static_cast<uint64_t>(v)); }, 1);
+                    break;
+                case bcsv::ColumnType::UINT64:
+                    reader.row().visitConst<uint64_t>(i, [&](size_t, const uint64_t& v) { p.visitIntegerUnsigned(v); }, 1);
+                    break;
+                case bcsv::ColumnType::FLOAT:
+                    reader.row().visitConst<float>(i, [&](size_t, const float& v) { p.visitFloat(static_cast<double>(v)); }, 1);
+                    break;
+                case bcsv::ColumnType::DOUBLE:
+                    reader.row().visitConst<double>(i, [&](size_t, const double& v) { p.visitFloat(v); }, 1);
+                    break;
+                case bcsv::ColumnType::STRING:
+                    reader.row().visitConst<std::string>(i, [&](size_t, const std::string& s) { p.visitString(s); }, 1);
+                    break;
+                default:
+                    p.alive = false;
+                    --alive_count;
+                    break;
+            }
+        }
+
+        for (size_t i : selected_cols_out) {
+            auto& p = probes[i];
+            if (!p.alive)
+                continue;
+            p.rows_probed++;
+            p.checkStabilization();
+            if (!p.alive)
+                --alive_count;
+        }
+
+        if (alive_count == 0)
+            break;
+
+        if (verbose && (total_rows & 0x3FFF) == 0) {
+            std::cerr << "  Scanned " << total_rows << " rows, "
+                      << alive_count << " columns still probing..." << std::endl;
+        }
+    }
+    // Capture file metadata while reader is still open
+    flags_out       = reader.fileHeader().getFlags();
+    comp_out        = reader.fileHeader().getCompressionLevel();
+    packet_size_out = reader.fileHeader().getPacketSize();
+    reader.close();
+
+    // Empty-column guard
+    for (auto& p : probes) {
+        if (p.rows_probed == 0) {
+            p.optimal_type = p.original_type;
+            p.alive        = false;
+        }
+    }
+
+    total_rows_out = total_rows;
+    return probes;
+}
+
+// ── Analyze output ──────────────────────────────────────────────────
+
+static bool printAnalysis(
+    const std::string&                   input_path,
+    const std::vector<std::string>&      col_names,
+    const std::vector<ColumnProbeState>& probes,
+    size_t                               rows_scanned,
+    bcsv::FileFlags                      flags,
+    uint8_t                              comp,
+    const std::vector<size_t>&           selected_cols,
+    bool                                 scope_active,
+    bool /*verbose*/) {
+
+    const size_t num_cols = col_names.size();
+
+    // Only the selected columns are reported/counted. selected_cols already
+    // holds every in-scope column (all columns when no --cols was given).
+    const size_t scope_cols = selected_cols.size();
+    const char*  col_word   = scope_active ? "selected columns" : "columns";
+
+    auto names = bcsv_cli::codecNamesFromFlags(flags, comp);
+
+    bool has_narrowed = anyNarrowed(probes);
+
+    std::cout << "bcsvCast: analysis of " << input_path << "\n";
+    std::cout << "File codec: " << names.file_codec << " | Row codec: " << names.row_codec
+              << " | Compression: " << static_cast<int>(comp) << "\n";
+
+    if (!has_narrowed) {
+        // Try to get total row count for early-termination display only when needed
+        size_t total_possible = 0;
+        try {
+            bcsv::ReaderDirectAccess<bcsv::Layout> da;
+            if (da.open(input_path)) {
+                total_possible = da.rowCount();
+            }
+        } catch (...) {}
+
+        // Check for early termination: all columns stabilized before EOF, nothing narrowable
+        bool early_terminated = total_possible > 0 && rows_scanned < total_possible;
+
+        if (early_terminated) {
+            std::cout << "Rows scanned: " << rows_scanned << " (out of " << total_possible
+                      << ", terminated early)\n";
+            std::cout << "Columns: " << scope_cols << "\n";
+            std::cout << "\nAll " << scope_cols << " " << col_word << " are already at their narrowest type.\n";
+            std::cout << "No conversion possible.\n";
+            return false;
+        }
+
+        std::cout << "Rows scanned: " << rows_scanned << ", Columns: " << scope_cols << "\n";
+        std::cout << "\nAll " << scope_cols << " " << col_word << " are already at their narrowest type.\n";
+        std::cout << "No conversion possible.\n";
+        return false;
+    }
+
+    std::cout << "Rows scanned: " << rows_scanned << ", Columns: " << scope_cols << "\n";
+
+    // Table widths
+    size_t max_idx = 3;
+    if (num_cols > 99) {
+        max_idx = std::to_string(num_cols - 1).size();
+        if (max_idx < 3)
+            max_idx = 3;
+    }
+
+    size_t max_name = 4;
+    for (size_t i : selected_cols) {
+        if (col_names[i].size() > max_name)
+            max_name = col_names[i].size();
+    }
+
+    size_t opt_width = 0;
+    for (size_t i : selected_cols) {
+        std::string s = bcsv_cli::columnTypeStr(probes[i].optimal_type);
+        if (probes[i].optimal_type == probes[i].original_type)
+            s += "       (unchanged)";
+        if (s.size() > opt_width)
+            opt_width = s.size();
+    }
+
+    std::cout << "\n"
+              << "  " << std::right << std::setw(static_cast<int>(max_idx)) << "Idx"
+              << "  " << std::left << std::setw(static_cast<int>(max_name)) << "Name"
+              << "  " << std::right << std::setw(8) << "Original"
+              << "  " << std::left << std::setw(static_cast<int>(opt_width)) << "Optimal"
+              << "\n"
+              << "  " << std::string(max_idx, '-')
+              << "  " << std::string(max_name, '-')
+              << "  " << std::string(8, '-')
+              << "  " << std::string(opt_width, '-')
+              << "\n";
+
+    size_t narrowable = 0;
+    for (size_t i : selected_cols) {
+        auto& p = probes[i];
+        std::cout << "  " << std::right << std::setw(static_cast<int>(max_idx)) << i
+                  << "  " << std::left << std::setw(static_cast<int>(max_name))
+                  << col_names[i]
+                  << "  " << std::right << std::setw(8)
+                  << bcsv_cli::columnTypeStr(p.original_type)
+                  << "  ";
+
+        if (p.optimal_type == p.original_type) {
+            std::cout << std::left << std::setw(static_cast<int>(opt_width))
+                      << bcsv_cli::columnTypeStr(p.optimal_type) << "       (unchanged)";
+        } else {
+            std::cout << std::left << std::setw(static_cast<int>(opt_width))
+                      << bcsv_cli::columnTypeStr(p.optimal_type);
+            ++narrowable;
+        }
+        std::cout << "\n";
+    }
+
+    size_t orig_bytes = 0, opt_bytes = 0;
+    for (size_t i : selected_cols) {
+        orig_bytes += bcsv::sizeOf(probes[i].original_type);
+        opt_bytes += bcsv::sizeOf(probes[i].optimal_type);
+    }
+    double savings_pct = (orig_bytes > 0)
+                             ? 100.0 * (1.0 - static_cast<double>(opt_bytes) / static_cast<double>(orig_bytes))
+                             : 0.0;
+
+    std::cout << "\nNarrowable columns: " << narrowable << " / " << scope_cols << "\n";
+    std::cout << "Max theoretical savings (flat codec): " << std::fixed
+              << std::setprecision(1) << savings_pct
+              << "% (estimated type widths only)\n";
+    std::cout << "\nProvide an OUTPUT_FILE to apply, or use --in-place to overwrite the input.\n";
+
+    return true; // has narrowed columns
+}
+
+// ── Convert phase ───────────────────────────────────────────────────
+
+// Apply a resolved plan: copy verbatim when effective==original, else coerce
+// (saturating). Accumulates per-column clamp counts into plan[i].clamped.
+static void applyPlan(
+    const std::string&    input_path,
+    const std::string&    output_path,
+    std::vector<ColPlan>& plan,
+    double                tol,
+    bcsv::FileFlags       flags,
+    uint8_t               comp_level,
+    size_t                block_size_kb,
+    bool                  verbose) {
+
+    bcsv::Reader<bcsv::Layout> reader;
+    if (!reader.open(input_path)) {
+        throw std::runtime_error("Cannot open for conversion: " + input_path +
+                                 " (" + reader.getErrorMsg() + ")");
+    }
+
+    const auto& src_layout = reader.layout();
+    size_t      num_cols   = src_layout.columnCount();
+
+    bcsv::Layout dst_layout;
+    for (size_t i = 0; i < num_cols; ++i)
+        dst_layout.addColumn({src_layout.columnName(i), plan[i].effective});
+
+    auto names = bcsv_cli::codecNamesFromFlags(flags, comp_level);
+
+    if (verbose) {
+        std::cerr << "Converting to: " << output_path << std::endl;
+        std::cerr << "Row codec: " << names.row_codec << std::endl;
+    }
+
+    size_t total_rows = 0;
+    bcsv_cli::withWriter(dst_layout, names.row_codec, [&](auto& writer) {
+        writer.open(output_path, true, comp_level, block_size_kb, flags);
+
+        while (reader.readNext()) {
+            ++total_rows;
+            auto& dst_row = writer.row();
+
+            for (size_t i = 0; i < num_cols; ++i) {
+                ColPlan& c = plan[i];
+
+                if (c.effective == c.original) {
+                    reader.row().visitConst(i, [&dst_row](size_t col, const auto& val) { dst_row.set(col, val); }, 1);
+                    continue;
+                }
+
+                const bcsv::ColumnType dst = c.effective;
+                visitTyped(reader.row(), i, c.original, [&](const auto& v) {
+                    using S = std::decay_t<decltype(v)>;
+                    bcsv::ValueType vt;
+                    if constexpr (std::is_same_v<S, std::string>) {
+                        char*  endptr = nullptr;
+                        double d      = std::strtod(v.c_str(), &endptr);
+                        if (v.empty() || endptr != v.c_str() + v.size())
+                            throw std::runtime_error(
+                                "bcsvCast: cannot convert non-numeric string \"" + v +
+                                "\" at row " + std::to_string(total_rows) + " to " +
+                                bcsv_cli::columnTypeStr(dst));
+                        vt = coerce(dst, d, tol, c.clamped);
+                    } else {
+                        vt = coerce(dst, v, tol, c.clamped);
+                    }
+                    std::visit([&i, &dst_row](const auto& x) { dst_row.set(i, x); }, vt);
+                });
+            }
+            writer.writeRow();
+
+            if (verbose && (total_rows & 0x3FFF) == 0)
+                std::cerr << "  Written " << total_rows << " rows..." << std::endl;
+        }
+
+        writer.close();
+        if (verbose)
+            std::cerr << "  Written " << total_rows << " rows to " << output_path << std::endl;
+    });
+}
+
+// Build a plan from auto-derived narrowing probes (all lossless).
+static std::vector<ColPlan> planFromProbes(const std::vector<ColumnProbeState>& probes) {
+    std::vector<ColPlan> plan(probes.size());
+    for (size_t i = 0; i < probes.size(); ++i) {
+        plan[i].original  = probes[i].original_type;
+        plan[i].requested = probes[i].optimal_type;
+        plan[i].effective = probes[i].optimal_type;
+    }
+    return plan;
+}
+
+// Report for --static / --dynamic (human-readable; JSON handled in step 7).
+static void reportExplicit(const Config&                   config,
+                           const std::string&              input,
+                           const std::vector<std::string>& names,
+                           const std::vector<ColPlan>&     plan,
+                           size_t                          rows) {
+    std::cout << "bcsvCast: " << (config.mode == Mode::Static ? "static" : "dynamic")
+              << " cast of " << input << "\n";
+    std::cout << "Rows scanned: " << rows << ", Columns: " << plan.size();
+    if (config.tolerance > 0.0)
+        std::cout << ", tolerance: " << config.tolerance;
+    std::cout << "\n\n";
+
+    size_t changed = 0, skipped = 0, forced = 0;
+    for (size_t i = 0; i < plan.size(); ++i) {
+        const ColPlan& c = plan[i];
+        std::cout << "  " << i << "  " << names[i] << "  "
+                  << bcsv_cli::columnTypeStr(c.original) << " -> "
+                  << bcsv_cli::columnTypeStr(c.effective);
+        if (c.requested == c.original) {
+            std::cout << "   (unchanged)";
+        } else if (c.skipped) {
+            std::cout << "   skipped: lossy (" << c.lossy_cells << " cells)";
+            ++skipped;
+        } else if (c.lossy) {
+            std::cout << "   forced (" << c.lossy_cells << " lossy cells)";
+            ++changed;
+            ++forced;
+        } else {
+            std::cout << "   ok";
+            ++changed;
+        }
+        std::cout << "\n";
+    }
+    std::cout << "\nChanged: " << changed << ", Skipped: " << skipped
+              << ", Forced (lossy): " << forced << " / " << plan.size() << "\n";
+}
+
+// Machine-readable plan/result on stdout (spec §11.3). Enumerates every column
+// so an agent can build a positional list; `suggested_spec` is a ready-to-copy
+// map-form SPEC that reproduces the plan.
+static void printJson(const Config&                   config,
+                      const std::string&              input,
+                      const std::vector<std::string>& names,
+                      const std::vector<ColPlan>&     plan,
+                      size_t                          rows,
+                      const std::string&              output,
+                      bool                            applied) {
+    const char* mode_str = config.mode == Mode::Scan     ? "scan"
+                         : config.mode == Mode::Optimize ? "optimize"
+                         : config.mode == Mode::Dynamic  ? "dynamic"
+                                                         : "static";
+    std::string spec;
+    bool        any_loss = false;
+    for (size_t i = 0; i < plan.size(); ++i) {
+        if (plan[i].requested != plan[i].original) {
+            if (!spec.empty()) spec += ",";
+            spec += std::to_string(i) + "=" +
+                    std::string(bcsv_cli::columnTypeStr(plan[i].requested));
+        }
+        if (plan[i].lossy) any_loss = true;
+    }
+    const std::string ver = std::to_string(bcsv::VERSION_MAJOR) + "." +
+                            std::to_string(bcsv::VERSION_MINOR) + "." +
+                            std::to_string(bcsv::VERSION_PATCH);
+
+    std::cout << "{\n"
+              << "  \"tool\": \"bcsvCast\",\n"
+              << "  \"version\": " << bcsv_cli::jsonStr(ver) << ",\n"
+              << "  \"mode\": \"" << mode_str << "\",\n"
+              << "  \"input\": " << bcsv_cli::jsonStr(input) << ",\n"
+              << "  \"output\": " << (output.empty() ? "null" : bcsv_cli::jsonStr(output)) << ",\n"
+              << "  \"applied\": " << (applied ? "true" : "false") << ",\n"
+              << "  \"rows_scanned\": " << rows << ",\n"
+              << "  \"num_columns\": " << plan.size() << ",\n"
+              << "  \"tolerance\": " << config.tolerance << ",\n"
+              << "  \"any_loss\": " << (any_loss ? "true" : "false") << ",\n"
+              << "  \"suggested_spec\": " << bcsv_cli::jsonStr(spec) << ",\n"
+              << "  \"columns\": [";
+    for (size_t i = 0; i < plan.size(); ++i) {
+        const ColPlan& c           = plan[i];
+        const bool     col_applied = applied && (c.effective != c.original);
+        const std::string reason =
+            c.skipped ? ("skipped: " + std::to_string(c.lossy_cells) + " lossy cells")
+                      : (c.requested == c.original ? "unchanged"
+                                                   : (c.lossy ? (std::to_string(c.lossy_cells) + " lossy cells")
+                                                              : "ok"));
+        std::cout << (i ? "," : "") << "\n    {"
+                  << "\"index\": " << i
+                  << ", \"name\": " << bcsv_cli::jsonStr(names[i])
+                  << ", \"original\": " << bcsv_cli::jsonStr(std::string(bcsv_cli::columnTypeStr(c.original)))
+                  << ", \"target\": " << bcsv_cli::jsonStr(std::string(bcsv_cli::columnTypeStr(c.requested)))
+                  << ", \"bytes_original\": " << bcsv::sizeOf(c.original)
+                  << ", \"bytes_target\": " << bcsv::sizeOf(c.requested)
+                  << ", \"applied\": " << (col_applied ? "true" : "false")
+                  << ", \"lossy\": " << (c.lossy ? "true" : "false")
+                  << ", \"clamped_cells\": " << c.clamped
+                  << ", \"values_out_of_range\": " << c.oor
+                  << ", \"skipped\": " << (c.skipped ? "true" : "false")
+                  << ", \"reason\": " << bcsv_cli::jsonStr(reason)
+                  << "}";
+    }
+    std::cout << "\n  ]\n}\n";
+}
+
+// Write the plan to `target` crash-safely: convert into a temp file in the target's
+// directory, then atomically rename over `target`. Used by both -o and --in-place, so
+// a mid-convert failure (e.g. an unparseable forced string) never destroys an existing
+// file. The temp lives in the target's directory to keep the rename on one filesystem.
+static void writeViaTemp(const std::string&    input,
+                         const fs::path&       target,
+                         std::vector<ColPlan>& plan,
+                         double                tol,
+                         bcsv::FileFlags       flags,
+                         uint8_t               comp,
+                         size_t                block_kb,
+                         bool                  verbose) {
+    const fs::path dir  = target.parent_path();
+    std::string    tmpl = (dir / "bcsvCast_XXXXXX").string();
+#ifdef BCSV_HAS_MKSTEMP
+    int fd = mkstemp(tmpl.data());   // POSIX: creates + opens atomically
+    if (fd == -1)
+        throw std::runtime_error("Cannot create temp file in " +
+                                 (dir.empty() ? std::string(".") : dir.string()));
+    ::close(fd);  // applyPlan overwrites via writer.open(..., true)
+#else
+    if (_mktemp_s(tmpl.data(), tmpl.size() + 1) != 0)  // Windows: name only (minor TOCTOU)
+        throw std::runtime_error("Cannot create temp file name in " +
+                                 (dir.empty() ? std::string(".") : dir.string()));
+#endif
+    fs::path tmp_path(tmpl);
+    try {
+        applyPlan(input, tmp_path.string(), plan, tol, flags, comp, block_kb, verbose);
+        fs::rename(tmp_path, target);
+    } catch (...) {
+        if (fs::exists(tmp_path))
+            fs::remove(tmp_path);
+        throw;
+    }
+}
+
+// ── Main ────────────────────────────────────────────────────────────
+
+int main(int argc, char* argv[]) {
+    try {
+        Config config = parseArgs(argc, argv);
+
+        if (config.help) {
+            printUsage(argv[0]);
+            return 0;
+        }
+
+        if (!fs::exists(config.input_file)) {
+            throw std::runtime_error("Input file does not exist: " + config.input_file);
+        }
+
+        // A tolerance ≥ 0.5 makes the float→int wholeness test trivially true
+        // (every value is within 0.5 of an integer), so it effectively disables it.
+        if (config.tolerance >= 0.5)
+            std::cerr << "bcsvCast: warning: --tolerance " << config.tolerance
+                      << " makes the float->int wholeness test trivially true "
+                         "(every value is within 0.5 of an integer)." << std::endl;
+
+        // Warn on inert flag combinations rather than silently ignoring them.
+        if (config.string_to_value &&
+            (config.mode == Mode::Static || config.mode == Mode::Dynamic))
+            std::cerr << "bcsvCast: warning: --string-to-value is ignored with "
+                         "--static/--dynamic (it only affects --scan/--optimize)."
+                      << std::endl;
+        if (config.overwrite && config.in_place)
+            std::cerr << "bcsvCast: warning: --overwrite is ignored with --in-place."
+                      << std::endl;
+
+        // ── Build the plan (+ file metadata) for the selected mode ──
+        size_t                        total_rows   = 0;
+        bcsv::FileFlags               flags        = bcsv::FileFlags::NONE;
+        uint8_t                       comp         = 0;
+        uint32_t                      packet_size  = 0;
+        std::vector<std::string>      col_names;
+        std::vector<size_t>           selected_cols;
+        bool                          scope_active = false;
+        std::vector<ColPlan>          plan;
+        std::vector<ColumnProbeState> probes;   // auto modes only (feeds printAnalysis)
+        const bool explicit_mode =
+            (config.mode == Mode::Static || config.mode == Mode::Dynamic);
+
+        if (!explicit_mode) {
+            probes = scanFile(config.input_file, config.cols_spec,
+                              config.string_to_value, config.tolerance, config.verbose,
+                              total_rows, flags, comp, packet_size,
+                              col_names, selected_cols, scope_active);
+            plan = planFromProbes(probes);
+        } else {
+            // Read layout + metadata, parse the SPEC, then scan for loss.
+            {
+                bcsv::Reader<bcsv::Layout> reader;
+                if (!reader.open(config.input_file))
+                    throw std::runtime_error("Cannot open BCSV file: " + config.input_file +
+                                             " (" + reader.getErrorMsg() + ")");
+                const auto&  layout = reader.layout();
+                const size_t n      = layout.columnCount();
+                col_names.reserve(n);
+                for (size_t i = 0; i < n; ++i)
+                    col_names.push_back(layout.columnName(i));
+                auto requested = parseSpec(config.type_spec, layout);   // throws ArgError
+                plan.resize(n);
+                for (size_t i = 0; i < n; ++i) {
+                    plan[i].original  = layout.columnType(i);
+                    plan[i].requested = requested[i];
+                }
+                flags       = reader.fileHeader().getFlags();
+                comp        = reader.fileHeader().getCompressionLevel();
+                packet_size = reader.fileHeader().getPacketSize();
+                reader.close();
+            }
+            scanForLoss(config.input_file, plan, config.tolerance, total_rows);
+            for (auto& c : plan) {
+                if (c.requested == c.original) { c.effective = c.original; continue; }
+                if (config.mode == Mode::Dynamic) {
+                    if (c.lossy) { c.skipped = true; c.effective = c.original; }
+                    else           c.effective = c.requested;
+                } else {  // Static: apply the requested type, clamping lossy cells.
+                    c.effective = c.requested;
+                }
+            }
+            // Fail fast: --static cannot force a non-numeric string to a number, so
+            // reject before writing anything (consistent for dry-run and apply).
+            if (config.mode == Mode::Static) {
+                for (size_t i = 0; i < plan.size(); ++i) {
+                    const ColPlan& c = plan[i];
+                    if (c.effective != c.original && c.unparseable > 0)
+                        throw std::runtime_error(
+                            "--static cannot cast column " + std::to_string(i) + " ('" +
+                            col_names[i] + "') to " + bcsv_cli::columnTypeStr(c.requested) + ": " +
+                            std::to_string(c.unparseable) +
+                            " non-numeric string cell(s) — forcing cannot invent a number.");
+                }
+            }
+            for (size_t i = 0; i < plan.size(); ++i) selected_cols.push_back(i);
+        }
+
+        // Preserve the source packet/block size (bytes → KB; it was written as
+        // blockSizeKB*1024, so this recovers it exactly).  Fall back to the
+        // default only for degenerate/zero values.
+        const size_t block_size_kb = packet_size >= 1024
+                                         ? packet_size / 1024
+                                         : bcsv::DEFAULT_PACKET_SIZE_KB;
+
+        // ── Report the plan (human-readable; JSON emitted after any convert) ──
+        if (!config.json) {
+            // Honest labeling (spec §9.4): a positive tolerance means the "lossless"
+            // narrowing may drop up to `tol` per value — say so, so --optimize's
+            // report is never mistaken for bit-exact.
+            if (!explicit_mode && config.tolerance > 0.0)
+                std::cout << "Tolerance: " << config.tolerance
+                          << " (values within tolerance are treated as lossless)\n";
+            if (!explicit_mode)
+                printAnalysis(config.input_file, col_names, probes, total_rows,
+                              flags, comp, selected_cols, scope_active, config.verbose);
+            else
+                reportExplicit(config, config.input_file, col_names, plan, total_rows);
+        }
+
+        // Convert phase — apply-always-writes: an output path always produces a
+        // file, even when the plan is a no-op (spec §12). Both -o and --in-place go
+        // through writeViaTemp (temp + atomic rename) so a mid-convert failure never
+        // destroys an existing file.
+        if (config.convert) {
+            fs::path input_fs(config.input_file);
+
+            if (config.in_place) {
+                writeViaTemp(config.input_file, input_fs, plan, config.tolerance,
+                             flags, comp, block_size_kb, config.verbose);
+                if (config.verbose)
+                    std::cerr << "In-place overwrite complete." << std::endl;
+            } else {
+                const std::string& effective_output = config.output_file;
+                fs::path           out_fs(effective_output);
+
+                // Reject same-path: reading and writing the same file corrupts it.
+                // Lexical check catches identical / relative-vs-absolute spellings;
+                // fs::equivalent (below, once the output exists) catches hard/symlinks.
+                if (config.input_file == effective_output ||
+                    (fs::current_path() / config.input_file).lexically_normal() ==
+                    (fs::current_path() / out_fs).lexically_normal())
+                    throw std::runtime_error(
+                        "Output path resolves to same file as input: " +
+                        effective_output + " — use --in-place to overwrite the input.");
+
+                if (fs::exists(out_fs)) {
+                    if (fs::equivalent(input_fs, out_fs))
+                        throw std::runtime_error(
+                            "Output resolves to the same file as input (hard/symlink): " +
+                            effective_output + " — use --in-place to rewrite the input.");
+                    if (!fs::is_regular_file(out_fs))
+                        throw std::runtime_error(
+                            "Output path exists and is not a regular file: " +
+                            effective_output);
+                    if (!config.overwrite)
+                        throw std::runtime_error(
+                            "Output file already exists: " + effective_output +
+                            " — use --overwrite to replace it.");
+                    std::cerr << "Warning: overwriting existing output file: "
+                              << effective_output << std::endl;
+                }
+
+                writeViaTemp(config.input_file, out_fs, plan, config.tolerance,
+                             flags, comp, block_size_kb, config.verbose);
+                if (config.verbose)
+                    std::cerr << "Converted file written to " << effective_output << std::endl;
+            }
+
+            // Per-column clamp / skip notices (stderr) — spec §11.2.
+            for (size_t i = 0; i < plan.size(); ++i) {
+                const ColPlan& c = plan[i];
+                if (c.clamped > 0)
+                    std::cerr << "bcsvCast: col " << i << " '" << col_names[i] << "' "
+                              << bcsv_cli::columnTypeStr(c.original) << "->"
+                              << bcsv_cli::columnTypeStr(c.effective) << ": "
+                              << c.clamped << " cells clamped/rounded" << std::endl;
+                else if (c.skipped)
+                    std::cerr << "bcsvCast: col " << i << " '" << col_names[i] << "' kept "
+                              << bcsv_cli::columnTypeStr(c.original) << " (skipped "
+                              << bcsv_cli::columnTypeStr(c.requested) << ": "
+                              << c.lossy_cells << " lossy cells)" << std::endl;
+            }
+        }
+
+        // ── JSON output (after any convert, so clamp counts are accurate) ──
+        if (config.json) {
+            const std::string out_path =
+                config.in_place ? config.input_file : config.output_file;
+            printJson(config, config.input_file, col_names, plan, total_rows,
+                      out_path, config.convert);
+        }
+
+        return 0;
+    } catch (const ArgError& ex) {
+        std::cerr << "Error: " << ex.what() << std::endl;
+        return 2;
+    } catch (const std::exception& ex) {
+        std::cerr << "Error: " << ex.what() << std::endl;
+        return 1;
+    }
+}

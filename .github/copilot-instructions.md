@@ -58,7 +58,7 @@ include/bcsv/         # Header-only C++ library (.h = declarations, .hpp = imple
   codec_row/           # Row codecs (flat001, zoh001, delta002)
   codec_file/          # File codecs (stream, packet, LZ4 variants)
   sampler/             # Bytecode VM for row filtering/projection
-src/tools/             # 11 CLI tools (csv2bcsv, bcsv2csv, bcsvHead/Tail/Header, bcsvSampler, bcsvGenerator, bcsvValidate, bcsvRepair, bcsvNarrowType, bcsvCompare)
+src/tools/             # 11 CLI tools (csv2bcsv, bcsv2csv, bcsvHead/Tail/Header, bcsvSampler, bcsvGenerator, bcsvValidate, bcsvRepair, bcsvCast, bcsvCompare)
 tests/                 # GTest suite (25 .cpp) + C API tests (3 .c) + shell integration tests
 benchmark/             # Python orchestrator + Google Benchmark executables
 python/                # nanobind bindings + pandas integration

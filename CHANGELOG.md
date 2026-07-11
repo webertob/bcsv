@@ -12,7 +12,33 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **`bcsvCast` CLI tool** — generalizes column re-typing with four modes: `--scan`
+  (report the smallest lossless type per column, read-only), `--optimize`
+  (auto-derive and apply — the former `bcsvNarrowType` behavior), `--static SPEC`
+  (apply caller-chosen types, saturating/rounding lossy cells), and `--dynamic SPEC`
+  (apply a SPEC per column, skipping any column that would lose data). Adds a quoted
+  type SPEC grammar (`'0=int32,7:8=float'` map form or `'int32,uint64,…'` positional
+  list) with canonical + short type aliases, `--tolerance` (absolute epsilon; a larger
+  tolerance lets `--optimize` narrow more aggressively — `|orig − new| ≤ tol` counts as
+  lossless), and `--json` output (with a ready-to-reuse `suggested_spec`).
+  Default mode: `--optimize` when an output path is given, else `--scan`.
+
+### Changed
+- **`bcsvNarrowType` removed — replaced by `bcsvCast`** (breaking, tooling). Migration:
+  `bcsvNarrowType in out` → `bcsvCast in out` (or `--optimize`); `--stringsToValue` →
+  `--string-to-value`; all other flags (`--cols`, `-o`, `--in-place`, `--overwrite`,
+  `-v`) are unchanged. Library and wire format are unchanged (patch release).
+- **`bcsvCast` apply always writes an output** — a no-op plan now still produces the
+  output file (previously `bcsvNarrowType` skipped the write when nothing narrowed),
+  so pipelines get a deterministic output path.
+
 ### Fixed
+- **`bcsvCast` double→int64/uint64 boundary (inherited from `bcsvNarrowType`)** —
+  the range check compared against `static_cast<double>(INT64_MAX)`/`UINT64_MAX`,
+  which round up to 2⁶³/2⁶⁴, so a value of exactly 2⁶³/2⁶⁴ passed the guard and
+  overflowed (UB) on cast. Both the scan ladder and the coercion path now exclude
+  `≥ 2⁶³` / `≥ 2⁶⁴` strictly.
 - **parquet2bcsv/bcsv2parquet: FixedSizeList columns were transposed** — element
   `i` of a fixed-size list was extracted as a contiguous block
   (`child[i*N:(i+1)*N]`) instead of a strided per-element gather, scrambling the

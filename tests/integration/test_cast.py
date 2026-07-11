@@ -1,7 +1,8 @@
-"""Integration tests for bcsvNarrowType CLI.
+"""Integration tests for bcsvCast CLI.
 
-Tests: analyze mode, convert + compare, in-place overwrite,
-no-narrowing case, empty file, string opt-in, flat codec size.
+Tests: --scan report, --optimize convert + compare, in-place overwrite,
+no-op case, empty file, string opt-in, flat codec size, --static/--dynamic,
+and --json output.
 """
 
 import shutil
@@ -18,7 +19,7 @@ from helpers import run_tool
 def narrow_data(tmp_path_factory, tools):
     d = tmp_path_factory.mktemp("narrow_type")
     narrow = tools.get(
-        "bcsvNarrowType", tools["bcsvGenerator"].parent / "bcsvNarrowType"
+        "bcsvCast", tools["bcsvGenerator"].parent / "bcsvCast"
     )
 
     # Generate test files
@@ -70,18 +71,18 @@ def narrow_data(tmp_path_factory, tools):
 class TestHelp:
     def test_help_flag(self, narrow_data):
         r = run_tool(narrow_data["narrow"], "--help")
-        assert "bcsvNarrowType" in r.stdout
+        assert "bcsvCast" in r.stdout
         assert "--in-place" in r.stdout
         assert "--overwrite" in r.stdout
         assert "--cols" in r.stdout
-        assert "--stringsToValue" in r.stdout
+        assert "--string-to-value" in r.stdout
 
 
 class TestAnalyze:
     def test_analyze_output(self, narrow_data):
         r = run_tool(narrow_data["narrow"], narrow_data["sensor"])
         assert r.returncode == 0
-        assert "bcsvNarrowType: analysis of" in r.stdout
+        assert "bcsvCast: analysis of" in r.stdout
         assert "Columns:" in r.stdout
 
     def test_verbose_stderr(self, narrow_data):
@@ -196,7 +197,7 @@ class TestStringsToValue:
     def test_strings_to_value_flag(self, narrow_data):
         r = run_tool(
             narrow_data["narrow"],
-            "--stringsToValue",
+            "--string-to-value",
             narrow_data["sensor"],
             check=False,
         )
@@ -274,4 +275,88 @@ class TestColumnSelection:
         )
         assert r.returncode == 0
         assert out.exists()
+
+
+class TestExplicitModes:
+    def test_static_col_to_string(self, narrow_data):
+        # any → string is always lossless; works regardless of column 0's type.
+        out = narrow_data["dir"] / "to_string.bcsv"
+        r = run_tool(
+            narrow_data["narrow"], "--static", "0=string",
+            narrow_data["sensor"], str(out),
+        )
+        assert r.returncode == 0
+        assert out.exists()
+
+    def test_static_apply_and_value_roundtrip(self, narrow_data, tools):
+        # Force column 0 to string; parsing those strings back must reproduce the
+        # original numeric values exactly (shortest round-trip formatting).
+        out = narrow_data["dir"] / "static_rt.bcsv"
+        run_tool(narrow_data["narrow"], "--static", "0=string",
+                 narrow_data["sensor"], str(out))
+        r = run_tool(tools["bcsvCompare"], "--mode", "value", "--string-to-value",
+                     narrow_data["sensor"], out, check=False)
+        assert r.returncode == 0
+
+    def test_dynamic_dry_run_reports(self, narrow_data):
+        r = run_tool(narrow_data["narrow"], "--dynamic", "0=int8", narrow_data["sensor"])
+        assert r.returncode == 0
+        assert "dynamic cast of" in r.stdout
+
+    def test_mode_conflict_rejected(self, narrow_data):
+        r = run_tool(narrow_data["narrow"], "--scan", "--optimize",
+                     narrow_data["sensor"], check=False)
+        assert r.returncode == 2
+
+    def test_positional_with_equals_rejected(self, narrow_data):
+        # A stray '=' positional (brace-expanded SPEC) must be caught.
+        r = run_tool(narrow_data["narrow"], narrow_data["sensor"], "3=float", check=False)
+        assert r.returncode == 2
+
+    def test_cols_with_static_rejected(self, narrow_data):
+        out = narrow_data["dir"] / "conflict.bcsv"
+        r = run_tool(narrow_data["narrow"], "--cols", "0", "--static", "0=int8",
+                     narrow_data["sensor"], str(out), check=False)
+        assert r.returncode == 2
+
+    def test_apply_always_writes_noop(self, narrow_data):
+        # Requesting current type for col 0 is a no-op, but output must be written.
+        import subprocess
+        # Determine column 0's current type from --scan --json.
+        r = run_tool(narrow_data["narrow"], "--scan", "--json", narrow_data["sensor"])
+        import json
+        typ = json.loads(r.stdout)["columns"][0]["original"]
+        out = narrow_data["dir"] / "noop.bcsv"
+        r2 = run_tool(narrow_data["narrow"], "--static", f"0={typ}",
+                      narrow_data["sensor"], str(out))
+        assert r2.returncode == 0
+        assert out.exists()
+
+
+class TestJson:
+    def test_scan_json_shape(self, narrow_data):
+        import json
+        r = run_tool(narrow_data["narrow"], "--scan", "--json", narrow_data["sensor"])
+        assert r.returncode == 0
+        doc = json.loads(r.stdout)  # pure JSON on stdout
+        assert doc["tool"] == "bcsvCast"
+        assert doc["mode"] == "scan"
+        assert doc["num_columns"] == len(doc["columns"])
+        assert "suggested_spec" in doc
+
+    def test_suggested_spec_is_reusable(self, narrow_data, tools):
+        # Agent workflow: scan → take suggested_spec → apply via --static → round-trips.
+        import json
+        r = run_tool(narrow_data["narrow"], "--scan", "--json", narrow_data["flat"])
+        spec = json.loads(r.stdout)["suggested_spec"]
+        if not spec:
+            pytest.skip("nothing narrowable in fixture")
+        out = narrow_data["dir"] / "reused.bcsv"
+        r2 = run_tool(narrow_data["narrow"], "--static", spec,
+                      narrow_data["flat"], str(out))
+        assert r2.returncode == 0
+        # suggested_spec is the lossless narrowing plan → values must compare equal.
+        r3 = run_tool(tools["bcsvCompare"], "--mode", "value",
+                      narrow_data["flat"], out, check=False)
+        assert r3.returncode == 0
 

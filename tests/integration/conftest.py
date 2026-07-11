@@ -74,7 +74,7 @@ def tools(bin_dir):
         "bcsvSampler",
         "bcsvValidate",
         "bcsvCompare",
-        "bcsvNarrowType",
+        "bcsvCast",
     ]
     result = {}
     for name in names:

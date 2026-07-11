@@ -180,21 +180,9 @@ static Config parseArgs(int argc, char* argv[]) {
 
 // ── JSON helpers ────────────────────────────────────────────────────
 
-static std::string jsonStr(const std::string& s) {
-    std::string out = "\"";
-    for (char c : s) {
-        switch (c) {
-            case '"':  out += "\\\""; break;
-            case '\\': out += "\\\\"; break;
-            case '\n': out += "\\n";  break;
-            case '\r': out += "\\r";  break;
-            case '\t': out += "\\t";  break;
-            default:   out += c;      break;
-        }
-    }
-    out += '"';
-    return out;
-}
+// jsonStr now lives in cli_common.h (shared with bcsvCast); bring it into scope
+// so existing unqualified call sites keep working.
+using bcsv_cli::jsonStr;
 
 // ── Formatting helpers ──────────────────────────────────────────────
 

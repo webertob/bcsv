@@ -254,7 +254,7 @@ if(BUILD_TOOLS)
             bcsvGenerator
             bcsvValidate
             bcsvRepair
-            bcsvNarrowType
+            bcsvCast
             bcsvCompare
         RUNTIME DESTINATION bin
     )

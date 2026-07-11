@@ -140,7 +140,7 @@ What is installed:
 
 | Location | Content |
 |---|---|
-| `$PREFIX/bin/` | 9 CLI tools (`csv2bcsv`, `bcsv2csv`, `bcsvHead`, `bcsvTail`, `bcsvHeader`, `bcsvSampler`, `bcsvGenerator`, `bcsvValidate`, `bcsvRepair`) |
+| `$PREFIX/bin/` | 11 CLI tools (`csv2bcsv`, `bcsv2csv`, `bcsvHead`, `bcsvTail`, `bcsvHeader`, `bcsvSampler`, `bcsvGenerator`, `bcsvValidate`, `bcsvRepair`, `bcsvCompare`, `bcsvCast`) |
 | `$PREFIX/lib/libbcsv_c_api.so` | Shared C API library (registered with ldconfig) |
 | `$PREFIX/include/bcsv/` | Full C++ + C API headers |
 | `$PREFIX/lib/cmake/bcsv/` | CMake config for `find_package(bcsv)` |
@@ -345,7 +345,7 @@ Deep reference: `benchmark/README.md`, `benchmark/REFERENCE_WORKLOADS.md`.
 ### CLI Tools (`src/tools/`)
 
 ```bash
-# Build all 9 tools
+# Build all 11 tools
 cmake --build --preset ninja-release-build -j$(nproc)
 
 # Core pipeline

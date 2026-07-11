@@ -50,7 +50,7 @@ set(TEST_SOURCES
     sampler_test.cpp
     bcsv_coverage_gaps_test.cpp
     repair_test.cpp
-    test_narrow_type.cpp
+    test_cast.cpp
 )
 
 if(BCSV_ENABLE_STRESS_TESTS)
@@ -102,12 +102,12 @@ if(Python3_FOUND)
         ENVIRONMENT "BCSV_BUILD_DIR=${CMAKE_BINARY_DIR}"
     )
 
-    add_test(NAME pytest_narrow_type
+    add_test(NAME pytest_cast
         COMMAND ${Python3_EXECUTABLE} -m pytest
-            "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_narrow_type.py" -v
+            "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_cast.py" -v
         WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
     )
-    set_tests_properties(pytest_narrow_type PROPERTIES
+    set_tests_properties(pytest_cast PROPERTIES
         TIMEOUT 300
         ENVIRONMENT "BCSV_BUILD_DIR=${CMAKE_BINARY_DIR}"
     )

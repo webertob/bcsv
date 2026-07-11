@@ -408,5 +408,120 @@ inline IndexRangeSet parseIndexRanges(const std::string& spec, size_t total) {
     return r;
 }
 
+// ── JSON string escaping ──────────────────────────────────────────
+
+/// Escape a string as a JSON string literal (including the surrounding quotes).
+inline std::string jsonStr(const std::string& s) {
+    std::string out = "\"";
+    for (char c : s) {
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            default:   out += c;      break;
+        }
+    }
+    out += '"';
+    return out;
+}
+
+// ── Column type classification ────────────────────────────────────
+
+/// True for BOOL and every fixed-width integer type.
+inline bool isIntegerType(bcsv::ColumnType t) noexcept {
+    switch (t) {
+        case bcsv::ColumnType::BOOL:
+        case bcsv::ColumnType::INT8:   case bcsv::ColumnType::INT16:
+        case bcsv::ColumnType::INT32:  case bcsv::ColumnType::INT64:
+        case bcsv::ColumnType::UINT8:  case bcsv::ColumnType::UINT16:
+        case bcsv::ColumnType::UINT32: case bcsv::ColumnType::UINT64:
+            return true;
+        default:
+            return false;
+    }
+}
+
+inline bool isSignedIntType(bcsv::ColumnType t) noexcept {
+    switch (t) {
+        case bcsv::ColumnType::INT8:  case bcsv::ColumnType::INT16:
+        case bcsv::ColumnType::INT32: case bcsv::ColumnType::INT64:
+            return true;
+        default:
+            return false;
+    }
+}
+
+inline bool isUnsignedIntType(bcsv::ColumnType t) noexcept {
+    switch (t) {
+        case bcsv::ColumnType::UINT8:  case bcsv::ColumnType::UINT16:
+        case bcsv::ColumnType::UINT32: case bcsv::ColumnType::UINT64:
+            return true;
+        default:
+            return false;
+    }
+}
+
+inline bool isFloatType(bcsv::ColumnType t) noexcept {
+    return t == bcsv::ColumnType::FLOAT || t == bcsv::ColumnType::DOUBLE;
+}
+
+/// Every type except VOID is a legal cast source/target.
+inline bool isCastableType(bcsv::ColumnType t) noexcept {
+    return t != bcsv::ColumnType::VOID;
+}
+
+// ── Type-name parsing (canonical names + aliases) ─────────────────
+
+/// Parse a type name (canonical or alias, case-insensitive) into a ColumnType.
+/// `allow_void` permits the literal "void" (for positional-list slots that must
+/// cover an already-VOID column); otherwise VOID is rejected as non-castable.
+/// Throws std::runtime_error on an empty or unknown name.
+inline bcsv::ColumnType parseColumnType(std::string s, bool allow_void = false) {
+    // trim
+    size_t a = 0, b = s.size();
+    while (a < b && std::isspace(static_cast<unsigned char>(s[a]))) ++a;
+    while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1]))) --b;
+    s = s.substr(a, b - a);
+    // lower-case
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    if (s.empty())
+        throw std::runtime_error("Empty type name");
+
+    if (s == "void") {
+        if (allow_void)
+            return bcsv::ColumnType::VOID;
+        throw std::runtime_error("'void' is not a castable type");
+    }
+
+    static const std::map<std::string, bcsv::ColumnType> ALIASES = {
+        {"bool", bcsv::ColumnType::BOOL},     {"b", bcsv::ColumnType::BOOL},
+        {"int8", bcsv::ColumnType::INT8},     {"i8", bcsv::ColumnType::INT8},   {"sbyte", bcsv::ColumnType::INT8},
+        {"int16", bcsv::ColumnType::INT16},   {"i16", bcsv::ColumnType::INT16}, {"short", bcsv::ColumnType::INT16},
+        {"int32", bcsv::ColumnType::INT32},   {"i32", bcsv::ColumnType::INT32}, {"int", bcsv::ColumnType::INT32},
+        {"int64", bcsv::ColumnType::INT64},   {"i64", bcsv::ColumnType::INT64}, {"long", bcsv::ColumnType::INT64},
+        {"uint8", bcsv::ColumnType::UINT8},   {"ui8", bcsv::ColumnType::UINT8}, {"u8", bcsv::ColumnType::UINT8},
+        {"uchar", bcsv::ColumnType::UINT8},   {"char", bcsv::ColumnType::UINT8}, {"ch", bcsv::ColumnType::UINT8}, {"byte", bcsv::ColumnType::UINT8},
+        {"uint16", bcsv::ColumnType::UINT16}, {"ui16", bcsv::ColumnType::UINT16}, {"u16", bcsv::ColumnType::UINT16}, {"ushort", bcsv::ColumnType::UINT16},
+        {"uint32", bcsv::ColumnType::UINT32}, {"ui32", bcsv::ColumnType::UINT32}, {"u32", bcsv::ColumnType::UINT32}, {"uint", bcsv::ColumnType::UINT32},
+        {"uint64", bcsv::ColumnType::UINT64}, {"ui64", bcsv::ColumnType::UINT64}, {"u64", bcsv::ColumnType::UINT64}, {"ulong", bcsv::ColumnType::UINT64},
+        {"float", bcsv::ColumnType::FLOAT},   {"f", bcsv::ColumnType::FLOAT}, {"f32", bcsv::ColumnType::FLOAT}, {"single", bcsv::ColumnType::FLOAT},
+        {"double", bcsv::ColumnType::DOUBLE}, {"d", bcsv::ColumnType::DOUBLE}, {"f64", bcsv::ColumnType::DOUBLE},
+        {"string", bcsv::ColumnType::STRING}, {"str", bcsv::ColumnType::STRING}, {"s", bcsv::ColumnType::STRING},
+    };
+    auto it = ALIASES.find(s);
+    if (it != ALIASES.end())
+        return it->second;
+
+    throw std::runtime_error(
+        "Unknown type '" + s + "'. Valid: bool int8 int16 int32 int64 "
+        "uint8 uint16 uint32 uint64 float double string "
+        "(aliases: i8..i64, ui8..ui64/u8..u64, b, ch/char/byte, f/f32, d/f64, "
+        "str/s, int=int32, long=int64, uint=uint32, short, ushort, ulong)");
+}
+
 } // namespace bcsv_cli
 

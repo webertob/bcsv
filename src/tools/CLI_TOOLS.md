@@ -15,7 +15,7 @@ All tools are built from `src/tools/` and output to `build/bin/`.
 | **bcsvSampler** | Filter & project rows | BCSV | BCSV |
 | **bcsvGenerator** | Generate synthetic datasets | — | BCSV |
 | **bcsvCompare** | Deterministic file comparison | BCSV × 2 | Exit code + report |
-| **bcsvNarrowType** | Scan/convert to narrower types | BCSV | BCSV |
+| **bcsvCast** | Cast column types (scan / narrow / static / dynamic) | BCSV | BCSV |
 | **bcsvValidate** | Validate structure & content | BCSV (+CSV) | Report |
 | **bcsvRepair** | Repair damaged/interrupted files | BCSV | BCSV |
 
@@ -34,9 +34,9 @@ bcsvValidate -i data.bcsv --compare source.csv         # Compare files
 bcsvCompare a.bcsv b.bcsv                              # Deterministic comparison (strict)
 bcsvCompare --mode values a.bcsv b.bcsv                 # Compare values only (coercion)
 bcsvCompare --mode types,values --tolerance 1e-6 a.bcsv b.bcsv # Compatible mode
-bcsvNarrowType data.bcsv                                # Scan for narrowing
-bcsvNarrowType data.bcsv narrow.bcsv                     # Apply narrowing
-bcsvNarrowType --in-place data.bcsv                      # In-place overwrite
+bcsvCast data.bcsv                                # Scan for narrowing
+bcsvCast data.bcsv narrow.bcsv                     # Apply narrowing
+bcsvCast --in-place data.bcsv                      # In-place overwrite
 bcsvRepair -i broken.bcsv --dry-run                    # Analyze damage
 bcsvRepair -i broken.bcsv -o repaired.bcsv             # Repair to new file
 ```
@@ -81,7 +81,7 @@ cmake --build --preset ninja-release-build --target bcsvSampler -j$(nproc)
 | `bcsvValidate.cpp` | Structure & content validation |
 | `bcsvRepair.cpp` | Repair damaged/interrupted BCSV files |
 | `bcsvCompare.cpp` | Deterministic file comparison (combining modes: names, types, values) |
-| `bcsvNarrowType.cpp` | Type-narrowing scanner and converter |
+| `bcsvCast.cpp` | Column type cast: scan / narrow / static / dynamic |
 | `cli_common.h` | Shared CLI utilities (codec dispatch, validation, formatting) |
 | `CMakeLists.txt` | Build definitions for all 11 tools |
 
@@ -592,83 +592,83 @@ bcsvCompare -v a.bcsv b.bcsv
 
 ---
 
-## bcsvNarrowType — Type-Narrowing Scanner & Converter
+## bcsvCast — Column Type Cast (Scan / Narrow / Static / Dynamic)
 
-Scan BCSV files for columns that can be stored in a narrower type without losing information, and optionally rewrite the file with reduced per-column types.
+Change BCSV column types. **Auto** modes derive the smallest lossless type by scanning the data; **explicit** modes apply a caller-supplied type SPEC. Replaces the former `bcsvNarrowType` (whose behavior is now `bcsvCast --optimize`).
 
-**Note:** With the default codec (delta + packet_lz4_batch), narrowing may yield little or no on-disk savings because integers use zigzag + VLE and floats use XOR + zero-stripping before LZ4. The primary beneficiaries are files encoded with the **flat** codec, or fixed-width consumers (C API, Unity P/Invoke, mmap) where in-memory struct sizes depend on declared types. All reported savings are **max theoretical (flat codec)**.
+**Note:** With the default codec (delta + packet_lz4_batch), narrowing may yield little or no on-disk savings because integers use zigzag + VLE and floats use XOR + zero-stripping before LZ4. The primary beneficiaries are **flat**-codec files, or fixed-width consumers (C API, Unity P/Invoke, mmap). Reported savings are **max theoretical (flat codec)**.
 
 ### Usage
 
 ```bash
-bcsvNarrowType data.bcsv                                  # Analyze only (1 arg)
-bcsvNarrowType data.bcsv output.bcsv                      # Scan + rewrite (2 args)
-bcsvNarrowType --in-place data.bcsv                       # Overwrite input in place
-bcsvNarrowType --overwrite data.bcsv output.bcsv          # Replace existing output
-bcsvNarrowType --cols 0:3,5 data.bcsv output.bcsv         # Only narrow selected columns
-bcsvNarrowType --stringsToValue data.bcsv                 # Also probe string columns
-bcsvNarrowType -v data.bcsv                               # Verbose progress (stderr)
+bcsvCast data.bcsv                          # Scan: report smallest lossless types (read-only)
+bcsvCast data.bcsv out.bcsv                 # Narrow + apply (default when an output is given)
+bcsvCast --optimize --in-place data.bcsv      # Auto-narrow in place
+bcsvCast --static '0=int32,3=float' data.bcsv out.bcsv   # Force these casts (clamp lossy)
+bcsvCast --dynamic '0=int32,3=float' data.bcsv out.bcsv  # Cast if lossless, else skip the column
+bcsvCast --scan --json data.bcsv            # Machine-readable plan (agent-friendly)
 ```
 
-Mode is inferred from the arguments: a single `INPUT_FILE` runs **analyze**;
-adding an `OUTPUT_FILE` (or `--in-place`) runs **convert**.
+### Modes
+
+| Mode | Target types | Writes? | On loss |
+|------|--------------|---------|---------|
+| `--scan` | auto-derived | never (read-only) | reports smallest lossless types |
+| `--optimize` | auto-derived | if output given | lossless by construction |
+| `--dynamic SPEC` | from SPEC | if output given | skips any column that would lose data |
+| `--static SPEC` | from SPEC | if output given | applies anyway; clamps lossy cells |
+
+Default mode (no flag): `--optimize` when an output path is present, else `--scan`.
+
+### Type SPEC
+
+Quote it (shells expand unquoted `{ }`). Two mutually exclusive forms:
+
+- **Map** — `'0=int32,1=uint64,7:8=float,-1=bool'` (index or `i:j` range `=` type; negative-from-end indices allowed; a subset of columns).
+- **List** — `'int32,uint64,bool,...'` (one type per column, covering **every** column).
+
+Type names: `bool int8 int16 int32 int64 uint8 uint16 uint32 uint64 float double string`, plus aliases `i8..i64`, `ui8..ui64`/`u8..u64`, `b`, `ch`/`char`/`byte` (→uint8), `f`/`f32`, `d`/`f64`, `str`/`s`, `int`=int32, `long`=int64, `short`, `ushort`, `uint`=uint32, `ulong`.
 
 ### Options
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `OUTPUT_FILE` (positional) | Write converted file here (enables convert mode) | — |
-| `-o, --output FILE` | Alias for the `OUTPUT_FILE` positional | — |
-| `--in-place` | Convert `INPUT_FILE` in place (temp + atomic rename); no `OUTPUT_FILE` allowed | — |
+| `-o, --output FILE` | Output BCSV file (enables apply) | — |
+| `--in-place` | Rewrite `INPUT_FILE` in place (temp + atomic rename) | — |
 | `--overwrite` | Allow overwriting an existing `OUTPUT_FILE` | — |
-| `--cols SPEC` | Restrict to columns by index (`0:3,5,7:-1`); negative indices count from the end | all |
-| `--stringsToValue` | Also attempt string→numeric/bool conversion | off |
+| `--cols SPEC` | Restrict `--scan`/`--optimize` to columns (`0:3,5,7:-1`) | all |
+| `--tolerance TOL` | Absolute epsilon for float/int loss tests | 0.0 |
+| `--string-to-value` | `--scan`/`--optimize` also consider STRING→numeric | off |
+| `--json` | Emit the plan/result as JSON on stdout | — |
 | `-v, --verbose` | Per-column details and progress to stderr | — |
 | `-h, --help` | Show help message | — |
+
+### Force semantics (`--static`)
+
+Non-representable cells are made deterministic rather than rejected: out-of-range → **saturate/clamp** to the target min/max; float→int → round to nearest (`std::round`); `NaN`→0; `±Inf`→min/max; a non-numeric **string** → hard error (exit 1). Each affected column is reported on stderr.
 
 ### Exit Codes
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success |
-| 1 | Error (invalid file, conversion failed) |
-| 2 | Argument error |
-
-### Type Narrowing Rules
-
-| Original | Possible narrowings |
-|----------|-------------------|
-| INT64 / UINT64 | → narrower int/uint, or bool (if 0/1 only) |
-| INT32 / UINT32 | → narrower int/uint, or bool |
-| DOUBLE | → float (if roundtrips), → integer (if all whole), → bool |
-| FLOAT | → integer (if all whole), → bool |
-| STRING | → numeric/bool (only with `--stringsToValue`) |
-| BOOL | Already minimal — no probing |
-
-### Conversion Safety
-
-- **Debug builds:** Every cast from source to target type asserts that the value doesn't overflow or lose precision. If an assertion fires, the conversion aborts and the temp file is deleted.
-- **Release builds:** Trust the scan-phase invariant. No per-value runtime checks.
-- **In-place (`--in-place`):** Writes to a temp file in the same directory, then atomically renames. Crash-resilient.
+| 0 | Success (lossy `--static`/`--dynamic` still exit 0; loss is reported on stderr) |
+| 1 | Runtime error (invalid file, unparseable forced string, write failure) |
+| 2 | Argument error (bad flags/SPEC, conflicting modes) |
 
 ### Examples
 
 ```bash
-# Analyze a file — find what can be narrowed
-bcsvNarrowType sensor.bcsv
+# Discover what would narrow (read-only)
+bcsvCast sensor.bcsv
+bcsvCast --scan --json sensor.bcsv        # → suggested_spec for reuse
 
-# Apply narrowing and compare values
-bcsvNarrowType sensor.bcsv narrow.bcsv
+# Auto-narrow and verify values round-trip
+bcsvCast sensor.bcsv narrow.bcsv
 bcsvCompare --mode value sensor.bcsv narrow.bcsv
 
-# Only narrow specific columns (indices 0..3 and 5)
-bcsvNarrowType --cols 0:3,5 sensor.bcsv narrow.bcsv
+# Force an id column to int32 and a noisy sensor to float32
+bcsvCast --static '0=int32,3=float' sensor.bcsv out.bcsv --overwrite
 
-# For flat codec files, check actual size reduction
-bcsvGenerator -p sensor_noisy -n 100000 --row-codec flat -o flat.bcsv
-bcsvNarrowType --in-place flat.bcsv
-ls -la flat.bcsv
-
-# String-opt-in: try string→numeric conversion
-bcsvNarrowType --stringsToValue labels.bcsv
+# Same, but skip any column that would lose data
+bcsvCast --dynamic '0=int32,3=float' sensor.bcsv out.bcsv
 ```
