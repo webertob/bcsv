@@ -75,10 +75,13 @@ inline std::span<std::byte> RowCodecFlat001<LayoutType>::serialize(
     const uint32_t*   offsets = layout_->columnOffsets().data();
 
     // ── Pre-scan: sum string payload sizes for a single buffer.resize() ──
+    // Clamp to MAX_STRING_LENGTH — the write loop below truncates to that
+    // limit, and the buffer size must match the bytes actually written
+    // (an unclamped size would leave uninitialized bytes in the row span).
     size_t strg_payload = 0;
     for (size_t i = 0; i < count; ++i) {
         if (types[i] == ColumnType::STRING) {
-            strg_payload += row.strg_[offsets[i]].size();
+            strg_payload += std::min(row.strg_[offsets[i]].size(), MAX_STRING_LENGTH);
         }
     }
 
@@ -195,12 +198,14 @@ inline std::span<std::byte> RowCodecFlat001<LayoutStatic<ColumnTypes...>>::seria
 
     const size_t offRow = buffer.size();
 
-    // Compute total string payload via fold expression
+    // Compute total string payload via fold expression.  Clamped to
+    // MAX_STRING_LENGTH to match the truncating write in serializeElements
+    // (see the dynamic-layout pre-scan above).
     size_t strg_payload = 0;
     [&]<size_t... I>(std::index_sequence<I...>) {
         (([&] {
             if constexpr (std::is_same_v<typename RowType::template column_type<I>, std::string>) {
-                strg_payload += std::get<I>(row.data_).size();
+                strg_payload += std::min(std::get<I>(row.data_).size(), MAX_STRING_LENGTH);
             }
         }()), ...);
     }(std::index_sequence_for<ColumnTypes...>{});

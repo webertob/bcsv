@@ -75,6 +75,7 @@ namespace bcsv {
         RowCodec                row_codec_;                  // Compile-time selected row codec
         uint64_t                row_cnt_ = 0;                // Total rows written across all packets
         RowType                 row_;
+        bool                    write_poisoned_ = false;     // Set when a rejected oversized row desynced the row codec's reference state; cleared by flush() (packet boundary) or open()
         
 
     public:

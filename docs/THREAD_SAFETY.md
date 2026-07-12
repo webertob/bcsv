@@ -51,3 +51,35 @@ If thread-safe operation becomes necessary in the future, the recommended
 approach is a thin wrapper class (`ThreadSafeWriter`) that wraps a
 `std::mutex` around the public API, rather than adding locking to the core
 library.
+
+## Internal Threading: the Batch File Codec
+
+One component is internally multi-threaded: `FileCodecPacketLZ4Batch001`
+(selected by `FileFlags::BATCH_COMPRESS`, the default codec) owns a single
+background `std::jthread` that performs packet compression/decompression and
+all stream I/O. This does **not** change the public contract — `Writer` and
+`Reader` remain single-threaded objects — but it imposes internal rules:
+
+- **Stream ownership**: while a background task is in flight, the background
+  thread exclusively owns the file stream. The main thread must not touch it,
+  not even to poll `rdstate()`. `Reader::readNext()` therefore queries
+  liveness via `FileCodecDispatch::readGood()`, which the batch codec answers
+  from main-thread-owned state.
+- **Error propagation**: exceptions on the background thread are captured in
+  an `std::exception_ptr` guarded by the codec mutex and rethrown on the main
+  thread at the next synchronization point — packet boundary, `flush()`, or
+  `close()`. They are never checked on the per-row fast path (no locking per
+  row). `finalize()` rethrows unconditionally before writing the footer, so a
+  file with a failed packet never receives a clean footer.
+- **EOF signalling**: end-of-data is communicated exclusively through codec
+  state (`bg_has_next_packet_`), never through stream flags; the background
+  thread restores a defined stream state on every task exit.
+
+The `clang-tsan` CMake preset builds the test suite under ThreadSanitizer to
+guard these invariants:
+
+```bash
+cmake --preset clang-tsan
+cmake --build --preset clang-tsan-build --target bcsv_gtest bcsvRepair -j
+./build/clang-tsan/bin/bcsv_gtest --gtest_filter='*Batch*:*LZ4*:FileCodec*'
+```

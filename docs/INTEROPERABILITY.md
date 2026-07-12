@@ -231,6 +231,30 @@ All numeric types are **bit-compatible** across languages:
 
 **All platforms use little-endian and IEEE 754 floating point.**
 
+### Special Floating-Point Values
+
+The binary format is **bit-exact** for every IEEE-754 pattern: `NaN`
+(including payload bits), `±Inf`, signed zero (`-0.0`), and subnormals
+round-trip unchanged through all row codecs (flat, ZoH, delta) on both the
+flexible and static APIs. ZoH/Delta change detection compares bit patterns,
+so repeated NaNs compress via ZoH hold, and `-0.0` vs `+0.0` counts as a
+change (the sign bit is never lost).
+
+Caveats at the boundaries:
+
+- **CSV bridge** (`csv2bcsv`/`bcsv2csv`, `CsvWriter`/`CsvReader`): special
+  *values* are preserved (`nan`, `inf`, `-inf`, `-0`), NaN payload bits are
+  not (text has no representation for them).
+- **pandas** (`pybcsv.write_dataframe`): float `NaN` is preserved by default
+  (`nan_policy="preserve"`). pandas cannot distinguish `None` from `NaN` in
+  float columns — both are written as `NaN`. Non-float columns cannot
+  represent missing values and are coerced with a warning (or use
+  `nan_policy="raise"`).
+- **Parquet** (`pybcsv.parquet_utils`): NaN values pass through; Parquet
+  *nulls* are a distinct concept and are rejected on import (fill them
+  first).
+- BCSV has **no null type**: `NaN` is a value, not a missing-data marker.
+
 ### String Types
 
 Strings are stored as **UTF-8 encoded byte sequences** with length prefix:

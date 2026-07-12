@@ -17,6 +17,7 @@ import os
 import tempfile
 import time
 import unittest
+import warnings
 
 import numpy as np
 
@@ -131,6 +132,9 @@ class TestPandasIntegration(unittest.TestCase):
         )
 
     def test_dataframe_with_missing_values(self):
+        # Default nan_policy="preserve": float NaN round-trips bit-exactly;
+        # non-float columns (which cannot represent None) are coerced with
+        # a warning.
         filepath = self._tmp()
         df_with_na = pd.DataFrame(
             {
@@ -140,12 +144,86 @@ class TestPandasIntegration(unittest.TestCase):
                 "active": [True, None, True, False],
             }
         )
-        try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)  # non-float coercion
             pybcsv.write_dataframe(df_with_na, filepath)
-            df_read = pybcsv.read_dataframe(filepath)
-            self.assertEqual(len(df_read), len(df_with_na))
-        except (ValueError, TypeError, RuntimeError):
-            pass  # acceptable to reject NaN
+        df_read = pybcsv.read_dataframe(filepath)
+        self.assertEqual(len(df_read), len(df_with_na))
+        self.assertTrue(np.isnan(df_read["score"].iloc[1]))
+        self.assertEqual(df_read["score"].iloc[0], 95.5)
+        self.assertEqual(df_read["name"].iloc[1], "")  # coerced (no null strings)
+
+    def test_nan_policy_preserve_floats(self):
+        # Pure float frame: preserve must neither warn nor alter values;
+        # NaN and +/-inf round-trip.
+        filepath = self._tmp()
+        df = pd.DataFrame(
+            {
+                "f64": [1.5, np.nan, -np.inf, np.inf, -0.0],
+                "f32": np.array([np.nan, 2.5, np.inf, -np.inf, 0.0], dtype=np.float32),
+            }
+        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)  # preserve must not warn
+            pybcsv.write_dataframe(df, filepath)
+        df_read = pybcsv.read_dataframe(filepath)
+        np.testing.assert_array_equal(df_read["f64"].to_numpy(), df["f64"].to_numpy())
+        np.testing.assert_array_equal(
+            df_read["f32"].to_numpy(dtype=np.float32), df["f32"].to_numpy()
+        )
+        # -0.0 must keep its sign bit
+        self.assertTrue(np.signbit(df_read["f64"].iloc[4]))
+
+    def test_nan_policy_preserve_nullable_float_dtype(self):
+        # pandas nullable Float64 (pd.NA) is converted to np.nan on write.
+        filepath = self._tmp()
+        df = pd.DataFrame({"v": pd.array([1.0, pd.NA, 3.0], dtype="Float64")})
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            pybcsv.write_dataframe(df, filepath)
+        df_read = pybcsv.read_dataframe(filepath)
+        self.assertEqual(df_read["v"].iloc[0], 1.0)
+        self.assertTrue(np.isnan(df_read["v"].iloc[1]))
+        self.assertEqual(df_read["v"].iloc[2], 3.0)
+
+    def test_nan_policy_preserve_object_column_with_na(self):
+        # Object-dtype column containing pd.NA, forced to a float type via
+        # type_hints: preserve must convert NA -> NaN instead of crashing in
+        # np.ascontiguousarray (regression: raw TypeError pre-fix).
+        filepath = self._tmp()
+        df = pd.DataFrame({"v": pd.Series([1.5, pd.NA, 2.5], dtype=object)})
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            pybcsv.write_dataframe(
+                df, filepath, type_hints={"v": pybcsv.ColumnType.DOUBLE}
+            )
+        df_read = pybcsv.read_dataframe(filepath)
+        self.assertEqual(df_read["v"].iloc[0], 1.5)
+        self.assertTrue(np.isnan(df_read["v"].iloc[1]))
+        self.assertEqual(df_read["v"].iloc[2], 2.5)
+
+    def test_nan_policy_coerce_legacy(self):
+        filepath = self._tmp()
+        df = pd.DataFrame({"score": [95.5, np.nan, 92.1]})
+        with self.assertWarns(UserWarning):
+            pybcsv.write_dataframe(df, filepath, nan_policy="coerce")
+        df_read = pybcsv.read_dataframe(filepath)
+        self.assertEqual(df_read["score"].iloc[1], 0.0)  # legacy coercion
+
+    def test_nan_policy_raise(self):
+        filepath = self._tmp()
+        df = pd.DataFrame({"score": [95.5, np.nan, 92.1]})
+        with self.assertRaises(ValueError):
+            pybcsv.write_dataframe(df, filepath, nan_policy="raise")
+        # strict=True keeps its historical meaning (same as raise)
+        with self.assertRaises(ValueError):
+            pybcsv.write_dataframe(df, filepath, strict=True)
+
+    def test_nan_policy_invalid_value(self):
+        filepath = self._tmp()
+        df = pd.DataFrame({"score": [1.0]})
+        with self.assertRaises(ValueError):
+            pybcsv.write_dataframe(df, filepath, nan_policy="bogus")
 
     def test_dataframe_index_handling(self):
         filepath = self._tmp()

@@ -470,6 +470,16 @@ def generate_summary_markdown(run_dir: Path,
                 f" | {fmt_med_std(row.get('sparse_read_cells_per_sec_median'), row.get('sparse_read_cells_per_sec_stdev'), decimals=0)} |"
             )
         lines.append("")
+        lines.append(
+            "*Note: ZoH/Delta modes are benchmarked on `generateTimeSeries` data "
+            "(smooth, codec-representative) while CSV and Dense use the volatile "
+            "`generate` data — the compression column therefore compares against a "
+            "CSV of a *different* dataset and overstates ZoH/Delta ratios on "
+            "volatile data. Read timings include per-row validation; use "
+            "`bench_macro_datasets --no-validate` for pure decode throughput "
+            "(e.g. cross-format comparisons).*"
+        )
+        lines.append("")
 
         lines.extend(generate_codec_recommendation(current_condensed))
 

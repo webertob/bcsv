@@ -50,6 +50,9 @@ set(TEST_SOURCES
     sampler_test.cpp
     bcsv_coverage_gaps_test.cpp
     repair_test.cpp
+    batch_codec_recovery_test.cpp
+    format_hardening_test.cpp
+    nan_inf_test.cpp
     test_cast.cpp
 )
 

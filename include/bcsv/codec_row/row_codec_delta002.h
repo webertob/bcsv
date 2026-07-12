@@ -69,6 +69,27 @@
 
 namespace bcsv {
 
+/// Cold path of delta002ValidateLengthCode — kept out of line so the string
+/// construction does not bloat the decode hot loop.
+[[noreturn]] inline void delta002ThrowInvalidLengthCode(size_t deltaBytes,
+                                                        size_t typeSize) {
+    throw std::runtime_error(
+        "RowCodecDelta002::deserialize() failed! Invalid delta length code ("
+        + std::to_string(deltaBytes) + " bytes for a "
+        + std::to_string(typeSize) + "-byte column)");
+}
+
+/// Reject a delta header code that implies more payload bytes than the
+/// column type holds.  Reachable only from corrupt/hostile input (the
+/// encoder clamps to sizeof(T)); without this check decodeDelta() would
+/// shift past the 64-bit width (UB) and desync all following column
+/// offsets.  Shared by the dynamic and static Delta002 decoders.
+inline void delta002ValidateLengthCode(size_t deltaBytes, size_t typeSize) {
+    if (deltaBytes > typeSize) [[unlikely]] {
+        delta002ThrowInvalidLengthCode(deltaBytes, typeSize);
+    }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // RowCodecDelta002 for dynamic Layout
 // ────────────────────────────────────────────────────────────────────────────
@@ -425,7 +446,10 @@ private:
 
     static uint64_t decodeDelta(const std::byte* src, size_t byteCount) {
         uint64_t result = 0;
-        for (size_t i = 0; i < byteCount; ++i)
+        // Clamped loop bound: total for all inputs + full unrolling.
+        // See the dynamic-layout decodeDelta in row_codec_delta002.hpp.
+        const size_t n = byteCount <= sizeof(uint64_t) ? byteCount : sizeof(uint64_t);
+        for (size_t i = 0; i < n; ++i)
             result |= static_cast<uint64_t>(static_cast<uint8_t>(src[i])) << (i * 8);
         return result;
     }

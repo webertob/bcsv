@@ -73,8 +73,8 @@ class TestStrictNaN:
             pybcsv.write_dataframe(df, filepath, strict=True)
         assert "bad_str" in str(exc_info.value)
 
-    def test_strict_false_default_coerces(self, tmp_path):
-        """Default strict=False should coerce NaN to zero (existing behavior)."""
+    def test_strict_false_default_preserves_float_nan(self, tmp_path):
+        """Default (strict=False, nan_policy="preserve") keeps float NaN."""
         filepath = str(tmp_path / "default_nan.bcsv")
         df = pd.DataFrame(
             {
@@ -82,13 +82,28 @@ class TestStrictNaN:
                 "value": [1.0, float("nan"), 3.0],
             }
         )
-        # Should succeed without error (with warning)
-        with pytest.warns(UserWarning, match="NaN/None"):
-            pybcsv.write_dataframe(df, filepath, strict=False)
+        # Should succeed without error and without warning: NaN in a float
+        # column is a legitimate IEEE-754 value and round-trips bit-exactly.
+        pybcsv.write_dataframe(df, filepath, strict=False)
 
         df_read = pybcsv.read_dataframe(filepath)
         assert len(df_read) == 3
-        # NaN was coerced to 0.0
+        assert np.isnan(df_read.iloc[1]["value"])
+
+    def test_nan_policy_coerce_restores_legacy(self, tmp_path):
+        """nan_policy="coerce" restores the pre-1.5.10 coercion (with warning)."""
+        filepath = str(tmp_path / "coerce_nan.bcsv")
+        df = pd.DataFrame(
+            {
+                "id": [1, 2, 3],
+                "value": [1.0, float("nan"), 3.0],
+            }
+        )
+        with pytest.warns(UserWarning, match="NaN/None"):
+            pybcsv.write_dataframe(df, filepath, nan_policy="coerce")
+
+        df_read = pybcsv.read_dataframe(filepath)
+        assert len(df_read) == 3
         assert df_read.iloc[1]["value"] == 0.0
 
     def test_strict_clean_data_passes(self, tmp_path):

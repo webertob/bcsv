@@ -52,6 +52,38 @@
             }
         },
         {
+            "name": "clang-tsan",
+            "displayName": "Clang ThreadSanitizer (RelWithDebInfo)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/clang-tsan",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_CXX_SCAN_FOR_MODULES": "OFF",
+                "CMAKE_C_FLAGS": "-fsanitize=thread",
+                "CMAKE_CXX_FLAGS": "-fsanitize=thread",
+                "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=thread",
+                "BCSV_WERROR": "OFF"
+            }
+        },
+        {
+            "name": "clang-ubsan",
+            "displayName": "Clang UndefinedBehaviorSanitizer (RelWithDebInfo)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/clang-ubsan",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+                "CMAKE_C_COMPILER": "clang",
+                "CMAKE_CXX_COMPILER": "clang++",
+                "CMAKE_CXX_SCAN_FOR_MODULES": "OFF",
+                "CMAKE_C_FLAGS": "-fsanitize=undefined -fno-sanitize-recover=undefined",
+                "CMAKE_CXX_FLAGS": "-fsanitize=undefined -fno-sanitize-recover=undefined",
+                "CMAKE_EXE_LINKER_FLAGS": "-fsanitize=undefined",
+                "BCSV_WERROR": "OFF"
+            }
+        },
+        {
             "name": "msvc-debug",
             "displayName": "MSVC Debug (Visual Studio 17 2022)",
             "generator": "Visual Studio 17 2022",
@@ -144,6 +176,14 @@
         {
             "name": "clang-release-build",
             "configurePreset": "clang-release"
+        },
+        {
+            "name": "clang-tsan-build",
+            "configurePreset": "clang-tsan"
+        },
+        {
+            "name": "clang-ubsan-build",
+            "configurePreset": "clang-ubsan"
         },
         {
             "name": "msvc-debug-build",

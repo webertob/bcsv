@@ -262,6 +262,12 @@ Supports 12 types: `BOOL`, `UINT8/16/32/64`, `INT8/16/32/64`, `FLOAT`, `DOUBLE`,
 
 All types are stored in **little-endian** format with **IEEE 754** for floating point. See [docs/INTEROPERABILITY.md](docs/INTEROPERABILITY.md#type-compatibility).
 
+**Bit-exactness guarantee:** the binary format round-trips every IEEE-754 bit
+pattern — `NaN` (including payload bits), `±Inf`, signed zero (`-0.0`), and
+subnormals — through all row codecs (flat, ZoH, delta) on both the flexible
+and static APIs. The CSV bridge (`csv2bcsv`/`bcsv2csv`, `CsvWriter`/`CsvReader`)
+preserves special *values* (`nan`, `inf`, `-inf`, `-0`) but not NaN payload bits.
+
 ### Flexible vs Static API
 
 - **Flexible (Runtime):** Dynamic schemas, runtime validation, 3.6M rows/sec

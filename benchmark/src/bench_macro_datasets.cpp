@@ -89,6 +89,10 @@ struct ModeSelection {
 // Global compression level for benchmark functions.
 // Avoids threading through every template-dispatched call chain.
 static size_t g_compression_level = 1;
+// --no-validate: skip per-row expected-value regeneration + comparison inside
+// the timed read loops → pure decode throughput (needed for honest
+// cross-format comparisons; validation costs dominate read timings).
+static bool g_validate = true;
 
 struct ProfileCapabilities {
     bool hasStaticLayoutDispatch = false;
@@ -634,10 +638,14 @@ bench::BenchmarkResult benchmarkCSV(const bench::DatasetProfile& profile,
         size_t rowsRead = 0;
         timer.start();
         while (csvReader.readNext()) {
-            profile.generate(expectedRow, rowsRead);
-            if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
-                validateRowByScenario(scenario, rowsRead, expectedRow, csvReader.row(), profile.layout,
-                                      selectedColumns, validator);
+            if (g_validate) {
+                profile.generate(expectedRow, rowsRead);
+                if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
+                    validateRowByScenario(scenario, rowsRead, expectedRow, csvReader.row(), profile.layout,
+                                          selectedColumns, validator);
+                    ++processedRows;
+                }
+            } else if (shouldProcessRow(scenario, rowsRead, csvReader.row(), profile.layout, predicateColumn)) {
                 ++processedRows;
             }
 
@@ -737,10 +745,14 @@ bench::BenchmarkResult benchmarkBCSVFlexible(const bench::DatasetProfile& profil
         while (reader.readNext()) {
             const auto& row = reader.row();
 
-            profile.generate(expectedRow, rowsRead);
-            if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
-                validateRowByScenario(scenario, rowsRead, expectedRow, row, profile.layout,
-                                      selectedColumns, validator);
+            if (g_validate) {
+                profile.generate(expectedRow, rowsRead);
+                if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
+                    validateRowByScenario(scenario, rowsRead, expectedRow, row, profile.layout,
+                                          selectedColumns, validator);
+                    ++processedRows;
+                }
+            } else if (shouldProcessRow(scenario, rowsRead, row, profile.layout, predicateColumn)) {
                 ++processedRows;
             }
 
@@ -838,10 +850,14 @@ bench::BenchmarkResult benchmarkBCSVFlexibleZoH(const bench::DatasetProfile& pro
         while (reader.readNext()) {
             const auto& row = reader.row();
 
-            profile.generateTimeSeries(expectedRow, rowsRead);
-            if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
-                validateRowByScenario(scenario, rowsRead, expectedRow, row, profile.layout,
-                                      selectedColumns, validator);
+            if (g_validate) {
+                profile.generateTimeSeries(expectedRow, rowsRead);
+                if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
+                    validateRowByScenario(scenario, rowsRead, expectedRow, row, profile.layout,
+                                          selectedColumns, validator);
+                    ++processedRows;
+                }
+            } else if (shouldProcessRow(scenario, rowsRead, row, profile.layout, predicateColumn)) {
                 ++processedRows;
             }
 
@@ -932,10 +948,14 @@ bench::BenchmarkResult benchmarkBCSVFlexibleZoHGeneric(const bench::DatasetProfi
         timer.start();
         while (reader.readNext()) {
             const auto& row = reader.row();
-            profile.generate(expectedRow, rowsRead);
-            if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
-                validateRowByScenario(scenario, rowsRead, expectedRow, row, profile.layout,
-                                      selectedColumns, validator);
+            if (g_validate) {
+                profile.generate(expectedRow, rowsRead);
+                if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
+                    validateRowByScenario(scenario, rowsRead, expectedRow, row, profile.layout,
+                                          selectedColumns, validator);
+                    ++processedRows;
+                }
+            } else if (shouldProcessRow(scenario, rowsRead, row, profile.layout, predicateColumn)) {
                 ++processedRows;
             }
             bench::doNotOptimize(row);
@@ -1029,10 +1049,14 @@ bench::BenchmarkResult benchmarkBCSVFlexibleDelta(const bench::DatasetProfile& p
         while (reader.readNext()) {
             const auto& row = reader.row();
 
-            profile.generateTimeSeries(expectedRow, rowsRead);
-            if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
-                validateRowByScenario(scenario, rowsRead, expectedRow, row, profile.layout,
-                                      selectedColumns, validator);
+            if (g_validate) {
+                profile.generateTimeSeries(expectedRow, rowsRead);
+                if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
+                    validateRowByScenario(scenario, rowsRead, expectedRow, row, profile.layout,
+                                          selectedColumns, validator);
+                    ++processedRows;
+                }
+            } else if (shouldProcessRow(scenario, rowsRead, row, profile.layout, predicateColumn)) {
                 ++processedRows;
             }
 
@@ -1159,21 +1183,25 @@ bench::BenchmarkResult runStaticLayoutVariant(const bench::DatasetProfile& profi
         timer.start();
         while (reader.readNext()) {
             const auto& row = reader.row();
-            const bool generated = usesTimeSeries
-                ? generateProfileZoHNoCopy(profile, expectedRow, rowsRead)
-                : generateProfileNonZoHNoCopy(profile, expectedRow, rowsRead);
-            if (!generated) {
-                result.validation_error = "No-copy static expected-row generator unavailable for profile: " + profile.name;
-                reader.close();
-                return result;
-            }
-            if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
-                std::string err;
-                if (!validateRowByScenarioExact(scenario, rowsRead, expectedRow, row, profile.layout,
-                                                selectedColumns, err)) {
-                    validationOk = false;
-                    if (firstError.empty()) firstError = err;
+            if (g_validate) {
+                const bool generated = usesTimeSeries
+                    ? generateProfileZoHNoCopy(profile, expectedRow, rowsRead)
+                    : generateProfileNonZoHNoCopy(profile, expectedRow, rowsRead);
+                if (!generated) {
+                    result.validation_error = "No-copy static expected-row generator unavailable for profile: " + profile.name;
+                    reader.close();
+                    return result;
                 }
+                if (shouldProcessRow(scenario, rowsRead, expectedRow, profile.layout, predicateColumn)) {
+                    std::string err;
+                    if (!validateRowByScenarioExact(scenario, rowsRead, expectedRow, row, profile.layout,
+                                                    selectedColumns, err)) {
+                        validationOk = false;
+                        if (firstError.empty()) firstError = err;
+                    }
+                    ++processedRows;
+                }
+            } else if (shouldProcessRow(scenario, rowsRead, row, profile.layout, predicateColumn)) {
                 ++processedRows;
             }
             bench::doNotOptimize(row);
@@ -1238,9 +1266,10 @@ bench::BenchmarkResult benchmarkBCSVStaticVariant(const bench::DatasetProfile& p
     }
 
     if (!dispatched) {
-        applyScenarioMetadata(result, profile, numRows, scenario, modeLabel, "deserialize_first");
-        result.status = "error";
-        result.validation_error = "Static layout dispatch unavailable for profile: " + profile.name;
+        // Expected for profiles without a compile-time LayoutStatic
+        // definition — a skip, not a failure (must not poison the exit code).
+        result = makeSkippedResult(profile, numRows, scenario, modeLabel,
+                                   "Static layout dispatch unavailable for profile: " + profile.name);
     }
 
     return result;
@@ -1441,6 +1470,7 @@ int main(int argc, char* argv[]) {
             << "  --storage=all|flexible|static       (default: all)\n"
             << "  --codec=all|dense|zoh|delta|primary (default: all)\n"
             << "  --compression=N                   LZ4 compression level 1-9 (default: 1; 1=fast, 9=best ratio)\n"
+            << "  --no-validate                     skip per-row validation in timed read loops (pure decode throughput)\n"
             << "  --list\n"
             << "  --list-scenarios\n"
             << "  --quiet\n"
@@ -1513,6 +1543,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     g_compression_level = compressionLevelArg;
+
+    // --no-validate: pure decode throughput (skip expected-row regeneration
+    // and comparison inside the timed read loops). Default runs validate.
+    g_validate = !bench::hasArg(args, "no-validate");
 
     ModeSelection modeSelection;
     std::string modeError;

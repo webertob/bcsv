@@ -246,6 +246,18 @@ namespace bcsv {
                 return false;
             }
 
+            // Validate start_offset before any arithmetic on it: it must
+            // cover at least magic + ConstSection (or `indexSize` below
+            // underflows size_t), and it cannot reach past the start of the
+            // file (this also bounds the index allocation by the file size).
+            stream.seekg(0, std::ios::end);
+            const std::streamoff fileSize = stream.tellg();
+            if (const_section_.start_offset < sizeof(ConstSection) + 4 ||
+                static_cast<std::streamoff>(const_section_.start_offset) > fileSize) {
+                stream.seekg(originalPos);
+                return false;
+            }
+
             // Seek to index start
             stream.seekg(-static_cast<int64_t>(const_section_.start_offset), std::ios::end);
             

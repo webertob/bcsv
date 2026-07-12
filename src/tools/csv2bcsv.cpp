@@ -15,6 +15,7 @@
  * It automatically detects data types and creates an appropriate layout.
  */
 
+#include <cmath>
 #include <iostream>
 #include <fstream>
 #include <string>
@@ -252,8 +253,11 @@ void analyzeValue(const std::string& value, ColumnStats& stats, char decimal_sep
         }
         
         // Check if this specific value can be represented exactly in float
-        // (only relevant if string precision doesn't already require double)
-        if (stats.all_float_compatible && !high_precision) {
+        // (only relevant if string precision doesn't already require double).
+        // Non-finite values are float-representable by definition — without
+        // the isfinite guard a single "nan" cell forces the column to DOUBLE
+        // because NaN != NaN is always true.
+        if (stats.all_float_compatible && !high_precision && std::isfinite(double_val)) {
             float float_val = static_cast<float>(double_val);
             if (static_cast<double>(float_val) != double_val) {
                 stats.all_float_compatible = false;

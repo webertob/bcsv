@@ -280,17 +280,23 @@ cd build && ctest --verbose
 
 ### Run with Sanitizers
 
+Dedicated presets exist for the two sanitizers that guard known bug classes
+(TSan: the batch codec's internal thread; UBSan: hostile-input decode paths).
+Run both before a release — the full suite is expected to be clean:
+
 ```bash
-# Address Sanitizer (memory errors)
+# ThreadSanitizer (clang, RelWithDebInfo)
+cmake --preset clang-tsan
+cmake --build --preset clang-tsan-build --target bcsv_gtest bcsvRepair -j$(nproc)
+./build/clang-tsan/bin/bcsv_gtest --gtest_filter='*Batch*:*LZ4*:FileCodec*'
+
+# UndefinedBehaviorSanitizer (clang, RelWithDebInfo, halt on first error)
+cmake --preset clang-ubsan
+cmake --build --preset clang-ubsan-build --target bcsv_gtest -j$(nproc)
+./build/clang-ubsan/bin/bcsv_gtest
+
+# Address Sanitizer (no preset yet — manual flags)
 cmake -B build -S . -DCMAKE_CXX_FLAGS="-fsanitize=address -g"
-./build/bin/bcsv_gtest
-
-# Undefined Behavior Sanitizer
-cmake -B build -S . -DCMAKE_CXX_FLAGS="-fsanitize=undefined -g"
-./build/bin/bcsv_gtest
-
-# Thread Sanitizer (race conditions)
-cmake -B build -S . -DCMAKE_CXX_FLAGS="-fsanitize=thread -g"
 ./build/bin/bcsv_gtest
 ```
 

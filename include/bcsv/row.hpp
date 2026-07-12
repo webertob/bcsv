@@ -145,8 +145,11 @@ namespace bcsv {
     /** Clear the row to its default state (default values) */
     inline void Row::clear()
     {
-        // Zero all scalar data
-        std::memset(data_.data(), 0, data_.size());
+        // Zero all scalar data (guard: memset on nullptr is UB even for n=0,
+        // and data_ is empty for layouts with no scalar columns)
+        if (!data_.empty()) {
+            std::memset(data_.data(), 0, data_.size());
+        }
 
         // Clear all strings
         for (auto& s : strg_) {

@@ -446,7 +446,10 @@ RowCodecZoH001<LayoutStatic<ColumnTypes...>>::serialize(
                     std::get<I>(prev_data_) = std::get<I>(row.data_);
                 }
             } else {
-                if (std::get<I>(row.data_) != std::get<I>(prev_data_)) {
+                // bitEqual: NaN holds (same bits) and -0.0 vs +0.0 counts as
+                // a change — IEEE operator== would silently turn -0.0 into
+                // the held +0.0 on the decoder side.
+                if (!bitEqual(std::get<I>(row.data_), std::get<I>(prev_data_))) {
                     row_header_.set(ROW_HEADER_BIT_INDEX[I], true);
                     hasAnyChange = true;
                     std::get<I>(prev_data_) = std::get<I>(row.data_);

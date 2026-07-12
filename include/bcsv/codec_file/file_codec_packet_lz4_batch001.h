@@ -37,7 +37,18 @@
  *   BLE(PCKT_TERMINATOR)
  *
  * Exceptions that occur on the background thread are captured via
- * std::exception_ptr and re-thrown on the next main-thread call.
+ * std::exception_ptr (under mutex_) and re-thrown on the main thread at the
+ * next synchronization point: packet boundary, flushPacket(), or finalize().
+ *
+ * Threading contract (main thread ↔ one internal BG thread):
+ *  - While a BG task is in flight, the BG thread is the only owner of the
+ *    stream.  The main thread must not touch the stream — not even to poll
+ *    rdstate(); it queries readGood() instead, which answers from
+ *    main-thread-owned state (packet_open_).
+ *  - The BG thread leaves the stream in a defined state on every task exit
+ *    (clears eof/fail bits it caused; EOF is reported exclusively via
+ *    bg_has_next_packet_).
+ *  - bg_exception_ is written and read only under mutex_.
  */
 
 #include "file_codec_concept.h"
@@ -64,6 +75,7 @@
 #include <stop_token>
 #include <string>
 #include <thread>
+#include <utility>
 
 namespace bcsv {
 
@@ -127,9 +139,9 @@ public:
 
     /// Called before each writeRow().  Returns true if a packet boundary
     /// was crossed (caller resets RowCodec).
+    /// Note: BG failures surface at the next packet boundary, flushPacket()
+    /// or finalize() — never on the per-row fast path (no locking here).
     bool beginWrite(std::ostream& /*os*/, uint64_t rowCnt) {
-        rethrowBgException();
-
         if (raw_active_->size() >= packet_size_limit_) {
             // Close the current packet payload.
             vleEncode<uint64_t, true>(static_cast<uint64_t>(PCKT_TERMINATOR), *raw_active_);
@@ -169,6 +181,9 @@ public:
     }
 
     /// Finalize: flush remaining data, shut down BG thread, write footer.
+    /// Any pending BG failure is rethrown unconditionally BEFORE the footer
+    /// is written — a file with a corrupt/missing packet must never get a
+    /// clean footer.
     void finalize(std::ostream& /*os*/, uint64_t totalRows) {
         if (!raw_active_->empty()) {
             // Close the last packet payload.
@@ -184,16 +199,18 @@ public:
                 bg_task_ = BgTask::COMPRESS_WRITE;
             }
             cv_.notify_one();
-
-            waitForBgIdle();
-            rethrowBgException();
         }
 
-        shutdownBgThread();
+        shutdownBgThread();      // waits for any in-flight task, then joins
+        rethrowBgException();    // unconditional — surfaces failures from the last packet
 
         // Write file footer on main thread (BG is stopped).
         FileFooter footer(packet_index_, totalRows);
         footer.write(*os_ptr_);
+        if (!os_ptr_->good()) {
+            throw std::runtime_error(
+                "FileCodecPacketLZ4Batch001: footer write failed");
+        }
     }
 
     ByteBuffer& writeBuffer() { return write_buffer_; }
@@ -233,8 +250,10 @@ public:
 
     // ── Read lifecycle ──────────────────────────────────────────────────
 
+    /// Note: BG failures (e.g. a corrupt pre-read packet) surface at the
+    /// packet boundary inside decodeNextRow() — remaining rows of the
+    /// current (validated) packet are served first; no locking per row.
     std::span<const std::byte> readRow(std::istream& /*is*/) {
-        rethrowBgException();
         packet_boundary_crossed_ = false;
 
         if (!packet_open_) {
@@ -245,6 +264,14 @@ public:
     }
 
     // ── Boundary / state signals ────────────────────────────────────────
+
+    /// Reader liveness query — replaces direct stream polling.  The BG
+    /// thread may be touching the stream concurrently, so the main thread
+    /// must not inspect stream state; packet_open_ is main-thread-owned
+    /// and reflects whether more rows may be available.
+    bool readGood(std::istream& /*is*/) const noexcept {
+        return packet_open_;
+    }
 
     bool packetBoundaryCrossed() const noexcept {
         return packet_boundary_crossed_;
@@ -290,6 +317,8 @@ private:
     void startBgThread() {
         if (bg_thread_.joinable()) return;  // Already running
 
+        // No BG thread exists here, so plain writes are race-free; the
+        // jthread constructor below provides the happens-before edge.
         bg_task_ = BgTask::IDLE;
         bg_exception_ = nullptr;
         bg_thread_ = std::jthread([this](std::stop_token stoken) { bgLoop(stoken); });
@@ -317,7 +346,19 @@ private:
         // fires cv_.notify_all() when request_stop() is called, ensuring
         // the BG thread exits its idle wait without a manual CV notification
         // from the main thread.
-        std::stop_callback wake_on_stop(stoken, [this] { cv_.notify_all(); });
+        //
+        // The lock_guard is essential: request_stop() sets the stop flag
+        // OUTSIDE mutex_, so an unlocked notify could land in the window
+        // where this thread holds the mutex between a (pre-stop) predicate
+        // check and going to sleep — a lost wakeup that leaves the CV wait
+        // sleeping and shutdownBgThread()'s join() blocked forever.  Taking
+        // the mutex serializes the notify against the predicate check.
+        // (Reproduced readily by open()+close() cycles under load: the
+        // shutdown races the just-started thread's first predicate check.)
+        std::stop_callback wake_on_stop(stoken, [this] {
+            std::lock_guard<std::mutex> lk(mutex_);
+            cv_.notify_all();
+        });
 
         while (!stoken.stop_requested()) {
             std::unique_lock<std::mutex> lk(mutex_);
@@ -328,6 +369,7 @@ private:
             BgTask task = bg_task_;
             lk.unlock();
 
+            std::exception_ptr ex;
             try {
                 if (task == BgTask::COMPRESS_WRITE) {
                     bgCompressAndWrite();
@@ -335,11 +377,14 @@ private:
                     bgReadAndDecompress();
                 }
             } catch (...) {
-                bg_exception_ = std::current_exception();
+                ex = std::current_exception();
             }
 
             {
                 std::lock_guard<std::mutex> lk2(mutex_);
+                if (ex) {
+                    bg_exception_ = ex;  // published under mutex_ only
+                }
                 bg_task_ = BgTask::IDLE;
             }
             cv_.notify_one();
@@ -351,10 +396,16 @@ private:
         cv_.wait(lk, [this] { return bg_task_ == BgTask::IDLE; });
     }
 
+    /// Take and rethrow a captured BG exception, if any.  Safe to call at
+    /// any time (slot is accessed under mutex_), but only used at packet
+    /// boundaries / flush / finalize — never on the per-row fast path.
     void rethrowBgException() {
-        if (bg_exception_) {
-            std::exception_ptr ex = bg_exception_;
-            bg_exception_ = nullptr;
+        std::exception_ptr ex;
+        {
+            std::lock_guard<std::mutex> lk(mutex_);
+            ex = std::exchange(bg_exception_, nullptr);
+        }
+        if (ex) {
             std::rethrow_exception(ex);
         }
     }
@@ -425,6 +476,12 @@ private:
                 is.seekg(pos);
                 return false;   // Footer reached
             } else if (is.eof()) {
+                // Raw EOF (footer-less / crashed file): restore a defined
+                // stream state.  End-of-data is reported to the main thread
+                // exclusively via the return value (bg_has_next_packet_) —
+                // never via stream flags, which the main thread must not
+                // poll while this may run on the BG thread.
+                is.clear();
                 return false;
             } else {
                 is.clear();
@@ -448,9 +505,19 @@ private:
                 "FileCodecPacketLZ4Batch001: failed to read compressed_size");
         }
 
-        if (uncompressed_size > MAX_PACKET_SIZE || compressed_size > MAX_PACKET_SIZE) {
+        // Bound declared sizes by what this file's header allows, not by the
+        // absolute 1 GiB format limit: a packet payload can exceed the
+        // header packet size by at most one row (+ VLE framing + terminator).
+        // This stops tiny corrupt/hostile files from triggering huge
+        // allocations before checksum validation gets a chance to reject them.
+        const uint64_t max_uncompressed =
+            static_cast<uint64_t>(packet_size_limit_) + MAX_ROW_LENGTH + 16;
+        // LZ4 worst-case bound (LZ4_COMPRESSBOUND formula) inlined in 64-bit:
+        // the macro/API take int and would overflow for large packet sizes.
+        const uint64_t max_compressed = max_uncompressed + max_uncompressed / 255 + 16;
+        if (uncompressed_size > max_uncompressed || compressed_size > max_compressed) {
             throw std::runtime_error(
-                "FileCodecPacketLZ4Batch001: packet size exceeds MAX_PACKET_SIZE");
+                "FileCodecPacketLZ4Batch001: declared packet size exceeds header packet size limit");
         }
 
         // 3. Read compressed block.
@@ -599,8 +666,15 @@ private:
     // mutex + cv_.notify) and read by main AFTER waitForBgIdle():
     //   bg_has_next_packet_ — whether read_next_ contains valid data
     //   packet_index_       — BG appends entries; main reads after join()
-    //   bg_exception_       — captured exception; main reads after wait
     //   compressed_buf_     — BG writes here; main never reads it directly
+    //
+    // bg_exception_ is written and read ONLY under mutex_ (BG publishes in
+    // the same critical section as the IDLE transition; main takes it via
+    // rethrowBgException() at packet boundaries / flush / finalize).
+    //
+    // The stream (is_ptr_/os_ptr_) is owned by the BG thread while a task
+    // is in flight.  The main thread must not touch it then — not even
+    // rdstate(); Reader queries readGood() instead (main-thread state).
     //
     // All other state is exclusively owned by one thread (documented below).
 
@@ -650,7 +724,7 @@ private:
     std::mutex               mutex_;       ///< Protects bg_task_ and provides happens-before edges.
     std::condition_variable  cv_;          ///< Signals bg_task_ transitions.
     BgTask                   bg_task_{BgTask::IDLE};
-    std::exception_ptr       bg_exception_;///< BG→main via sync protocol.
+    std::exception_ptr       bg_exception_;///< Guarded by mutex_ (see protocol above).
 };
 
 static_assert(FileCodecConcept<FileCodecPacketLZ4Batch001>,

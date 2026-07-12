@@ -48,7 +48,7 @@ namespace bcsv {
         
         uint32_t magic;           ///< Magic number: PCKT_MAGIC (0x50 0x4B 0x43 0x54 on disk)
         uint64_t first_row_index; ///< Absolute row index (0-based, file-wide)
-        uint32_t checksum;        ///< xxHash32 of bytes 0-19 (magic + firstRowIndex + prevPayloadChecksum)
+        uint32_t checksum;        ///< xxHash32 of bytes 0-11 (magic + first_row_index)
         
         /**
          * @brief Default constructor - initializes to invalid state
@@ -86,7 +86,7 @@ namespace bcsv {
          * and stores it in the headerChecksum field.
          */
         void updateChecksum() {
-            // Calculate xxHash32 of bytes 0-19 (all fields except headerChecksum)
+            // Calculate xxHash32 of bytes 0-11 (all fields except checksum)
             checksum = XXH32(this, sizeof(PacketHeader)-sizeof(checksum), 0);
         }
         

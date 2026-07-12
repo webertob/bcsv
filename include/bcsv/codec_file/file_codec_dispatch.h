@@ -59,6 +59,8 @@ public:
     using FinalizeFn             = void (*)(void* ctx, std::ostream& os, uint64_t totalRows);
     using WriteBufferFn          = ByteBuffer& (*)(void* ctx);
     using ReadRowFn              = std::span<const std::byte> (*)(void* ctx, std::istream& is);
+    using ReadGoodFn             = bool (*)(const void* ctx, std::istream& is);
+    using FinishPacketReadFn     = void (*)(void* ctx, std::istream& is);
     using PacketBoundaryCrossedFn = bool (*)(const void* ctx);
     using ResetFn                = void (*)(void* ctx);
     using SeekToPacketFn         = bool (*)(void* ctx, std::istream& is, std::streamoff offset);
@@ -172,6 +174,25 @@ public:
         return read_row_fn_(ctx_, is);
     }
 
+    /// True while more rows may be readable.  Synchronous codecs report the
+    /// stream state; codecs with an internal I/O thread (batch) answer from
+    /// their own state because the main thread must not poll a stream the
+    /// background thread may be using concurrently.
+    bool readGood(std::istream& is) const {
+        assert(ctx_ && read_good_fn_);
+        return read_good_fn_(ctx_, is);
+    }
+
+    /// Consume + validate the current packet's terminator/checksum without
+    /// touching the next packet.  No-op for codecs that validate the whole
+    /// packet up front (batch) or have no packet framing (stream codecs).
+    /// Throws on checksum mismatch.
+    void finishPacketRead(std::istream& is) {
+        if (ctx_ && finish_packet_read_fn_) {
+            finish_packet_read_fn_(ctx_, is);
+        }
+    }
+
     bool packetBoundaryCrossed() const {
         assert(ctx_ && packet_boundary_crossed_fn_);
         return packet_boundary_crossed_fn_(ctx_);
@@ -218,6 +239,8 @@ private:
     FinalizeFn              finalize_fn_{nullptr};
     WriteBufferFn           write_buffer_fn_{nullptr};
     ReadRowFn               read_row_fn_{nullptr};
+    ReadGoodFn              read_good_fn_{nullptr};
+    FinishPacketReadFn      finish_packet_read_fn_{nullptr};
     PacketBoundaryCrossedFn packet_boundary_crossed_fn_{nullptr};
     ResetFn                 reset_fn_{nullptr};
     SeekToPacketFn          seek_to_packet_fn_{nullptr};
@@ -232,6 +255,8 @@ private:
         finalize_fn_ = nullptr;
         write_buffer_fn_ = nullptr;
         read_row_fn_ = nullptr;
+        read_good_fn_ = nullptr;
+        finish_packet_read_fn_ = nullptr;
         packet_boundary_crossed_fn_ = nullptr;
         reset_fn_ = nullptr;
         seek_to_packet_fn_ = nullptr;
@@ -249,6 +274,8 @@ private:
         finalize_fn_ = other.finalize_fn_;
         write_buffer_fn_ = other.write_buffer_fn_;
         read_row_fn_ = other.read_row_fn_;
+        read_good_fn_ = other.read_good_fn_;
+        finish_packet_read_fn_ = other.finish_packet_read_fn_;
         packet_boundary_crossed_fn_ = other.packet_boundary_crossed_fn_;
         reset_fn_ = other.reset_fn_;
         seek_to_packet_fn_ = other.seek_to_packet_fn_;
@@ -291,6 +318,31 @@ private:
         packet_boundary_crossed_fn_ = [](const void* ctx) -> bool {
             return static_cast<const ConcreteCodec*>(ctx)->packetBoundaryCrossed();
         };
+        // Codecs with an internal I/O thread provide readGood(); synchronous
+        // codecs fall back to plain stream-state polling.
+        if constexpr (requires(const ConcreteCodec& c, std::istream& is) {
+            { c.readGood(is) } -> std::convertible_to<bool>;
+        }) {
+            read_good_fn_ = [](const void* ctx, std::istream& is) -> bool {
+                return static_cast<const ConcreteCodec*>(ctx)->readGood(is);
+            };
+        } else {
+            read_good_fn_ = [](const void* /*ctx*/, std::istream& is) -> bool {
+                return is.good();
+            };
+        }
+        // Synchronous packet codecs provide finishPacketRead(); codecs that
+        // validate whole packets up front (batch) or have no packet framing
+        // (stream) don't need it — the dispatch no-ops for them.
+        if constexpr (requires(ConcreteCodec& c, std::istream& is) {
+            c.finishPacketRead(is);
+        }) {
+            finish_packet_read_fn_ = [](void* ctx, std::istream& is) {
+                static_cast<ConcreteCodec*>(ctx)->finishPacketRead(is);
+            };
+        } else {
+            finish_packet_read_fn_ = nullptr;
+        }
         reset_fn_ = [](void* ctx) {
             static_cast<ConcreteCodec*>(ctx)->reset();
         };

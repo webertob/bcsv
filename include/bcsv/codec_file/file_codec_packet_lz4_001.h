@@ -155,6 +155,12 @@ public:
         return packet_.seekToPacket(is, offset);
     }
 
+    /// Consume terminator + checksum of the current packet (framing lives in
+    /// the inner packet codec — see FileCodecPacket001::finishPacketRead).
+    void finishPacketRead(std::istream& is) {
+        packet_.finishPacketRead(is);
+    }
+
 private:
     ByteBuffer write_buffer_;   // Owned write buffer for RowCodec serialization
     FileCodecPacket001 packet_;         // Handles framing, checksums, packet lifecycle

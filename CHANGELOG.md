@@ -13,6 +13,33 @@ This project uses [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- **Benchmark: `--no-validate` flag** — `bench_macro_datasets` can now time pure
+  decode throughput (the default timed read loops include per-row validation,
+  which understates decode speed several-fold — e.g. Flexible Delta reads
+  1.15 M rows/s validated vs 7.0 M rows/s pure decode). Use for absolute
+  claims and cross-format comparisons.
+- **Benchmark: measurement methodology documented** — noise-floor study
+  (`docs/archive/NOISE_FLOOR_2026-07-12.md`) quantifying repetition noise,
+  warm-up effects, and the parallel-vs-solo regime offset; rules of thumb in
+  `benchmark/README.md`; generated reports footnote the mixed-generator
+  compression column and the validation-inclusive read timings.
+- **NaN/±Inf bit-exactness guarantee, tested and documented** — the binary
+  format round-trips every IEEE-754 bit pattern (NaN payloads, ±Inf, signed
+  zero, subnormals) through all codecs × both layout APIs; 17-test matrix in
+  `tests/nan_inf_test.cpp`, guarantee documented in README and
+  `docs/INTEROPERABILITY.md`.
+- **pybcsv: `write_dataframe(nan_policy=...)`** — new default `"preserve"`
+  writes float NaN through bit-exactly (previously coerced to `0.0` with a
+  warning — a silent data corruption for legitimate NaN data). `"coerce"`
+  restores the legacy behavior; `"raise"` rejects NaN/None (equivalent to
+  `strict=True`, which is retained). Non-float columns are still coerced with
+  a warning under `"preserve"` (BCSV has no null type). Handles pandas
+  nullable Float dtypes (`pd.NA` → `NaN`).
+
+- **Sanitizer presets** — `clang-tsan` and `clang-ubsan` CMake presets
+  (ThreadSanitizer / UndefinedBehaviorSanitizer, RelWithDebInfo). The batch
+  codec's threading contract is documented in `docs/THREAD_SAFETY.md` and
+  guarded by the TSan preset.
 - **`bcsvCast` CLI tool** — generalizes column re-typing with four modes: `--scan`
   (report the smallest lossless type per column, read-only), `--optimize`
   (auto-derive and apply — the former `bcsvNarrowType` behavior), `--static SPEC`
@@ -33,7 +60,119 @@ This project uses [Semantic Versioning](https://semver.org/).
   output file (previously `bcsvNarrowType` skipped the write when nothing narrowed),
   so pipelines get a deterministic output path.
 
+- `bcsv2parquet`: corrected the `--row-group-size` help text (the parameter is
+  applied per streamed batch and is honored, not ignored).
+- Documented `parquet2bcsv`/`bcsv2parquet` (usage, schema mapping, limitations) in
+  the Python README; hardened the conversion + narrowing test suites with
+  per-element, multi-batch, collision, ordering, empty-file, type/value-fidelity,
+  and packet-size regression tests.
+
 ### Fixed
+- **Batch codec: lost-wakeup hang on close** — `request_stop()` sets the stop
+  flag outside the codec mutex, so the stop callback's CV notification could
+  land while the background thread held the mutex between its (pre-stop)
+  predicate check and going to sleep; the notification was lost and `close()`
+  blocked forever in `join()`. Readily reproduced by rapid open()+close()
+  cycles under load (empty-file tests hung ~30 % of parallel CI runs). The
+  callback now takes the mutex before notifying.
+- **Direct access: corrupt neighbor packets no longer poison valid reads** —
+  the packet-checksum validation added earlier in this release read *through*
+  the terminator into the next packet, so corruption in packet N+1 made the
+  fully valid packet N unreadable; and a checksum failure left stale row-cache
+  metadata that could serve the corrupt packet's rows under the previous
+  packet's indices (or index out of bounds). New codec entry point
+  `finishPacketRead()` consumes terminator + checksum and stops; the row cache
+  is invalidated before any mutation.
+- **Writer: rejected oversized rows poison the codec state — now enforced** —
+  the `MAX_ROW_LENGTH` check runs after the serializer has committed the row
+  into the ZoH/Delta reference state, so continuing to write after the throw
+  silently corrupted the stream (a retry became a 0-byte ZoH repeat). The
+  writer now refuses further rows until `flush()` resynchronizes at a packet
+  boundary (or the file is closed; rows written before the rejection stay
+  valid).
+- **Writer: disk-full is reported for small (fully buffered) files** —
+  `close()` now flushes before inspecting stream state and throws on failure;
+  previously the physical write happened inside `stream_.close()` after the
+  check, and a full disk was completely silent. Sync packet codec also
+  verifies its footer write (parity with the batch codec).
+- **pybcsv: `nan_policy="preserve"` handles object columns with `pd.NA`** —
+  an object-dtype column containing `pd.NA` with a float `type_hint` crashed
+  with a raw `TypeError`; it is now converted (`pd.NA`/`None` → `NaN`) like
+  nullable extension dtypes.
+- **Static-layout ZoH/Delta: `-0.0` silently became `+0.0`** — change detection
+  used IEEE `operator==`, which treats `-0.0 == +0.0`, so a sign flip was
+  encoded as "unchanged" and the decoder held the previous `+0.0`. Both static
+  codecs now compare bit patterns (`bcsv::bitEqual`), matching the dynamic
+  layouts' `memcmp` semantics. Side benefit: repeated NaN rows now compress
+  via ZoH hold instead of being re-serialized every row (`NaN != NaN`).
+- **Delta002: no FoC predictions through NaN arithmetic** — the encoder now
+  declines first-order-constant encoding when the prediction is NaN, because
+  NaN *payload* propagation through `prev + grad` is implementation-defined
+  and the decoder recomputes that expression; the XOR-delta path taken instead
+  is bit-exact on every platform. Encoder-only change, wire format unchanged.
+- **csv2bcsv: a single `nan` cell no longer forces a column to DOUBLE** —
+  the float-compatibility probe (`(double)(float)v != v`) is always true for
+  NaN; non-finite values are now skipped (`std::isfinite` guard).
+
+- **Writer now enforces `MAX_ROW_LENGTH`** — `writeRow()` throws when a serialized
+  row exceeds the 16 MiB format limit. Previously the writer happily produced
+  files that every read path rejects (and a row length could in principle
+  collide with the packet terminator marker).
+- **Flat001 no longer writes uninitialized memory for oversized strings** — the
+  serialize pre-scan now clamps each string to `MAX_STRING_LENGTH` (64 KiB, the
+  documented truncation), so the emitted row span contains exactly the bytes
+  written. Previously a string > 64 KiB left uninitialized heap bytes in the
+  row (written to disk — an information leak) and desynced the row framing.
+- **Delta002 rejects invalid header length codes** — crafted input could
+  declare more delta bytes than the column type holds, causing undefined
+  behavior (shift past 64-bit width). Two-layer fix: `decodeDelta()` clamps
+  its loop bound (total by construction — UB impossible regardless of caller;
+  the provable trip count also lets the compiler fully unroll the loop), plus
+  a cold-path validation that reports malformed files cleanly. Net effect
+  measured **faster** than the unchecked baseline (decode −6 %, file-level
+  delta reads +3.8 %); methodology and variant comparison in
+  `docs/archive/B2_VALIDATION_COST_INVESTIGATION.md`.
+- **Direct access validates packet checksums** — `ReaderDirectAccess::loadPacket()`
+  now consumes the packet terminator + checksum for synchronous packet codecs,
+  so random access rejects the same corrupt packets a sequential read would
+  (the batch codec already validated whole packets on seek).
+- **Hostile-input hardening** — `FileFooter::read()` validates `start_offset`
+  before use (a crafted value < 28 underflowed `size_t`; large values could
+  trigger multi-GiB allocations); the batch codec bounds declared packet sizes
+  by the file header's packet size instead of the absolute 1 GiB limit (a
+  40-byte crafted file could previously trigger ~2 GiB of allocations);
+  `FileHeader` enforces a cumulative column-name cap (`MAX_HEADER_NAME_BYTES`,
+  16 MiB) symmetrically on write and read.
+- **Zero-length UB fixes** — `Row::clear()` and `Bitset::readFrom()/writeTo()`
+  no longer call `memset`/`memcpy` with null pointers on empty layouts/bitsets
+  (flagged by UBSan; full test suite is now UBSan-clean).
+- **Compile-time endianness guard** — the wire format is little-endian;
+  `definitions.h` now refuses to compile on big-endian targets instead of
+  silently producing incompatible files. Stale comments fixed (packet-header
+  checksum coverage, terminator value).
+- **Benchmark: expected static-layout skips no longer fail the run** —
+  profiles without a compile-time `LayoutStatic` reported `status: "error"`
+  and forced exit code 1 (every full macro run "failed" cosmetically). They
+  now report `status: "skipped"` and the exit code is 0 when only skips occur.
+- **Batch codec: silent loss of the last packet on footer-less (crashed) files** —
+  the background pre-read thread and the reader main loop raced on the shared
+  stream state (`Reader::readNext()` polled `stream_.good()` while the background
+  thread was reading). On crash-recovered files without a footer this dropped
+  every row of the final complete packet; under ThreadSanitizer the reader could
+  deadlock. `Reader::readNext()` now queries liveness through the codec
+  (`FileCodecDispatch::readGood()`); the batch codec answers from main-thread-owned
+  state and its background thread restores a defined stream state on every exit.
+  Regression tests: `tests/batch_codec_recovery_test.cpp`.
+- **Batch codec: data race on the background exception slot** — `bg_exception_`
+  was read/written without synchronization (UB; errors could be missed). It is
+  now guarded by the codec mutex and checked only at packet boundaries, flush,
+  and finalize — never on the per-row fast path.
+- **Batch codec: background write failures could be swallowed at close** —
+  `finalize()` now rethrows a pending background exception unconditionally
+  before writing the footer (a file with a failed packet never gets a clean
+  footer), and verifies the footer write itself. `Writer::close()` records the
+  error in `getErrorMsg()`, performs full cleanup, then propagates the exception.
+
 - **`bcsvCast` double→int64/uint64 boundary (inherited from `bcsvNarrowType`)** —
   the range check compared against `static_cast<double>(INT64_MAX)`/`UINT64_MAX`,
   which round up to 2⁶³/2⁶⁴, so a value of exactly 2⁶³/2⁶⁴ passed the guard and
@@ -66,14 +205,6 @@ This project uses [Semantic Versioning](https://semver.org/).
 - **bcsvNarrowType: source packet/block size was not preserved** — conversion reset
   the packet size to the default; it now reuses the input file's packet size,
   honoring the encoding-preservation invariant.
-
-### Changed
-- `bcsv2parquet`: corrected the `--row-group-size` help text (the parameter is
-  applied per streamed batch and is honored, not ignored).
-- Documented `parquet2bcsv`/`bcsv2parquet` (usage, schema mapping, limitations) in
-  the Python README; hardened the conversion + narrowing test suites with
-  per-element, multi-batch, collision, ordering, empty-file, type/value-fidelity,
-  and packet-size regression tests.
 
 ## [1.5.8] - 2026-07-04
 

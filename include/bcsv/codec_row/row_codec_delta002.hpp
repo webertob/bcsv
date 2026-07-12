@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <bit>
 #include <cassert>
+#include <cmath>
 #include <cstring>
 #include <type_traits>
 
@@ -50,7 +51,14 @@ size_t RowCodecDelta002<LayoutType>::encodeDelta(std::byte* dst, uint64_t value,
 template<typename LayoutType>
 uint64_t RowCodecDelta002<LayoutType>::decodeDelta(const std::byte* src, size_t byteCount) {
     uint64_t result = 0;
-    for (size_t i = 0; i < byteCount; ++i)
+    // Clamp the loop bound: makes the function total (no shift past the
+    // 64-bit width for any input) and, importantly, gives the compiler a
+    // provable max trip count — the byte-assembly loop unrolls fully,
+    // which measures FASTER than the unclamped loop (see docs/archive/
+    // B2_VALIDATION_COST_INVESTIGATION.md).  For valid inputs (encoder
+    // clamps to sizeof(T) <= 8) the clamp is an identity.
+    const size_t n = byteCount <= sizeof(uint64_t) ? byteCount : sizeof(uint64_t);
+    for (size_t i = 0; i < n; ++i)
         result |= static_cast<uint64_t>(static_cast<uint8_t>(src[i])) << (i * 8);
     return result;
 }
@@ -155,6 +163,13 @@ bool RowCodecDelta002<LayoutType>::checkFloatFoC(const std::byte* curr, const st
     std::memcpy(&p, prev, sizeof(T));
     std::memcpy(&g, grad, sizeof(T));
     T predicted = p + g;
+    // Never emit FoC for a NaN prediction: the decoder reconstructs the
+    // value as prev + grad, and NaN *payload* propagation through
+    // arithmetic is implementation-defined — the XOR-delta path is
+    // bit-exact on every platform.  (Encoder-only guard; wire unchanged.)
+    if (std::isnan(predicted)) {
+        return false;
+    }
     return std::memcmp(&c, &predicted, sizeof(T)) == 0;
 }
 
@@ -453,6 +468,7 @@ void RowCodecDelta002<LayoutType>::deserialize(
 
             // ── code ≥ 2: delta with (code-1) bytes ─────────────────────
             const size_t deltaBytes = code - 1;
+            delta002ValidateLengthCode(deltaBytes, sizeof(T));
 
             if (dataOff + deltaBytes > buffer.size())
                 throw std::runtime_error(
@@ -627,6 +643,10 @@ bool RowCodecDelta002<LayoutStatic<ColumnTypes...>>::checkFloatFoC(
     const T& curr, const T& prev, const T& grad)
 {
     T predicted = prev + grad;
+    // See the dynamic-layout checkFloatFoC: no FoC for NaN predictions.
+    if (std::isnan(predicted)) {
+        return false;
+    }
     return std::memcmp(&curr, &predicted, sizeof(T)) == 0;
 }
 
@@ -694,7 +714,9 @@ RowCodecDelta002<LayoutStatic<ColumnTypes...>>::serialize(
                 T& grad = std::get<ColIdx>(grad_data_);
 
                 // ── ZoH check ────────────────────────────────────────────
-                if (curr == prev) {
+                // bitEqual: NaN holds (same bits) and -0.0 vs +0.0 counts
+                // as a change (matches the dynamic layout's memcmp check).
+                if (bitEqual(curr, prev)) {
                     row_header_.encode(ROW_HEADER_BIT_INDEX[ColIdx], HB, 0);
                     grad = T{};
                     return;
@@ -846,6 +868,7 @@ void RowCodecDelta002<LayoutStatic<ColumnTypes...>>::deserialize(
 
                 // ── code ≥ 2: delta with (code-1) bytes ─────────────────
                 const size_t deltaBytes = code - 1;
+                delta002ValidateLengthCode(deltaBytes, sizeof(T));
 
                 if (dataOff + deltaBytes > buffer.size())
                     throw std::runtime_error(

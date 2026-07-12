@@ -41,7 +41,35 @@
 #endif
 
 namespace bcsv {
-    
+
+    // The wire format is written by memcpy of native integers and documented
+    // as little-endian.  Until explicit byte-order conversion exists, refuse
+    // to compile on big-endian targets rather than silently producing files
+    // no other platform can read.
+    static_assert(std::endian::native == std::endian::little,
+                  "BCSV wire format requires a little-endian target");
+
+    /// Value equality with bit-exact semantics for floating-point types:
+    /// NaN equals NaN (same bit pattern) and -0.0 does NOT equal +0.0.
+    /// Codec change detection (ZoH/Delta) must use this instead of
+    /// operator== so signed zeros round-trip exactly and repeated NaNs
+    /// hold — IEEE operator== breaks both (NaN != NaN; -0.0 == +0.0).
+    /// Non-floating types fall back to operator==.
+    /// BCSV_ALWAYS_INLINE: without it, the extra call in the templated
+    /// serialize fold-expressions perturbs GCC's TU-wide inlining budget and
+    /// measurably degrades unrelated (decode) hot loops — see
+    /// docs/archive/B2_VALIDATION_COST_INVESTIGATION.md for the same effect class.
+    template<typename T>
+    [[nodiscard]] BCSV_ALWAYS_INLINE bool bitEqual(const T& a, const T& b) {
+        if constexpr (std::is_same_v<T, float>) {
+            return std::bit_cast<uint32_t>(a) == std::bit_cast<uint32_t>(b);
+        } else if constexpr (std::is_same_v<T, double>) {
+            return std::bit_cast<uint64_t>(a) == std::bit_cast<uint64_t>(b);
+        } else {
+            return a == b;
+        }
+    }
+
     // Configuration
     constexpr bool RANGE_CHECKING = true;
     constexpr bool STRING_OVERFLOW_THROWS = true;  // true = throw std::length_error on string > MAX_STRING_LENGTH, false = silently truncate (legacy behavior)
@@ -80,7 +108,8 @@ namespace bcsv {
     constexpr size_t MAX_COLUMN_COUNT  = std::numeric_limits<uint16_t>::max();  // Maximum number of columns
     constexpr size_t MAX_COLUMN_LENGTH = std::numeric_limits<uint16_t>::max();  // Maximum width of column content
     constexpr size_t MAX_STRING_LENGTH = std::numeric_limits<uint16_t>::max(); // Maximum length of string data (wire format uses uint16_t lengths)
-    constexpr size_t MAX_ROW_LENGTH    = (1ULL << 24) - 2 ;                     // ~16 MB maximum row size, 4b BLE encoding (2 bits for length), reserve 0xFFFF for terminator.
+    constexpr size_t MAX_ROW_LENGTH    = (1ULL << 24) - 2 ;                     // ~16 MB maximum row size, 4b BLE encoding (2 bits for length); safely below PCKT_TERMINATOR (0x3FFFFFFF) so a row length can never collide with the terminator marker.
+    constexpr size_t MAX_HEADER_NAME_BYTES = 16 * 1024 * 1024;              // Cumulative cap on column-name bytes in a file header (hostile-input guard)
     constexpr size_t MIN_PACKET_SIZE         = 64 * 1024;                       // 64KB minimum packet size
     constexpr size_t DEFAULT_PACKET_SIZE_KB  = 8192;                            // 8MB default packet size (in KB, for Writer::open blockSizeKB param)
     constexpr size_t MAX_PACKET_SIZE         = 1024 * 1024 * 1024;              // 1GB maximum packet size

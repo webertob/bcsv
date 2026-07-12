@@ -102,18 +102,19 @@ def _get_pandas_dtype_from_bcsv_type(col_type: ColumnType) -> Union[str, np.dtyp
     return type_mapping.get(col_type, str)
 
 
-def write_dataframe(df, 
-                    filename: str, 
+def write_dataframe(df,
+                    filename: str,
                     compression_level: int = 1,
                     row_codec: str = "delta",
                     type_hints: Optional[Dict[str, ColumnType]] = None,
-                    strict: bool = False) -> None:
+                    strict: bool = False,
+                    nan_policy: str = "preserve") -> None:
     """
     Write a pandas DataFrame to a BCSV file via the C++ columnar path.
-    
+
     All data is converted to numpy arrays/string lists in Python, then passed
     to C++ write_columns which runs the entire write loop under GIL release.
-    
+
     Args:
         df: The pandas DataFrame to write
         filename: Output BCSV filename (str or pathlib.Path)
@@ -121,7 +122,23 @@ def write_dataframe(df,
         row_codec: Row codec to use ('flat', 'zoh', or 'delta', default: 'delta')
         type_hints: Optional dictionary mapping column names to specific BCSV types
         strict: If True, raise ValueError when any column contains NaN/None
-                values instead of coercing them to zero/False/empty-string.
+                values (equivalent to nan_policy="raise"; kept for backward
+                compatibility and takes precedence over nan_policy).
+        nan_policy: How to handle NaN/None values (default "preserve"):
+            - "preserve": float/double columns write NaN through bit-exactly
+              (NaN is a legitimate IEEE-754 value; the BCSV binary format
+              round-trips it). Non-float columns cannot represent NaN/None
+              and are still coerced to zero/False/empty-string with a warning.
+            - "coerce": legacy behavior — NaN/None in every column type is
+              replaced with zero/False/empty-string (float NaN becomes 0.0),
+              with a warning.
+            - "raise": raise ValueError when any column contains NaN/None.
+
+    Note: pandas cannot distinguish float NaN from missing (None becomes NaN
+    in float columns), so with "preserve" both are written as NaN. Reading
+    the file back yields NaN in those cells. When converting to parquet via
+    pybcsv.parquet_utils note that parquet *nulls* are a distinct concept —
+    NaN values pass through, nulls are rejected (see to_parquet docs).
     """
     if not PANDAS_AVAILABLE:
         raise ImportError("pandas is not available. Please install pandas to use this function.")
@@ -129,14 +146,22 @@ def write_dataframe(df,
         raise ImportError("Columnar I/O is not available in this build. "
                           "Rebuild pybcsv with numpy headers available.")
 
+    if nan_policy not in ("preserve", "coerce", "raise"):
+        raise ValueError(f"Invalid nan_policy: {nan_policy!r} "
+                         f"(expected 'preserve', 'coerce' or 'raise')")
+
     filename = os.fspath(filename)
 
     if strict:
+        nan_policy = "raise"
+
+    if nan_policy == "raise":
         null_cols = [str(c) for c in df.columns if df[c].isna().any()]
         if null_cols:
             raise ValueError(
                 f"NaN/None values found in columns: {null_cols}. "
-                f"Use strict=False (default) to coerce to zero/False/empty-string, "
+                f"Use nan_policy='preserve' to keep float NaN, "
+                f"nan_policy='coerce' to replace with zero/False/empty-string, "
                 f"or handle missing values before calling write_dataframe().")
 
     col_order = [str(c) for c in df.columns]
@@ -151,20 +176,35 @@ def write_dataframe(df,
         col_types.append(ct)
 
         col = df[col_name]
+        is_float_col = ct in (ColumnType.FLOAT, ColumnType.DOUBLE)
+
         if col.isna().any():
-            nan_cols = col.isna().sum()
-            warnings.warn(
-                f"Column '{col_name}' contains {nan_cols} NaN/None values. "
-                f"These will be replaced with zero/False/empty-string since BCSV has no null type.",
-                UserWarning, stacklevel=2)
-            if ct == ColumnType.STRING:
-                col = col.fillna("")
-            elif ct in (ColumnType.FLOAT, ColumnType.DOUBLE):
-                col = col.fillna(0.0)
-            elif ct == ColumnType.BOOL:
-                col = col.fillna(False)
+            if is_float_col and nan_policy == "preserve":
+                # NaN is a valid IEEE-754 value; the binary format
+                # round-trips it bit-exactly.  Nullable extension dtypes
+                # (e.g. pandas Float64) and object columns need an explicit
+                # conversion so pd.NA/None become np.nan in a plain numpy
+                # array (np.ascontiguousarray cannot convert NAType).
+                if (isinstance(col.dtype, pd.api.extensions.ExtensionDtype)
+                        or col.dtype == object):
+                    np_dtype = np.float32 if ct == ColumnType.FLOAT else np.float64
+                    col = pd.Series(col.to_numpy(dtype=np_dtype, na_value=np.nan),
+                                    index=col.index)
             else:
-                col = col.fillna(0)
+                nan_cols = col.isna().sum()
+                warnings.warn(
+                    f"Column '{col_name}' contains {nan_cols} NaN/None values. "
+                    f"These will be replaced with zero/False/empty-string since BCSV has no null type."
+                    + (" Use nan_policy='preserve' to keep float NaN." if is_float_col else ""),
+                    UserWarning, stacklevel=2)
+                if ct == ColumnType.STRING:
+                    col = col.fillna("")
+                elif is_float_col:
+                    col = col.fillna(0.0)
+                elif ct == ColumnType.BOOL:
+                    col = col.fillna(False)
+                else:
+                    col = col.fillna(0)
 
         if ct == ColumnType.STRING:
             columns[col_name] = col.astype(str).tolist()

@@ -23,8 +23,9 @@
 #include "layout.h"
 #include <cassert>
 #include <cstddef>
-#include <fstream>
 #include <cstring>
+#include <exception>
+#include <fstream>
 
 
 namespace bcsv {
@@ -56,21 +57,48 @@ namespace bcsv {
         if (!stream_.is_open()) {
             return;
         }
-        
-        // Finalize file codec: close last packet, write footer (if packet-based)
+
+        // Finalize file codec: close last packet, write footer (if packet-based).
+        // A finalize failure (e.g. disk full during the last packet) is recorded
+        // and rethrown AFTER cleanup, so the writer never stays half-open.
+        std::exception_ptr finalize_error;
         if (file_codec_.isSetup()) {
-            file_codec_.finalize(stream_, row_cnt_);
+            try {
+                file_codec_.finalize(stream_, row_cnt_);
+            } catch (const std::exception& ex) {
+                finalize_error = std::current_exception();
+                err_msg_ = std::string("Error: file finalization failed: ") + ex.what();
+            } catch (...) {
+                finalize_error = std::current_exception();
+                err_msg_ = "Error: file finalization failed";
+            }
         }
 
-        if (!stream_.good()) {
-            err_msg_ = "Error: I/O failure during file close/footer write";
+        // Force buffered bytes to the OS before inspecting stream state:
+        // for small files the physical write happens right here, and a
+        // disk-full failure would otherwise surface only as a silently-set
+        // badbit inside stream_.close() after this check.
+        bool flush_error = false;
+        if (!finalize_error) {
+            stream_.flush();
+            if (!stream_.good()) {
+                flush_error = true;
+                err_msg_ = "Error: I/O failure during file close/footer write";
+            }
         }
-        
+
         stream_.close();
         row_codec_ = CodecType();  // Move-assign default; old codec's destructor releases the structural lock
         file_codec_.destroy();
         file_path_.clear();
-        row_cnt_ = 0;       
+        row_cnt_ = 0;
+
+        if (finalize_error) {
+            std::rethrow_exception(finalize_error);
+        }
+        if (flush_error) {
+            throw std::runtime_error(err_msg_);
+        }
     }
 
     /// @brief Flush all buffered data to disk in a crash-recoverable state.
@@ -92,6 +120,10 @@ namespace bcsv {
         if (file_codec_.isSetup()) {
             if (file_codec_.flushPacket(stream_, row_cnt_)) {
                 row_codec_.reset();
+                // Packet boundary: the reader resets its row codec here too,
+                // so a poisoned encoder state (rejected oversized row) is
+                // resynchronized and writing may continue.
+                write_poisoned_ = false;
             }
         } else {
             stream_.flush();
@@ -176,6 +208,7 @@ namespace bcsv {
             file_codec_.setupWrite(stream_, file_header_);
 
             row_.clear();
+            write_poisoned_ = false;
 
             // Initialize row codec (Item 11)
             row_codec_.setup(layout());
@@ -215,6 +248,12 @@ namespace bcsv {
         if (!stream_.is_open()) {
             throw std::runtime_error("File is not open");
         }
+        if (write_poisoned_) [[unlikely]] {
+            throw std::runtime_error(
+                "Writer::writeRow: writer poisoned by a previously rejected "
+                "oversized row (codec state desynced); call flush() to "
+                "resynchronize or close()");
+        }
 
         // Packet lifecycle: beginWrite handles close-if-full → open-if-needed.
         // Returns true when a packet boundary was crossed → reset RowCodec.
@@ -226,6 +265,24 @@ namespace bcsv {
         auto& buf = file_codec_.writeBuffer();
         buf.clear();
         std::span<std::byte> actRow = row_codec_.serialize(row_, buf);
+
+        // Enforce the format's row-size limit at write time — every read
+        // path rejects rows above MAX_ROW_LENGTH, so writing one would
+        // produce a file the library itself cannot read back.
+        //
+        // The serializer has already committed this row into the codec's
+        // ZoH/Delta reference state, so the encoder no longer matches what
+        // the decoder will reconstruct — the writer is poisoned until a
+        // packet boundary resynchronizes both sides (flush()) or the file
+        // is closed (rows written so far remain valid).
+        if (actRow.size() > MAX_ROW_LENGTH) [[unlikely]] {
+            write_poisoned_ = true;
+            throw std::runtime_error(
+                "Writer::writeRow: serialized row length exceeds MAX_ROW_LENGTH ("
+                + std::to_string(actRow.size()) + " > " + std::to_string(MAX_ROW_LENGTH)
+                + "); reduce column count or string sizes. Call flush() to "
+                  "resynchronize before writing further rows, or close()");
+        }
 
         // 2. Write row via file codec (handles VLE, compression, checksum, I/O)
         file_codec_.writeRow(stream_, actRow);

@@ -76,10 +76,18 @@ namespace bcsv {
             throw std::runtime_error("Failed to write column data types to stream");
         }
         
-        // Write column name lengths
+        // Write column name lengths.  Enforce the same cumulative cap the
+        // reader applies (MAX_HEADER_NAME_BYTES) — the writer must never
+        // produce a header its own reader rejects.
         std::vector<uint16_t> strLength(layout.columnCount());
+        size_t totalNameBytes = 0;
         for (size_t i = 0; i < layout.columnCount(); ++i) {
             strLength[i] = static_cast<uint16_t>(layout.columnName(i).length());
+            totalNameBytes += strLength[i];
+        }
+        if (totalNameBytes > MAX_HEADER_NAME_BYTES) [[unlikely]] {
+            throw std::runtime_error("Cumulative column-name size (" + std::to_string(totalNameBytes) +
+                                   ") exceeds maximum (" + std::to_string(MAX_HEADER_NAME_BYTES) + ")");
         }
         stream.write(reinterpret_cast<const char*>(strLength.data()), strLength.size() * sizeof(uint16_t));
         if (!stream.good()) {
@@ -150,13 +158,21 @@ namespace bcsv {
                 throw std::runtime_error("Failed to read column name lengths");
             }
             
-            // Validate name lengths
+            // Validate name lengths — individually and cumulatively.  The
+            // cumulative cap rejects hostile headers early instead of
+            // grinding through up to ~4 GiB of column-name reads.
+            size_t totalNameBytes = 0;
             for (uint16_t i = 0; i < const_section_.column_count; ++i) {
                 if (nameLengths[i] > MAX_STRING_LENGTH) [[unlikely]] {
                     throw std::runtime_error("Column name length (" + std::to_string(nameLengths[i]) + 
                                            ") exceeds maximum (" + std::to_string(MAX_STRING_LENGTH) + 
                                            ") at index " + std::to_string(i));
                 }
+                totalNameBytes += nameLengths[i];
+            }
+            if (totalNameBytes > MAX_HEADER_NAME_BYTES) [[unlikely]] {
+                throw std::runtime_error("Cumulative column-name size (" + std::to_string(totalNameBytes) +
+                                       ") exceeds maximum (" + std::to_string(MAX_HEADER_NAME_BYTES) + ")");
             }
 
             // Read column names

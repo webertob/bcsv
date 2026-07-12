@@ -207,7 +207,10 @@ namespace bcsv {
             return false;
         }
 
-        if (!stream_ || !stream_.good()) {
+        // Liveness is queried through the codec, not by polling stream_
+        // directly: the batch codec's background thread may be touching the
+        // stream concurrently, so its state is not ours to inspect here.
+        if (!file_codec_.readGood(stream_)) {
             return false;
         }
 
@@ -371,6 +374,15 @@ namespace bcsv {
     bool ReaderDirectAccess<LayoutType>::loadPacket(size_t packetIdx) {
         const auto& pktEntry = file_footer_.packetIndex()[packetIdx];
 
+        // Invalidate the cache BEFORE any mutation: several steps below can
+        // throw (seek failure, checksum mismatch, decode error), and stale
+        // metadata pointing at freshly overwritten cached_rows_ would serve
+        // rows from the wrong packet — or index past the vector.
+        cached_packet_idx_ = SIZE_MAX;
+        cached_first_row_ = 0;
+        cached_row_count_ = 0;
+        cached_decode_pos_ = SIZE_MAX;
+
         // Seek file codec to the target packet
         if (!Base::file_codec_.seekToPacket(Base::stream_,
                 static_cast<std::streamoff>(pktEntry.byte_offset))) {
@@ -395,10 +407,12 @@ namespace bcsv {
         cached_rows_.clear();
         cached_rows_.reserve(pktRowCount);
 
+        bool sawEof = false;
         for (size_t i = 0; i < pktRowCount; ++i) {
             auto rowRawData = Base::file_codec_.readRow(Base::stream_);
 
             if (rowRawData.data() == EOF_SENTINEL.data()) {
+                sawEof = true;
                 break;  // Unexpected EOF within packet
             }
 
@@ -407,6 +421,16 @@ namespace bcsv {
             } else {
                 cached_rows_.emplace_back(rowRawData.begin(), rowRawData.end());
             }
+        }
+
+        // Validate the packet checksum.  Synchronous packet codecs verify it
+        // only when the terminator is consumed, which the row-count-bounded
+        // loop above never does.  finishPacketRead() consumes terminator +
+        // checksum and STOPS — it never touches the next packet, so
+        // corruption there cannot make this (valid) packet unreadable.
+        // Codecs that validate whole packets up front (batch) no-op here.
+        if (!sawEof) {
+            Base::file_codec_.finishPacketRead(Base::stream_);
         }
 
         cached_packet_idx_ = packetIdx;

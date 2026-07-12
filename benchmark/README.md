@@ -57,6 +57,41 @@ Discovery helpers:
 - `--list` prints all profile names
 - `--list-scenarios` prints all scenario IDs
 
+Timing modes:
+
+- Default: timed read loops include per-row validation (regenerate expected
+  row + compare). Good for regression A/B within this suite — but the numbers
+  understate pure decode speed several-fold.
+- `--no-validate`: pure decode throughput (no expected-row work in the timed
+  loop). Use for absolute claims and cross-format comparisons.
+- Note: ZoH/Delta modes use `generateTimeSeries` data while CSV/Dense use the
+  volatile `generate` data — the compression-vs-CSV column therefore compares
+  against a CSV of a different dataset (footnoted in generated reports).
+
+## Measurement Methodology & Noise Floor
+
+Quantified on the reference machine (Ryzen 9 9950X3D) — full study in
+`docs/archive/NOISE_FLOOR_2026-07-12.md`:
+
+| Regime | Read noise (median CV) | Write noise | Use for |
+|---|---|---|---|
+| 8-way parallel sweep | 5.5–8.5 % (p90 to 20 %) | 7–9 % (p90 to 23 %) | coverage smoke, regressions > 15–20 % |
+| Solo, pinned, interleaved A/B | ~1–2 % | ~5–7 % (binary-layout luck) | verdicts in the ±10 % band |
+
+Rules of thumb:
+
+1. Judge on **per-mode medians across profiles × scenarios**, never on single
+   metrics (single-metric deltas below the p90 CV are noise).
+2. Reads are the reliable metric; writes carry ±5–7 % binary-layout noise
+   even between semantically identical builds.
+3. Prefer M/L sizes for gating (S is 1.5–2× noisier); run ≥ 3 repetitions and
+   use medians (warm-up median penalty is ≤ 3 %, but ~10 % of metrics show a
+   10–23 % slower first repetition).
+4. Parallel-sweep numbers are 7–14 % below solo numbers — never mix regimes
+   without same-regime anchors.
+5. Micro suite: gate only on aggregate ops (≥ ~10 ns: Visit, Serialize,
+   CsvWriteRow); the sub-ns `Get_*`/`Set_*` accessors swing ±30 % run-to-run.
+
 ## Codec Parity Investigation (`bench_codec_compare`)
 
 Standalone tool for cross-product comparison of all file codecs × row codecs × layout types

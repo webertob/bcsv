@@ -1606,6 +1606,9 @@ void Bitset<N>::readFrom(const void* src, size_t available) {
     if (available < byteCount()) {
         throw std::out_of_range("Bitset::readFrom: insufficient data");
     }
+    if (byteCount() == 0) {
+        return;  // memcpy with a null src is UB even for n=0
+    }
     std::memcpy(data(), src, byteCount());
     clearUnusedBits();
 }
@@ -1614,6 +1617,9 @@ template<size_t N>
 void Bitset<N>::writeTo(void* dst, size_t capacity) const {
     if (capacity < byteCount()) {
         throw std::out_of_range("Bitset::writeTo: insufficient capacity");
+    }
+    if (byteCount() == 0) {
+        return;  // memcpy with a null dst is UB even for n=0
     }
     // Ensure padding bits in the last word are zero before export
     const_cast<Bitset*>(this)->clearUnusedBits();

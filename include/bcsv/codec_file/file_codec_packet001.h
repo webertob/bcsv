@@ -108,6 +108,9 @@ public:
         }
         FileFooter footer(packet_index_, totalRows);
         footer.write(os);
+        if (!os.good()) {
+            throw std::runtime_error("FileCodecPacket001: footer write failed");
+        }
     }
 
     /// Flush: close the current packet (terminator + checksum), flush the
@@ -191,6 +194,26 @@ public:
     void reset() noexcept {
         packet_hash_.reset();
         packet_size_ = 0;
+    }
+
+    /// Consume the current packet's terminator + checksum and validate.
+    /// Used by direct access after reading a known number of rows: unlike a
+    /// readRow() that crosses the boundary, this STOPS after the checksum —
+    /// it never touches the next packet, so corruption there cannot poison
+    /// reads of this (valid) packet.  Throws on checksum mismatch or a
+    /// malformed packet tail.
+    void finishPacketRead(std::istream& is) {
+        if (!packet_open_) {
+            return;
+        }
+        uint64_t rowLen = 0;
+        vleDecode<uint64_t, true>(is, rowLen, &packet_hash_);
+        if (rowLen != PCKT_TERMINATOR) {
+            throw std::runtime_error(
+                "FileCodecPacket001::finishPacketRead: expected packet terminator");
+        }
+        closePacketRead(is);
+        packet_open_ = false;
     }
 
     /// Seek to a specific packet by absolute file offset and prepare for reading.
