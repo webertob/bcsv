@@ -325,9 +325,10 @@ namespace bcsv_compare {
         extractIntVal(rowInt, colInt, intType, sVal, uVal);
 
         if (intType == bcsv::ColumnType::INT64 || intType == bcsv::ColumnType::UINT64) {
-            constexpr uint64_t D53     = UINT64_C(9007199254740992);
-            bool               mayLose = (intType == bcsv::ColumnType::INT64)
-                                             ? (sVal < static_cast<int64_t>(-D53) || sVal > static_cast<int64_t>(D53))
+            constexpr uint64_t D53        = UINT64_C(9007199254740992);         // 2^53, unsigned bound
+            constexpr int64_t  D53_SIGNED = INT64_C(9007199254740992);          // 2^53, signed bound
+            bool               mayLose    = (intType == bcsv::ColumnType::INT64)
+                                             ? (sVal < -D53_SIGNED || sVal > D53_SIGNED)
                                              : (uVal > D53);
             if (mayLose && !allowImprecise)
                 return false;

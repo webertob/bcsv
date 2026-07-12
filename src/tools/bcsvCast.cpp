@@ -30,6 +30,10 @@
 #  endif
 #endif
 
+#ifndef BCSV_HAS_MKSTEMP
+#  include <io.h>  // Windows/MSVC: _mktemp_s
+#endif
+
 #include <bcsv/bcsv.h>
 #include <bcsv/std_charconv_compat.h>
 #include "cli_common.h"

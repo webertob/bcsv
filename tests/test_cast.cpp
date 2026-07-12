@@ -8,10 +8,22 @@
  */
 
 #include <gtest/gtest.h>
+#include <cstdio>
 #include <filesystem>
 #include <string>
 #include <vector>
 #include <bcsv/bcsv.h>
+
+#ifdef _WIN32
+#  define CAST_POPEN  _popen
+#  define CAST_PCLOSE _pclose
+#  define CAST_EXE_SUFFIX ".exe"
+#else
+#  include <sys/wait.h>
+#  define CAST_POPEN  popen
+#  define CAST_PCLOSE pclose
+#  define CAST_EXE_SUFFIX ""
+#endif
 
 namespace fs = std::filesystem;
 
@@ -20,11 +32,11 @@ static std::string findCastBin() {
     fs::path cur = fs::current_path();
 
     std::string candidates[] = {
-        (cur / "bin" / "bcsvCast").string(),
-        (cur / "../bin" / "bcsvCast").string(),
-        (cur / "bcsvCast").string(),
-        "build/ninja-debug/bin/bcsvCast",
-        "build/ninja-release/bin/bcsvCast",
+        (cur / "bin" / "bcsvCast" CAST_EXE_SUFFIX).string(),
+        (cur / "../bin" / "bcsvCast" CAST_EXE_SUFFIX).string(),
+        (cur / "bcsvCast" CAST_EXE_SUFFIX).string(),
+        "build/ninja-debug/bin/bcsvCast" CAST_EXE_SUFFIX,
+        "build/ninja-release/bin/bcsvCast" CAST_EXE_SUFFIX,
     };
 
     for (auto& c : candidates) {
@@ -33,7 +45,7 @@ static std::string findCastBin() {
             return p.string();
     }
 
-    return (cur / "bin" / "bcsvCast").string();
+    return (cur / "bin" / "bcsvCast" CAST_EXE_SUFFIX).string();
 }
 
 class CastTest : public ::testing::Test {
@@ -64,15 +76,19 @@ protected:
             cmd += " " + a;
 
         std::string merged = cmd + " 2>&1";
-        FILE*       pipe   = popen(merged.c_str(), "r");
+        FILE*       pipe   = CAST_POPEN(merged.c_str(), "r");
         if (!pipe)
             return -1;
 
         char buf[256];
         while (std::fgets(buf, sizeof(buf), pipe))
             stdout_out += buf;
-        int rc = pclose(pipe);
-        return WEXITSTATUS(rc);
+        int rc = CAST_PCLOSE(pipe);
+#ifdef _WIN32
+        return rc;  // _pclose returns the process exit code directly
+#else
+        return WIFEXITED(rc) ? WEXITSTATUS(rc) : -1;
+#endif
     }
 
     void writeInt64File(const std::string&          path,
