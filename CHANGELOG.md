@@ -10,7 +10,9 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.5.10] - 2026-07-12
+
+Includes MSVC/Windows build and test portability fixes.
 
 ### Added
 - **Benchmark: `--no-validate` flag** — `bench_macro_datasets` can now time pure
