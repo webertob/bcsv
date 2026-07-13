@@ -108,6 +108,13 @@ the streaming row-wise write path intact. Order = suggested implementation order
       `std::ostream` (stdin/stdout piping, network). API addition; format unchanged.
       Includes CLI piping support + docs/examples (bcsvCat/bcsvMore-style usage).
 - [ ] E8: pybcsv/C# surface for E1–E7 as applicable; parquet converters pick up dictionary/stats.
+- [ ] E10: **Unify typed CSV cell parsing in CsvReader** (from the 2026-07-13 tools review) —
+      csv2bcsv's checked conversion (`parseCellChecked` + slow paths) and the library's
+      `CsvReader::parseCells` are two implementations with deliberate divergences (strict
+      case-insensitive bool token set vs legacy true/1/TRUE/True-else-false; quoted numerics
+      unquoted by the tool but parse-as-0 in the library). Move checked/typed parsing into
+      CsvReader as the single semantics, and expose `parseErrorCount()` through the C API and
+      python bindings. Natural companion to E9 (new float types then land in one parser).
 - [ ] E9: **FP8 / FP16 / FP128 column types** (requested 2026-07-13) — additive format + API
       support for reduced/extended-precision floats (FP8, IEEE half, quad). Includes updating the
       CLI tools for the new types: csv2bcsv (inference ladder + `--types`), bcsvCast (probe,

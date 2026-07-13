@@ -26,8 +26,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>   // mkstemp (POSIX), std::stod
 #include <filesystem>
 #include <iomanip>
 #include <iostream>
@@ -65,6 +68,47 @@ inline constexpr const char* VALID_ROW_CODECS[] = {
 
 inline constexpr const char* DEFAULT_FILE_CODEC = "packet_lz4_batch";
 inline constexpr const char* DEFAULT_ROW_CODEC  = "delta";
+
+// ── Small shared string helpers ────────────────────────────────────
+
+/// Trim ASCII whitespace from both ends (in place).
+inline void trimAscii(std::string& s) {
+    size_t a = 0, b = s.size();
+    while (a < b && std::isspace(static_cast<unsigned char>(s[a]))) ++a;
+    while (b > a && std::isspace(static_cast<unsigned char>(s[b - 1]))) --b;
+    s = s.substr(a, b - a);
+}
+
+/// Split on commas (no quoting/escaping — the SPEC/range grammars have none).
+inline std::vector<std::string> splitOnComma(const std::string& s) {
+    std::vector<std::string> parts;
+    std::string cur;
+    for (char c : s) {
+        if (c == ',') {
+            parts.push_back(cur);
+            cur.clear();
+        } else {
+            cur += c;
+        }
+    }
+    parts.push_back(cur);
+    return parts;
+}
+
+/// CLI11 ->check() validator shared by every tool with a --tolerance option.
+inline std::string validateToleranceArg(const std::string& s) {
+    try {
+        size_t pos = 0;
+        double v   = std::stod(s, &pos);
+        if (pos != s.size())
+            return "--tolerance requires a numeric argument, got '" + s + "'";
+        if (!std::isfinite(v) || v < 0.0)
+            return "--tolerance must be a finite non-negative number";
+        return {};
+    } catch (...) {
+        return "--tolerance requires a numeric argument, got '" + s + "'";
+    }
+}
 
 // ── Version / program identity ─────────────────────────────────────
 
@@ -362,41 +406,35 @@ inline IndexRangeSet parseIndexRanges(const std::string& spec, size_t total) {
     if (!specified || total == 0)
         return r;
 
-    std::vector<std::string> parts;
-    {
-        std::string cur;
-        for (char c : spec) {
-            if (c == ',') {
-                parts.push_back(cur);
-                cur.clear();
-                continue;
-            }
-            cur += c;
-        }
-        parts.push_back(cur);
-    }
+    // Strict index parse: the whole token must be a (possibly negative)
+    // integer. std::stoll's junk tolerance silently turned typos like '1+2'
+    // or '5-' into index 1 / 5 — a data-shaping tool must error instead.
+    auto parseIndex = [&spec](const std::string& tok) -> int64_t {
+        int64_t v = 0;
+        auto [p, ec] = std::from_chars(tok.data(), tok.data() + tok.size(), v);
+        if (ec != std::errc{} || p != tok.data() + tok.size())
+            throw std::runtime_error("Invalid index '" + tok + "' in '" + spec +
+                                     "' (ranges use ':', e.g. '5:10')");
+        return v;
+    };
+
+    std::vector<std::string> parts = splitOnComma(spec);
 
     for (auto& p : parts) {
         auto p0 = p;
-        // inline trim
-        size_t a = 0, b = p0.size();
-        while (a < b && std::isspace(static_cast<unsigned char>(p0[a])))
-            ++a;
-        while (b > a && std::isspace(static_cast<unsigned char>(p0[b - 1])))
-            --b;
-        p0 = p0.substr(a, b - a);
+        trimAscii(p0);
         if (p0.empty())
             continue;
 
         int64_t lo, hi;
         auto    colon = p0.find(':');
         if (colon == std::string::npos) {
-            lo = hi = std::stoll(p0);
+            lo = hi = parseIndex(p0);
         } else {
             std::string ls = p0.substr(0, colon);
             std::string hs = p0.substr(colon + 1);
-            lo             = ls.empty() ? 0 : std::stoll(ls);
-            hi             = hs.empty() ? static_cast<int64_t>(total) - 1 : std::stoll(hs);
+            lo             = ls.empty() ? 0 : parseIndex(ls);
+            hi             = hs.empty() ? static_cast<int64_t>(total) - 1 : parseIndex(hs);
         }
 
         if (lo < 0)
@@ -438,10 +476,14 @@ inline IndexRangeSet parseIndexRanges(const std::string& spec, size_t total) {
 inline IndexRangeSet parseIndexRangesUnbounded(const std::string& spec) {
     // Negatives count from the end, which is meaningless while streaming —
     // reject them up front by spec text (the range grammar has no other
-    // legitimate use for '-').
+    // legitimate use for '-'). Mention the ':' syntax too: '5-10' is the
+    // most common typo for '5:10' and would otherwise get a confusing
+    // negative-index complaint.
     if (spec.find('-') != std::string::npos)
-        throw std::runtime_error("Negative indices are not supported here (the total "
-                                 "count is unknown while streaming): '" + spec + "'");
+        throw std::runtime_error("'" + spec + "': negative indices (counting from the end) "
+                                 "are not supported here because the total count is unknown "
+                                 "while streaming — and note ranges use ':' (e.g. '5:10'), "
+                                 "not '-'");
     constexpr size_t UNBOUNDED = std::numeric_limits<int64_t>::max();
     IndexRangeSet    r = parseIndexRanges(spec, UNBOUNDED);
     // Open upper ends were folded to UNBOUNDED-1; widen them to SIZE_MAX.

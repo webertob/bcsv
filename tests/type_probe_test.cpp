@@ -25,6 +25,7 @@
 
 using bcsv::ColumnType;
 using bcsv_cli::ColumnProbeState;
+using bcsv_cli::CsvColumnProbe;
 using bcsv_cli::cellLoses;
 using bcsv_cli::coerce;
 using bcsv_cli::doubleToIntForced;
@@ -351,4 +352,49 @@ TEST(ResolveColumnKey, IndexExprAndName) {
     EXPECT_EQ(resolveColumnKey("1:2", 4, NAMES), (std::vector<size_t>{1, 2}));
     EXPECT_EQ(resolveColumnKey("note", 4, NAMES), (std::vector<size_t>{3}));
     EXPECT_THROW(resolveColumnKey("9", 4, NAMES), std::exception);  // out of range stays an index error
+}
+
+// ── Regressions from the 2026-07-13 review ──────────────────────────
+
+TEST(ColumnProbe, TextualBoolDoesNotSettleWhileBoolLadderAlive) {
+    // Regression: settled() treated textual_bool as terminal, so the probe
+    // stopped after the first "true" and a later non-bool value made the
+    // whole conversion abort instead of widening to STRING.
+    CsvColumnProbe p;
+    std::string scratch;
+    p.init(0.0);
+    p.visit("true", '.', scratch);
+    EXPECT_FALSE(p.settled());   // BOOL can still widen
+    EXPECT_EQ(p.derive(), ColumnType::BOOL);
+    p.visit("false", '.', scratch);
+    EXPECT_EQ(p.derive(), ColumnType::BOOL);
+    p.visit("hello", '.', scratch);
+    EXPECT_EQ(p.derive(), ColumnType::STRING);
+    EXPECT_TRUE(p.settled());    // now genuinely terminal
+    EXPECT_FALSE(p.overflowWarning());
+}
+
+TEST(ColumnProbe, TextualBoolThenNumericIsString) {
+    // "true" cannot be stored numerically, so mixing it with numbers → STRING.
+    CsvColumnProbe p;
+    std::string scratch;
+    p.init(0.0);
+    p.visit("true", '.', scratch);
+    p.visit("5", '.', scratch);
+    EXPECT_EQ(p.derive(), ColumnType::STRING);
+    EXPECT_FALSE(p.overflowWarning());
+}
+
+TEST(IndexRanges, RejectsTrailingJunkStrictly) {
+    // Regression: std::stoll parsed '1+2' as 1 and '5-' as 5, silently
+    // assigning the wrong column via SPEC keys and --cols.
+    EXPECT_THROW(bcsv_cli::parseIndexRanges("1+2", 10), std::exception);
+    EXPECT_THROW(bcsv_cli::parseIndexRanges("5-", 10), std::exception);
+    EXPECT_THROW(bcsv_cli::parseIndexRanges("3:x", 10), std::exception);
+    EXPECT_THROW(resolveColumnKey("1+2", 10, {}), std::exception);
+    // Legitimate forms still parse.
+    EXPECT_EQ(bcsv_cli::parseIndexRanges("1", 10).toIndices(10),
+              (std::vector<size_t>{1}));
+    EXPECT_EQ(bcsv_cli::parseIndexRanges("-2:", 10).toIndices(10),
+              (std::vector<size_t>{8, 9}));
 }

@@ -360,9 +360,10 @@ int main(int argc, char* argv[]) {
         size_t total_rows_read = 0;
         size_t output_rows_written = 0;
         int64_t file_size = -1; // Will be determined if negative indexing is used
-        
-        // If we have negative indices, we need to get the file size to resolve them
-        std::vector<bool> rows_to_output;
+
+        // Negative indices are resolved against the row count, after which the
+        // ordinary start/stop/step arithmetic below covers them (no separate
+        // mask mechanism needed).
         if (has_negative_indices) {
             if (config.verbose) {
                 std::cerr << "Counting rows to resolve negative indices..." << std::endl;
@@ -415,16 +416,8 @@ int main(int argc, char* argv[]) {
                 std::cerr << "File contains " << file_size << " rows" << std::endl;
                 std::cerr << "Resolved range: [" << effective_start << ":" << effective_stop << ":" << effective_step << "]" << std::endl;
             }
-            
-            // Create mask for which rows to output
-            rows_to_output.resize(file_size, false);
-            for (int64_t i = effective_start; i < effective_stop; i += effective_step) {
-                if (i >= 0 && i < file_size) {
-                    rows_to_output[i] = true;
-                }
-            }
         }
-        
+
         // Main conversion loop
         constexpr size_t DROPPED = std::numeric_limits<size_t>::max();
         while (reader.readNext()) {
@@ -432,11 +425,9 @@ int main(int argc, char* argv[]) {
 
             if (use_row_set) {
                 should_output = row_cursor.contains(total_rows_read);
-            } else if (has_negative_indices) {
-                // Use pre-calculated mask
-                should_output = (total_rows_read < rows_to_output.size()) && rows_to_output[total_rows_read];
             } else {
-                // Real-time range checking (cast to avoid signed/unsigned comparison warnings)
+                // Range arithmetic (negatives already resolved above; cast to
+                // avoid signed/unsigned comparison warnings)
                 if (static_cast<int64_t>(total_rows_read) >= effective_start) {
                     if (static_cast<int64_t>(total_rows_read) < effective_stop) {
                         // Check step
@@ -467,11 +458,12 @@ int main(int argc, char* argv[]) {
 
             ++total_rows_read;
 
-            // Early termination for efficiency
+            // Early termination for efficiency (stop is fully resolved by now,
+            // including formerly-negative indices)
             if (use_row_set) {
                 if (row_cursor.exhausted(total_rows_read))
                     break;
-            } else if (!has_negative_indices && effective_step == 1 &&
+            } else if (effective_step == 1 &&
                        static_cast<int64_t>(total_rows_read) >= effective_stop) {
                 break;
             }

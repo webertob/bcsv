@@ -41,33 +41,21 @@ namespace bcsv_cli {
 
 namespace spec_detail {
 
-    inline void trim(std::string& s) {
-        size_t a = 0, b = s.size();
-        while (a < b && std::isspace((unsigned char)s[a])) ++a;
-        while (b > a && std::isspace((unsigned char)s[b - 1])) --b;
-        s = s.substr(a, b - a);
-    }
-
     // Strip optional surrounding braces and split on commas.
     inline std::vector<std::string> splitSpec(const std::string& spec_in) {
         std::string spec = spec_in;
-        trim(spec);
+        trimAscii(spec);
         if (spec.size() >= 2 && spec.front() == '{' && spec.back() == '}')
             spec = spec.substr(1, spec.size() - 2);
-        trim(spec);
+        trimAscii(spec);
         if (spec.empty())
             throw std::invalid_argument("Empty SPEC");
-
-        std::vector<std::string> parts;
-        std::string cur;
-        for (char c : spec) {
-            if (c == ',') { parts.push_back(cur); cur.clear(); }
-            else cur += c;
-        }
-        parts.push_back(cur);
-        return parts;
+        return splitOnComma(spec);
     }
 
+    // A key made only of range-grammar characters is always treated as an
+    // index expression (parseIndexRanges then validates it strictly), so
+    // numeric-looking column names must be addressed by index.
     inline bool looksLikeIndexExpr(const std::string& key) {
         for (char c : key) {
             if (!(std::isdigit((unsigned char)c) || c == ':' || c == '-' || c == '+'))
@@ -115,7 +103,7 @@ inline IndexRangeSet parseColumnSelection(const std::string&              spec,
     std::vector<bool> selected(n_columns, false);
     for (auto& raw : spec_detail::splitSpec(spec)) {
         std::string tok = raw;
-        spec_detail::trim(tok);
+        trimAscii(tok);
         if (tok.empty())
             throw std::invalid_argument("Empty entry in column selection (stray comma?)");
         for (size_t idx : resolveColumnKey(tok, n_columns, names))
@@ -135,77 +123,109 @@ inline IndexRangeSet parseColumnSelection(const std::string&              spec,
     return parseIndexRanges(canonical, n_columns);
 }
 
+namespace spec_detail {
+
+    /// Shared map/list scaffolding for the SPEC parsers. parse_map_value and
+    /// parse_list_value turn one trimmed, non-empty value string into an
+    /// optional<T> (nullopt = explicit 'auto'); they throw invalid_argument
+    /// on a bad value. single_column_per_key rejects range/multi-column keys
+    /// (names can only be assigned to one column).
+    template<typename T, typename ParseMapValue, typename ParseListValue>
+    std::vector<std::optional<T>>
+    parseSpecCore(const std::string& spec_in, size_t n_columns,
+                  const std::vector<std::string>& names, bool single_column_per_key,
+                  ParseMapValue&& parse_map_value, ParseListValue&& parse_list_value) {
+        std::vector<std::optional<T>> out(n_columns);
+        auto parts = splitSpec(spec_in);
+
+        bool is_map = false;
+        for (auto& p : parts)
+            if (p.find('=') != std::string::npos) { is_map = true; break; }
+
+        if (is_map) {
+            std::vector<bool> seen(n_columns, false);
+            for (auto& raw : parts) {
+                std::string p = raw;
+                trimAscii(p);
+                if (p.empty())
+                    throw std::invalid_argument("Empty entry in SPEC (stray comma?)");
+                auto eq = p.find('=');
+                if (eq == std::string::npos)
+                    throw std::invalid_argument("Mixed SPEC forms: entry '" + p +
+                                                "' has no '=' but others do");
+                std::string key   = p.substr(0, eq);
+                std::string value = p.substr(eq + 1);
+                trimAscii(key);
+                trimAscii(value);
+                if (key.empty())
+                    throw std::invalid_argument("Empty column key in SPEC entry '" + p + "'");
+                std::optional<T> val = parse_map_value(value);
+                std::vector<size_t> indices;
+                try { indices = resolveColumnKey(key, n_columns, names); }
+                catch (const std::exception& e) {
+                    throw std::invalid_argument("SPEC key '" + key + "': " + e.what());
+                }
+                if (single_column_per_key && indices.size() != 1)
+                    throw std::invalid_argument("SPEC key '" + key +
+                                                "' selects multiple columns — this value can "
+                                                "only be assigned to a single column");
+                for (size_t idx : indices) {
+                    if (seen[idx])
+                        throw std::invalid_argument("Column " + std::to_string(idx) +
+                                                    " assigned more than once in SPEC");
+                    seen[idx] = true;
+                    out[idx]  = val;
+                }
+            }
+        } else {
+            if (parts.size() != n_columns)
+                throw std::invalid_argument("Positional SPEC lists " + std::to_string(parts.size()) +
+                                            " entries but there are " + std::to_string(n_columns) +
+                                            " columns — use the map form (e.g. '0=...') for a subset");
+            for (size_t i = 0; i < n_columns; ++i) {
+                std::string p = parts[i];
+                trimAscii(p);
+                if (p.empty())
+                    throw std::invalid_argument("Empty entry at position " + std::to_string(i) +
+                                                " in SPEC");
+                out[i] = parse_list_value(p, i);
+            }
+        }
+        return out;
+    }
+
+} // namespace spec_detail
+
 /// Parse a type SPEC. Returns one entry per column: std::nullopt where the SPEC
-/// leaves the column unspecified (map form) or says 'auto' (list form, when
-/// allow_auto). 'void' is accepted only when allow_void (list form placeholder
-/// for VOID columns; validated against the actual layout by the caller).
+/// leaves the column unspecified (map form) or says 'auto' (when allow_auto).
+/// 'void' is accepted only in the LIST form and only when allow_void (a
+/// placeholder for already-VOID columns, validated against the actual layout by
+/// the caller); map-form values never accept 'void' — preserved bcsvCast
+/// behavior.
 inline std::vector<std::optional<bcsv::ColumnType>>
 parseTypeSpec(const std::string&              spec_in,
               size_t                          n_columns,
               const std::vector<std::string>& names      = {},
               bool                            allow_void = false,
               bool                            allow_auto = false) {
-    using spec_detail::trim;
-
-    std::vector<std::optional<bcsv::ColumnType>> req(n_columns);
-    auto parts = spec_detail::splitSpec(spec_in);
-
-    bool is_map = false;
-    for (auto& p : parts)
-        if (p.find('=') != std::string::npos) { is_map = true; break; }
-
-    if (is_map) {
-        std::vector<bool> seen(n_columns, false);
-        for (auto& raw : parts) {
-            std::string p = raw;
-            trim(p);
-            if (p.empty())
-                throw std::invalid_argument("Empty entry in SPEC (stray comma?)");
-            auto eq = p.find('=');
-            if (eq == std::string::npos)
-                throw std::invalid_argument("Mixed SPEC forms: entry '" + p +
-                                            "' has no '=' but others do");
-            std::string key = p.substr(0, eq);
-            std::string typ = p.substr(eq + 1);
-            trim(key);
-            trim(typ);
-            if (key.empty())
-                throw std::invalid_argument("Empty column key in SPEC entry '" + p + "'");
-            std::optional<bcsv::ColumnType> t;
-            if (!(allow_auto && typ == "auto")) {
-                try { t = parseColumnType(typ); }
-                catch (const std::exception& e) { throw std::invalid_argument(std::string("SPEC: ") + e.what()); }
+    return spec_detail::parseSpecCore<bcsv::ColumnType>(
+        spec_in, n_columns, names, /*single_column_per_key=*/false,
+        [&](const std::string& typ) -> std::optional<bcsv::ColumnType> {
+            if (allow_auto && typ == "auto")
+                return std::nullopt;
+            try { return parseColumnType(typ); }
+            catch (const std::exception& e) {
+                throw std::invalid_argument(std::string("SPEC: ") + e.what());
             }
-            std::vector<size_t> indices;
-            try { indices = resolveColumnKey(key, n_columns, names); }
-            catch (const std::exception& e) { throw std::invalid_argument("SPEC key '" + key + "': " + e.what()); }
-            for (size_t idx : indices) {
-                if (seen[idx])
-                    throw std::invalid_argument("Column " + std::to_string(idx) +
-                                                " assigned more than once in SPEC");
-                seen[idx] = true;
-                req[idx]  = t;
-            }
-        }
-    } else {
-        if (parts.size() != n_columns)
-            throw std::invalid_argument("Positional SPEC lists " + std::to_string(parts.size()) +
-                                        " types but there are " + std::to_string(n_columns) +
-                                        " columns — use the map form (e.g. '0=int32') for a subset");
-        for (size_t i = 0; i < n_columns; ++i) {
-            std::string p = parts[i];
-            trim(p);
-            if (p.empty())
-                throw std::invalid_argument("Empty type at position " + std::to_string(i) + " in SPEC");
-            if (allow_auto && p == "auto")
-                continue;  // stays nullopt
-            try { req[i] = parseColumnType(p, allow_void); }
+        },
+        [&](const std::string& typ, size_t i) -> std::optional<bcsv::ColumnType> {
+            if (allow_auto && typ == "auto")
+                return std::nullopt;
+            try { return parseColumnType(typ, allow_void); }
             catch (const std::exception& e) {
                 throw std::invalid_argument("SPEC position " + std::to_string(i) + ": " + e.what());
             }
-        }
-    }
-    return req;
+        });
 }
 
 /// Parse a name SPEC (same map/list grammar; values are column names).
@@ -214,61 +234,16 @@ inline std::vector<std::optional<std::string>>
 parseNameSpec(const std::string&              spec_in,
               size_t                          n_columns,
               const std::vector<std::string>& names = {}) {
-    using spec_detail::trim;
-
-    std::vector<std::optional<std::string>> out(n_columns);
-    auto parts = spec_detail::splitSpec(spec_in);
-
-    bool is_map = false;
-    for (auto& p : parts)
-        if (p.find('=') != std::string::npos) { is_map = true; break; }
-
-    if (is_map) {
-        std::vector<bool> seen(n_columns, false);
-        for (auto& raw : parts) {
-            std::string p = raw;
-            trim(p);
-            if (p.empty())
-                throw std::invalid_argument("Empty entry in SPEC (stray comma?)");
-            auto eq = p.find('=');
-            if (eq == std::string::npos)
-                throw std::invalid_argument("Mixed SPEC forms: entry '" + p +
-                                            "' has no '=' but others do");
-            std::string key  = p.substr(0, eq);
-            std::string name = p.substr(eq + 1);
-            trim(key);
-            trim(name);
-            if (key.empty())
-                throw std::invalid_argument("Empty column key in SPEC entry '" + p + "'");
+    return spec_detail::parseSpecCore<std::string>(
+        spec_in, n_columns, names, /*single_column_per_key=*/true,
+        [](const std::string& name) -> std::optional<std::string> {
             if (name.empty())
-                throw std::invalid_argument("Empty column name in SPEC entry '" + p + "'");
-            std::vector<size_t> indices;
-            try { indices = resolveColumnKey(key, n_columns, names); }
-            catch (const std::exception& e) { throw std::invalid_argument("SPEC key '" + key + "': " + e.what()); }
-            if (indices.size() != 1)
-                throw std::invalid_argument("SPEC key '" + key +
-                                            "' selects multiple columns — a name can only be "
-                                            "assigned to a single column");
-            if (seen[indices[0]])
-                throw std::invalid_argument("Column " + std::to_string(indices[0]) +
-                                            " assigned more than once in SPEC");
-            seen[indices[0]] = true;
-            out[indices[0]]  = name;
-        }
-    } else {
-        if (parts.size() != n_columns)
-            throw std::invalid_argument("Positional SPEC lists " + std::to_string(parts.size()) +
-                                        " names but there are " + std::to_string(n_columns) +
-                                        " columns");
-        for (size_t i = 0; i < n_columns; ++i) {
-            std::string p = parts[i];
-            trim(p);
-            if (p.empty())
-                throw std::invalid_argument("Empty name at position " + std::to_string(i) + " in SPEC");
-            out[i] = p;
-        }
-    }
-    return out;
+                throw std::invalid_argument("Empty column name in SPEC entry");
+            return name;
+        },
+        [](const std::string& name, size_t) -> std::optional<std::string> {
+            return name;
+        });
 }
 
 } // namespace bcsv_cli

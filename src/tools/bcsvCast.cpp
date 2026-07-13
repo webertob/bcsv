@@ -682,19 +682,7 @@ int main(int argc, char* argv[]) {
                    "(e.g. '0:3,temp,7:-1')");
     app.add_option("--tolerance", config.tolerance,
                    "Absolute epsilon for float/int loss tests")
-        ->check([](const std::string& s) -> std::string {
-            try {
-                size_t pos = 0;
-                double v   = std::stod(s, &pos);
-                if (pos != s.size())
-                    return "--tolerance requires a numeric argument, got '" + s + "'";
-                if (!std::isfinite(v) || v < 0.0)
-                    return "--tolerance must be a finite non-negative number";
-                return {};
-            } catch (...) {
-                return "--tolerance requires a numeric argument, got '" + s + "'";
-            }
-        })
+        ->check(bcsv_cli::validateToleranceArg)
         ->capture_default_str();
     app.add_flag("--json", config.json, "Emit the plan/result as JSON on stdout");
     app.add_flag("-v,--verbose", config.verbose, "Per-column details and progress to stderr");

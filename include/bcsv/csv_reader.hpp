@@ -162,8 +162,13 @@ namespace bcsv {
      *
      * Same record assembly as readNext() (multi-line quoted fields, empty-line skip, \r strip,
      * BOM strip on the first physical line) but the cells are left as raw string_views
-     * (see rawCells()); the layout is not consulted and row() is not updated. Callers handle
-     * column-count mismatches and unquoting (see unquote()) themselves.
+     * (see rawCells()); the layout is not consulted for typing and row() is not updated.
+     * Callers handle column-count mismatches and unquoting (see unquote()) themselves.
+     *
+     * @note One layout-derived behavior remains: splitLine() drops a single trailing empty
+     *       cell when a record has exactly layout().columnCount()+1 fields (trailing-delimiter
+     *       tolerance). Construct the reader with an EMPTY layout to get fully untouched
+     *       tokenization in raw mode.
      */
     template<LayoutConcept LayoutType>
     bool CsvReader<LayoutType>::readNextRaw() {

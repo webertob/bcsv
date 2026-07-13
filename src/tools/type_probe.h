@@ -672,11 +672,19 @@ struct CsvColumnProbe {
         core.init(bcsv::ColumnType::DOUBLE, 0, false, tolerance);
     }
 
+    /// True when numeric data cannot be held losslessly by any 64-bit integer
+    /// or double — the column must become STRING with a warning. Single source
+    /// for settled()/derive()/overflowWarning() so they cannot drift apart.
+    bool numericOverflow() const {
+        return huge || (saw_negative && pos_gt_i64) || (!pure_int && int_inexact_d);
+    }
+
     /// True once the derived type can no longer change — callers may skip
-    /// further cells of this column.
+    /// further cells of this column. NOTE: textual_bool is terminal only once
+    /// the bool ladder is dead; while all_bool holds, the column may still be
+    /// BOOL and a later cell can legally push it anywhere in the lattice.
     bool settled() const {
-        return non_numeric || textual_bool || huge || (saw_negative && pos_gt_i64) ||
-               (!pure_int && int_inexact_d);
+        return non_numeric || (textual_bool && !all_bool) || numericOverflow();
     }
 
     void visit(std::string_view trimmed_cell, char decimal_sep, std::string& scratch) {
@@ -751,15 +759,13 @@ struct CsvColumnProbe {
             return bcsv::ColumnType::BOOL;
         if (non_numeric || textual_bool)
             return bcsv::ColumnType::STRING;             // clearly strings — no warning
-        if (huge || (saw_negative && pos_gt_i64))
+        if (numericOverflow())
             return bcsv::ColumnType::STRING;             // numeric overflow — warning
         if (pure_int) {
             if (!saw_negative)
                 return ColumnProbeState::deriveIntUnsigned(0, umax);
             return ColumnProbeState::deriveIntSigned(smin, smax);
         }
-        if (int_inexact_d)
-            return bcsv::ColumnType::STRING;             // exact big ints mixed with floats — warning
         if (core.f_ladder_alive) {
             if (core.int_all_positive)
                 return ColumnProbeState::deriveIntUnsigned(
@@ -774,7 +780,7 @@ struct CsvColumnProbe {
     bool overflowWarning() const {
         if (non_empty == 0 || all_bool || non_numeric || textual_bool)
             return false;
-        return huge || (saw_negative && pos_gt_i64) || (!pure_int && int_inexact_d);
+        return numericOverflow();
     }
 };
 
