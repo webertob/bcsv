@@ -360,3 +360,36 @@ class TestJson:
                       narrow_data["flat"], out, check=False)
         assert r3.returncode == 0
 
+
+
+class TestNameKeys:
+    """SPEC map keys and --cols accept column names (shared spec grammar)."""
+
+    def test_spec_name_key(self, tools, tmp_path):
+        csv_path = tmp_path / "nk.csv"
+        csv_path.write_text("alpha,beta\n1,2\n3,4\n")
+        bcsv_path = tmp_path / "nk.bcsv"
+        run_tool(tools["csv2bcsv"], "-f", csv_path, bcsv_path)
+
+        out_path = tmp_path / "nk_out.bcsv"
+        run_tool(tools["bcsvCast"], "--static", "beta=float", bcsv_path, out_path,
+                 "--overwrite")
+        header = run_tool(tools["bcsvHeader"], out_path).stdout
+        assert "float" in header
+
+    def test_cols_name(self, tools, tmp_path):
+        csv_path = tmp_path / "nc.csv"
+        csv_path.write_text("alpha,beta\n1,2\n3,4\n")
+        bcsv_path = tmp_path / "nc.bcsv"
+        run_tool(tools["csv2bcsv"], "-f", csv_path, bcsv_path)
+        result = run_tool(tools["bcsvCast"], "--scan", "--cols", "beta", bcsv_path)
+        assert "Columns: 1" in result.stdout  # name resolved to exactly one column
+
+    def test_unknown_name_fails(self, tools, tmp_path):
+        csv_path = tmp_path / "un.csv"
+        csv_path.write_text("alpha,beta\n1,2\n")
+        bcsv_path = tmp_path / "un.bcsv"
+        run_tool(tools["csv2bcsv"], "-f", csv_path, bcsv_path)
+        result = run_tool(tools["bcsvCast"], "--static", "gamma=float", bcsv_path,
+                          tmp_path / "o.bcsv", check=False)
+        assert result.returncode == 2

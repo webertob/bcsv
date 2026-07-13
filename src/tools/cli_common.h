@@ -28,8 +28,10 @@
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <stdexcept>
@@ -37,6 +39,17 @@
 #include <utility>
 #include <vector>
 #include <bcsv/bcsv.h>
+
+#ifdef __has_include
+#  if __has_include(<unistd.h>)
+#    include <unistd.h>
+#    define BCSV_CLI_HAS_MKSTEMP 1
+#  endif
+#endif
+
+#ifndef BCSV_CLI_HAS_MKSTEMP
+#  include <io.h>  // Windows/MSVC: _mktemp_s
+#endif
 
 namespace bcsv_cli {
 
@@ -419,6 +432,51 @@ inline IndexRangeSet parseIndexRanges(const std::string& spec, size_t total) {
     return r;
 }
 
+/** Streaming variant of parseIndexRanges for inputs whose total count is not
+ * known up front (e.g. CSV data rows). Negative indices are rejected with a
+ * clear message; an open upper end ("100:") extends to SIZE_MAX. */
+inline IndexRangeSet parseIndexRangesUnbounded(const std::string& spec) {
+    // Negatives count from the end, which is meaningless while streaming —
+    // reject them up front by spec text (the range grammar has no other
+    // legitimate use for '-').
+    if (spec.find('-') != std::string::npos)
+        throw std::runtime_error("Negative indices are not supported here (the total "
+                                 "count is unknown while streaming): '" + spec + "'");
+    constexpr size_t UNBOUNDED = std::numeric_limits<int64_t>::max();
+    IndexRangeSet    r = parseIndexRanges(spec, UNBOUNDED);
+    // Open upper ends were folded to UNBOUNDED-1; widen them to SIZE_MAX.
+    for (auto& [lo, hi] : r.ranges)
+        if (hi >= UNBOUNDED - 1)
+            hi = std::numeric_limits<size_t>::max();
+    return r;
+}
+
+/// Monotone membership cursor over an IndexRangeSet: contains(idx) must be
+/// called with non-decreasing idx and is O(1) amortised (plain
+/// IndexRangeSet::contains is O(#ranges) per call). exhausted(idx) tells a
+/// streaming caller it is past the last selected index and may stop reading.
+struct IndexRangeCursor {
+    const IndexRangeSet& set;
+    size_t               pos = 0;   // current range index
+
+    explicit IndexRangeCursor(const IndexRangeSet& s) : set(s) {}
+
+    bool contains(size_t idx) noexcept {
+        if (set.ranges.empty())
+            return true;   // no scope → match-all
+        while (pos < set.ranges.size() && idx > set.ranges[pos].second)
+            ++pos;
+        return pos < set.ranges.size() &&
+               idx >= set.ranges[pos].first && idx <= set.ranges[pos].second;
+    }
+
+    bool exhausted(size_t idx) const noexcept {
+        if (set.ranges.empty())
+            return false;
+        return idx > set.ranges.back().second;
+    }
+};
+
 // ── JSON string escaping ──────────────────────────────────────────
 
 /// Escape a string as a JSON string literal (including the surrounding quotes).
@@ -532,6 +590,29 @@ inline bcsv::ColumnType parseColumnType(std::string s, bool allow_void = false) 
         "uint8 uint16 uint32 uint64 float double string "
         "(aliases: i8..i64, ui8..ui64/u8..u64, b, ch/char/byte, f/f32, d/f64, "
         "str/s, int=int32, long=int64, uint=uint32, short, ushort, ulong)");
+}
+
+// ── Crash-safe output: temp sibling for atomic rename ─────────────
+
+/// Create an empty temp file next to `target` (same directory, so the final
+/// rename stays on one filesystem) and return its path. Callers write into the
+/// temp file, then fs::rename() it over `target`; on failure they remove it.
+inline std::filesystem::path makeTempSibling(const std::filesystem::path& target,
+                                             const std::string&           prefix) {
+    const std::filesystem::path dir  = target.parent_path();
+    std::string                 tmpl = (dir / (prefix + "_XXXXXX")).string();
+#ifdef BCSV_CLI_HAS_MKSTEMP
+    int fd = mkstemp(tmpl.data());   // POSIX: creates + opens atomically
+    if (fd == -1)
+        throw std::runtime_error("Cannot create temp file in " +
+                                 (dir.empty() ? std::string(".") : dir.string()));
+    ::close(fd);  // writers overwrite via writer.open(..., true)
+#else
+    if (_mktemp_s(tmpl.data(), tmpl.size() + 1) != 0)  // Windows: name only (minor TOCTOU)
+        throw std::runtime_error("Cannot create temp file name in " +
+                                 (dir.empty() ? std::string(".") : dir.string()));
+#endif
+    return std::filesystem::path(tmpl);
 }
 
 } // namespace bcsv_cli

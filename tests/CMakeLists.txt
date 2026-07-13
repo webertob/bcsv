@@ -54,6 +54,7 @@ set(TEST_SOURCES
     format_hardening_test.cpp
     nan_inf_test.cpp
     test_cast.cpp
+    type_probe_test.cpp
 )
 
 if(BCSV_ENABLE_STRESS_TESTS)
@@ -124,9 +125,11 @@ set_target_properties(bcsv_gtest PROPERTIES
 # Enable C++20 standard
 target_compile_features(bcsv_gtest PRIVATE cxx_std_20)
 
-# bench_dataset_profiles_test.cpp includes src/shared/test_datasets.hpp
+# bench_dataset_profiles_test.cpp includes src/shared/test_datasets.hpp;
+# type_probe_test.cpp includes src/tools/type_probe.h + spec_parse.h
 target_include_directories(bcsv_gtest PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src/shared
+    ${CMAKE_CURRENT_SOURCE_DIR}/../src/tools
 )
 
 # MSVC: heavy template instantiation in bitset_test.cpp exceeds default section limit
