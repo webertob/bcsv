@@ -25,6 +25,14 @@ This project uses [Semantic Versioning](https://semver.org/).
   FLOAT vs DOUBLE (the dead FLOAT16/FLOAT128 decimal-place heuristics are gone).
   Output is written via a temp file + atomic rename, so a failed conversion
   never destroys an existing output.
+- **csv2bcsv: partial rows abort by default.** A row whose field count does not
+  match the columns is treated as a corrupt-CSV indicator and stops the
+  conversion with the offending row/line. `--skip-partial-rows` skips such rows
+  and `--pad-partial-rows` pads short rows with empty cells; both always report
+  the affected row count. Trailing all-empty fields (trailing delimiters)
+  remain tolerated, and headerless files take their column count from the
+  first data row with trailing empty fields trimmed (no more phantom trailing
+  column).
 - **csv2bcsv: `--skip-header`, `--names SPEC`, `--types SPEC`, `--tolerance`,
   `--strict`.** Names/types use the bcsvCast SPEC grammar (map form
   `0=int32,price=float,7:8=double` with index, range, or column-name keys; list

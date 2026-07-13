@@ -803,3 +803,123 @@ class TestBcsv2CsvSelection:
         out = tmp_dir / "step.csv"
         run_tool(tools["bcsv2csv"], "--slice", "::2", sel_bcsv, out)
         assert csv_rows(out) == 3  # rows 0, 2, 4
+
+
+class TestCsv2BcsvPartialRows:
+    """Field-count mismatches abort by default (likely corrupt CSV);
+    --skip-partial-rows / --pad-partial-rows opt into tolerant behavior."""
+
+    SHORT = "a,b,c\n1,2,3\n4,5\n6,7,8\n"
+    LONG = "a,b\n1,2\n3,4,5\n"
+
+    def test_short_row_aborts_by_default(self, tools, tmp_dir):
+        csv_path = tmp_dir / "short.csv"
+        csv_path.write_text(self.SHORT)
+        result = run_tool(tools["csv2bcsv"], "-f", csv_path, tmp_dir / "s.bcsv", check=False)
+        assert result.returncode == 1
+        assert "partial" in result.stderr and "row 1" in result.stderr
+        assert not (tmp_dir / "s.bcsv").exists()
+
+    def test_long_row_aborts_by_default(self, tools, tmp_dir):
+        csv_path = tmp_dir / "long.csv"
+        csv_path.write_text(self.LONG)
+        result = run_tool(tools["csv2bcsv"], "-f", csv_path, tmp_dir / "l.bcsv", check=False)
+        assert result.returncode == 1
+
+    def test_skip_partial_rows(self, tools, tmp_dir):
+        csv_path = tmp_dir / "skip.csv"
+        csv_path.write_text(self.SHORT)
+        bcsv_path = tmp_dir / "skip.bcsv"
+        result = run_tool(tools["csv2bcsv"], "-f", "--skip-partial-rows", csv_path, bcsv_path)
+        assert "skipped 1 partial row" in result.stderr  # reported even without -v
+        out = tmp_dir / "skip_out.csv"
+        run_tool(tools["bcsv2csv"], bcsv_path, out)
+        assert csv_rows(out) == 2
+
+    def test_pad_partial_rows(self, tools, tmp_dir):
+        csv_path = tmp_dir / "pad.csv"
+        csv_path.write_text(self.SHORT)
+        bcsv_path = tmp_dir / "pad.bcsv"
+        result = run_tool(tools["csv2bcsv"], "-f", "--pad-partial-rows", csv_path, bcsv_path)
+        assert "padded 1 short row" in result.stderr
+        out = tmp_dir / "pad_out.csv"
+        run_tool(tools["bcsv2csv"], bcsv_path, out)
+        assert csv_rows(out) == 3
+        assert csv_cell(out, 2, 3) == "0"  # padded cell stored as default
+
+    def test_pad_does_not_cover_long_rows(self, tools, tmp_dir):
+        csv_path = tmp_dir / "padlong.csv"
+        csv_path.write_text(self.LONG)
+        result = run_tool(tools["csv2bcsv"], "-f", "--pad-partial-rows",
+                          csv_path, tmp_dir / "pl.bcsv", check=False)
+        assert result.returncode == 1
+
+    def test_pad_and_skip_combine(self, tools, tmp_dir):
+        csv_path = tmp_dir / "mixed.csv"
+        csv_path.write_text("a,b\n1,2\n3\n4,5,6\n7,8\n")
+        bcsv_path = tmp_dir / "mixed.bcsv"
+        result = run_tool(tools["csv2bcsv"], "-f", "--pad-partial-rows",
+                          "--skip-partial-rows", csv_path, bcsv_path)
+        assert "padded 1" in result.stderr and "skipped 1" in result.stderr
+        out = tmp_dir / "mixed_out.csv"
+        run_tool(tools["bcsv2csv"], bcsv_path, out)
+        assert csv_rows(out) == 3  # 1,2 / 3,<pad> / 7,8 — 4,5,6 skipped
+
+    def test_trailing_delimiter_still_tolerated(self, tools, tmp_dir):
+        csv_path = tmp_dir / "trail.csv"
+        csv_path.write_text("a,b\n1,2,\n3,4\n")
+        bcsv_path = tmp_dir / "trail.bcsv"
+        result = run_tool(tools["csv2bcsv"], "-f", csv_path, bcsv_path)
+        assert "Warning" not in result.stderr
+        out = tmp_dir / "trail_out.csv"
+        run_tool(tools["bcsv2csv"], bcsv_path, out)
+        assert csv_rows(out) == 2
+
+    def test_headerless_trailing_delimiter_column_count(self, tools, tmp_dir):
+        """Regression: --no-header with trailing delimiters must not grow a
+        phantom all-empty trailing column."""
+        csv_path = tmp_dir / "hless.csv"
+        csv_path.write_text("1,2,3,\n4,5,6,\n")
+        bcsv_path = tmp_dir / "hless.bcsv"
+        run_tool(tools["csv2bcsv"], "-f", "--no-header", csv_path, bcsv_path)
+        header = run_tool(tools["bcsvHeader"], bcsv_path).stdout
+        assert "Columns: 3" in header
+
+
+class TestReviewRegressions:
+    """Regressions from the 2026-07-13 critical review."""
+
+    def test_textual_bool_column_widens_to_string(self, tools, tmp_dir):
+        """A bool-looking column with a later non-bool value must widen to
+        STRING, not abort the conversion (settled() regression)."""
+        csv_path = tmp_dir / "tbool.csv"
+        lines = ["flag"] + ["true", "false"] * 30 + ["N/A"]
+        csv_path.write_text("\n".join(lines) + "\n")
+        bcsv_path = tmp_dir / "tbool.bcsv"
+        result = run_tool(tools["csv2bcsv"], "-f", "--sample", "10", csv_path, bcsv_path)
+        assert result.returncode == 0
+        out = tmp_dir / "tbool_out.csv"
+        run_tool(tools["bcsv2csv"], bcsv_path, out)
+        assert csv_rows(out) == 61
+        assert csv_cell(out, 61, 1) == "N/A"
+
+    def test_malformed_spec_key_rejected(self, tools, tmp_dir):
+        """'1+2' must not silently resolve to column 1 (strict index parse)."""
+        csv_path = tmp_dir / "key.csv"
+        csv_path.write_text("a,b,c\n1,2,3\n")
+        for bad in ("1+2=double", "5-=double"):
+            result = run_tool(tools["csv2bcsv"], "-f", "--types", bad,
+                              csv_path, tmp_dir / "key.bcsv", check=False)
+            assert result.returncode == 2, bad
+        result = run_tool(tools["csv2bcsv"], "-f", csv_path, tmp_dir / "key.bcsv")
+        result = run_tool(tools["bcsv2csv"], "--cols", "1+2",
+                          tmp_dir / "key.bcsv", tmp_dir / "key_out.csv", check=False)
+        assert result.returncode == 2
+
+    def test_rows_dash_typo_message_mentions_colon(self, tools, tmp_dir):
+        csv_path = tmp_dir / "typo.csv"
+        csv_path.write_text("a\n1\n")
+        result = run_tool(tools["csv2bcsv"], "-f", "--rows", "5-10",
+                          csv_path, tmp_dir / "typo.bcsv", check=False)
+        assert result.returncode == 2
+        assert "5:10" in result.stderr  # points at the ':' syntax

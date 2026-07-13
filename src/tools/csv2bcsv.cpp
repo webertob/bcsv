@@ -71,6 +71,8 @@ struct Config {
     size_t sample_rows = 1000; // --sample N; 0 = scan the whole file before writing
     double tolerance   = 0.0;  // --tolerance (probe + FLOAT round-trip check)
     bool   strict      = false; // --strict: abort instead of clamping forced misfits
+    bool   skip_partial_rows = false; // --skip-partial-rows: skip field-count mismatches
+    bool   pad_partial_rows  = false; // --pad-partial-rows: pad short rows with empty cells
 
     // Codec selection (standardised with bcsvGenerator / bcsvSampler)
     std::string row_codec  = bcsv_cli::DEFAULT_ROW_CODEC;   // delta | zoh | flat
@@ -124,16 +126,50 @@ struct ColumnPlan {
     uint64_t         unparseable  = 0;  // forced-type cells with unparseable content
 };
 
-// One CSV record normalised against the expected column count.
-// Short rows are padded with empty cells; extra cells are tolerated only when
-// they are all empty (trailing delimiters), otherwise the row is skipped.
-static bool acceptRecord(const std::vector<std::string_view>& cells, size_t n_cols) {
-    if (cells.size() <= n_cols)
-        return true;
+// ── Partial-row policy ──────────────────────────────────────────────
+//
+// A row whose field count does not match the layout is most likely a corrupt
+// row (CSVs are rarely populated partially), so the DEFAULT is to abort the
+// conversion with a clear error. --skip-partial-rows skips such rows and
+// --pad-partial-rows pads short rows with empty cells; both report how many
+// rows were affected. Extra cells that are all empty (trailing delimiters)
+// are always tolerated.
+
+enum class RecordShape : uint8_t { Ok, Short, Long };
+
+static RecordShape recordShape(const std::vector<std::string_view>& cells, size_t n_cols) {
+    if (cells.size() == n_cols)
+        return RecordShape::Ok;
+    if (cells.size() < n_cols)
+        return RecordShape::Short;
     for (size_t i = n_cols; i < cells.size(); ++i)
         if (!cells[i].empty())
-            return false;
-    return true;
+            return RecordShape::Long;
+    return RecordShape::Ok;   // only empty trailing cells (trailing delimiters)
+}
+
+enum class RowAction : uint8_t { Process, Skip };
+
+// Apply the partial-row policy to one mismatched record. Returns Process
+// (padded short row) or Skip; throws in the default strict mode.
+static RowAction handlePartialRow(const Config& config, RecordShape shape,
+                                  size_t row_idx, size_t file_line,
+                                  size_t got, size_t expected,
+                                  size_t& padded, size_t& skipped) {
+    if (shape == RecordShape::Short && config.pad_partial_rows) {
+        ++padded;
+        return RowAction::Process;   // cellAt() supplies the empty cells
+    }
+    if (config.skip_partial_rows) {
+        ++skipped;
+        return RowAction::Skip;
+    }
+    throw std::runtime_error(
+        "Data row " + std::to_string(row_idx) + " (file line " + std::to_string(file_line) +
+        ") has " + std::to_string(got) + " fields, expected " + std::to_string(expected) +
+        " — partial/malformed row, the CSV may be corrupt. Use --skip-partial-rows to skip "
+        "such rows" +
+        (shape == RecordShape::Short ? " or --pad-partial-rows to pad short rows" : "") + ".");
 }
 
 static inline std::string_view cellAt(const std::vector<std::string_view>& cells, size_t i) {
@@ -162,11 +198,17 @@ static inline std::string_view numericView(std::string_view trimmed, std::string
 // Open `reader` on the input in raw mode. Both passes read with an empty
 // layout so tokenization (incl. splitLine's layout-based trailing-empty
 // tolerance, which then never fires) is bit-identical between them; record
-// shape is handled by acceptRecord() instead.
+// shape is handled by recordShape()/handlePartialRow() instead.
 static void openRaw(const Config& config, bcsv::CsvReader<bcsv::Layout>& reader) {
     if (!reader.open(config.input_file, /*hasHeader=*/false)) {
         throw std::runtime_error("Cannot open CSV file: " + reader.getErrorMsg());
     }
+}
+
+// Single definition of "the first record is a header to consume" — the probe
+// and write passes must always agree on how many leading records to eat.
+static inline bool consumesHeaderRecord(const Config& config) {
+    return config.has_header || config.skip_header;
 }
 
 // ── Pass 1: probe (type inference + header/name/spec resolution) ────
@@ -174,12 +216,11 @@ static void openRaw(const Config& config, bcsv::CsvReader<bcsv::Layout>& reader)
 struct ProbeResult {
     std::vector<ColumnPlan> plan;        // one per CSV column
     size_t                  n_csv_cols = 0;
-    bool                    reached_eof = false;  // sample covered the whole file
 };
 
 static ProbeResult probePass(const Config& config, size_t sample_rows,
                              const std::vector<ColumnPlan>* prior /* rescue: keep names/forced */) {
-    const bool consume_header = config.has_header || config.skip_header;
+    const bool consume_header = consumesHeaderRecord(config);
     bcsv::Layout empty_layout;
     bcsv::CsvReader<bcsv::Layout> reader(empty_layout, config.delimiter, config.decimal_separator,
                                          config.collapse_whitespace);
@@ -208,7 +249,6 @@ static ProbeResult probePass(const Config& config, size_t sample_rows,
     // Probe state; lazily sized on the first data record for headerless /
     // skip-header inputs.
     std::vector<CsvColumnProbe> probes;
-    std::vector<char>           probe_alive;  // avoid vector<bool> in the loop
     std::string                 scratch, unquote_buf;
 
     bcsv_cli::IndexRangeSet row_set = config.rows_spec.empty()
@@ -281,9 +321,16 @@ static ProbeResult probePass(const Config& config, size_t sample_rows,
                                    final_names[i] + "') which is outside the --cols selection");
         }
 
+        // Rescue pass: the file is being read a second time — if its column
+        // count changed underneath us, fail cleanly instead of indexing the
+        // prior plan out of bounds.
+        if (prior && prior->size() != n)
+            throw std::runtime_error("Input file changed during conversion (had " +
+                                     std::to_string(prior->size()) + " columns, now " +
+                                     std::to_string(n) + ")");
+
         result.plan.resize(n);
         probes.resize(n);
-        probe_alive.assign(n, 0);
         for (size_t i = 0; i < n; ++i) {
             ColumnPlan& c = result.plan[i];
             c.name     = final_names[i];
@@ -299,7 +346,6 @@ static ProbeResult probePass(const Config& config, size_t sample_rows,
             }
             if (c.selected && !c.forced) {
                 probes[i].init(config.tolerance);
-                probe_alive[i] = 1;
                 probe_cols.push_back(i);
             }
         }
@@ -312,25 +358,34 @@ static ProbeResult probePass(const Config& config, size_t sample_rows,
     // ── Sample loop ──
     size_t data_row = 0;     // index over CSV data records (selection domain)
     size_t sampled  = 0;     // selected rows probed
+    size_t padded = 0, skipped = 0;   // partial-row policy bookkeeping (reported by the write pass)
     while (reader.readNextRaw()) {
         const auto& cells = reader.rawCells();
-        if (result.plan.empty())
-            finalizeColumns(cells.size());
+        if (result.plan.empty()) {
+            // Headerless/skip-header: the column count comes from the first
+            // data row, with trailing empty cells trimmed (trailing-delimiter
+            // files), mirroring the header-name trimming above.
+            size_t n_first = cells.size();
+            while (n_first > 0 && cells[n_first - 1].empty())
+                --n_first;
+            finalizeColumns(n_first);
+        }
 
         const size_t row_idx = data_row++;
         if (!row_cursor.contains(row_idx))
             continue;
-        if (!acceptRecord(cells, result.n_csv_cols))
-            continue;   // malformed row — same skip the write pass applies
+        const RecordShape shape = recordShape(cells, result.n_csv_cols);
+        if (shape != RecordShape::Ok &&
+            handlePartialRow(config, shape, row_idx, reader.fileLine(),
+                             cells.size(), result.n_csv_cols, padded, skipped) == RowAction::Skip)
+            continue;
 
         for (size_t k = 0; k < probe_cols.size(); ++k) {
             const size_t i = probe_cols[k];
-            if (!probe_alive[i])
-                continue;
+            if (probes[i].settled())
+                continue;   // type can no longer change — skip the cell
             std::string_view cell = numericView(trimSpaces(cellAt(cells, i)), unquote_buf);
             probes[i].visit(cell, config.decimal_separator, scratch);
-            if (probes[i].settled())
-                probe_alive[i] = 0;
         }
 
         if (++sampled == sample_rows && sample_rows != 0)
@@ -338,11 +393,10 @@ static ProbeResult probePass(const Config& config, size_t sample_rows,
         if (row_cursor.exhausted(data_row))
             break;
     }
-    result.reached_eof = !reader.readNextRaw();
     reader.close();
 
     if (result.plan.empty())
-        throw std::runtime_error(config.has_header || config.skip_header
+        throw std::runtime_error(consumesHeaderRecord(config)
                                  ? "No valid data rows found"
                                  : "Input file is empty");
     if (data_row == 0)
@@ -363,6 +417,8 @@ static ProbeResult probePass(const Config& config, size_t sample_rows,
 struct WriteResult {
     bool        ok = false;
     size_t      rows_written = 0;
+    size_t      padded_rows  = 0;  // short rows padded (--pad-partial-rows)
+    size_t      skipped_rows = 0;  // mismatched rows skipped (--skip-partial-rows)
     // First misfit (inferred column whose data no longer fits):
     size_t      misfit_row = 0;
     size_t      misfit_col = 0;
@@ -521,7 +577,12 @@ static inline CellFit parseCellChecked(bcsv::ColumnType t, std::string_view raw_
                                        std::string& scratch, std::string& unquote_buf,
                                        std::string& str_buf) {
     if (t == bcsv::ColumnType::STRING) {
-        str_buf = bcsv::CsvReader<bcsv::Layout>::unquote(raw_cell);
+        // Reuse str_buf's capacity for the common unquoted case — unquote()
+        // returns a fresh allocation, which would defeat the scratch buffer.
+        if (raw_cell.size() >= 2 && raw_cell.front() == '"' && raw_cell.back() == '"')
+            str_buf = bcsv::CsvReader<bcsv::Layout>::unquote(raw_cell);
+        else
+            str_buf.assign(raw_cell.data(), raw_cell.size());
         row.set(out_col, str_buf);
         return CellFit::Ok;
     }
@@ -547,74 +608,30 @@ static inline CellFit parseCellChecked(bcsv::ColumnType t, std::string_view raw_
                 std::visit([&](const auto& x) { row.set(out_col, x); }, bcsv_cli::zeroOf(t));
                 return CellFit::Ok;
             }
-            const char* b = cell.data();
-            const char* e = b + cell.size();
+            // One fast exact parse per width; anything unusual defers to the
+            // slow path. The template lambda keeps the eight cases in lockstep.
+            auto tryExact = [&]<typename T>() -> bool {
+                T v{};
+                auto [p, ec] = std::from_chars(cell.data(), cell.data() + cell.size(), v);
+                if (p == cell.data() + cell.size() && ec == std::errc{}) {
+                    row.set(out_col, v);
+                    return true;
+                }
+                return false;
+            };
+            bool ok = false;
             switch (t) {
-                case bcsv::ColumnType::INT8: {
-                    int8_t v{};
-                    if (auto [p, ec] = std::from_chars(b, e, v); p == e && ec == std::errc{}) {
-                        row.set(out_col, v);
-                        return CellFit::Ok;
-                    }
-                    break;
-                }
-                case bcsv::ColumnType::INT16: {
-                    int16_t v{};
-                    if (auto [p, ec] = std::from_chars(b, e, v); p == e && ec == std::errc{}) {
-                        row.set(out_col, v);
-                        return CellFit::Ok;
-                    }
-                    break;
-                }
-                case bcsv::ColumnType::INT32: {
-                    int32_t v{};
-                    if (auto [p, ec] = std::from_chars(b, e, v); p == e && ec == std::errc{}) {
-                        row.set(out_col, v);
-                        return CellFit::Ok;
-                    }
-                    break;
-                }
-                case bcsv::ColumnType::INT64: {
-                    int64_t v{};
-                    if (auto [p, ec] = std::from_chars(b, e, v); p == e && ec == std::errc{}) {
-                        row.set(out_col, v);
-                        return CellFit::Ok;
-                    }
-                    break;
-                }
-                case bcsv::ColumnType::UINT8: {
-                    uint8_t v{};
-                    if (auto [p, ec] = std::from_chars(b, e, v); p == e && ec == std::errc{}) {
-                        row.set(out_col, v);
-                        return CellFit::Ok;
-                    }
-                    break;
-                }
-                case bcsv::ColumnType::UINT16: {
-                    uint16_t v{};
-                    if (auto [p, ec] = std::from_chars(b, e, v); p == e && ec == std::errc{}) {
-                        row.set(out_col, v);
-                        return CellFit::Ok;
-                    }
-                    break;
-                }
-                case bcsv::ColumnType::UINT32: {
-                    uint32_t v{};
-                    if (auto [p, ec] = std::from_chars(b, e, v); p == e && ec == std::errc{}) {
-                        row.set(out_col, v);
-                        return CellFit::Ok;
-                    }
-                    break;
-                }
-                default: {  // UINT64
-                    uint64_t v{};
-                    if (auto [p, ec] = std::from_chars(b, e, v); p == e && ec == std::errc{}) {
-                        row.set(out_col, v);
-                        return CellFit::Ok;
-                    }
-                    break;
-                }
+                case bcsv::ColumnType::INT8:   ok = tryExact.template operator()<int8_t>();   break;
+                case bcsv::ColumnType::INT16:  ok = tryExact.template operator()<int16_t>();  break;
+                case bcsv::ColumnType::INT32:  ok = tryExact.template operator()<int32_t>();  break;
+                case bcsv::ColumnType::INT64:  ok = tryExact.template operator()<int64_t>();  break;
+                case bcsv::ColumnType::UINT8:  ok = tryExact.template operator()<uint8_t>();  break;
+                case bcsv::ColumnType::UINT16: ok = tryExact.template operator()<uint16_t>(); break;
+                case bcsv::ColumnType::UINT32: ok = tryExact.template operator()<uint32_t>(); break;
+                default:                       ok = tryExact.template operator()<uint64_t>(); break;
             }
+            if (ok)
+                return CellFit::Ok;
             return intSlowPath(t, cell, decimal_sep, tol, row, out_col, plan, scratch);
         }
         case bcsv::ColumnType::FLOAT: {
@@ -696,12 +713,11 @@ static WriteResult writePass(const Config& config, std::vector<ColumnPlan>& plan
                                              config.decimal_separator,
                                              config.collapse_whitespace);
         openRaw(config, reader);
-        if ((config.has_header || config.skip_header) && !reader.readNextRaw())
+        if (consumesHeaderRecord(config) && !reader.readNextRaw())
             throw std::runtime_error("Input file is empty");
 
         std::string scratch, unquote_buf, str_buf;
         size_t data_row = 0;
-        size_t skipped_rows = 0;
 
         while (reader.readNextRaw()) {
             const auto& cells = reader.rawCells();
@@ -711,14 +727,12 @@ static WriteResult writePass(const Config& config, std::vector<ColumnPlan>& plan
                     break;
                 continue;
             }
-            if (!acceptRecord(cells, n_csv_cols)) {
-                ++skipped_rows;
-                if (config.verbose)
-                    std::cerr << "Warning: data row " << row_idx << " (file line "
-                              << reader.fileLine() << ") has " << cells.size()
-                              << " fields, expected " << n_csv_cols << ". Skipping." << std::endl;
+            const RecordShape shape = recordShape(cells, n_csv_cols);
+            if (shape != RecordShape::Ok &&
+                handlePartialRow(config, shape, row_idx, reader.fileLine(),
+                                 cells.size(), n_csv_cols,
+                                 result.padded_rows, result.skipped_rows) == RowAction::Skip)
                 continue;
-            }
 
             auto& row = writer.row();
             for (size_t k = 0; k < csv_cols.size(); ++k) {
@@ -753,10 +767,6 @@ static WriteResult writePass(const Config& config, std::vector<ColumnPlan>& plan
             if (row_cursor.exhausted(data_row))
                 break;
         }
-
-        if (config.verbose && skipped_rows > 0)
-            std::cerr << "Warning: skipped " << skipped_rows
-                      << " rows with mismatched field counts" << std::endl;
 
         reader.close();
         writer.close();
@@ -811,23 +821,17 @@ int main(int argc, char* argv[]) {
         ->capture_default_str();
     app.add_option("--tolerance", config.tolerance,
                    "Absolute epsilon for float narrowing/round-trip tests")
-        ->check([](const std::string& s) -> std::string {
-            try {
-                size_t pos = 0;
-                double v   = std::stod(s, &pos);
-                if (pos != s.size())
-                    return "--tolerance requires a numeric argument, got '" + s + "'";
-                if (!std::isfinite(v) || v < 0.0)
-                    return "--tolerance must be a finite non-negative number";
-                return {};
-            } catch (...) {
-                return "--tolerance requires a numeric argument, got '" + s + "'";
-            }
-        })
+        ->check(bcsv_cli::validateToleranceArg)
         ->capture_default_str();
     app.add_flag("--strict", config.strict,
                  "Abort (exit 1) when a cell does not fit a forced --types column "
                  "instead of clamping it");
+    app.add_flag("--skip-partial-rows", config.skip_partial_rows,
+                 "Skip rows whose field count does not match the columns "
+                 "(default: abort — such rows usually indicate a corrupt CSV)");
+    app.add_flag("--pad-partial-rows", config.pad_partial_rows,
+                 "Pad short rows with empty cells instead of aborting "
+                 "(rows with excess fields still abort unless --skip-partial-rows)");
     app.add_option("--decimal-separator", config.decimal_separator,
                    "Decimal separator: '.' or ','")
         ->check([](const std::string& s) -> std::string {
@@ -1031,6 +1035,13 @@ int main(int argc, char* argv[]) {
         const size_t row_count = wres.rows_written;
 
         // ── Warnings ──
+        if (wres.skipped_rows > 0)
+            std::cerr << "Warning: skipped " << wres.skipped_rows
+                      << " partial row(s) with mismatched field counts "
+                      << "(--skip-partial-rows)" << std::endl;
+        if (wres.padded_rows > 0)
+            std::cerr << "Warning: padded " << wres.padded_rows
+                      << " short row(s) with empty cells (--pad-partial-rows)" << std::endl;
         for (size_t i = 0; i < probe.n_csv_cols; ++i) {
             const ColumnPlan& c = probe.plan[i];
             if (!c.selected)

@@ -140,6 +140,8 @@ csv2bcsv --benchmark data.csv output.bcsv             # Measure throughput
 | `--sample N` | Rows sampled for inference; `0` = scan whole file first | `1000` |
 | `--tolerance X` | Absolute epsilon for float narrowing/round-trip tests | `0` |
 | `--strict` | Abort instead of clamping forced-type misfits | |
+| `--skip-partial-rows` | Skip rows whose field count mismatches (default: abort) | |
+| `--pad-partial-rows` | Pad short rows with empty cells (default: abort) | |
 | `-f, --overwrite` | Overwrite an existing output file | |
 | `-v, --verbose` | Verbose output | |
 | `--benchmark` | Print timing stats to stderr | |
@@ -196,6 +198,22 @@ pass. Forced `--types` columns never widen: misfitting cells are clamped
 
 The output is written to a temp file and atomically renamed, so a failed or
 aborted conversion never destroys an existing output file.
+
+### Partial / malformed rows
+
+A row whose field count does not match the columns almost always indicates a
+corrupt CSV (or the wrong delimiter), so csv2bcsv **aborts by default** with
+the offending data row and file line. To convert anyway:
+
+- `--skip-partial-rows` — skip every mismatched row (short or long);
+- `--pad-partial-rows` — pad **short** rows with empty cells (stored as
+  0/false/empty); rows with excess non-empty fields still abort unless
+  `--skip-partial-rows` is also given.
+
+Both report the number of skipped/padded rows on stderr. Extra fields that are
+all empty (trailing delimiters) are always tolerated, and for headerless files
+the column count is taken from the first data row with trailing empty fields
+trimmed.
 
 | Input Data | Detected Type | Savings vs INT64 |
 |------------|---------------|-------------------|
