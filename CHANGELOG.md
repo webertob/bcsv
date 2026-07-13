@@ -12,6 +12,49 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- **csv2bcsv: validated type inference with automatic widening.** Types are still
+  inferred from a sample (default 1000 rows, configurable via `--sample N`, `0` =
+  full pre-scan), but every row is now checked during conversion: a later cell
+  that does not fit the inferred type triggers a full-file re-scan and one retry
+  with the widened type (ints grow to int64/uint64, floats to double; numbers
+  beyond those stay STRING with a warning; clearly non-numeric cells widen to
+  STRING silently). Previously such cells were **silently written as 0**.
+  Inference now parses integers exactly (values in `(int64 max, uint64 max]` become
+  UINT64 instead of a lossy DOUBLE) and uses round-trip verification for
+  FLOAT vs DOUBLE (the dead FLOAT16/FLOAT128 decimal-place heuristics are gone).
+  Output is written via a temp file + atomic rename, so a failed conversion
+  never destroys an existing output.
+- **csv2bcsv: `--skip-header`, `--names SPEC`, `--types SPEC`, `--tolerance`,
+  `--strict`.** Names/types use the bcsvCast SPEC grammar (map form
+  `0=int32,price=float,7:8=double` with index, range, or column-name keys; list
+  form covering all columns, `auto` = infer). Forced types never widen: misfits
+  clamp with a warning summary (bcsvCast `--static` semantics); `--strict`
+  aborts instead. `--skip-header` consumes and discards the header row.
+- **csv2bcsv & bcsv2csv: `--rows` / `--cols` selection** using the shared
+  index-range grammar (`0:99,200,-10:`); `--cols` also accepts column names.
+  bcsv2csv's `--firstRow/--lastRow/--slice` remain as legacy flags (stepping is
+  still `--slice`-only) and conflict with `--rows`. csv2bcsv `--rows` addresses
+  0-based data rows after the header and rejects negative indices (streaming).
+- **bcsvCast: column names as SPEC keys and in `--cols`** (e.g.
+  `--static 'price=float'`, `--cols temp`); numeric-looking names must be
+  addressed by index.
+- **CsvReader: raw-cells mode and parse-error visibility** — `readNextRaw()` /
+  `rawCells()` expose split, untyped cells; `parseErrorCount()` counts typed-cell
+  parse failures (previously an unprinted, per-cell-allocated message);
+  `unquote()` is public/static. The UTF-8 BOM is now stripped for headerless
+  files too, and `\r`-only lines are skipped like empty lines.
+- Shared tool headers `src/tools/type_probe.h` (bcsvCast's `ColumnProbeState`,
+  loss model, and the new CSV cell classifier/probe) and `src/tools/spec_parse.h`
+  (SPEC grammar with name+index keys), plus direct unit tests
+  (`tests/type_probe_test.cpp`).
+
+### Fixed
+- **CsvReader silently truncated out-of-range INT8/UINT8 cells** (e.g. `300` in an
+  INT8 column stored as `44`): INT8/UINT8 now parse into their exact type and
+  report out-of-range like the other integer widths (value stays the default 0,
+  and the failure is visible via `parseErrorCount()`).
+
 ### Changed
 - **CLI tools now use the CLI11 argument parser** (bundled under `include/CLI11-2.6.2/`,
   BSD-3-Clause). All 11 tools share a thin layer (`src/tools/cli_app.h`) for the

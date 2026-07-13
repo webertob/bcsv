@@ -108,6 +108,13 @@ the streaming row-wise write path intact. Order = suggested implementation order
       `std::ostream` (stdin/stdout piping, network). API addition; format unchanged.
       Includes CLI piping support + docs/examples (bcsvCat/bcsvMore-style usage).
 - [ ] E8: pybcsv/C# surface for E1–E7 as applicable; parquet converters pick up dictionary/stats.
+- [ ] E9: **FP8 / FP16 / FP128 column types** (requested 2026-07-13) — additive format + API
+      support for reduced/extended-precision floats (FP8, IEEE half, quad). Includes updating the
+      CLI tools for the new types: csv2bcsv (inference ladder + `--types`), bcsvCast (probe,
+      loss model, SPEC), bcsv2csv/CsvWriter formatting, bcsvHeader display. Note: the old
+      csv2bcsv FLOAT16/FLOAT128 decimal-place heuristics were removed in the 2026-07 tools
+      rework (they were dead code — `BCSV_HAS_FLOAT16/128` was never defined) — the new
+      inference is round-trip-exact and caps at FLOAT/DOUBLE until these types land.
 
 ## 2.0.0 — reserved (nothing currently requires it)
 
