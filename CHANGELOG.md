@@ -10,9 +10,24 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.5.11] - 2026-07-13
+
+CSV converter rework: validated type inference with automatic widening (no more
+silently zeroed cells), strict partial-row handling, per-column name/type
+overrides, row/column selection — plus pybcsv wheels that now ship the full
+native CLI tool suite.
 
 ### Added
+- **pybcsv wheels bundle the full CLI tool suite.** `pip install pybcsv` now
+  also installs all eleven BCSV tools (csv2bcsv, bcsv2csv, bcsvHeader,
+  bcsvHead, bcsvTail, bcsvCast, bcsvSampler, bcsvValidate, bcsvRepair,
+  bcsvCompare, bcsvGenerator) into the environment's scripts directory (on
+  PATH in an activated venv), so Python users get the high-performance,
+  version-matched toolchain with no compiler or CMake required. Programmatic
+  access via `pybcsv.tools.run("csv2bcsv", ...)` / `pybcsv.tools.path(...)`.
+  Adds ~5 MB to the wheel; opt out of a source build with
+  `-DPYBCSV_BUILD_TOOLS=OFF`. (`sync_headers.py` now also copies
+  `src/tools`/`src/shared` and the CLI11 header for standalone sdist builds.)
 - **csv2bcsv: validated type inference with automatic widening.** Types are still
   inferred from a sample (default 1000 rows, configurable via `--sample N`, `0` =
   full pre-scan), but every row is now checked during conversion: a later cell
@@ -56,6 +71,8 @@ This project uses [Semantic Versioning](https://semver.org/).
   loss model, and the new CSV cell classifier/probe) and `src/tools/spec_parse.h`
   (SPEC grammar with name+index keys), plus direct unit tests
   (`tests/type_probe_test.cpp`).
+- Third-party component notices (LZ4, xxHash, CLI11) are now reproduced in the
+  `LICENSE` file and installed with the binaries (`share/doc/bcsv/LICENSE`).
 
 ### Fixed
 - **CsvReader silently truncated out-of-range INT8/UINT8 cells** (e.g. `300` in an
@@ -76,10 +93,6 @@ This project uses [Semantic Versioning](https://semver.org/).
   bcsvRepair, and bcsvCast keep their documented `2 = argument error` code.
 - `--help` output leads with the tool description; the BCSV version is available
   via `-V/--version` (previously the version tag also prefixed `--help`).
-
-### Added
-- Third-party component notices (LZ4, xxHash, CLI11) are now reproduced in the
-  `LICENSE` file and installed with the binaries (`share/doc/bcsv/LICENSE`).
 
 ---
 
