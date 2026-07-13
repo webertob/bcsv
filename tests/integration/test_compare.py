@@ -61,6 +61,15 @@ def _csv_to_bcsv(tool_path: Path, *, csv_data: str, bcsv_path: Path) -> None:
         csv_file.unlink(missing_ok=True)
 
 
+def _cast_col_type(bcsv_path: Path, col_type: str, tools) -> None:
+    """Force column types of a BCSV file in place via bcsvCast --static."""
+    subprocess.run(
+        [str(tools["bcsvCast"]), "--static", col_type, "--in-place", str(bcsv_path)],
+        capture_output=True,
+        check=True,
+    )
+
+
 def _assert_col_type(bcsv_path: Path, expected_type: str, tools) -> None:
     """Assert that column 0 of a BCSV file has the expected inferred type.
     Uses bcsvHeader to verify — prevents the regression test from silently
@@ -137,6 +146,12 @@ def coercion_data(tmp_path_factory, tools):
     double_csv = "v\n1.5000000000000001\n2.0000000000000000\n"
     cflt, cdbl = _typed_files(d, float_csv, double_csv, tools, suffix="_flt_dbl")
 
+    # The precision-guard pairs below need a genuine INT64/UINT64-vs-DOUBLE
+    # comparison. csv2bcsv inference narrows whole-valued float literals like
+    # "9007199254740992.0" back to integer types, so the double side is forced
+    # with bcsvCast after conversion (lossless here: every b-side value is
+    # exactly double-representable) and both sides are asserted to stay honest.
+
     # --- UINT64 == 2^53 vs DOUBLE (boundary, should pass) ---
     D53 = 9007199254740992
     d53_uint_csv = f"v\n{D53}\n"
@@ -144,6 +159,9 @@ def coercion_data(tmp_path_factory, tools):
     cd53u_a, cd53u_b = _typed_files(
         d, d53_uint_csv, d53_dbl_csv, tools, suffix="_u64_53"
     )
+    _cast_col_type(cd53u_b, "double", tools)
+    _assert_col_type(cd53u_a, "uint64", tools)
+    _assert_col_type(cd53u_b, "double", tools)
 
     # --- UINT64 > 2^53 (should block without --allow-imprecise) ---
     D53P1 = D53 + 1
@@ -152,6 +170,9 @@ def coercion_data(tmp_path_factory, tools):
     cabove_u_a, cabove_u_b = _typed_files(
         d, above_uint_csv, above_dbl_csv, tools, suffix="_u64_above53"
     )
+    _cast_col_type(cabove_u_b, "double", tools)
+    _assert_col_type(cabove_u_a, "uint64", tools)
+    _assert_col_type(cabove_u_b, "double", tools)
 
     # --- INT64 == -2^53 vs DOUBLE (boundary, should pass for negative) ---
     neg_d53_csv = f"v\n{-D53}\n"
@@ -159,6 +180,9 @@ def coercion_data(tmp_path_factory, tools):
     cd53neg_a, cd53neg_b = _typed_files(
         d, neg_d53_csv, neg_d53_dbl_csv, tools, suffix="_i64_neg53"
     )
+    _cast_col_type(cd53neg_b, "double", tools)
+    _assert_col_type(cd53neg_a, "int64", tools)
+    _assert_col_type(cd53neg_b, "double", tools)
 
     # --- INT64 < -2^53 (should block without --allow-imprecise) ---
     below_neg_csv = f"v\n{-D53 - 1}\n"
@@ -166,6 +190,9 @@ def coercion_data(tmp_path_factory, tools):
     cbelow_n_a, cbelow_n_b = _typed_files(
         d, below_neg_csv, below_neg_dbl_csv, tools, suffix="_i64_below53"
     )
+    _cast_col_type(cbelow_n_b, "double", tools)
+    _assert_col_type(cbelow_n_a, "int64", tools)
+    _assert_col_type(cbelow_n_b, "double", tools)
 
     # --- STRING " 12 " (trimmed → 12) vs UINT(12) ---
     str_ws_csv = "v\n 12 \n"

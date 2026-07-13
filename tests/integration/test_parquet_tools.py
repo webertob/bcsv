@@ -3,11 +3,14 @@
 import json
 from pathlib import Path
 
-import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 
-import pybcsv
+# Optional dependencies: skip the whole module (instead of erroring at
+# collection) so ctest can register this file unconditionally.
+pa = pytest.importorskip("pyarrow")
+pq = pytest.importorskip("pyarrow.parquet")
+pybcsv = pytest.importorskip("pybcsv")
+
 from pybcsv.parquet_utils import (
     bcsv_to_parquet,
     flatten_parquet_schema,

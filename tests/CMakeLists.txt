@@ -115,6 +115,27 @@ if(Python3_FOUND)
         TIMEOUT 300
         ENVIRONMENT "BCSV_BUILD_DIR=${CMAKE_BINARY_DIR}"
     )
+
+    add_test(NAME pytest_compare
+        COMMAND ${Python3_EXECUTABLE} -m pytest
+            "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_compare.py" -v
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+    )
+    set_tests_properties(pytest_compare PROPERTIES
+        TIMEOUT 300
+        ENVIRONMENT "BCSV_BUILD_DIR=${CMAKE_BINARY_DIR}"
+    )
+
+    # Skips itself (exit 0) when pyarrow/pybcsv are not installed.
+    add_test(NAME pytest_parquet_tools
+        COMMAND ${Python3_EXECUTABLE} -m pytest
+            "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_parquet_tools.py" -v
+        WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+    )
+    set_tests_properties(pytest_parquet_tools PROPERTIES
+        TIMEOUT 300
+        ENVIRONMENT "BCSV_BUILD_DIR=${CMAKE_BINARY_DIR}"
+    )
 endif()
 
 # Set output directory
