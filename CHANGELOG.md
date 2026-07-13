@@ -10,6 +10,28 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Changed
+- **CLI tools now use the CLI11 argument parser** (bundled under `include/CLI11-2.6.2/`,
+  BSD-3-Clause). All 11 tools share a thin layer (`src/tools/cli_app.h`) for the
+  `-V/--version` flag, `--help`, validation, and the common encoding options,
+  replacing ~800 lines of hand-rolled per-tool parsing. Behavior and flags are
+  preserved. CLI11 is a tools-only build dependency and is **not** installed with
+  the library headers.
+- **Argument-error exit codes** for the converter/inspection tools (csv2bcsv,
+  bcsv2csv, bcsvHead, bcsvTail, bcsvHeader, bcsvSampler, bcsvGenerator) are now the
+  parser's codes (non-zero) rather than always `1`. bcsvCompare, bcsvValidate,
+  bcsvRepair, and bcsvCast keep their documented `2 = argument error` code.
+- `--help` output leads with the tool description; the BCSV version is available
+  via `-V/--version` (previously the version tag also prefixed `--help`).
+
+### Added
+- Third-party component notices (LZ4, xxHash, CLI11) are now reproduced in the
+  `LICENSE` file and installed with the binaries (`share/doc/bcsv/LICENSE`).
+
+---
+
 ## [1.5.10] - 2026-07-12
 
 Includes MSVC/Windows build and test portability fixes.
@@ -42,6 +64,11 @@ Includes MSVC/Windows build and test portability fixes.
   (ThreadSanitizer / UndefinedBehaviorSanitizer, RelWithDebInfo). The batch
   codec's threading contract is documented in `docs/THREAD_SAFETY.md` and
   guarded by the TSan preset.
+- **`--version` / `-V` flag for all CLI tools** — every tool now reports its name and
+  the BCSV version (`<tool> (BCSV <version>)`) plus copyright/license. The same version
+  tag is also printed as the header of each tool's `--help` output. Shared helpers
+  (`programName`, `versionTag`, `printVersion`) live in `src/tools/cli_common.h` to
+  avoid duplication.
 - **`bcsvCast` CLI tool** — generalizes column re-typing with four modes: `--scan`
   (report the smallest lossless type per column, read-only), `--optimize`
   (auto-derive and apply — the former `bcsvNarrowType` behavior), `--static SPEC`

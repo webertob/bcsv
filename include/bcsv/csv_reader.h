@@ -72,6 +72,7 @@ namespace bcsv {
 
         char                    delimiter_ = ',';     // field delimiter
         char                    decimal_sep_ = '.';   // decimal separator for float/double
+        bool                    collapse_whitespace_ = false; // treat runs of spaces/tabs as one delimiter
 
         // Reusable buffers to minimize allocations
         std::string             line_buf_;            // current line being parsed
@@ -80,7 +81,8 @@ namespace bcsv {
 
     public:
         CsvReader() = delete;
-        explicit CsvReader(const LayoutType& layout, char delimiter = ',', char decimalSep = '.');
+        explicit CsvReader(const LayoutType& layout, char delimiter = ',', char decimalSep = '.',
+                           bool collapseWhitespace = false);
         ~CsvReader();
 
         void                    close();
@@ -97,6 +99,7 @@ namespace bcsv {
         // CSV-specific accessors
         char                    delimiter() const               { return delimiter_; }
         char                    decimalSeparator() const        { return decimal_sep_; }
+        bool                    collapseWhitespace() const       { return collapse_whitespace_; }
 
     private:
         bool                    readHeader();

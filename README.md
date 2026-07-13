@@ -337,6 +337,10 @@ target_link_libraries(your_target PRIVATE bcsv)
 
 **MIT License** - Copyright (c) 2025 Tobias Weber. See [LICENSE](LICENSE).
 
+BCSV bundles third-party components under permissive BSD licenses — LZ4 and
+xxHash (BSD-2-Clause) in the library, and CLI11 (BSD-3-Clause) in the CLI tools.
+Their copyright notices are reproduced in the [LICENSE](LICENSE) file.
+
 **Contributions welcome!** Please open issues for bugs/features and include tests with PRs.
 
 ---

@@ -25,7 +25,7 @@
 #include <chrono>
 #include <iomanip>
 #include <bcsv/bcsv.h>
-#include "cli_common.h"
+#include "cli_app.h"
 
 struct Config {
     std::string input_file;
@@ -34,8 +34,8 @@ struct Config {
     char decimal_separator = '.';  // Default to point, can be changed to comma
     bool has_header = true;
     bool verbose = false;
-    bool help = false;
     bool force_delimiter = false;  // True if user explicitly set delimiter
+    bool collapse_whitespace = false;  // Treat runs of spaces/tabs as one delimiter
     bool overwrite = false;
     bool benchmark = false;  // Print timing stats to stderr
     bool json_output = false;  // Emit JSON timing blob to stdout
@@ -349,139 +349,86 @@ std::vector<std::string> parseCSVLine(const std::string& line, char delimiter, c
     return fields;
 }
 
-void printUsage(const char* program_name) {
-    std::cout << "Usage: " << program_name << " [OPTIONS] INPUT_FILE [OUTPUT_FILE]\n\n";
-    std::cout << "Convert CSV file to BCSV format.\n\n";
-    std::cout << "Arguments:\n";
-    std::cout << "  INPUT_FILE     Input CSV file path\n";
-    std::cout << "  OUTPUT_FILE    Output BCSV file path (default: INPUT_FILE.bcsv)\n\n";
-    std::cout << "Options:\n";
-    std::cout << "  -d, --delimiter CHAR    Field delimiter (default: auto-detect)\n";
-    std::cout << "  --no-header             CSV file has no header row\n";
-    std::cout << "  --decimal-separator CHAR  Decimal separator: '.' or ',' (default: '.')\n";
-    std::cout << "  -v, --verbose           Enable verbose output\n";
-    std::cout << "  -f, --overwrite         Overwrite output file if it exists\n";
-    std::cout << "  --benchmark             Print timing stats (wall clock, rows/s, MB/s) to stderr\n";
-    std::cout << "  --json                  With --benchmark: emit JSON timing blob to stderr\n";
-    std::cout << "  -h, --help              Show this help message\n\n";
-    std::cout << "Encoding (defaults: packet_lz4_batch + delta):\n";
-    std::cout << "  --row-codec CODEC       Row codec: delta (default), zoh, flat\n";
-    std::cout << "  --file-codec CODEC      File codec: packet_lz4_batch (default),\n";
-    std::cout << "                          packet_lz4, packet, stream_lz4, stream\n";
-    std::cout << "  --compression-level N   LZ4 compression level (default: 1)\n";
-    std::cout << "  --block-size N          Block size in KB (default: 64)\n\n";
-    std::cout << "Examples:\n";
-    std::cout << "  " << program_name << " data.csv\n";
-    std::cout << "  " << program_name << " -d ';' data.csv output.bcsv\n";
-    std::cout << "  " << program_name << " --no-header -v data.csv\n";
-    std::cout << "  " << program_name << " --decimal-separator ',' german_data.csv\n";
-    std::cout << "  " << program_name << " --row-codec zoh data.csv\n";
-    std::cout << "  " << program_name << " --row-codec flat --file-codec stream data.csv\n";
+// Split a line on runs of whitespace (spaces/tabs), skipping leading/trailing runs.
+// Mirrors CsvReader's whitespace-collapse mode for consistent first-pass analysis.
+std::vector<std::string> splitWhitespace(const std::string& line) {
+    std::vector<std::string> fields;
+    size_t i = 0;
+    const size_t len = line.size();
+    while (i < len) {
+        while (i < len && (line[i] == ' ' || line[i] == '\t')) ++i;
+        if (i >= len) break;
+        size_t start = i;
+        while (i < len && line[i] != ' ' && line[i] != '\t') ++i;
+        fields.push_back(line.substr(start, i - start));
+    }
+    return fields;
 }
 
-Config parseArgs(int argc, char* argv[]) {
-    Config config;
-    
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        
-        if (arg == "-h" || arg == "--help") {
-            config.help = true;
-            return config;
-        } else if (arg == "-d" || arg == "--delimiter") {
-            if (i + 1 < argc) {
-                config.delimiter = argv[++i][0];
-                config.force_delimiter = true;
-            } else {
-                throw std::runtime_error("Option " + arg + " requires an argument");
-            }
-        } else if (arg == "--no-header") {
-            config.has_header = false;
-        } else if (arg == "-f" || arg == "--overwrite") {
-            config.overwrite = true;
-        } else if (arg == "-v" || arg == "--verbose") {
-            config.verbose = true;
-        } else if (arg == "--benchmark") {
-            config.benchmark = true;
-        } else if (arg == "--json") {
-            config.json_output = true;
-        } else if (arg == "--row-codec" && i + 1 < argc) {
-            config.row_codec = argv[++i];
-            bcsv_cli::validateRowCodec(config.row_codec);
-        } else if (arg == "--file-codec" && i + 1 < argc) {
-            config.file_codec = argv[++i];
-            bcsv_cli::validateFileCodec(config.file_codec);
-        } else if (arg == "--compression-level" && i + 1 < argc) {
-            try {
-                int lvl = std::stoi(argv[++i]);
-                if (lvl < 0) throw std::runtime_error("Compression level must be non-negative");
-                config.compression_level = static_cast<size_t>(lvl);
-            } catch (const std::invalid_argument&) {
-                throw std::runtime_error(std::string("Invalid compression level: ") + argv[i]);
-            }
-        } else if (arg == "--block-size" && i + 1 < argc) {
-            try {
-                int bs = std::stoi(argv[++i]);
-                if (bs <= 0) throw std::runtime_error("Block size must be positive");
-                config.block_size_kb = static_cast<size_t>(bs);
-            } catch (const std::invalid_argument&) {
-                throw std::runtime_error(std::string("Invalid block size: ") + argv[i]);
-            }
-        } else if (arg == "--decimal-separator") {
-            if (i + 1 < argc) {
-                std::string sep = argv[++i];
-                if (sep.length() == 1 && (sep[0] == '.' || sep[0] == ',')) {
-                    config.decimal_separator = sep[0];
-                } else {
-                    throw std::runtime_error("Decimal separator must be '.' or ','");
-                }
-            } else {
-                throw std::runtime_error("Option " + arg + " requires an argument");
-            }
-        } else if (arg.starts_with("-")) {
-            throw std::runtime_error("Unknown option: " + arg);
-        } else {
-            // Positional arguments
-            if (config.input_file.empty()) {
-                config.input_file = arg;
-            } else if (config.output_file.empty()) {
-                config.output_file = arg;
-            } else {
-                throw std::runtime_error("Too many arguments");
-            }
-        }
-    }
-    
-    if (config.input_file.empty() && !config.help) {
-        throw std::runtime_error("Input file is required");
-    }
-    
-    // Set default output file if not specified
-    if (config.output_file.empty() && !config.input_file.empty()) {
-        std::filesystem::path input_path(config.input_file);
-        config.output_file = input_path.stem().string() + ".bcsv";
-    }
-    
-    // Validate character conflicts
-    if (!config.help) {
-        if (config.delimiter == config.decimal_separator && config.delimiter != '\0') {
-            throw std::runtime_error("Delimiter and decimal separator cannot be the same ('" + 
-                                   std::string(1, config.delimiter) + "')");
-        }
-    }
-    
-    return config;
-}
+// Argument parsing and help are handled by CLI11 in main() below.
+
 
 int main(int argc, char* argv[]) {
+    Config config;
+    bool   no_header = false;
+
+    CLI::App app{"Convert CSV file to BCSV format.", "csv2bcsv"};
+    argv = app.ensure_utf8(argv);
+    bcsv_cli::setupVersionFlag(app, bcsv_cli::programName(argv[0]));
+
+    auto* delim_opt = app.add_option("-d,--delimiter", config.delimiter,
+                                     "Field delimiter (default: auto-detect)");
+    app.add_flag("-w,--whitespace", config.collapse_whitespace,
+                 "Treat runs of spaces/tabs as one delimiter (also splits header names)");
+    app.add_flag("--no-header", no_header, "CSV file has no header row");
+    app.add_option("--decimal-separator", config.decimal_separator,
+                   "Decimal separator: '.' or ','")
+        ->check([](const std::string& s) -> std::string {
+            if (s.size() == 1 && (s[0] == '.' || s[0] == ','))
+                return {};
+            return "Decimal separator must be '.' or ','";
+        });
+    app.add_flag("-f,--overwrite", config.overwrite, "Overwrite output file if it exists");
+    app.add_flag("-v,--verbose", config.verbose, "Enable verbose output");
+    app.add_flag("--benchmark", config.benchmark,
+                 "Print timing stats (wall clock, rows/s, MB/s) to stderr");
+    app.add_flag("--json", config.json_output,
+                 "With --benchmark: emit JSON timing blob to stdout");
+    bcsv_cli::addCodecOptions(app, config.row_codec, config.file_codec,
+                              config.compression_level, config.block_size_kb);
+    app.add_option("INPUT_FILE", config.input_file, "Input CSV file path")
+        ->required();
+    app.add_option("OUTPUT_FILE", config.output_file,
+                   "Output BCSV file path (default: <input>.bcsv)");
+
+    app.footer(
+        "Examples:\n"
+        "  csv2bcsv data.csv\n"
+        "  csv2bcsv -d ';' data.csv output.bcsv\n"
+        "  csv2bcsv --no-header -v data.csv\n"
+        "  csv2bcsv --decimal-separator ',' german_data.csv\n"
+        "  csv2bcsv --row-codec zoh data.csv\n"
+        "  csv2bcsv --row-codec flat --file-codec stream data.csv");
+
+    CLI11_PARSE(app, argc, argv);
+
     try {
-        Config config = parseArgs(argc, argv);
-        
-        if (config.help) {
-            printUsage(argv[0]);
-            return 0;
+        config.has_header      = !no_header;
+        config.force_delimiter = (delim_opt->count() > 0);
+
+        // Default output file if not specified
+        if (config.output_file.empty() && !config.input_file.empty()) {
+            std::filesystem::path input_path(config.input_file);
+            config.output_file = input_path.stem().string() + ".bcsv";
         }
-        
+
+        // Delimiter and decimal separator must differ (unless whitespace-collapse)
+        if (!config.collapse_whitespace &&
+            config.delimiter == config.decimal_separator && config.delimiter != '\0') {
+            throw std::runtime_error("Delimiter and decimal separator cannot be the same ('" +
+                                     std::string(1, config.delimiter) + "')");
+        }
+
         if (config.verbose) {
             std::cerr << "Converting: " << config.input_file << " -> " << config.output_file << std::endl;
             std::cerr << "Delimiter: '" << config.delimiter << "'" << std::endl;
@@ -522,8 +469,8 @@ int main(int argc, char* argv[]) {
             line.pop_back();
         }
         
-        // Auto-detect delimiter if not specified
-        if (!config.force_delimiter) {
+        // Auto-detect delimiter if not specified (skipped in whitespace-collapse mode)
+        if (!config.collapse_whitespace && !config.force_delimiter) {
             config.delimiter = detectDelimiter(line);
             if (config.verbose) {
                 std::cout << "Auto-detected delimiter: '" << config.delimiter << "'" << std::endl;
@@ -532,11 +479,17 @@ int main(int argc, char* argv[]) {
         
         if (config.verbose) {
             std::cerr << "Converting: " << config.input_file << " -> " << config.output_file << std::endl;
-            std::cerr << "Delimiter: '" << config.delimiter << "'" << std::endl;
+            if (config.collapse_whitespace) {
+                std::cerr << "Delimiter: whitespace-collapse" << std::endl;
+            } else {
+                std::cerr << "Delimiter: '" << config.delimiter << "'" << std::endl;
+            }
             std::cerr << "Header: " << (config.has_header ? "yes" : "no") << std::endl;
         }
         
-        std::vector<std::string> first_row = parseCSVLine(line, config.delimiter, '"');
+        std::vector<std::string> first_row = config.collapse_whitespace
+            ? splitWhitespace(line)
+            : parseCSVLine(line, config.delimiter, '"');
         
         if (config.has_header) {
             headers = first_row;
@@ -564,7 +517,9 @@ int main(int argc, char* argv[]) {
                 line.pop_back();
             }
             
-            auto row_data = parseCSVLine(line, config.delimiter, '"');
+            auto row_data = config.collapse_whitespace
+                ? splitWhitespace(line)
+                : parseCSVLine(line, config.delimiter, '"');
             
             // Trim trailing empty fields to match header count
             while (row_data.size() > headers.size() && !row_data.empty() && row_data.back().empty()) {
@@ -641,7 +596,8 @@ int main(int argc, char* argv[]) {
             }
 
             // Use CsvReader with the detected layout for type-safe CSV parsing
-            bcsv::CsvReader<bcsv::Layout> csv_reader(layout, config.delimiter, config.decimal_separator);
+            bcsv::CsvReader<bcsv::Layout> csv_reader(layout, config.delimiter, config.decimal_separator,
+                                                    config.collapse_whitespace);
             if (!csv_reader.open(config.input_file, config.has_header)) {
                 throw std::runtime_error("Cannot open CSV file with CsvReader: " + csv_reader.getErrorMsg());
             }

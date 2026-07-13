@@ -29,10 +29,12 @@ namespace bcsv {
     // ── Constructor / Destructor ────────────────────────────────────────
 
     template<LayoutConcept LayoutType>
-    CsvReader<LayoutType>::CsvReader(const LayoutType& layout, char delimiter, char decimalSep)
+    CsvReader<LayoutType>::CsvReader(const LayoutType& layout, char delimiter, char decimalSep,
+                                     bool collapseWhitespace)
         : row_(layout)
         , delimiter_(delimiter)
         , decimal_sep_(decimalSep)
+        , collapse_whitespace_(collapseWhitespace)
     {
         line_buf_.reserve(4096);
         cells_.reserve(layout.columnCount());
@@ -252,16 +254,46 @@ namespace bcsv {
         cells_.clear();
         const char* data = line.data();
         size_t len = line.size();
-        size_t start = 0;
-        bool inQuotes = false;
 
-        for (size_t i = 0; i <= len; ++i) {
-            if (i == len || (!inQuotes && data[i] == delimiter_)) {
+        if (collapse_whitespace_) {
+            // Whitespace-collapse mode: treat any run of spaces/tabs as a single
+            // separator, skipping leading and trailing whitespace runs.
+            size_t i = 0;
+            while (i < len) {
+                while (i < len && (data[i] == ' ' || data[i] == '\t')) ++i;
+                if (i >= len) break;
+                size_t start = i;
+                bool inQuotes = false;
+                while (i < len) {
+                    char c = data[i];
+                    if (c == '"') {
+                        inQuotes = !inQuotes;
+                    } else if (!inQuotes && (c == ' ' || c == '\t')) {
+                        break;
+                    }
+                    ++i;
+                }
                 cells_.emplace_back(data + start, i - start);
-                start = i + 1;
-            } else if (data[i] == '"') {
-                inQuotes = !inQuotes;
             }
+        } else {
+            size_t start = 0;
+            bool inQuotes = false;
+            for (size_t i = 0; i <= len; ++i) {
+                if (i == len || (!inQuotes && data[i] == delimiter_)) {
+                    cells_.emplace_back(data + start, i - start);
+                    start = i + 1;
+                } else if (data[i] == '"') {
+                    inQuotes = !inQuotes;
+                }
+            }
+        }
+
+        // Tolerate a single spurious trailing empty field produced by a trailing
+        // delimiter (e.g. lines ending in a tab). Only drop it when it makes the
+        // cell count match the layout, so legitimate trailing empty values are
+        // preserved.
+        if (cells_.size() == layout().columnCount() + 1 && cells_.back().empty()) {
+            cells_.pop_back();
         }
     }
 

@@ -27,7 +27,7 @@
 #include <bcsv/bcsv.h>
 #include <bcsv/sampler/sampler.h>
 #include <bcsv/sampler/sampler.hpp>
-#include "cli_common.h"
+#include "cli_app.h"
 
 // ── Configuration ───────────────────────────────────────────────────
 
@@ -52,126 +52,9 @@ struct Config {
     bool        overwrite         = false;  // -f / --overwrite
     bool        disassemble       = false;  // --disassemble
     bool        verbose           = false;  // -v / --verbose
-    bool        help              = false;  // -h / --help
 };
 
-// ── Usage ───────────────────────────────────────────────────────────
-
-static void printUsage(const char* prog) {
-    std::cout
-        << "Usage: " << prog
-        << " [OPTIONS] INPUT_FILE [OUTPUT_FILE]\n\n"
-
-        << "Filter and project a BCSV file using Sampler expressions.\n\n"
-
-        << "Arguments:\n"
-        << "  INPUT_FILE               Input BCSV file\n"
-        << "  OUTPUT_FILE              Output BCSV file (default: INPUT_sampled.bcsv)\n\n"
-
-        << "Sampler expressions:\n"
-        << "  -c, --conditional EXPR   Row filter (boolean expression)\n"
-        << "  -s, --selection EXPR     Column projection (comma-separated)\n"
-        << "  -m, --mode MODE          Boundary mode: truncate (default) or expand\n\n"
-
-        << "Encoding (defaults: row=delta, file=packet_lz4_batch):\n"
-        << "  --row-codec CODEC        Row codec: flat, zoh, delta (default: delta)\n"
-        << "  --file-codec CODEC       File codec: stream, stream_lz4, packet,\n"
-        << "                           packet_lz4, packet_lz4_batch (default)\n"
-        << "  --compression-level N    LZ4 compression level (default: 1)\n"
-        << "  --block-size N           Block size in KB (default: 64)\n\n"
-
-        << "General:\n"
-        << "  -f, --overwrite          Overwrite output file if it exists\n"
-        << "  --disassemble            Print compiled bytecode and exit\n"
-        << "  -v, --verbose            Verbose progress output\n"
-        << "  -h, --help               Show this help message\n\n"
-
-        << "Examples:\n"
-        << "  " << prog << " data.bcsv\n"
-        << "  " << prog << " -c 'X[0][0] > 100' data.bcsv filtered.bcsv\n"
-        << "  " << prog << " -s 'X[0][0], X[0][2]' data.bcsv projected.bcsv\n"
-        << "  " << prog << " -c 'X[0][1] != X[-1][1]' -s 'X[0][0], X[0][1]' -m expand in.bcsv out.bcsv\n"
-        << "  " << prog << " --disassemble -c 'X[0][0] > 0' data.bcsv\n";
-}
-
-// ── Argument parsing ────────────────────────────────────────────────
-
-static Config parseArgs(int argc, char* argv[]) {
-    Config cfg;
-
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-
-        if (arg == "-h" || arg == "--help") {
-            cfg.help = true;
-            return cfg;
-        } else if (arg == "-v" || arg == "--verbose") {
-            cfg.verbose = true;
-        } else if (arg == "-f" || arg == "--overwrite") {
-            cfg.overwrite = true;
-        } else if (arg == "--disassemble") {
-            cfg.disassemble = true;
-        } else if ((arg == "--row-codec") && i + 1 < argc) {
-            cfg.row_codec = argv[++i];
-            bcsv_cli::validateRowCodec(cfg.row_codec);
-        } else if ((arg == "--file-codec") && i + 1 < argc) {
-            cfg.file_codec = argv[++i];
-            bcsv_cli::validateFileCodec(cfg.file_codec);
-        } else if ((arg == "-c" || arg == "--conditional") && i + 1 < argc) {
-            cfg.conditional = argv[++i];
-        } else if ((arg == "-s" || arg == "--selection") && i + 1 < argc) {
-            cfg.selection = argv[++i];
-        } else if ((arg == "-m" || arg == "--mode") && i + 1 < argc) {
-            cfg.mode = argv[++i];
-            if (cfg.mode != "truncate" && cfg.mode != "expand") {
-                throw std::runtime_error("Unknown mode '" + cfg.mode + "'. Expected 'truncate' or 'expand'.");
-            }
-        } else if (arg == "--compression-level" && i + 1 < argc) {
-            try {
-                int lvl = std::stoi(argv[++i]);
-                if (lvl < 0) {
-                    throw std::runtime_error("Compression level must be non-negative.");
-                }
-                cfg.compression_level = static_cast<size_t>(lvl);
-            } catch (const std::invalid_argument&) {
-                throw std::runtime_error(std::string("Invalid compression level: ") + argv[i]);
-            }
-        } else if (arg == "--block-size" && i + 1 < argc) {
-            try {
-                int bs = std::stoi(argv[++i]);
-                if (bs <= 0) {
-                    throw std::runtime_error("Block size must be positive.");
-                }
-                cfg.block_size_kb = static_cast<size_t>(bs);
-            } catch (const std::invalid_argument&) {
-                throw std::runtime_error(std::string("Invalid block size: ") + argv[i]);
-            }
-        } else if (arg.starts_with("-")) {
-            throw std::runtime_error("Unknown option: " + arg);
-        } else {
-            // Positional arguments
-            if (cfg.input_file.empty()) {
-                cfg.input_file = arg;
-            } else if (cfg.output_file.empty()) {
-                cfg.output_file = arg;
-            } else {
-                throw std::runtime_error("Too many positional arguments.");
-            }
-        }
-    }
-
-    if (cfg.input_file.empty() && !cfg.help) {
-        throw std::runtime_error("Input file is required.");
-    }
-
-    // Default output filename: <stem>_sampled.bcsv
-    if (cfg.output_file.empty() && !cfg.input_file.empty()) {
-        std::filesystem::path p(cfg.input_file);
-        cfg.output_file = p.stem().string() + "_sampled.bcsv";
-    }
-
-    return cfg;
-}
+// Argument parsing is handled by CLI11 in main() below.
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -196,14 +79,44 @@ static void printCompileError(const std::string& label,
 // ── Main ────────────────────────────────────────────────────────────
 
 int main(int argc, char* argv[]) {
+    Config cfg;
+
+    CLI::App app{"Filter and project a BCSV file using Sampler expressions.", "bcsvSampler"};
+    argv = app.ensure_utf8(argv);
+    bcsv_cli::setupVersionFlag(app, bcsv_cli::programName(argv[0]));
+
+    app.add_option("INPUT_FILE", cfg.input_file, "Input BCSV file")
+        ->required();
+    app.add_option("OUTPUT_FILE", cfg.output_file,
+                   "Output BCSV file (default: <input>_sampled.bcsv)");
+    app.add_option("-c,--conditional", cfg.conditional, "Row filter (boolean expression)");
+    app.add_option("-s,--selection", cfg.selection, "Column projection (comma-separated)");
+    app.add_option("-m,--mode", cfg.mode, "Boundary mode: truncate or expand")
+        ->check(CLI::IsMember({"truncate", "expand"}))
+        ->capture_default_str();
+    app.add_flag("-f,--overwrite", cfg.overwrite, "Overwrite output file if it exists");
+    app.add_flag("--disassemble", cfg.disassemble, "Print compiled bytecode and exit");
+    bcsv_cli::addCodecOptions(app, cfg.row_codec, cfg.file_codec,
+                              cfg.compression_level, cfg.block_size_kb);
+    app.add_flag("-v,--verbose", cfg.verbose, "Verbose progress output");
+
+    app.footer(
+        "Examples:\n"
+        "  bcsvSampler data.bcsv\n"
+        "  bcsvSampler -c 'X[0][0] > 100' data.bcsv filtered.bcsv\n"
+        "  bcsvSampler -s 'X[0][0], X[0][2]' data.bcsv projected.bcsv\n"
+        "  bcsvSampler -c 'X[0][1] != X[-1][1]' -s 'X[0][0], X[0][1]' -m expand in.bcsv out.bcsv\n"
+        "  bcsvSampler --disassemble -c 'X[0][0] > 0' data.bcsv");
+
+    CLI11_PARSE(app, argc, argv);
+
+    // Default output filename: <stem>_sampled.bcsv
+    if (cfg.output_file.empty() && !cfg.input_file.empty()) {
+        std::filesystem::path p(cfg.input_file);
+        cfg.output_file = p.stem().string() + "_sampled.bcsv";
+    }
+
     try {
-        Config cfg = parseArgs(argc, argv);
-
-        if (cfg.help) {
-            printUsage(argv[0]);
-            return 0;
-        }
-
         // ── Validate input ──────────────────────────────────────────
         if (!std::filesystem::exists(cfg.input_file)) {
             std::cerr << "Error: Input file does not exist: "

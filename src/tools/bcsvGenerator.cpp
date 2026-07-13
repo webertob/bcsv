@@ -27,7 +27,7 @@
 #include <map>
 #include <stdexcept>
 #include <bcsv/bcsv.h>
-#include "cli_common.h"
+#include "cli_app.h"
 #include "test_datasets.hpp"   // src/shared/ — dataset profiles for generation
 
 // ── Configuration ───────────────────────────────────────────────────
@@ -48,142 +48,46 @@ struct Config {
     bool        overwrite         = false;
     bool        list_profiles     = false;
     bool        verbose           = false;
-    bool        help              = false;
 };
-
-// ── Usage ───────────────────────────────────────────────────────────
-
-static void printUsage(const char* prog) {
-    std::cout
-        << "Usage: " << prog
-        << " [OPTIONS] -o OUTPUT_FILE\n\n"
-
-        << "Generate a synthetic BCSV test dataset.\n\n"
-
-        << "Arguments:\n"
-        << "  -o, --output FILE        Output BCSV file (required)\n\n"
-
-        << "Dataset:\n"
-        << "  -p, --profile NAME       Dataset profile (default: mixed_generic)\n"
-        << "  -n, --rows N             Number of rows (default: 10000)\n"
-        << "  -d, --data-mode MODE     Data mode: timeseries (default) or random\n"
-        << "  --list                   List available profiles and exit\n\n"
-
-        << "Encoding:\n"
-        << "  --file-codec CODEC       File codec (default: packet_lz4_batch)\n"
-        << "                           Values: packet_lz4_batch, packet_lz4,\n"
-        << "                                   packet, stream_lz4, stream\n"
-        << "  --row-codec CODEC        Row codec (default: delta)\n"
-        << "                           Values: delta, zoh, flat\n"
-        << "  --compression-level N    LZ4 compression level (default: 1)\n"
-        << "  --block-size N           Block size in KB (default: 64)\n\n"
-
-        << "General:\n"
-        << "  -f, --overwrite          Overwrite output file if it exists\n"
-        << "  -v, --verbose            Verbose progress output\n"
-        << "  -h, --help               Show this help message\n\n"
-
-        << "Examples:\n"
-        << "  " << prog << " -o test.bcsv\n"
-        << "  " << prog << " -p sensor_noisy -n 100000 -o sensor.bcsv\n"
-        << "  " << prog << " -p weather_timeseries -d random -o weather.bcsv\n"
-        << "  " << prog << " -p string_heavy --file-codec packet --row-codec flat -o strings.bcsv\n"
-        << "  " << prog << " --list\n";
-}
-
-// ── Argument parsing ────────────────────────────────────────────────
-
-static Config parseArgs(int argc, char* argv[]) {
-    Config cfg;
-
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-
-        if (arg == "-h" || arg == "--help") {
-            cfg.help = true;
-            return cfg;
-        } else if (arg == "--list") {
-            cfg.list_profiles = true;
-            return cfg;
-        } else if (arg == "-v" || arg == "--verbose") {
-            cfg.verbose = true;
-        } else if (arg == "-f" || arg == "--overwrite") {
-            cfg.overwrite = true;
-        } else if (arg == "--file-codec" && i + 1 < argc) {
-            cfg.file_codec = argv[++i];
-            bcsv_cli::validateFileCodec(cfg.file_codec);
-        } else if (arg == "--row-codec" && i + 1 < argc) {
-            cfg.row_codec = argv[++i];
-            bcsv_cli::validateRowCodec(cfg.row_codec);
-        } else if ((arg == "-o" || arg == "--output") && i + 1 < argc) {
-            cfg.output_file = argv[++i];
-        } else if ((arg == "-p" || arg == "--profile") && i + 1 < argc) {
-            cfg.profile = argv[++i];
-        } else if ((arg == "-d" || arg == "--data-mode") && i + 1 < argc) {
-            cfg.data_mode = argv[++i];
-            if (cfg.data_mode != "timeseries" && cfg.data_mode != "random") {
-                throw std::runtime_error("Unknown data mode '" + cfg.data_mode + "'. Expected 'timeseries' or 'random'.");
-            }
-        } else if ((arg == "-n" || arg == "--rows") && i + 1 < argc) {
-            try {
-                int n = std::stoi(argv[++i]);
-                if (n <= 0) {
-                    throw std::runtime_error("Row count must be positive.");
-                }
-                cfg.rows = static_cast<size_t>(n);
-            } catch (const std::invalid_argument&) {
-                throw std::runtime_error(std::string("Invalid row count: ") + argv[i]);
-            }
-        } else if (arg == "--compression-level" && i + 1 < argc) {
-            try {
-                int lvl = std::stoi(argv[++i]);
-                if (lvl < 0) {
-                    throw std::runtime_error("Compression level must be non-negative.");
-                }
-                cfg.compression_level = static_cast<size_t>(lvl);
-            } catch (const std::invalid_argument&) {
-                throw std::runtime_error(std::string("Invalid compression level: ") + argv[i]);
-            }
-        } else if (arg == "--block-size" && i + 1 < argc) {
-            try {
-                int bs = std::stoi(argv[++i]);
-                if (bs <= 0) {
-                    throw std::runtime_error("Block size must be positive.");
-                }
-                cfg.block_size_kb = static_cast<size_t>(bs);
-            } catch (const std::invalid_argument&) {
-                throw std::runtime_error(std::string("Invalid block size: ") + argv[i]);
-            }
-        } else if (arg.starts_with("-")) {
-            throw std::runtime_error("Unknown option: " + arg);
-        } else {
-            // Treat bare positional arg as output file if -o not used
-            if (cfg.output_file.empty()) {
-                cfg.output_file = arg;
-            } else {
-                throw std::runtime_error("Too many positional arguments.");
-            }
-        }
-    }
-
-    if (cfg.output_file.empty() && !cfg.help && !cfg.list_profiles) {
-        throw std::runtime_error("Output file is required (-o FILE).");
-    }
-
-    return cfg;
-}
 
 // ── Main ────────────────────────────────────────────────────────────
 
 int main(int argc, char* argv[]) {
+    Config cfg;
+
+    CLI::App app{"Generate a synthetic BCSV test dataset.", "bcsvGenerator"};
+    argv = app.ensure_utf8(argv);
+    bcsv_cli::setupVersionFlag(app, bcsv_cli::programName(argv[0]));
+
+    app.add_option("-o,--output", cfg.output_file,
+                   "Output BCSV file (required unless --list)");
+    app.add_option("output_file", cfg.output_file, "Output BCSV file")
+        ->type_name("OUTPUT_FILE");
+    app.add_option("-p,--profile", cfg.profile, "Dataset profile")
+        ->capture_default_str();
+    app.add_option("-n,--rows", cfg.rows, "Number of rows")
+        ->check(CLI::PositiveNumber)
+        ->capture_default_str();
+    app.add_option("-d,--data-mode", cfg.data_mode, "Data mode: timeseries or random")
+        ->check(CLI::IsMember({"timeseries", "random"}))
+        ->capture_default_str();
+    app.add_flag("--list", cfg.list_profiles, "List available profiles and exit");
+    app.add_flag("-f,--overwrite", cfg.overwrite, "Overwrite output file if it exists");
+    bcsv_cli::addCodecOptions(app, cfg.row_codec, cfg.file_codec,
+                              cfg.compression_level, cfg.block_size_kb);
+    app.add_flag("-v,--verbose", cfg.verbose, "Verbose progress output");
+
+    app.footer(
+        "Examples:\n"
+        "  bcsvGenerator -o test.bcsv\n"
+        "  bcsvGenerator -p sensor_noisy -n 100000 -o sensor.bcsv\n"
+        "  bcsvGenerator -p weather_timeseries -d random -o weather.bcsv\n"
+        "  bcsvGenerator -p string_heavy --file-codec packet --row-codec flat -o strings.bcsv\n"
+        "  bcsvGenerator --list");
+
+    CLI11_PARSE(app, argc, argv);
+
     try {
-        Config cfg = parseArgs(argc, argv);
-
-        if (cfg.help) {
-            printUsage(argv[0]);
-            return 0;
-        }
-
         // ── List profiles ───────────────────────────────────────────
         if (cfg.list_profiles) {
             const auto& profiles = bench::getAllProfilesCached();
@@ -205,6 +109,12 @@ int main(int argc, char* argv[]) {
                           << p.description << "\n";
             }
             return 0;
+        }
+
+        if (cfg.output_file.empty()) {
+            std::cerr << "Error: Output file is required (-o FILE). "
+                         "Use --list to see profiles.\n";
+            return 1;
         }
 
         // ── Resolve profile ─────────────────────────────────────────

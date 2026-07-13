@@ -188,8 +188,11 @@ add_subdirectory(benchmark)
 # ============================================================================
 # Install headers — exclude the gitignored source-tree copy of version_generated.h;
 # the build-tree copy (correctly stamped from git tags) is installed separately.
+# CLI11 is a tools-only build dependency (not part of the library API), so it is
+# not shipped with the installed headers.
 install(DIRECTORY include/ DESTINATION include
-    PATTERN "version_generated.h" EXCLUDE)
+    PATTERN "version_generated.h" EXCLUDE
+    PATTERN "CLI11-2.6.2" EXCLUDE)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/include/bcsv/version_generated.h"
     DESTINATION include/bcsv)
 
@@ -259,6 +262,17 @@ if(BUILD_TOOLS)
         RUNTIME DESTINATION bin
     )
 endif()
+
+# ============================================================================
+# License & third-party attribution
+# ============================================================================
+# BSD-licensed bundled components (LZ4, xxHash, CLI11) require their copyright
+# notice to be reproduced in binary redistributions; those notices are appended
+# to the LICENSE file. Install it alongside the binaries.
+install(FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE"
+    DESTINATION share/doc/bcsv
+)
 
 # ============================================================================
 # Test Programs

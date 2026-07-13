@@ -19,6 +19,20 @@ All tools are built from `src/tools/` and output to `build/bin/`.
 | **bcsvValidate** | Validate structure & content | BCSV (+CSV) | Report |
 | **bcsvRepair** | Repair damaged/interrupted files | BCSV | BCSV |
 
+## Common Options
+
+Every tool accepts these two flags:
+
+| Flag | Description |
+|------|-------------|
+| `-h, --help` | Show the tool's help message and exit |
+| `-V, --version` | Show version information (`<tool> (BCSV <version>)`) and exit |
+
+Run `<tool> -V` (or `--version`) to print the tool name, BCSV version, and
+license. Argument parsing, help text, and validation are provided by the
+bundled [CLI11](https://github.com/CLIUtils/CLI11) parser (BSD-3-Clause;
+see [LICENSE](../../LICENSE)).
+
 ## Quick Start
 
 ```bash
@@ -82,7 +96,8 @@ cmake --build --preset ninja-release-build --target bcsvSampler -j$(nproc)
 | `bcsvRepair.cpp` | Repair damaged/interrupted BCSV files |
 | `bcsvCompare.cpp` | Deterministic file comparison (combining modes: names, types, values) |
 | `bcsvCast.cpp` | Column type cast: scan / narrow / static / dynamic |
-| `cli_common.h` | Shared CLI utilities (codec dispatch, validation, formatting) |
+| `cli_app.h` | Shared CLI11 layer (version flag, parse handling, codec options) |
+| `cli_common.h` | Shared CLI utilities (codec dispatch, formatting, type/range parsing) |
 | `CMakeLists.txt` | Build definitions for all 11 tools |
 
 ---
@@ -98,6 +113,7 @@ csv2bcsv [OPTIONS] INPUT_FILE [OUTPUT_FILE]
 csv2bcsv data.csv                                    # Auto-detect, default output
 csv2bcsv data.csv output.bcsv                         # Custom output
 csv2bcsv -d ';' --decimal-separator ',' german.csv    # European format
+csv2bcsv -w padded_columns.txt                        # Space/tab-padded columns
 csv2bcsv --row-codec delta data.csv output.bcsv       # Explicit delta codec
 csv2bcsv --benchmark data.csv output.bcsv             # Measure throughput
 ```
@@ -107,6 +123,7 @@ csv2bcsv --benchmark data.csv output.bcsv             # Measure throughput
 | Option | Description | Default |
 |--------|-------------|---------|
 | `-d, --delimiter CHAR` | Field delimiter (auto-detected if omitted) | auto |
+| `-w, --whitespace` | Treat runs of spaces/tabs as a single delimiter | |
 | `--decimal-separator CHAR` | Decimal separator: `.` or `,` | `.` |
 | `--no-header` | CSV file has no header row | |
 | `-v, --verbose` | Verbose output | |
@@ -129,6 +146,19 @@ All columns are scanned in a first pass to select the most compact type:
 ### Delimiter Auto-Detection
 
 When `-d` is omitted, scans the first line. Priority: comma → semicolon → tab → pipe.
+
+### Whitespace-Collapse Mode (`-w`)
+
+Use `-w` for files whose columns are separated by variable-width runs of spaces
+and/or tabs (e.g. fixed-width, space-padded exports). Any run of spaces/tabs is
+treated as one separator, and leading/trailing whitespace on each line is ignored.
+A single trailing delimiter (e.g. a line-ending tab) is tolerated automatically
+even without `-w`.
+
+> **Caveat:** `-w` also splits the header row on whitespace, so it is not suitable
+> for files whose column names contain spaces (e.g. `OCP Time`). For tab-delimited
+> files that merely pad values with spaces, prefer the default auto-detection
+> (which selects the tab) — the padding is trimmed during type conversion.
 
 ---
 

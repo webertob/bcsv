@@ -24,7 +24,7 @@
 #include <cstdint>
 #include <vector>
 #include <bcsv/bcsv.h>
-#include "cli_common.h"
+#include "cli_app.h"
 
 struct Config {
     std::string input_file;
@@ -32,7 +32,6 @@ struct Config {
     char delimiter = ',';
     bool include_header = true;
     bool verbose = false;
-    bool help = false;
     
     // Row range selection options
     int64_t first_row = -1;    // -1 = not specified (0-based indexing)
@@ -109,144 +108,82 @@ void parseSlice(const std::string& slice_str, Config& config) {
     }
 }
 
-void printUsage(const char* program_name) {
-    std::cout << "Usage: " << program_name << " [OPTIONS] INPUT_FILE [OUTPUT_FILE]\n\n";
-    std::cout << "Convert BCSV file to CSV format.\n\n";
-    std::cout << "Arguments:\n";
-    std::cout << "  INPUT_FILE     Input BCSV file path\n";
-    std::cout << "  OUTPUT_FILE    Output CSV file path (default: INPUT_FILE.csv)\n\n";
-    std::cout << "Options:\n";
-    std::cout << "  -o, --output FILE       Output CSV file path (use '-' for stdout)\n";
-    std::cout << "  -d, --delimiter CHAR    Field delimiter (default: ',')\n";
-    std::cout << "  --no-header             Don't include header row in output\n";
-    std::cout << "  --firstRow N            Start from row N (0-based, default: 0)\n";
-    std::cout << "  --lastRow N             End at row N (0-based, inclusive, default: last)\n";
-    std::cout << "  --slice SLICE           Python-style slice notation (overrides firstRow/lastRow)\n";
-    std::cout << "  -v, --verbose           Enable verbose output\n";
-    std::cout << "  --benchmark             Print timing stats (wall clock, rows/s, MB/s) to stderr\n";
-    std::cout << "  --json                  With --benchmark: emit JSON timing blob to stdout\n";
-    std::cout << "  -h, --help              Show this help message\n\n";
-    std::cout << "Row Selection Examples:\n";
-    std::cout << "  --firstRow 100 --lastRow 200    # Rows 100-200 (inclusive)\n";
-    std::cout << "  --slice 10:20                   # Rows 10-19 (Python-style)\n";
-    std::cout << "  --slice :100                    # First 100 rows\n";
-    std::cout << "  --slice 50:                     # From row 50 to end\n";
-    std::cout << "  --slice ::2                     # Every 2nd row\n";
-    std::cout << "  --slice -10:                    # Last 10 rows\n\n";
-    std::cout << "Examples:\n";
-    std::cout << "  " << program_name << " data.bcsv\n";
-    std::cout << "  " << program_name << " -d ';' data.bcsv output.csv\n";
-    std::cout << "  " << program_name << " --no-header data.bcsv\n";
-}
+// Help and argument parsing are handled by CLI11 in main() below.
 
-Config parseArgs(int argc, char* argv[]) {
+int main(int argc, char* argv[]) {
     Config config;
-    
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-        
-        if (arg == "-h" || arg == "--help") {
-            config.help = true;
-            return config;
-        } else if (arg == "-d" || arg == "--delimiter") {
-            if (i + 1 < argc) {
-                config.delimiter = argv[++i][0];
-            } else {
-                throw std::runtime_error("Option " + arg + " requires an argument");
-            }
-        } else if (arg == "-o" || arg == "--output") {
-            if (i + 1 < argc) {
-                config.output_file = argv[++i];
-            } else {
-                throw std::runtime_error("Option " + arg + " requires an argument");
-            }
-        } else if (arg == "--no-header") {
-            config.include_header = false;
-        } else if (arg == "--firstRow") {
-            if (i + 1 < argc) {
-                config.first_row = std::stoll(argv[++i]);
-                if (config.first_row < 0) {
-                    throw std::runtime_error("firstRow must be non-negative (0-based indexing)");
-                }
-            } else {
-                throw std::runtime_error("Option " + arg + " requires an argument");
-            }
-        } else if (arg == "--lastRow") {
-            if (i + 1 < argc) {
-                config.last_row = std::stoll(argv[++i]);
-                if (config.last_row < 0) {
-                    throw std::runtime_error("lastRow must be non-negative (0-based indexing)");
-                }
-            } else {
-                throw std::runtime_error("Option " + arg + " requires an argument");
-            }
-        } else if (arg == "--slice") {
-            if (i + 1 < argc) {
-                try {
-                    parseSlice(argv[++i], config);
-                } catch (const std::exception& e) {
-                    throw std::runtime_error("Invalid slice argument: " + std::string(e.what()));
-                }
-            } else {
-                throw std::runtime_error("Option " + arg + " requires an argument");
-            }
-        } else if (arg == "-v" || arg == "--verbose") {
-            config.verbose = true;
-        } else if (arg == "--benchmark") {
-            config.benchmark = true;
-        } else if (arg == "--json") {
-            config.json_output = true;
-        } else if (arg.starts_with("-")) {
-            throw std::runtime_error("Unknown option: " + arg);
-        } else {
-            // Positional arguments
-            if (config.input_file.empty()) {
-                config.input_file = arg;
-            } else if (config.output_file.empty()) {
-                config.output_file = arg;
-            } else {
-                throw std::runtime_error("Too many arguments");
+    bool        no_header = false;
+    std::string slice_arg;
+
+    CLI::App app{"Convert BCSV file to CSV format.", "bcsv2csv"};
+    argv = app.ensure_utf8(argv);
+    bcsv_cli::setupVersionFlag(app, bcsv_cli::programName(argv[0]));
+
+    app.add_option("INPUT_FILE", config.input_file, "Input BCSV file path")
+        ->required();
+    app.add_option("OUTPUT_FILE", config.output_file,
+                   "Output CSV file path (default: <input>.csv)");
+    app.add_option("-o,--output", config.output_file,
+                   "Output CSV file path (use '-' for stdout)");
+    app.add_option("-d,--delimiter", config.delimiter, "Field delimiter")
+        ->capture_default_str();
+    app.add_flag("--no-header", no_header, "Don't include header row in output");
+    app.add_option("--firstRow", config.first_row, "Start from row N (0-based)")
+        ->check(CLI::NonNegativeNumber);
+    app.add_option("--lastRow", config.last_row, "End at row N (0-based, inclusive)")
+        ->check(CLI::NonNegativeNumber);
+    app.add_option("--slice", slice_arg,
+                   "Python-style slice notation (overrides firstRow/lastRow)");
+    app.add_flag("-v,--verbose", config.verbose, "Enable verbose output");
+    app.add_flag("--benchmark", config.benchmark,
+                 "Print timing stats (wall clock, rows/s, MB/s) to stderr");
+    app.add_flag("--json", config.json_output,
+                 "With --benchmark: emit JSON timing blob to stdout");
+
+    app.footer(
+        "Row Selection Examples:\n"
+        "  --firstRow 100 --lastRow 200    # Rows 100-200 (inclusive)\n"
+        "  --slice 10:20                   # Rows 10-19 (Python-style)\n"
+        "  --slice :100                    # First 100 rows\n"
+        "  --slice 50:                     # From row 50 to end\n"
+        "  --slice ::2                     # Every 2nd row\n"
+        "  --slice -10:                    # Last 10 rows\n\n"
+        "Examples:\n"
+        "  bcsv2csv data.bcsv\n"
+        "  bcsv2csv -d ';' data.bcsv output.csv\n"
+        "  bcsv2csv --no-header data.bcsv");
+
+    CLI11_PARSE(app, argc, argv);
+
+    try {
+        config.include_header = !no_header;
+
+        // Parse Python-style slice notation if provided
+        if (!slice_arg.empty()) {
+            try {
+                parseSlice(slice_arg, config);
+            } catch (const std::exception& e) {
+                throw std::runtime_error("Invalid slice argument: " + std::string(e.what()));
             }
         }
-    }
-    
-    if (config.input_file.empty() && !config.help) {
-        throw std::runtime_error("Input file is required");
-    }
-    
-    // Set default output file if not specified
-    if (config.output_file.empty() && !config.input_file.empty()) {
-        std::filesystem::path input_path(config.input_file);
-        config.output_file = input_path.stem().string() + ".csv";
-    }
-    
-    // Validate character conflicts
-    if (!config.help) {
+
+        // Set default output file if not specified
+        if (config.output_file.empty() && !config.input_file.empty()) {
+            std::filesystem::path input_path(config.input_file);
+            config.output_file = input_path.stem().string() + ".csv";
+        }
+
         // Validate row range arguments
         if (config.slice_parsed && (config.first_row != -1 || config.last_row != -1)) {
             std::cerr << "Warning: --slice overrides --firstRow and --lastRow arguments" << std::endl;
         }
-        
         if (!config.slice_parsed && config.first_row != -1 && config.last_row != -1) {
             if (config.first_row > config.last_row) {
-                throw std::runtime_error("firstRow (" + std::to_string(config.first_row) + 
+                throw std::runtime_error("firstRow (" + std::to_string(config.first_row) +
                                        ") cannot be greater than lastRow (" + std::to_string(config.last_row) + ")");
             }
         }
-    }
-    
-    return config;
-}
 
-int main(int argc, char* argv[]) {
-    try {
-        Config config = parseArgs(argc, argv);
-        
-        if (config.help) {
-            printUsage(argv[0]);
-            return 0;
-        }
-        
         if (config.verbose) {
             std::cerr << "Converting: " << config.input_file << " -> " << config.output_file << std::endl;
             std::cerr << "Delimiter: '" << config.delimiter << "'" << std::endl;

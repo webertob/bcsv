@@ -18,8 +18,7 @@
  *   - formatBytes()             — byte count → "1.23 MB" / "456 KB" / "789 bytes"
  *   - encodingDescription()     — row/file codec + level → summary string
  *   - printLayoutSummary()      — tabular layout dump to any ostream
- *   - parseFileCodecFlags()     — "--file-codec" string → FileFlags + compression level
- *   - validateRowCodec()        — "--row-codec" string validation
+ *   - resolveCodecFlags()       — codec strings → FileFlags + compression level
  *   - VALID_FILE_CODECS / VALID_ROW_CODECS — canonical string lists
  *
  * Tools opt-in to specific helpers via ordinary #include.
@@ -53,6 +52,40 @@ inline constexpr const char* VALID_ROW_CODECS[] = {
 
 inline constexpr const char* DEFAULT_FILE_CODEC = "packet_lz4_batch";
 inline constexpr const char* DEFAULT_ROW_CODEC  = "delta";
+
+// ── Version / program identity ─────────────────────────────────────
+
+/// Derive a clean tool name from argv[0]: strips the directory prefix
+/// and a trailing ".exe" (Windows), e.g. "C:\bin\bcsvHead.exe" → "bcsvHead".
+inline std::string programName(const char* argv0) {
+    std::string name = (argv0 && *argv0) ? argv0 : "bcsv";
+    // Strip directory (handle both '/' and '\\').
+    const auto slash = name.find_last_of("/\\");
+    if (slash != std::string::npos)
+        name = name.substr(slash + 1);
+    // Strip a trailing ".exe" (case-insensitive).
+    if (name.size() > 4) {
+        std::string ext = name.substr(name.size() - 4);
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (ext == ".exe")
+            name = name.substr(0, name.size() - 4);
+    }
+    return name;
+}
+
+/// One-line identity string, e.g. "bcsvHead (BCSV 1.5.1)".
+inline std::string versionTag(const std::string& tool) {
+    return tool + " (BCSV " + bcsv::getVersion() + ")";
+}
+
+/// Print the full --version block to `os`.
+inline void printVersion(const std::string& tool, std::ostream& os = std::cout) {
+    os << versionTag(tool) << "\n"
+       << "Binary-CSV command-line tools\n"
+       << "Copyright (c) 2025-2026 Tobias Weber\n"
+       << "License: MIT\n";
+}
 
 // ── columnTypeStr ──────────────────────────────────────────────────
 
@@ -152,29 +185,7 @@ inline void printLayoutSummary(const std::string& label,
     }
 }
 
-// ── Codec validation / mapping ────────────────────────────────────
-
-/// Validate a --row-codec string.  Throws std::runtime_error on invalid value.
-inline void validateRowCodec(const std::string& codec) {
-    if (codec != "delta" && codec != "zoh" && codec != "flat") {
-        throw std::runtime_error(
-            "Unknown row codec '" + codec +
-            "'. Expected: delta, zoh, flat.");
-    }
-}
-
-/// Validate a --file-codec string.  Throws std::runtime_error on invalid value.
-inline void validateFileCodec(const std::string& codec) {
-    if (codec != "packet_lz4_batch" &&
-        codec != "packet_lz4" &&
-        codec != "packet" &&
-        codec != "stream_lz4" &&
-        codec != "stream") {
-        throw std::runtime_error(
-            "Unknown file codec '" + codec +
-            "'. Expected: packet_lz4_batch, packet_lz4, packet, stream_lz4, stream.");
-    }
-}
+// ── Codec mapping ─────────────────────────────────────────────────
 
 /// Result of parsing file-codec settings into FileFlags + compression level.
 struct FileCodecSettings {

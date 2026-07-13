@@ -36,7 +36,7 @@
 
 #include <bcsv/bcsv.h>
 #include <bcsv/std_charconv_compat.h>
-#include "cli_common.h"
+#include "cli_app.h"
 
 namespace fs = std::filesystem;
 
@@ -64,163 +64,9 @@ struct Config {
     double      tolerance       = 0.0;      // --tolerance (absolute epsilon)
     bool        json            = false;    // --json
     bool        verbose         = false;
-    bool        help            = false;
 };
 
-static void printUsage(const char* program_name) {
-    std::cout << "Usage: " << program_name << " [MODE] [OPTIONS] INPUT_FILE [OUTPUT_FILE]\n"
-        "\n"
-        "Change BCSV column types. Auto modes derive the smallest lossless type by\n"
-        "scanning the data; explicit modes apply a caller-supplied type SPEC.\n"
-        "\n"
-        "Modes (choose one; default: --optimize if an output is given, else --scan):\n"
-        "  --scan               Report smallest lossless type per column (read-only)\n"
-        "  --optimize           Auto-derive smallest lossless types and apply\n"
-        "  --dynamic SPEC       Apply SPEC per column, skipping any lossy column\n"
-        "  --static  SPEC       Apply SPEC, clamping lossy values (forced)\n"
-        "\n"
-        "SPEC (quote it — shells expand unquoted { }):\n"
-        "  map form   '0=int32,1=uint64,7:8=float,-1=bool'  (index or i:j range = type)\n"
-        "  list form  'int32,uint64,bool,...'               (one type per column, all)\n"
-        "  types: bool int8..int64 uint8..uint64 float double string\n"
-        "         (aliases: i32 ui64 f d b str; int=int32, long=int64, ch=uint8, ...)\n"
-        "\n"
-        "Output (an output path enables apply):\n"
-        "  -o, --output FILE    Output BCSV file (alias for the OUTPUT_FILE positional)\n"
-        "  --in-place           Rewrite INPUT_FILE in place (temp + atomic rename)\n"
-        "  --overwrite          Allow overwriting an existing OUTPUT_FILE\n"
-        "\n"
-        "Options:\n"
-        "  --cols SPEC          Restrict --scan/--optimize to columns (e.g. '0:3,5,7:-1')\n"
-        "  --tolerance TOL      Absolute epsilon for float/int loss tests (default 0.0)\n"
-        "  --string-to-value    Let --scan/--optimize consider STRING->numeric (opt-in)\n"
-        "  --json               Emit the plan/result as JSON on stdout\n"
-        "  -v, --verbose        Per-column details and progress to stderr\n"
-        "  -h, --help           Show this help message\n"
-        "\n"
-        "Exit codes:\n"
-        "  0  Success\n"
-        "  1  Runtime error (invalid file, conversion failed)\n"
-        "  2  Argument error\n";
-}
-
-static Config parseArgs(int argc, char* argv[]) {
-    Config config;
-    bool   mode_set = false;
-
-    auto setMode = [&](Mode m) {
-        if (mode_set && config.mode != m)
-            throw ArgError("Only one mode may be given "
-                           "(--scan / --optimize / --static / --dynamic)");
-        config.mode          = m;
-        config.mode_explicit = true;
-        mode_set             = true;
-    };
-
-    for (int i = 1; i < argc; ++i) {
-        std::string arg = argv[i];
-
-        if (arg == "-h" || arg == "--help") {
-            config.help = true;
-            return config;
-        } else if (arg == "-v" || arg == "--verbose") {
-            config.verbose = true;
-        } else if (arg == "--json") {
-            config.json = true;
-        } else if (arg == "--scan") {
-            setMode(Mode::Scan);
-        } else if (arg == "--optimize") {
-            setMode(Mode::Optimize);
-        } else if (arg == "--static") {
-            if (i + 1 >= argc)
-                throw ArgError("--static requires a type SPEC argument");
-            setMode(Mode::Static);
-            config.type_spec = argv[++i];
-        } else if (arg == "--dynamic") {
-            if (i + 1 >= argc)
-                throw ArgError("--dynamic requires a type SPEC argument");
-            setMode(Mode::Dynamic);
-            config.type_spec = argv[++i];
-        } else if (arg == "--in-place") {
-            config.in_place = true;
-        } else if (arg == "--overwrite") {
-            config.overwrite = true;
-        } else if (arg == "--string-to-value") {
-            config.string_to_value = true;
-        } else if (arg == "--tolerance") {
-            if (i + 1 >= argc)
-                throw ArgError("--tolerance requires a numeric argument");
-            std::string tv = argv[++i];
-            try {
-                size_t pos       = 0;
-                config.tolerance = std::stod(tv, &pos);
-                if (pos != tv.size())
-                    throw std::invalid_argument("trailing characters");
-            } catch (const ArgError&) {
-                throw;
-            } catch (...) {
-                throw ArgError("--tolerance requires a numeric argument, got '" + tv + "'");
-            }
-            if (!std::isfinite(config.tolerance) || config.tolerance < 0.0)
-                throw ArgError("--tolerance must be a finite non-negative number");
-        } else if (arg == "--cols") {
-            if (i + 1 >= argc)
-                throw ArgError("--cols requires an argument");
-            config.cols_spec = argv[++i];
-        } else if (arg == "-o" || arg == "--output") {
-            if (i + 1 >= argc)
-                throw ArgError("-o/--output requires an argument");
-            if (!config.output_file.empty())
-                throw ArgError("Output specified more than once");
-            config.output_file = argv[++i];
-        } else if (arg.starts_with("-") && arg != "-") {
-            throw ArgError("Unknown option: " + arg);
-        } else {
-            // Positional. A bare token containing '=' is almost always a
-            // brace-expanded SPEC (fish/bash split {a=b,c=d} into words).
-            if (arg.find('=') != std::string::npos)
-                throw ArgError("Positional argument '" + arg +
-                               "' looks like a type SPEC — quote the SPEC and pass it "
-                               "with --static/--dynamic (shells expand unquoted { }).");
-            if (config.input_file.empty()) {
-                config.input_file = arg;
-            } else if (config.output_file.empty()) {
-                config.output_file = arg;
-            } else {
-                throw ArgError("Too many positional arguments. Expected INPUT_FILE [OUTPUT_FILE].");
-            }
-        }
-    }
-
-    if (config.help)
-        return config;
-
-    if (config.input_file.empty())
-        throw ArgError("Input file is required");
-
-    const bool has_output = config.in_place || !config.output_file.empty();
-
-    // Default-mode inference: no explicit mode → optimize when an output path is
-    // present (apply), otherwise scan (read-only).
-    if (!config.mode_explicit)
-        config.mode = has_output ? Mode::Optimize : Mode::Scan;
-
-    // ── Conflict matrix (all → argument error) ──
-    if (config.mode == Mode::Scan && has_output)
-        throw ArgError("--scan is read-only; use --optimize to apply "
-                       "(or drop the output path).");
-    if ((config.mode == Mode::Static || config.mode == Mode::Dynamic) &&
-        !config.cols_spec.empty())
-        throw ArgError("--cols is not allowed with --static/--dynamic; "
-                       "the SPEC already defines the column scope.");
-    if (config.in_place && !config.output_file.empty())
-        throw ArgError("--in-place does not accept an OUTPUT_FILE");
-
-    // Apply when a writing mode has somewhere to write.
-    config.convert = (config.mode != Mode::Scan) && has_output;
-
-    return config;
-}
+// Usage/help is generated by CLI11 in main() below.
 
 // Exact power-of-two boundaries for double→int64/uint64 range tests.
 // static_cast<double>(INT64_MAX) rounds UP to 2^63 and static_cast<double>(UINT64_MAX)
@@ -1379,13 +1225,111 @@ static void writeViaTemp(const std::string&    input,
 // ── Main ────────────────────────────────────────────────────────────
 
 int main(int argc, char* argv[]) {
-    try {
-        Config config = parseArgs(argc, argv);
+    Config      config;
+    bool        opt_scan = false, opt_optimize = false;
+    std::string static_spec, dynamic_spec;
 
-        if (config.help) {
-            printUsage(argv[0]);
-            return 0;
+    CLI::App app{"Change BCSV column types (scan / optimize / static / dynamic).", "bcsvCast"};
+    argv = app.ensure_utf8(argv);
+    bcsv_cli::setupVersionFlag(app, bcsv_cli::programName(argv[0]));
+
+    app.add_option("INPUT_FILE", config.input_file, "Input BCSV file");
+    app.add_option("OUTPUT_FILE", config.output_file, "Output BCSV file (an output enables apply)");
+    auto* scan_opt   = app.add_flag("--scan", opt_scan,
+                                    "Report smallest lossless type per column (read-only)");
+    auto* opt_opt    = app.add_flag("--optimize", opt_optimize,
+                                    "Auto-derive smallest lossless types and apply");
+    auto* static_opt = app.add_option("--static", static_spec,
+                                      "Apply SPEC, clamping lossy values (forced)")->type_name("SPEC");
+    auto* dyn_opt    = app.add_option("--dynamic", dynamic_spec,
+                                      "Apply SPEC per column, skipping any lossy column")->type_name("SPEC");
+    app.add_option("-o,--output", config.output_file,
+                   "Output BCSV file (alias for the OUTPUT_FILE positional)");
+    app.add_flag("--in-place", config.in_place, "Rewrite INPUT_FILE in place (temp + atomic rename)");
+    app.add_flag("--overwrite", config.overwrite, "Allow overwriting an existing OUTPUT_FILE");
+    app.add_flag("--string-to-value", config.string_to_value,
+                 "Let --scan/--optimize consider STRING->numeric (opt-in)");
+    app.add_option("--cols", config.cols_spec,
+                   "Restrict --scan/--optimize to columns (e.g. '0:3,5,7:-1')");
+    app.add_option("--tolerance", config.tolerance,
+                   "Absolute epsilon for float/int loss tests")
+        ->check([](const std::string& s) -> std::string {
+            try {
+                size_t pos = 0;
+                double v   = std::stod(s, &pos);
+                if (pos != s.size())
+                    return "--tolerance requires a numeric argument, got '" + s + "'";
+                if (!std::isfinite(v) || v < 0.0)
+                    return "--tolerance must be a finite non-negative number";
+                return {};
+            } catch (...) {
+                return "--tolerance requires a numeric argument, got '" + s + "'";
+            }
+        })
+        ->capture_default_str();
+    app.add_flag("--json", config.json, "Emit the plan/result as JSON on stdout");
+    app.add_flag("-v,--verbose", config.verbose, "Per-column details and progress to stderr");
+
+    app.footer(
+        "Modes (choose one; default: --optimize if an output is given, else --scan).\n\n"
+        "SPEC (quote it — shells expand unquoted { }):\n"
+        "  map form   '0=int32,1=uint64,7:8=float,-1=bool'  (index or i:j range = type)\n"
+        "  list form  'int32,uint64,bool,...'               (one type per column, all)\n"
+        "  types: bool int8..int64 uint8..uint64 float double string\n\n"
+        "Exit codes: 0 = success, 1 = runtime error, 2 = argument error");
+
+    if (auto rc = bcsv_cli::parseHandled(app, argc, argv, 2)) return *rc;
+
+    try {
+        // ── Resolve mode (mutually exclusive) ──
+        const int modes_given = (scan_opt->count() > 0) + (opt_opt->count() > 0)
+                              + (static_opt->count() > 0) + (dyn_opt->count() > 0);
+        if (modes_given > 1)
+            throw ArgError("Only one mode may be given "
+                           "(--scan / --optimize / --static / --dynamic)");
+        if (scan_opt->count()) {
+            config.mode = Mode::Scan;     config.mode_explicit = true;
+        } else if (opt_opt->count()) {
+            config.mode = Mode::Optimize; config.mode_explicit = true;
+        } else if (static_opt->count()) {
+            config.mode = Mode::Static;   config.mode_explicit = true;
+            config.type_spec = static_spec;
+        } else if (dyn_opt->count()) {
+            config.mode = Mode::Dynamic;  config.mode_explicit = true;
+            config.type_spec = dynamic_spec;
         }
+
+        // A positional containing '=' is almost always a brace-expanded SPEC
+        // (fish/bash split {a=b,c=d} into words).
+        for (const std::string* p : {&config.input_file, &config.output_file})
+            if (p->find('=') != std::string::npos)
+                throw ArgError("Positional argument '" + *p +
+                               "' looks like a type SPEC — quote the SPEC and pass it "
+                               "with --static/--dynamic (shells expand unquoted { }).");
+
+        if (config.input_file.empty())
+            throw ArgError("Input file is required");
+
+        const bool has_output = config.in_place || !config.output_file.empty();
+
+        // Default-mode inference: no explicit mode → optimize when an output path
+        // is present (apply), otherwise scan (read-only).
+        if (!config.mode_explicit)
+            config.mode = has_output ? Mode::Optimize : Mode::Scan;
+
+        // ── Conflict matrix (all → argument error) ──
+        if (config.mode == Mode::Scan && has_output)
+            throw ArgError("--scan is read-only; use --optimize to apply "
+                           "(or drop the output path).");
+        if ((config.mode == Mode::Static || config.mode == Mode::Dynamic) &&
+            !config.cols_spec.empty())
+            throw ArgError("--cols is not allowed with --static/--dynamic; "
+                           "the SPEC already defines the column scope.");
+        if (config.in_place && !config.output_file.empty())
+            throw ArgError("--in-place does not accept an OUTPUT_FILE");
+
+        // Apply when a writing mode has somewhere to write.
+        config.convert = (config.mode != Mode::Scan) && has_output;
 
         if (!fs::exists(config.input_file)) {
             throw std::runtime_error("Input file does not exist: " + config.input_file);
