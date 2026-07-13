@@ -18,3 +18,7 @@ prune examples
 global-exclude *.pyc
 global-exclude __pycache__
 global-exclude .DS_Store
+# Bundled CLI tool sources (synced by sync_headers.py; compiled into the wheel)
+recursive-include src *.cpp
+recursive-include src *.h
+recursive-include src *.hpp

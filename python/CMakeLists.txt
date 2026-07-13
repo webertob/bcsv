@@ -159,3 +159,77 @@ target_compile_definitions(_bcsv PRIVATE BCSV_HAS_BATCH_CODEC=1)
 
 # ── Install ─────────────────────────────────────────────────────────────
 install(TARGETS _bcsv LIBRARY DESTINATION pybcsv)
+
+# ── Bundled CLI tools ───────────────────────────────────────────────────
+# A curated subset of the BCSV CLI tools is compiled into the wheel and
+# installed into the environment's scripts dir (on PATH in every venv), so
+# `pip install pybcsv` ships the high-performance converters with a version
+# that always matches the bundled library. Sources come from the parent
+# checkout (CI / full clone) or from the copies sync_headers.py places under
+# python/src/ for standalone sdist builds.
+option(PYBCSV_BUILD_TOOLS "Build and bundle the BCSV CLI tools" ON)
+
+set(PARENT_TOOLS_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/../src/tools")
+set(LOCAL_TOOLS_DIR   "${CMAKE_CURRENT_SOURCE_DIR}/src/tools")
+set(PARENT_SHARED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../src/shared")
+set(LOCAL_SHARED_DIR  "${CMAKE_CURRENT_SOURCE_DIR}/src/shared")
+
+if(EXISTS "${PARENT_TOOLS_DIR}/csv2bcsv.cpp")
+    set(BCSV_TOOLS_DIR  "${PARENT_TOOLS_DIR}")
+    set(BCSV_SHARED_DIR "${PARENT_SHARED_DIR}")
+elseif(EXISTS "${LOCAL_TOOLS_DIR}/csv2bcsv.cpp")
+    set(BCSV_TOOLS_DIR  "${LOCAL_TOOLS_DIR}")
+    set(BCSV_SHARED_DIR "${LOCAL_SHARED_DIR}")
+else()
+    set(BCSV_TOOLS_DIR "")
+endif()
+
+set(CLI11_INCLUDE_DIR "${BCSV_INCLUDE_DIR}/CLI11-2.6.2")
+
+if(PYBCSV_BUILD_TOOLS AND BCSV_TOOLS_DIR AND EXISTS "${CLI11_INCLUDE_DIR}/CLI11.hpp")
+    # Keep in sync with pybcsv/tools.py::TOOLS.
+    set(PYBCSV_TOOLS
+        csv2bcsv bcsv2csv bcsvHeader bcsvCast bcsvValidate
+        bcsvHead bcsvTail bcsvSampler bcsvCompare bcsvRepair bcsvGenerator)
+
+    # Compile the vendored LZ4 once, shared by every tool (the extension
+    # module compiles its own copy because nanobind owns that target).
+    add_library(pybcsv_tools_lz4 STATIC ${LZ4_SOURCES})
+    target_include_directories(pybcsv_tools_lz4 PUBLIC ${LZ4_DIR})
+
+    foreach(tool IN LISTS PYBCSV_TOOLS)
+        add_executable(${tool} "${BCSV_TOOLS_DIR}/${tool}.cpp")
+        target_include_directories(${tool} PRIVATE
+            ${CMAKE_CURRENT_BINARY_DIR}/include
+            ${BCSV_INCLUDE_DIR}
+            ${BCSV_TOOLS_DIR}
+            ${BCSV_SHARED_DIR}
+        )
+        target_include_directories(${tool} SYSTEM PRIVATE ${CLI11_INCLUDE_DIR})
+        target_link_libraries(${tool} PRIVATE pybcsv_tools_lz4)
+        target_compile_definitions(${tool} PRIVATE BCSV_HAS_BATCH_CODEC=1)
+        set_target_properties(${tool} PROPERTIES
+            CXX_STANDARD 20
+            CXX_STANDARD_REQUIRED ON
+        )
+        if(MSVC)
+            target_compile_options(${tool} PRIVATE /O2 /std:c++20)
+        elseif(APPLE)
+            target_compile_options(${tool} PRIVATE
+                -O3 -fexperimental-library -mmacosx-version-min=13.3)
+        else()
+            target_compile_options(${tool} PRIVATE -O3)
+            target_link_libraries(${tool} PRIVATE pthread)
+            target_link_options(${tool} PRIVATE -s)   # strip: ~60% smaller wheels
+        endif()
+    endforeach()
+
+    if(DEFINED SKBUILD_SCRIPTS_DIR)
+        install(TARGETS ${PYBCSV_TOOLS} RUNTIME DESTINATION "${SKBUILD_SCRIPTS_DIR}")
+    else()
+        install(TARGETS ${PYBCSV_TOOLS} RUNTIME DESTINATION bin)
+    endif()
+    message(STATUS "[pybcsv] Bundling CLI tools: ${PYBCSV_TOOLS}")
+else()
+    message(STATUS "[pybcsv] CLI tools not bundled (sources or CLI11 not found, or disabled)")
+endif()

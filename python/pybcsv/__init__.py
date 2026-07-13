@@ -26,6 +26,9 @@ except ImportError:
             "See https://github.com/webertob/bcsv/tree/main/python"
         ) from _exc
 
+# Bundled CLI tools (csv2bcsv, bcsv2csv, ...) — see pybcsv.tools.run()/path()
+from . import tools
+
 # Try to import pandas utilities if pandas is available
 try:
     from .pandas_utils import write_dataframe, read_dataframe, to_csv, from_csv
@@ -112,6 +115,8 @@ def iter_arrow_batches(reader, *, batch_size=512000, columns=None, start_row=0):
 
 __all__ = [
     "__version__",
+    # Bundled CLI tools
+    "tools",
     # Core classes
     "Layout",
     "Writer",

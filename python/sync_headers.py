@@ -126,6 +126,36 @@ def sync_headers(project_root=None, force=False, verbose=False):
                     if verbose: print(f"  Copying {item.name}")
                     shutil.copy2(item, target_file)
 
+    # Sync CLI11 header (needed by the bundled CLI tools)
+    source_cli11_dir = source_include_dir / "CLI11-2.6.2"
+    target_cli11_dir = target_include_dir / "CLI11-2.6.2"
+    if source_cli11_dir.exists():
+        if verbose:
+            print("Syncing CLI11 header...")
+        target_cli11_dir.mkdir(exist_ok=True)
+        for item in source_cli11_dir.glob("*"):
+            if item.is_file() and item.suffix in (".hpp", ".h") or item.name == "LICENSE":
+                target_file = target_cli11_dir / item.name
+                if not target_file.exists() or force or item.stat().st_mtime > target_file.stat().st_mtime:
+                    if verbose: print(f"  Copying {item.name}")
+                    shutil.copy2(item, target_file)
+
+    # Sync CLI tool sources + shared helpers (compiled into the wheel and
+    # installed into the scripts dir; see PYBCSV_TOOLS in CMakeLists.txt)
+    for rel in ("src/tools", "src/shared"):
+        source_dir = project_root / rel
+        target_dir = python_dir / rel
+        if source_dir.exists():
+            if verbose:
+                print(f"Syncing {rel}...")
+            target_dir.mkdir(parents=True, exist_ok=True)
+            for item in source_dir.glob("*"):
+                if item.is_file() and item.suffix in (".cpp", ".h", ".hpp"):
+                    target_file = target_dir / item.name
+                    if not target_file.exists() or force or item.stat().st_mtime > target_file.stat().st_mtime:
+                        if verbose: print(f"  Copying {item.name}")
+                        shutil.copy2(item, target_file)
+
     # Sync boost headers if they exist
     source_boost_dir = source_include_dir / "boost-1.89.0"
     target_boost_dir = target_include_dir / "boost-1.89.0"

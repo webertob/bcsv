@@ -110,6 +110,40 @@ with pybcsv.ReaderDirectAccess() as da:
     print(da.read(100))  # alternative syntax
 ```
 
+## Bundled Native CLI Tools
+
+The wheel ships the core BCSV command-line tools as native, version-matched
+binaries — installed into the environment's scripts directory, so they are on
+PATH in an activated venv with no compiler or CMake required:
+
+| Tool | Purpose |
+|------|---------|
+| `csv2bcsv` | CSV → BCSV with validated type inference (see the main CLI docs) |
+| `bcsv2csv` | BCSV → CSV with row/column selection |
+| `bcsvHeader` | Show a file's schema |
+| `bcsvHead` / `bcsvTail` | Show the first/last N rows |
+| `bcsvCast` | Change/narrow column types |
+| `bcsvSampler` | Filter/project rows with a condition expression |
+| `bcsvValidate` | Integrity-check a file |
+| `bcsvRepair` | Recover data from truncated/corrupted files |
+| `bcsvCompare` | Compare two files (with float tolerance) |
+| `bcsvGenerator` | Generate synthetic test datasets |
+
+```bash
+csv2bcsv data.csv data.bcsv        # from an activated environment
+```
+
+```python
+import pybcsv
+
+pybcsv.tools.run("csv2bcsv", "data.csv", "data.bcsv", "--overwrite")
+print(pybcsv.tools.run("bcsvHeader", "data.bcsv").stdout)
+pybcsv.tools.path("csv2bcsv")      # absolute path, e.g. for custom pipelines
+```
+
+Source builds can opt out with `-DPYBCSV_BUILD_TOOLS=OFF`; the full tool suite
+(and docs) live in the main repository under `src/tools/`.
+
 ## Parquet Conversion Tools (CLI)
 
 Installing `pybcsv` provides two streaming command-line converters (require the
