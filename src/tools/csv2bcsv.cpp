@@ -1,24 +1,32 @@
 /*
  * Copyright (c) 2025-2026 Tobias Weber <weber.tobias.md@gmail.com>
- * 
+ *
  * This file is part of the BCSV library.
- * 
- * Licensed under the MIT License. See LICENSE file in the project root 
+ *
+ * Licensed under the MIT License. See LICENSE file in the project root
  * for full license information.
  */
 
 /**
  * @file csv2bcsv.cpp
  * @brief CLI tool to convert CSV files to BCSV format
- * 
- * This tool reads a CSV file and converts it to the binary BCSV format.
- * It automatically detects data types and creates an appropriate layout.
+ *
+ * Reads a CSV file and converts it to the binary BCSV format. Column types are
+ * inferred from a sample of the data (default 1000 rows, --sample) using the
+ * shared round-trip-exact probe (type_probe.h) and validated against EVERY row
+ * during conversion: a later cell that does not fit the inferred type triggers
+ * a full-file re-scan and one retry with the widened types, so no information
+ * is ever silently truncated. Types and names can also be forced per column
+ * (--types/--names, bcsvCast SPEC grammar), the header can be skipped or
+ * absent, and row/column subsets can be selected (--rows/--cols).
  */
 
 #include <cmath>
 #include <iostream>
 #include <fstream>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <map>
 #include <filesystem>
@@ -26,19 +34,43 @@
 #include <iomanip>
 #include <bcsv/bcsv.h>
 #include "cli_app.h"
+#include "spec_parse.h"
+#include "type_probe.h"
+
+namespace fs = std::filesystem;
+
+// Shared probe/cast machinery from type_probe.h.
+using bcsv_cli::CellClass;
+using bcsv_cli::CellValue;
+using bcsv_cli::CsvColumnProbe;
+
+// ── Arg error type — exit code 2 (same convention as bcsvCast) ──────
+
+struct ArgError : std::invalid_argument {
+    using std::invalid_argument::invalid_argument;
+};
 
 struct Config {
     std::string input_file;
     std::string output_file;
     char delimiter = '\0';  // '\0' means auto-detect
     char decimal_separator = '.';  // Default to point, can be changed to comma
-    bool has_header = true;
+    bool has_header = true;   // a header row exists (false with --no-header)
+    bool skip_header = false; // consume and discard the header row
     bool verbose = false;
     bool force_delimiter = false;  // True if user explicitly set delimiter
     bool collapse_whitespace = false;  // Treat runs of spaces/tabs as one delimiter
     bool overwrite = false;
     bool benchmark = false;  // Print timing stats to stderr
-    bool json_output = false;  // Emit JSON timing blob to stdout
+    bool json_output = false;  // Emit JSON timing blob to stderr
+
+    std::string names_spec;   // --names SPEC
+    std::string types_spec;   // --types SPEC
+    std::string rows_spec;    // --rows  (data-row indices, streaming: no negatives)
+    std::string cols_spec;    // --cols  (CSV column indices or names)
+    size_t sample_rows = 1000; // --sample N; 0 = scan the whole file before writing
+    double tolerance   = 0.0;  // --tolerance (probe + FLOAT round-trip check)
+    bool   strict      = false; // --strict: abort instead of clamping forced misfits
 
     // Codec selection (standardised with bcsvGenerator / bcsvSampler)
     std::string row_codec  = bcsv_cli::DEFAULT_ROW_CODEC;   // delta | zoh | flat
@@ -47,240 +79,14 @@ struct Config {
     size_t block_size_kb     = bcsv::DEFAULT_PACKET_SIZE_KB;
 };
 
-// Enhanced data type detection with range analysis
-struct ColumnStats {
-    int64_t min_int = INT64_MAX;
-    int64_t max_int = INT64_MIN;
-    double min_double = std::numeric_limits<double>::max();
-    double max_double = std::numeric_limits<double>::lowest();
-    bool has_decimals = false;
-    bool all_integers = true;
-    bool all_booleans = true;
-    bool all_empty = true;
-    bool all_float_compatible = true;  // New: tracks if all values can be represented exactly in float
-    uint32_t max_decimal_places = 0;  // Track the maximum decimal places in input strings
-    bool requires_high_precision = false;  // True if any value has >6 decimal places or >7 total digits
-    size_t sample_count = 0;
-};
-
-// Detect optimal data type based on column statistics
-bcsv::ColumnType detectOptimalType(const ColumnStats& stats) {
-    if (stats.all_empty || stats.sample_count == 0) {
-        return bcsv::ColumnType::STRING;
-    }
-    
-    if (stats.all_booleans && stats.sample_count > 0) {
-        return bcsv::ColumnType::BOOL;
-    }
-    
-    if (stats.all_integers && !stats.has_decimals) {
-        // Choose smallest integer type that can hold the range
-        if (stats.min_int >= 0 && stats.max_int <= 255) {
-            return bcsv::ColumnType::UINT8;
-        } else if (stats.min_int >= -128 && stats.max_int <= 127) {
-            return bcsv::ColumnType::INT8;
-        } else if (stats.min_int >= 0 && stats.max_int <= 65535) {
-            return bcsv::ColumnType::UINT16;
-        } else if (stats.min_int >= -32768 && stats.max_int <= 32767) {
-            return bcsv::ColumnType::INT16;
-        } else if (stats.min_int >= 0 && stats.max_int <= static_cast<int64_t>(4294967295ULL)) {
-            return bcsv::ColumnType::UINT32;
-        } else if (stats.min_int >= INT32_MIN && stats.max_int <= INT32_MAX) {
-            return bcsv::ColumnType::INT32;
-        } else if (stats.min_int >= 0) {
-            return bcsv::ColumnType::UINT64;
-        } else {
-            return bcsv::ColumnType::INT64;
-        }
-    }
-    
-    if (stats.has_decimals) {
-        // Use string-based precision analysis to choose optimal floating-point type
-        if (stats.requires_high_precision) {
-            // High precision explicitly requested by user (>6 decimal places or >7 total digits)
-#if BCSV_HAS_FLOAT128
-            // Use 128-bit quadruple precision for maximum accuracy
-            return bcsv::ColumnDataType::FLOAT128;
-#else
-            // Fall back to double precision
-            return bcsv::ColumnType::DOUBLE;
-#endif
-        } else if (stats.max_decimal_places <= 2) {
-            // Very low precision requirements - consider half precision types
-#if BCSV_HAS_FLOAT16
-            // Use 16-bit half precision for maximum space efficiency
-            return bcsv::ColumnDataType::FLOAT16;
-#else
-            // Fall back to single precision
-            return bcsv::ColumnType::FLOAT;
-#endif
-        } else if (stats.max_decimal_places <= 6) {
-            // User provided reasonable precision - use single precision
-            // Float provides ~7 decimal digits, which is sufficient for ≤6 decimal places
-            return bcsv::ColumnType::FLOAT;
-        } else {
-            // Higher precision requirements need double precision
-            return bcsv::ColumnType::DOUBLE;
-        }
-    }
-    
-    return bcsv::ColumnType::STRING;
-}
-
-// Analyze the precision requirements from the original string
-std::pair<uint32_t, bool> analyzeStringPrecision(const std::string& value, char decimal_separator = '.') {
-    // Handle scientific notation (e.g., "1.0233453e+23")
-    std::string mantissa_part = value;
-    size_t exp_pos = value.find_first_of("eE");
-    if (exp_pos != std::string::npos) {
-        mantissa_part = value.substr(0, exp_pos);
-    }
-    
-    // Find decimal point in mantissa
-    size_t decimal_pos = mantissa_part.find(decimal_separator);
-    if (decimal_pos == std::string::npos) {
-        // No decimal point - check if this is an integer or scientific notation without decimal
-        if (exp_pos != std::string::npos) {
-            // Scientific notation without decimal (e.g., "123e+5")
-            // Count digits in the integer part as significant digits
-            uint32_t significant_digits = 0;
-            bool found_first_nonzero = false;
-            
-            for (char c : mantissa_part) {
-                if (std::isdigit(c)) {
-                    if (c != '0' || found_first_nonzero) {
-                        significant_digits++;
-                        if (c != '0') found_first_nonzero = true;
-                    }
-                }
-            }
-            
-            // No decimal places, but check if total significant digits require high precision
-            bool high_precision = significant_digits > 7;
-            return {0, high_precision};
-        }
-        return {0, false}; // Plain integer, no decimal places, not high precision
-    }
-    
-    // Count decimal places - RESPECT USER INTENT by keeping trailing zeros
-    // The user explicitly wrote those trailing zeros, indicating desired precision
-    std::string decimal_part = mantissa_part.substr(decimal_pos + 1);
-    uint32_t decimal_places = static_cast<uint32_t>(decimal_part.length());
-    
-    // Count total significant digits in the mantissa
-    std::string digits_only;
-    bool found_first_nonzero = false;
-    bool after_decimal = false;
-    
-    for (char c : mantissa_part) {
-        if (c == decimal_separator) {
-            after_decimal = true;
-        } else if (std::isdigit(c)) {
-            if (c != '0' || found_first_nonzero || after_decimal) {
-                digits_only += c;
-                if (c != '0') found_first_nonzero = true;
-            }
-        }
-    }
-    
-    // For scientific notation, the meaningful precision is determined by the mantissa
-    // Example: "1.0233453e+23" has 8 meaningful digits (1 + 7 after decimal)
-    uint32_t total_significant_digits = static_cast<uint32_t>(digits_only.length());
-    
-    // Determine if high precision is required
-    // Use >6 decimal places or >7 total significant digits as threshold
-    bool high_precision = (decimal_places > 6) || (total_significant_digits > 7);
-    
-    return {decimal_places, high_precision};
-}
-
-// Enhanced data type detection helper
-void analyzeValue(const std::string& value, ColumnStats& stats, char decimal_separator = '.') {
-    if (value.empty()) {
-        return; // Don't count empty values
-    }
-    
-    stats.all_empty = false;
-    stats.sample_count++;
-    
-    // Check for boolean
-    std::string lower_val = value;
-    std::transform(lower_val.begin(), lower_val.end(), lower_val.begin(), 
-        [](char c) { return static_cast<char>(::tolower(c)); });
-    if (lower_val == "true" || lower_val == "false" || lower_val == "1" || lower_val == "0") {
-        if (stats.all_booleans) {
-            return; // Still could be boolean
-        }
-    } else {
-        stats.all_booleans = false;
-    }
-    
-    // Normalize decimal separator for parsing
-    std::string normalized_value = value;
-    if (decimal_separator != '.') {
-        std::replace(normalized_value.begin(), normalized_value.end(), decimal_separator, '.');
-    }
-    
-    // Try to parse as number
-    char* end;
-    errno = 0;
-    
-    // Try integer first (only if no decimal separator in original value)
-    if (value.find(decimal_separator) == std::string::npos) {
-        long long int_val = strtoll(normalized_value.c_str(), &end, 10);
-        if (errno == 0 && *end == '\0' && end != normalized_value.c_str()) {
-            // Valid integer
-            stats.min_int = std::min(stats.min_int, static_cast<int64_t>(int_val));
-            stats.max_int = std::max(stats.max_int, static_cast<int64_t>(int_val));
-            return;
-        }
-    }
-    
-    // Try double
-    double double_val = strtod(normalized_value.c_str(), &end);
-    if (errno == 0 && *end == '\0' && end != normalized_value.c_str()) {
-        // Valid double
-        stats.all_integers = false;
-        stats.has_decimals = true;
-        stats.min_double = std::min(stats.min_double, double_val);
-        stats.max_double = std::max(stats.max_double, double_val);
-        
-        // Analyze the precision requirements from the original string
-        auto [decimal_places, high_precision] = analyzeStringPrecision(value, decimal_separator);
-        stats.max_decimal_places = std::max(stats.max_decimal_places, decimal_places);
-        if (high_precision) {
-            stats.requires_high_precision = true;
-        }
-        
-        // Check if this specific value can be represented exactly in float
-        // (only relevant if string precision doesn't already require double).
-        // Non-finite values are float-representable by definition — without
-        // the isfinite guard a single "nan" cell forces the column to DOUBLE
-        // because NaN != NaN is always true.
-        if (stats.all_float_compatible && !high_precision && std::isfinite(double_val)) {
-            float float_val = static_cast<float>(double_val);
-            if (static_cast<double>(float_val) != double_val) {
-                stats.all_float_compatible = false;
-            }
-        }
-        
-        return;
-    }
-    
-    // Must be string
-    stats.all_integers = false;
-    stats.all_booleans = false;
-    stats.has_decimals = false;
-}
-
 // Automatic delimiter detection
-char detectDelimiter(const std::string& sample_line) {
+static char detectDelimiter(const std::string& sample_line) {
     const std::vector<char> delimiters = {',', ';', '\t', '|'};
     std::map<char, int> delimiter_counts;
-    
+
     bool in_quotes = false;
     char quote_char = '"';
-    
+
     for (char c : sample_line) {
         if (c == quote_char) {
             in_quotes = !in_quotes;
@@ -292,7 +98,7 @@ char detectDelimiter(const std::string& sample_line) {
             }
         }
     }
-    
+
     // Return delimiter with highest count
     char best_delimiter = ',';
     int max_count = 0;
@@ -302,71 +108,673 @@ char detectDelimiter(const std::string& sample_line) {
             best_delimiter = pair.first;
         }
     }
-    
+
     return best_delimiter;
 }
 
-// Parse CSV line with proper quote handling
-std::vector<std::string> parseCSVLine(const std::string& line, char delimiter, char quote_char) {
-    std::vector<std::string> fields;
-    std::string current_field;
-    bool in_quotes = false;
-    bool quote_started = false;
-    
-    for (size_t i = 0; i < line.length(); ++i) {
-        char c = line[i];
-        
-        if (c == quote_char) {
-            if (!quote_started && current_field.empty()) {
-                // Starting quoted field
-                in_quotes = true;
-                quote_started = true;
-            } else if (in_quotes) {
-                // Check for escaped quote (double quote)
-                if (i + 1 < line.length() && line[i + 1] == quote_char) {
-                    current_field += quote_char;
-                    ++i; // Skip the next quote
-                } else {
-                    // End of quoted field
-                    in_quotes = false;
-                }
-            } else {
-                // Quote in unquoted field (treat as regular character)
-                current_field += c;
-            }
-        } else if (c == delimiter && !in_quotes) {
-            // Field separator
-            fields.push_back(current_field);
-            current_field.clear();
-            quote_started = false;
-        } else {
-            current_field += c;
+// ── Column plan ──────────────────────────────────────────────────────
+
+struct ColumnPlan {
+    std::string      name;
+    bcsv::ColumnType type     = bcsv::ColumnType::STRING;
+    bool             forced   = false;  // --types pinned it; never widened
+    bool             selected = true;   // inside the --cols selection
+    bool             overflow_warn = false;  // STRING because numeric data exceeds 64-bit/double
+    uint64_t         clamped      = 0;  // forced-type cells saturated (write pass)
+    uint64_t         unparseable  = 0;  // forced-type cells with unparseable content
+};
+
+// One CSV record normalised against the expected column count.
+// Short rows are padded with empty cells; extra cells are tolerated only when
+// they are all empty (trailing delimiters), otherwise the row is skipped.
+static bool acceptRecord(const std::vector<std::string_view>& cells, size_t n_cols) {
+    if (cells.size() <= n_cols)
+        return true;
+    for (size_t i = n_cols; i < cells.size(); ++i)
+        if (!cells[i].empty())
+            return false;
+    return true;
+}
+
+static inline std::string_view cellAt(const std::vector<std::string_view>& cells, size_t i) {
+    return i < cells.size() ? cells[i] : std::string_view{};
+}
+
+// Trim the ' ' padding CsvReader::parseCells also strips for non-string cells.
+static inline std::string_view trimSpaces(std::string_view v) {
+    while (!v.empty() && v.front() == ' ') v.remove_prefix(1);
+    while (!v.empty() && v.back() == ' ')  v.remove_suffix(1);
+    return v;
+}
+
+// Unquote a cell for numeric interpretation (cold path — quoted numerics).
+static inline std::string_view numericView(std::string_view trimmed, std::string& unquote_buf) {
+    if (trimmed.size() >= 2 && trimmed.front() == '"' && trimmed.back() == '"') {
+        unquote_buf = bcsv::CsvReader<bcsv::Layout>::unquote(trimmed);
+        std::string_view v = unquote_buf;
+        return trimSpaces(v);
+    }
+    return trimmed;
+}
+
+// ── Shared reader setup ─────────────────────────────────────────────
+
+// Open `reader` on the input in raw mode. Both passes read with an empty
+// layout so tokenization (incl. splitLine's layout-based trailing-empty
+// tolerance, which then never fires) is bit-identical between them; record
+// shape is handled by acceptRecord() instead.
+static void openRaw(const Config& config, bcsv::CsvReader<bcsv::Layout>& reader) {
+    if (!reader.open(config.input_file, /*hasHeader=*/false)) {
+        throw std::runtime_error("Cannot open CSV file: " + reader.getErrorMsg());
+    }
+}
+
+// ── Pass 1: probe (type inference + header/name/spec resolution) ────
+
+struct ProbeResult {
+    std::vector<ColumnPlan> plan;        // one per CSV column
+    size_t                  n_csv_cols = 0;
+    bool                    reached_eof = false;  // sample covered the whole file
+};
+
+static ProbeResult probePass(const Config& config, size_t sample_rows,
+                             const std::vector<ColumnPlan>* prior /* rescue: keep names/forced */) {
+    const bool consume_header = config.has_header || config.skip_header;
+    bcsv::Layout empty_layout;
+    bcsv::CsvReader<bcsv::Layout> reader(empty_layout, config.delimiter, config.decimal_separator,
+                                         config.collapse_whitespace);
+    openRaw(config, reader);
+
+    ProbeResult result;
+
+    // Header record: read it to learn the column count (and names unless
+    // --skip-header discards them).
+    std::vector<std::string> base_names;
+    size_t n = 0;
+    if (consume_header) {
+        if (!reader.readNextRaw())
+            throw std::runtime_error("Input file is empty");
+        n = reader.rawCells().size();
+        if (config.has_header) {
+            for (const auto& c : reader.rawCells())
+                base_names.push_back(bcsv::CsvReader<bcsv::Layout>::unquote(c));
+            // Drop empty trailing names produced by trailing delimiters.
+            while (!base_names.empty() && base_names.back().empty())
+                base_names.pop_back();
+            n = base_names.size();
         }
     }
-    
-    // Add the last field
-    fields.push_back(current_field);
-    return fields;
-}
 
-// Split a line on runs of whitespace (spaces/tabs), skipping leading/trailing runs.
-// Mirrors CsvReader's whitespace-collapse mode for consistent first-pass analysis.
-std::vector<std::string> splitWhitespace(const std::string& line) {
-    std::vector<std::string> fields;
-    size_t i = 0;
-    const size_t len = line.size();
-    while (i < len) {
-        while (i < len && (line[i] == ' ' || line[i] == '\t')) ++i;
-        if (i >= len) break;
-        size_t start = i;
-        while (i < len && line[i] != ' ' && line[i] != '\t') ++i;
-        fields.push_back(line.substr(start, i - start));
+    // Probe state; lazily sized on the first data record for headerless /
+    // skip-header inputs.
+    std::vector<CsvColumnProbe> probes;
+    std::vector<char>           probe_alive;  // avoid vector<bool> in the loop
+    std::string                 scratch, unquote_buf;
+
+    bcsv_cli::IndexRangeSet row_set = config.rows_spec.empty()
+        ? bcsv_cli::IndexRangeSet{}
+        : bcsv_cli::parseIndexRangesUnbounded(config.rows_spec);
+    bcsv_cli::IndexRangeCursor row_cursor(row_set);
+
+    // Column selection is resolved once n is known (below).
+    std::optional<bcsv_cli::IndexRangeSet> col_set;
+    std::vector<size_t> probe_cols;   // selected, non-forced columns to probe
+    std::vector<std::optional<bcsv::ColumnType>> forced;
+
+    auto finalizeColumns = [&](size_t n_cols) {
+        n = n_cols;
+        if (base_names.empty())
+            for (size_t i = 0; i < n; ++i)
+                base_names.push_back("column_" + std::to_string(i + 1));
+        if (base_names.size() != n)
+            throw std::runtime_error("Header lists " + std::to_string(base_names.size()) +
+                                     " columns but the first data row has " + std::to_string(n));
+
+        // --names: override/replace names (map keys resolve against base names).
+        std::vector<std::string> final_names = base_names;
+        if (!config.names_spec.empty()) {
+            std::vector<std::optional<std::string>> spec_names;
+            try {
+                spec_names = bcsv_cli::parseNameSpec(config.names_spec, n, base_names);
+            } catch (const std::exception& e) {
+                throw ArgError(std::string("--names: ") + e.what());
+            }
+            for (size_t i = 0; i < n; ++i)
+                if (spec_names[i])
+                    final_names[i] = *spec_names[i];
+        }
+        for (size_t i = 0; i < n; ++i) {
+            if (final_names[i].empty())
+                throw ArgError("Column " + std::to_string(i) + " has an empty name "
+                               "(provide one with --names)");
+            for (size_t j = i + 1; j < n; ++j)
+                if (final_names[i] == final_names[j])
+                    throw ArgError("Duplicate column name '" + final_names[i] + "' (columns " +
+                                   std::to_string(i) + " and " + std::to_string(j) +
+                                   ") — rename with --names");
+        }
+
+        // --cols: selection over CSV columns (indices or final names).
+        std::vector<char> selected(n, 1);
+        if (!config.cols_spec.empty()) {
+            try {
+                col_set = bcsv_cli::parseColumnSelection(config.cols_spec, n, final_names);
+            } catch (const std::exception& e) {
+                throw ArgError(std::string("--cols: ") + e.what());
+            }
+            for (size_t i = 0; i < n; ++i)
+                selected[i] = col_set->contains(i) ? 1 : 0;
+        }
+
+        // --types: forced types (keys resolve against final names).
+        forced.assign(n, std::nullopt);
+        if (!config.types_spec.empty()) {
+            try {
+                forced = bcsv_cli::parseTypeSpec(config.types_spec, n, final_names,
+                                                 /*allow_void=*/false, /*allow_auto=*/true);
+            } catch (const std::exception& e) {
+                throw ArgError(std::string("--types: ") + e.what());
+            }
+            for (size_t i = 0; i < n; ++i)
+                if (forced[i] && !selected[i])
+                    throw ArgError("--types assigns column " + std::to_string(i) + " ('" +
+                                   final_names[i] + "') which is outside the --cols selection");
+        }
+
+        result.plan.resize(n);
+        probes.resize(n);
+        probe_alive.assign(n, 0);
+        for (size_t i = 0; i < n; ++i) {
+            ColumnPlan& c = result.plan[i];
+            c.name     = final_names[i];
+            c.selected = selected[i] != 0;
+            if (prior) {
+                // Rescue pass: keep the established plan; only re-derive
+                // non-forced selected columns.
+                c.forced = (*prior)[i].forced;
+                c.type   = (*prior)[i].type;
+            } else if (forced[i]) {
+                c.forced = true;
+                c.type   = *forced[i];
+            }
+            if (c.selected && !c.forced) {
+                probes[i].init(config.tolerance);
+                probe_alive[i] = 1;
+                probe_cols.push_back(i);
+            }
+        }
+        result.n_csv_cols = n;
+    };
+
+    if (consume_header && config.has_header)
+        finalizeColumns(n);
+
+    // ── Sample loop ──
+    size_t data_row = 0;     // index over CSV data records (selection domain)
+    size_t sampled  = 0;     // selected rows probed
+    while (reader.readNextRaw()) {
+        const auto& cells = reader.rawCells();
+        if (result.plan.empty())
+            finalizeColumns(cells.size());
+
+        const size_t row_idx = data_row++;
+        if (!row_cursor.contains(row_idx))
+            continue;
+        if (!acceptRecord(cells, result.n_csv_cols))
+            continue;   // malformed row — same skip the write pass applies
+
+        for (size_t k = 0; k < probe_cols.size(); ++k) {
+            const size_t i = probe_cols[k];
+            if (!probe_alive[i])
+                continue;
+            std::string_view cell = numericView(trimSpaces(cellAt(cells, i)), unquote_buf);
+            probes[i].visit(cell, config.decimal_separator, scratch);
+            if (probes[i].settled())
+                probe_alive[i] = 0;
+        }
+
+        if (++sampled == sample_rows && sample_rows != 0)
+            break;
+        if (row_cursor.exhausted(data_row))
+            break;
     }
-    return fields;
+    result.reached_eof = !reader.readNextRaw();
+    reader.close();
+
+    if (result.plan.empty())
+        throw std::runtime_error(config.has_header || config.skip_header
+                                 ? "No valid data rows found"
+                                 : "Input file is empty");
+    if (data_row == 0)
+        throw std::runtime_error("No valid data rows found");
+
+    for (size_t i = 0; i < result.n_csv_cols; ++i) {
+        ColumnPlan& c = result.plan[i];
+        if (c.selected && !c.forced) {
+            c.type          = probes[i].derive();
+            c.overflow_warn = probes[i].overflowWarning();
+        }
+    }
+    return result;
 }
 
-// Argument parsing and help are handled by CLI11 in main() below.
+// ── Pass 2: checked conversion ──────────────────────────────────────
 
+struct WriteResult {
+    bool        ok = false;
+    size_t      rows_written = 0;
+    // First misfit (inferred column whose data no longer fits):
+    size_t      misfit_row = 0;
+    size_t      misfit_col = 0;
+    std::string misfit_cell;
+    // First forced-type misfit under --strict:
+    bool        strict_abort = false;
+};
+
+enum class CellFit : uint8_t { Ok, Misfit };
+
+// Cold path: an integer/bool-typed cell that from_chars could not fully
+// consume or that overflowed. Retries an exact fit first (covers '+'-prefixed
+// and quoted numerics), then "3.0"-style whole floats within tolerance; only
+// genuinely unfittable values become misfits (or saturating clamps for forced
+// columns). Kept out of the hot switch.
+template<typename RowType>
+static CellFit intSlowPath(bcsv::ColumnType t, std::string_view cell, char decimal_sep,
+                           double tol, RowType& row, size_t out_col,
+                           ColumnPlan& plan, std::string& scratch) {
+    CellValue v;
+    const CellClass cls = bcsv_cli::classifyCell(cell, decimal_sep, scratch, v);
+
+    auto storeValue = [&](const bcsv::ValueType& val) {
+        std::visit([&](const auto& x) { row.set(out_col, x); }, val);
+    };
+
+    uint64_t oor = 0, unp = 0;
+    uint64_t no_clamp = 0;
+    switch (cls) {
+        case CellClass::IntUnsigned:
+            if (!bcsv_cli::cellLoses<uint64_t>(t, v.u, tol, oor, unp)) {
+                storeValue(bcsv_cli::coerce<uint64_t>(t, v.u, tol, no_clamp));
+                return CellFit::Ok;
+            }
+            if (!plan.forced)
+                return CellFit::Misfit;
+            storeValue(bcsv_cli::coerce<uint64_t>(t, v.u, tol, plan.clamped));
+            return CellFit::Ok;
+        case CellClass::IntSigned:
+            if (!bcsv_cli::cellLoses<int64_t>(t, v.i, tol, oor, unp)) {
+                storeValue(bcsv_cli::coerce<int64_t>(t, v.i, tol, no_clamp));
+                return CellFit::Ok;
+            }
+            if (!plan.forced)
+                return CellFit::Misfit;
+            storeValue(bcsv_cli::coerce<int64_t>(t, v.i, tol, plan.clamped));
+            return CellFit::Ok;
+        case CellClass::FloatNum: {
+            // Whole-within-tolerance floats convert losslessly (matches the
+            // probe's integer ladder).
+            const double r = std::round(v.d);
+            if (std::fabs(v.d - r) <= tol && bcsv_cli::roundedFitsInt(t, r)) {
+                storeValue(bcsv_cli::doubleToIntForced(t, v.d, tol, no_clamp));
+                return CellFit::Ok;
+            }
+            if (!plan.forced)
+                return CellFit::Misfit;
+            storeValue(bcsv_cli::doubleToIntForced(t, v.d, tol, plan.clamped));
+            return CellFit::Ok;
+        }
+        case CellClass::NonFinite:
+            if (!plan.forced)
+                return CellFit::Misfit;
+            storeValue(bcsv_cli::doubleToIntForced(t, v.d, tol, plan.clamped));
+            return CellFit::Ok;
+        case CellClass::HugeInt:
+        case CellClass::HugeFloat: {
+            if (!plan.forced)
+                return CellFit::Misfit;
+            // Sign decides the saturation end.
+            const double approx = (!cell.empty() && cell.front() == '-')
+                                  ? -bcsv_cli::TWO_POW_64 : bcsv_cli::TWO_POW_64;
+            storeValue(bcsv_cli::doubleToIntForced(t, approx, tol, plan.clamped));
+            return CellFit::Ok;
+        }
+        default:  // NonNumeric (Empty is handled by the caller)
+            if (!plan.forced)
+                return CellFit::Misfit;
+            ++plan.unparseable;
+            if (t == bcsv::ColumnType::BOOL)
+                row.set(out_col, false);
+            else
+                storeValue(bcsv_cli::zeroOf(t));
+            return CellFit::Ok;
+    }
+}
+
+// Cold path for FLOAT/DOUBLE cells that failed the fast parse or the FLOAT
+// round-trip test.
+template<typename RowType>
+static CellFit floatSlowPath(bcsv::ColumnType t, std::string_view cell, char decimal_sep,
+                             double tol, RowType& row, size_t out_col,
+                             ColumnPlan& plan, std::string& scratch) {
+    CellValue v;
+    const CellClass cls = bcsv_cli::classifyCell(cell, decimal_sep, scratch, v);
+
+    double d;
+    switch (cls) {
+        case CellClass::IntUnsigned:
+        case CellClass::IntSigned: {
+            // An integer that is not exactly double-representable would be
+            // silently rounded — that is a misfit (the re-probe turns the
+            // column into STRING with a warning).
+            const uint64_t mag = (cls == CellClass::IntUnsigned) ? v.u : bcsv_cli::absMag(v.i);
+            if (!bcsv_cli::magFitsMantissa(mag, 53)) {
+                if (!plan.forced)
+                    return CellFit::Misfit;
+                ++plan.clamped;
+            }
+            d = (cls == CellClass::IntUnsigned) ? static_cast<double>(v.u)
+                                                : static_cast<double>(v.i);
+            break;
+        }
+        case CellClass::FloatNum:
+        case CellClass::NonFinite:
+            d = v.d;
+            break;
+        case CellClass::HugeInt:
+        case CellClass::HugeFloat:
+            if (!plan.forced)
+                return CellFit::Misfit;
+            ++plan.clamped;
+            d = (!cell.empty() && cell.front() == '-')
+                ? -std::numeric_limits<double>::infinity()
+                :  std::numeric_limits<double>::infinity();
+            break;
+        default:
+            if (!plan.forced)
+                return CellFit::Misfit;
+            ++plan.unparseable;
+            d = 0.0;
+            break;
+    }
+
+    if (t == bcsv::ColumnType::FLOAT) {
+        const float f = static_cast<float>(d);
+        if (!std::isnan(d) && std::fabs(static_cast<double>(f) - d) > tol) {
+            if (!plan.forced)
+                return CellFit::Misfit;
+            ++plan.clamped;
+        }
+        row.set(out_col, f);
+    } else {
+        row.set(out_col, d);
+    }
+    return CellFit::Ok;
+}
+
+// Checked conversion of one cell into the writer row. Hot path: one switch,
+// one from_chars, no allocations; anything unusual defers to the cold helpers.
+template<typename RowType>
+static inline CellFit parseCellChecked(bcsv::ColumnType t, std::string_view raw_cell,
+                                       char decimal_sep, double tol,
+                                       RowType& row, size_t out_col,
+                                       ColumnPlan& plan,
+                                       std::string& scratch, std::string& unquote_buf,
+                                       std::string& str_buf) {
+    if (t == bcsv::ColumnType::STRING) {
+        str_buf = bcsv::CsvReader<bcsv::Layout>::unquote(raw_cell);
+        row.set(out_col, str_buf);
+        return CellFit::Ok;
+    }
+
+    std::string_view cell = trimSpaces(raw_cell);
+    if (!cell.empty() && cell.front() == '"')
+        cell = numericView(cell, unquote_buf);
+
+    switch (t) {
+        case bcsv::ColumnType::BOOL: {
+            bool v = false;
+            if (cell.empty() || bcsv_cli::parseBoolToken(cell, v)) {
+                row.set(out_col, v);
+                return CellFit::Ok;
+            }
+            return intSlowPath(t, cell, decimal_sep, tol, row, out_col, plan, scratch);
+        }
+        case bcsv::ColumnType::INT8:   case bcsv::ColumnType::INT16:
+        case bcsv::ColumnType::INT32:  case bcsv::ColumnType::INT64:
+        case bcsv::ColumnType::UINT8:  case bcsv::ColumnType::UINT16:
+        case bcsv::ColumnType::UINT32: case bcsv::ColumnType::UINT64: {
+            if (cell.empty()) {
+                std::visit([&](const auto& x) { row.set(out_col, x); }, bcsv_cli::zeroOf(t));
+                return CellFit::Ok;
+            }
+            const char* b = cell.data();
+            const char* e = b + cell.size();
+            switch (t) {
+                case bcsv::ColumnType::INT8: {
+                    int8_t v{};
+                    if (auto [p, ec] = std::from_chars(b, e, v); p == e && ec == std::errc{}) {
+                        row.set(out_col, v);
+                        return CellFit::Ok;
+                    }
+                    break;
+                }
+                case bcsv::ColumnType::INT16: {
+                    int16_t v{};
+                    if (auto [p, ec] = std::from_chars(b, e, v); p == e && ec == std::errc{}) {
+                        row.set(out_col, v);
+                        return CellFit::Ok;
+                    }
+                    break;
+                }
+                case bcsv::ColumnType::INT32: {
+                    int32_t v{};
+                    if (auto [p, ec] = std::from_chars(b, e, v); p == e && ec == std::errc{}) {
+                        row.set(out_col, v);
+                        return CellFit::Ok;
+                    }
+                    break;
+                }
+                case bcsv::ColumnType::INT64: {
+                    int64_t v{};
+                    if (auto [p, ec] = std::from_chars(b, e, v); p == e && ec == std::errc{}) {
+                        row.set(out_col, v);
+                        return CellFit::Ok;
+                    }
+                    break;
+                }
+                case bcsv::ColumnType::UINT8: {
+                    uint8_t v{};
+                    if (auto [p, ec] = std::from_chars(b, e, v); p == e && ec == std::errc{}) {
+                        row.set(out_col, v);
+                        return CellFit::Ok;
+                    }
+                    break;
+                }
+                case bcsv::ColumnType::UINT16: {
+                    uint16_t v{};
+                    if (auto [p, ec] = std::from_chars(b, e, v); p == e && ec == std::errc{}) {
+                        row.set(out_col, v);
+                        return CellFit::Ok;
+                    }
+                    break;
+                }
+                case bcsv::ColumnType::UINT32: {
+                    uint32_t v{};
+                    if (auto [p, ec] = std::from_chars(b, e, v); p == e && ec == std::errc{}) {
+                        row.set(out_col, v);
+                        return CellFit::Ok;
+                    }
+                    break;
+                }
+                default: {  // UINT64
+                    uint64_t v{};
+                    if (auto [p, ec] = std::from_chars(b, e, v); p == e && ec == std::errc{}) {
+                        row.set(out_col, v);
+                        return CellFit::Ok;
+                    }
+                    break;
+                }
+            }
+            return intSlowPath(t, cell, decimal_sep, tol, row, out_col, plan, scratch);
+        }
+        case bcsv::ColumnType::FLOAT: {
+            if (cell.empty()) {
+                row.set(out_col, 0.0f);
+                return CellFit::Ok;
+            }
+            double d{};
+            const char* b = cell.data();
+            const char* e = b + cell.size();
+            if (decimal_sep == '.') {
+                if (auto [p, ec] = bcsv::compat::from_chars(b, e, d); p == e && ec == std::errc{}) {
+                    const float f = static_cast<float>(d);
+                    if (std::isnan(d) || std::fabs(static_cast<double>(f) - d) <= tol) {
+                        row.set(out_col, f);
+                        return CellFit::Ok;
+                    }
+                }
+            }
+            return floatSlowPath(t, cell, decimal_sep, tol, row, out_col, plan, scratch);
+        }
+        case bcsv::ColumnType::DOUBLE: {
+            if (cell.empty()) {
+                row.set(out_col, 0.0);
+                return CellFit::Ok;
+            }
+            double d{};
+            const char* b = cell.data();
+            const char* e = b + cell.size();
+            if (decimal_sep == '.') {
+                if (auto [p, ec] = bcsv::compat::from_chars(b, e, d); p == e && ec == std::errc{}) {
+                    row.set(out_col, d);
+                    return CellFit::Ok;
+                }
+            }
+            return floatSlowPath(t, cell, decimal_sep, tol, row, out_col, plan, scratch);
+        }
+        default:
+            return CellFit::Misfit;  // VOID — cannot appear in a csv2bcsv layout
+    }
+}
+
+static WriteResult writePass(const Config& config, std::vector<ColumnPlan>& plan,
+                             size_t n_csv_cols, const bcsv::Layout& out_layout,
+                             const fs::path& tmp_path) {
+    WriteResult result;
+
+    // Selected columns → output column index, packed for the hot loop.
+    std::vector<size_t>           csv_cols;
+    std::vector<bcsv::ColumnType> types;
+    std::vector<ColumnPlan*>      plans;
+    for (size_t i = 0; i < n_csv_cols; ++i) {
+        if (!plan[i].selected)
+            continue;
+        csv_cols.push_back(i);
+        types.push_back(plan[i].type);
+        plans.push_back(&plan[i]);
+    }
+
+    bcsv_cli::IndexRangeSet row_set = config.rows_spec.empty()
+        ? bcsv_cli::IndexRangeSet{}
+        : bcsv_cli::parseIndexRangesUnbounded(config.rows_spec);
+    bcsv_cli::IndexRangeCursor row_cursor(row_set);
+
+    auto codec_settings = bcsv_cli::resolveCodecFlags(
+        config.file_codec, config.row_codec, config.compression_level);
+
+    bool write_ok = true;
+    auto write_rows = [&](auto& writer) {
+        if (!writer.open(tmp_path.string(), /*overwrite=*/true,
+                         codec_settings.comp_level, config.block_size_kb,
+                         codec_settings.flags)) {
+            throw std::runtime_error("Cannot open output file: " + tmp_path.string() +
+                                     " (" + writer.getErrorMsg() + ")");
+        }
+
+        bcsv::Layout empty_layout;
+        bcsv::CsvReader<bcsv::Layout> reader(empty_layout, config.delimiter,
+                                             config.decimal_separator,
+                                             config.collapse_whitespace);
+        openRaw(config, reader);
+        if ((config.has_header || config.skip_header) && !reader.readNextRaw())
+            throw std::runtime_error("Input file is empty");
+
+        std::string scratch, unquote_buf, str_buf;
+        size_t data_row = 0;
+        size_t skipped_rows = 0;
+
+        while (reader.readNextRaw()) {
+            const auto& cells = reader.rawCells();
+            const size_t row_idx = data_row++;
+            if (!row_cursor.contains(row_idx)) {
+                if (row_cursor.exhausted(data_row))
+                    break;
+                continue;
+            }
+            if (!acceptRecord(cells, n_csv_cols)) {
+                ++skipped_rows;
+                if (config.verbose)
+                    std::cerr << "Warning: data row " << row_idx << " (file line "
+                              << reader.fileLine() << ") has " << cells.size()
+                              << " fields, expected " << n_csv_cols << ". Skipping." << std::endl;
+                continue;
+            }
+
+            auto& row = writer.row();
+            for (size_t k = 0; k < csv_cols.size(); ++k) {
+                const std::string_view cell = cellAt(cells, csv_cols[k]);
+                const CellFit fit = parseCellChecked(types[k], cell, config.decimal_separator,
+                                                     config.tolerance, row, k, *plans[k],
+                                                     scratch, unquote_buf, str_buf);
+                if (fit == CellFit::Misfit) {
+                    result.misfit_row  = row_idx;
+                    result.misfit_col  = csv_cols[k];
+                    result.misfit_cell = std::string(cell);
+                    write_ok = false;
+                    break;
+                }
+                if (config.strict && (plans[k]->clamped || plans[k]->unparseable)) {
+                    result.misfit_row  = row_idx;
+                    result.misfit_col  = csv_cols[k];
+                    result.misfit_cell = std::string(cell);
+                    result.strict_abort = true;
+                    write_ok = false;
+                    break;
+                }
+            }
+            if (!write_ok)
+                break;
+
+            writer.writeRow();
+            ++result.rows_written;
+
+            if (config.verbose && (result.rows_written & 0x3FFF) == 0)
+                std::cerr << "Processed " << result.rows_written << " rows..." << std::endl;
+            if (row_cursor.exhausted(data_row))
+                break;
+        }
+
+        if (config.verbose && skipped_rows > 0)
+            std::cerr << "Warning: skipped " << skipped_rows
+                      << " rows with mismatched field counts" << std::endl;
+
+        reader.close();
+        writer.close();
+    };
+
+    bcsv_cli::withWriter(out_layout, config.row_codec, write_rows);
+    result.ok = write_ok;
+    return result;
+}
+
+// Build the output layout from the selected columns of the plan.
+static bcsv::Layout buildLayout(const std::vector<ColumnPlan>& plan) {
+    bcsv::Layout layout;
+    for (const auto& c : plan)
+        if (c.selected)
+            layout.addColumn(bcsv::ColumnDefinition(c.name, c.type));
+    return layout;
+}
 
 int main(int argc, char* argv[]) {
     Config config;
@@ -380,7 +788,46 @@ int main(int argc, char* argv[]) {
                                      "Field delimiter (default: auto-detect)");
     app.add_flag("-w,--whitespace", config.collapse_whitespace,
                  "Treat runs of spaces/tabs as one delimiter (also splits header names)");
-    app.add_flag("--no-header", no_header, "CSV file has no header row");
+    auto* no_header_flag = app.add_flag("--no-header", no_header, "CSV file has no header row");
+    app.add_flag("--skip-header", config.skip_header,
+                 "Consume and discard the header row (names from --names or auto-generated)")
+        ->excludes(no_header_flag);
+    app.add_option("--names", config.names_spec,
+                   "Column names: map '0=time,temp=temp_c' or list 'a,b,c' (all columns)")
+        ->type_name("SPEC");
+    app.add_option("--types", config.types_spec,
+                   "Force column types: map '0=int32,price=float,7:8=double' or list "
+                   "'int32,auto,...' (auto = infer)")
+        ->type_name("SPEC");
+    app.add_option("--rows", config.rows_spec,
+                   "Convert only these data rows, e.g. '0:999,5000:' (0-based, after the header; "
+                   "no negative indices)")
+        ->type_name("RANGES");
+    app.add_option("--cols", config.cols_spec,
+                   "Convert only these columns, by index range or name, e.g. '0:3,temp,-1'")
+        ->type_name("RANGES");
+    app.add_option("--sample", config.sample_rows,
+                   "Rows sampled for type inference; 0 = scan the whole file before writing")
+        ->capture_default_str();
+    app.add_option("--tolerance", config.tolerance,
+                   "Absolute epsilon for float narrowing/round-trip tests")
+        ->check([](const std::string& s) -> std::string {
+            try {
+                size_t pos = 0;
+                double v   = std::stod(s, &pos);
+                if (pos != s.size())
+                    return "--tolerance requires a numeric argument, got '" + s + "'";
+                if (!std::isfinite(v) || v < 0.0)
+                    return "--tolerance must be a finite non-negative number";
+                return {};
+            } catch (...) {
+                return "--tolerance requires a numeric argument, got '" + s + "'";
+            }
+        })
+        ->capture_default_str();
+    app.add_flag("--strict", config.strict,
+                 "Abort (exit 1) when a cell does not fit a forced --types column "
+                 "instead of clamping it");
     app.add_option("--decimal-separator", config.decimal_separator,
                    "Decimal separator: '.' or ','")
         ->check([](const std::string& s) -> std::string {
@@ -393,7 +840,7 @@ int main(int argc, char* argv[]) {
     app.add_flag("--benchmark", config.benchmark,
                  "Print timing stats (wall clock, rows/s, MB/s) to stderr");
     app.add_flag("--json", config.json_output,
-                 "With --benchmark: emit JSON timing blob to stdout");
+                 "With --benchmark: emit JSON timing blob to stderr");
     bcsv_cli::addCodecOptions(app, config.row_codec, config.file_codec,
                               config.compression_level, config.block_size_kb);
     app.add_option("INPUT_FILE", config.input_file, "Input CSV file path")
@@ -402,230 +849,210 @@ int main(int argc, char* argv[]) {
                    "Output BCSV file path (default: <input>.bcsv)");
 
     app.footer(
+        "Type inference samples the first --sample rows (default 1000) and keeps\n"
+        "validating every row during conversion; if a later cell exceeds the inferred\n"
+        "type, the file is re-scanned and converted once more with the widened type\n"
+        "(ints grow to int64/uint64, floats to double, beyond that the column becomes\n"
+        "STRING with a warning). Forced --types columns clamp instead (see --strict).\n\n"
+        "SPEC (quote it — shells expand unquoted { }):\n"
+        "  map form   '0=int32,price=float,7:8=double'  (index, i:j range, or name = value)\n"
+        "  list form  'int32,auto,double,...'           (one entry per column, all columns)\n\n"
         "Examples:\n"
         "  csv2bcsv data.csv\n"
         "  csv2bcsv -d ';' data.csv output.bcsv\n"
-        "  csv2bcsv --no-header -v data.csv\n"
-        "  csv2bcsv --decimal-separator ',' german_data.csv\n"
-        "  csv2bcsv --row-codec zoh data.csv\n"
-        "  csv2bcsv --row-codec flat --file-codec stream data.csv");
+        "  csv2bcsv --skip-header --names 'time,value' data.csv\n"
+        "  csv2bcsv --types 'id=uint64,3:5=float' --cols '0:5' data.csv\n"
+        "  csv2bcsv --rows '0:9999' --sample 0 data.csv\n"
+        "  csv2bcsv --row-codec zoh data.csv");
 
-    CLI11_PARSE(app, argc, argv);
+    if (auto rc = bcsv_cli::parseHandled(app, argc, argv, 2)) return *rc;
 
     try {
-        config.has_header      = !no_header;
-        config.force_delimiter = (delim_opt->count() > 0);
+        try {
+            config.has_header      = !(no_header || config.skip_header);
+            config.force_delimiter = (delim_opt->count() > 0);
 
-        // Default output file if not specified
-        if (config.output_file.empty() && !config.input_file.empty()) {
-            std::filesystem::path input_path(config.input_file);
-            config.output_file = input_path.stem().string() + ".bcsv";
+            // A positional containing '=' is almost always a brace-expanded SPEC
+            // (fish/bash split {a=b,c=d} into words).
+            for (const std::string* p : {&config.input_file, &config.output_file})
+                if (p->find('=') != std::string::npos)
+                    throw ArgError("Positional argument '" + *p +
+                                   "' looks like a SPEC — quote the SPEC and pass it "
+                                   "with --types/--names (shells expand unquoted { }).");
+
+            // Default output file if not specified
+            if (config.output_file.empty() && !config.input_file.empty()) {
+                fs::path input_path(config.input_file);
+                config.output_file = input_path.stem().string() + ".bcsv";
+            }
+
+            // Delimiter and decimal separator must differ (unless whitespace-collapse)
+            if (!config.collapse_whitespace &&
+                config.delimiter == config.decimal_separator && config.delimiter != '\0') {
+                throw ArgError("Delimiter and decimal separator cannot be the same ('" +
+                               std::string(1, config.delimiter) + "')");
+            }
+
+            // Validate row spec up front for a clean exit-2 (negatives etc.)
+            if (!config.rows_spec.empty()) {
+                try {
+                    bcsv_cli::parseIndexRangesUnbounded(config.rows_spec);
+                } catch (const std::exception& e) {
+                    throw ArgError(std::string("--rows: ") + e.what());
+                }
+            }
+        } catch (const ArgError& e) {
+            std::cerr << "Error: " << e.what() << std::endl;
+            return 2;
         }
 
-        // Delimiter and decimal separator must differ (unless whitespace-collapse)
-        if (!config.collapse_whitespace &&
-            config.delimiter == config.decimal_separator && config.delimiter != '\0') {
-            throw std::runtime_error("Delimiter and decimal separator cannot be the same ('" +
-                                     std::string(1, config.delimiter) + "')");
+        // Check if input file exists
+        if (!fs::exists(config.input_file)) {
+            throw std::runtime_error("Input file does not exist: " + config.input_file);
+        }
+        if (fs::exists(config.output_file) && !config.overwrite) {
+            throw std::runtime_error("Output file already exists: " + config.output_file +
+                                     " (use -f/--overwrite)");
+        }
+
+        // Get input file size for compression statistics
+        auto input_file_size = fs::file_size(config.input_file);
+
+        // Start timing the conversion process
+        auto start_time = std::chrono::steady_clock::now();
+
+        // Auto-detect delimiter from the first physical line (even when the
+        // header row is skipped).
+        if (!config.collapse_whitespace && !config.force_delimiter) {
+            std::ifstream input(config.input_file);
+            if (!input.is_open())
+                throw std::runtime_error("Cannot open input file: " + config.input_file);
+            std::string line;
+            if (!std::getline(input, line))
+                throw std::runtime_error("Input file is empty");
+            config.delimiter = detectDelimiter(line);
+            if (config.verbose)
+                std::cerr << "Auto-detected delimiter: '" << config.delimiter << "'" << std::endl;
         }
 
         if (config.verbose) {
             std::cerr << "Converting: " << config.input_file << " -> " << config.output_file << std::endl;
-            std::cerr << "Delimiter: '" << config.delimiter << "'" << std::endl;
-            std::cerr << "Header: " << (config.has_header ? "yes" : "no") << std::endl;
+            if (config.collapse_whitespace)
+                std::cerr << "Delimiter: whitespace-collapse" << std::endl;
+            else
+                std::cerr << "Delimiter: '" << config.delimiter << "'" << std::endl;
+            std::cerr << "Header: " << (config.has_header ? "yes" : (config.skip_header ? "skipped" : "no")) << std::endl;
             std::cerr << "Decimal separator: '" << config.decimal_separator << "'" << std::endl;
             std::cerr << "Encoding: " << bcsv_cli::encodingDescription(
                 config.row_codec, config.file_codec, config.compression_level) << std::endl;
         }
-        
-        // Check if input file exists
-        if (!std::filesystem::exists(config.input_file)) {
-            throw std::runtime_error("Input file does not exist: " + config.input_file);
-        }
-        
-        // Get input file size for compression statistics
-        auto input_file_size = std::filesystem::file_size(config.input_file);
-        
-        // Start timing the conversion process
-        auto start_time = std::chrono::steady_clock::now();
-        
-        std::ifstream input(config.input_file);
-        if (!input.is_open()) {
-            throw std::runtime_error("Cannot open input file: " + config.input_file);
+
+        // ── Pass 1: probe ──
+        ProbeResult probe;
+        try {
+            probe = probePass(config, config.sample_rows, nullptr);
+        } catch (const ArgError& e) {
+            std::cerr << "Error: " << e.what() << std::endl;
+            return 2;
         }
 
-        std::string line;
-        std::vector<std::string> headers;
-        std::vector<bcsv::ColumnType> column_types;
-        std::vector<std::vector<std::string>> sample_data;
-        
-        // Read first line for auto-detection
-        if (!std::getline(input, line)) {
-            throw std::runtime_error("Input file is empty");
-        }
-        
-        // Trim carriage return (Windows line endings)
-        if (!line.empty() && line.back() == '\r') {
-            line.pop_back();
-        }
-        
-        // Auto-detect delimiter if not specified (skipped in whitespace-collapse mode)
-        if (!config.collapse_whitespace && !config.force_delimiter) {
-            config.delimiter = detectDelimiter(line);
-            if (config.verbose) {
-                std::cout << "Auto-detected delimiter: '" << config.delimiter << "'" << std::endl;
-            }
-        }
-        
+        size_t passes = 2;
+        size_t widened_columns = 0;
+
         if (config.verbose) {
-            std::cerr << "Converting: " << config.input_file << " -> " << config.output_file << std::endl;
-            if (config.collapse_whitespace) {
-                std::cerr << "Delimiter: whitespace-collapse" << std::endl;
-            } else {
-                std::cerr << "Delimiter: '" << config.delimiter << "'" << std::endl;
-            }
-            std::cerr << "Header: " << (config.has_header ? "yes" : "no") << std::endl;
+            std::cerr << "Detected " << probe.n_csv_cols << " columns:" << std::endl;
+            for (const auto& c : probe.plan)
+                if (c.selected)
+                    std::cerr << "  " << c.name << " -> " << bcsv_cli::columnTypeStr(c.type)
+                              << (c.forced ? " (forced)" : "") << std::endl;
         }
-        
-        std::vector<std::string> first_row = config.collapse_whitespace
-            ? splitWhitespace(line)
-            : parseCSVLine(line, config.delimiter, '"');
-        
-        if (config.has_header) {
-            headers = first_row;
-            // Filter out empty column names (from trailing delimiters)
-            while (!headers.empty() && headers.back().empty()) {
-                headers.pop_back();
-            }
-        } else {
-            // Filter out empty trailing fields from first row
-            while (!first_row.empty() && first_row.back().empty()) {
-                first_row.pop_back();
-            }
-            // Generate column names
-            for (size_t i = 0; i < first_row.size(); ++i) {
-                headers.push_back("column_" + std::to_string(i + 1));
-            }
-            sample_data.push_back(first_row);
-        }
-        
-        // Read sample data to analyze types (up to 1000 rows for better detection)
-        size_t sample_count = 0;
-        while (std::getline(input, line) && sample_count < 1000) {
-            // Trim carriage return (Windows line endings)
-            if (!line.empty() && line.back() == '\r') {
-                line.pop_back();
-            }
-            
-            auto row_data = config.collapse_whitespace
-                ? splitWhitespace(line)
-                : parseCSVLine(line, config.delimiter, '"');
-            
-            // Trim trailing empty fields to match header count
-            while (row_data.size() > headers.size() && !row_data.empty() && row_data.back().empty()) {
-                row_data.pop_back();
-            }
-            
-            // Accept rows that match header count, or pad/truncate if close
-            if (row_data.size() == headers.size()) {
-                sample_data.push_back(row_data);
-                sample_count++;
-            } else if (row_data.size() < headers.size()) {
-                // Pad with empty strings if row is shorter
-                row_data.resize(headers.size(), "");
-                sample_data.push_back(row_data);
-                sample_count++;
-            } else if (row_data.size() <= headers.size() + 3) {
-                // If only a few extra fields, truncate (likely trailing delimiters)
-                row_data.resize(headers.size());
-                sample_data.push_back(row_data);
-                sample_count++;
-            } else if (config.verbose) {
-                // Only warn for significantly different row sizes
-                std::cerr << "Warning: Row " << (sample_count + 1) << " has " << row_data.size() 
-                          << " fields, expected " << headers.size() << ". Skipping." << std::endl;
-            }
-        }
-        
-        if (sample_data.empty()) {
-            throw std::runtime_error("No valid data rows found");
-        }
-        
-        // Analyze column statistics for optimal type detection
-        std::vector<ColumnStats> column_stats(headers.size());
-        
-        for (const auto& row : sample_data) {
-            for (size_t col = 0; col < std::min(row.size(), headers.size()); ++col) {
-                analyzeValue(row[col], column_stats[col], config.decimal_separator);
-            }
-        }
-        
-        // Determine optimal types based on statistics
-        column_types.resize(headers.size());
-        for (size_t col = 0; col < headers.size(); ++col) {
-            column_types[col] = detectOptimalType(column_stats[col]);
-        }
-        
-        if (config.verbose) {
-            std::cerr << "Detected " << headers.size() << " columns:" << std::endl;
-            for (size_t i = 0; i < headers.size(); ++i) {
-                std::cerr << "  " << headers[i] << " -> " << column_types[i] << std::endl;
-            }
-        }
-        
-        // Create BCSV layout
-        bcsv::Layout layout;
-        for (size_t i = 0; i < headers.size(); ++i) {
-            bcsv::ColumnDefinition col(headers[i], column_types[i]);
-            layout.addColumn(col);
-        }
-        
-        // Close the first-pass input stream (CsvReader will open its own)
-        input.close();
-        
-        // Create BCSV writer and convert data using CsvReader for the second pass
-        auto codec_settings = bcsv_cli::resolveCodecFlags(
-            config.file_codec, config.row_codec, config.compression_level);
-        size_t row_count = 0;
-        auto write_rows = [&](auto& writer) {
-            if (!writer.open(config.output_file, config.overwrite,
-                        codec_settings.comp_level, config.block_size_kb,
-                        codec_settings.flags)) {
-                throw std::runtime_error("Cannot open output file: " + config.output_file +
-                    " (" + writer.getErrorMsg() + ")");
-            }
 
-            // Use CsvReader with the detected layout for type-safe CSV parsing
-            bcsv::CsvReader<bcsv::Layout> csv_reader(layout, config.delimiter, config.decimal_separator,
-                                                    config.collapse_whitespace);
-            if (!csv_reader.open(config.input_file, config.has_header)) {
-                throw std::runtime_error("Cannot open CSV file with CsvReader: " + csv_reader.getErrorMsg());
-            }
-
-            while (csv_reader.readNext()) {
-                // Copy parsed row data from CsvReader to BCSV writer via visitConst
-                csv_reader.row().visitConst([&](size_t col, const auto& val) {
-                    writer.row().set(col, val);
-                });
-
-                writer.writeRow();
-                ++row_count;
-
-                if (config.verbose && (row_count & 0x3FFF) == 0) {
-                    std::cerr << "Processed " << row_count << " rows..." << std::endl;
+        // ── Pass 2 (+ optional rescue): checked conversion ──
+        WriteResult wres;
+        for (int attempt = 0; ; ++attempt) {
+            bcsv::Layout layout = buildLayout(probe.plan);
+            fs::path     tmp    = bcsv_cli::makeTempSibling(fs::path(config.output_file), "csv2bcsv");
+            try {
+                wres = writePass(config, probe.plan, probe.n_csv_cols, layout, tmp);
+                if (wres.ok) {
+                    fs::rename(tmp, config.output_file);
+                    break;
                 }
+                fs::remove(tmp);
+            } catch (...) {
+                std::error_code ec;
+                fs::remove(tmp, ec);
+                throw;
             }
 
-            csv_reader.close();
-            writer.close();
-        };
+            if (wres.strict_abort) {
+                throw std::runtime_error(
+                    "--strict: cell '" + wres.misfit_cell + "' at data row " +
+                    std::to_string(wres.misfit_row) + ", column " + std::to_string(wres.misfit_col) +
+                    " ('" + probe.plan[wres.misfit_col].name + "') does not fit forced type " +
+                    bcsv_cli::columnTypeStr(probe.plan[wres.misfit_col].type));
+            }
+            if (attempt >= 1) {
+                throw std::runtime_error(
+                    "Cell '" + wres.misfit_cell + "' at data row " + std::to_string(wres.misfit_row) +
+                    ", column " + std::to_string(wres.misfit_col) +
+                    " still does not fit after re-scanning — did the input change during conversion?");
+            }
 
-        bcsv_cli::withWriter(layout, config.row_codec, write_rows);
+            // Widen: full-file re-probe, then one retry.
+            if (config.verbose)
+                std::cerr << "Cell '" << wres.misfit_cell << "' at data row " << wres.misfit_row
+                          << ", column " << wres.misfit_col << " ('"
+                          << probe.plan[wres.misfit_col].name << "') does not fit "
+                          << bcsv_cli::columnTypeStr(probe.plan[wres.misfit_col].type)
+                          << " — re-scanning the whole file" << std::endl;
+
+            std::vector<ColumnPlan> old_plan = probe.plan;
+            ProbeResult rescan = probePass(config, 0, &old_plan);
+            for (size_t i = 0; i < probe.n_csv_cols; ++i) {
+                // Reset per-column counters for the retry write.
+                rescan.plan[i].clamped     = 0;
+                rescan.plan[i].unparseable = 0;
+                if (rescan.plan[i].type != old_plan[i].type)
+                    ++widened_columns;
+            }
+            probe.plan = std::move(rescan.plan);
+            passes     = 3;
+
+            if (config.verbose) {
+                std::cerr << "Widened types:" << std::endl;
+                for (size_t i = 0; i < probe.n_csv_cols; ++i)
+                    if (probe.plan[i].selected && probe.plan[i].type != old_plan[i].type)
+                        std::cerr << "  " << probe.plan[i].name << ": "
+                                  << bcsv_cli::columnTypeStr(old_plan[i].type) << " -> "
+                                  << bcsv_cli::columnTypeStr(probe.plan[i].type) << std::endl;
+            }
+        }
+        const size_t row_count = wres.rows_written;
+
+        // ── Warnings ──
+        for (size_t i = 0; i < probe.n_csv_cols; ++i) {
+            const ColumnPlan& c = probe.plan[i];
+            if (!c.selected)
+                continue;
+            if (c.overflow_warn)
+                std::cerr << "Warning: column " << i << " ('" << c.name << "') contains numeric "
+                          << "values that exceed the 64-bit integer / double range; kept as "
+                          << "STRING to avoid data loss" << std::endl;
+            if (c.clamped)
+                std::cerr << "Warning: column " << i << " ('" << c.name << "'): " << c.clamped
+                          << " value(s) clamped to fit forced type "
+                          << bcsv_cli::columnTypeStr(c.type) << std::endl;
+            if (c.unparseable)
+                std::cerr << "Warning: column " << i << " ('" << c.name << "'): " << c.unparseable
+                          << " unparseable value(s) stored as defaults in forced type "
+                          << bcsv_cli::columnTypeStr(c.type) << std::endl;
+        }
 
         // Calculate conversion timing and statistics
         auto end_time = std::chrono::steady_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end_time - start_time);
-        auto output_file_size = std::filesystem::file_size(config.output_file);
+        auto output_file_size = fs::file_size(config.output_file);
 
         // Ensure minimum duration for throughput calculation
         long long duration_ms = duration.count();
@@ -636,12 +1063,14 @@ int main(int argc, char* argv[]) {
         double compression_ratio = (static_cast<double>(input_file_size - output_file_size) / input_file_size) * 100.0;
         double throughput_mb_s = (static_cast<double>(input_file_size) / (1024.0 * 1024.0)) / duration_seconds;
         double rows_per_sec = static_cast<double>(row_count) / duration_seconds;
-        
+
+        const size_t out_columns = buildLayout(probe.plan).columnCount();
+
         // Display comprehensive conversion statistics
         std::cerr << "\n=== Conversion Complete ==="<< std::endl;
         std::cerr << "Successfully converted " << row_count << " rows to " << config.output_file << std::endl;
-        std::cerr << "Columns detected: " << headers.size() << std::endl;
-        std::cerr << layout << std::endl;
+        std::cerr << "Columns detected: " << out_columns << std::endl;
+        std::cerr << buildLayout(probe.plan) << std::endl;
         std::cerr << "Performance Statistics:" << std::endl;
         std::cerr << "  Conversion time: " << duration.count() << " ms" << std::endl;
         std::cerr << "  Throughput: " << std::fixed << std::setprecision(2) << throughput_mb_s << " MB/s" << std::endl;
@@ -649,7 +1078,7 @@ int main(int argc, char* argv[]) {
         std::cerr << "\nCompression Statistics:" << std::endl;
         std::cerr << "  Input CSV size: " << input_file_size << " bytes (" << std::fixed << std::setprecision(2) << (input_file_size / 1024.0) << " KB)" << std::endl;
         std::cerr << "  Output BCSV size: " << output_file_size << " bytes (" << std::fixed << std::setprecision(2) << (output_file_size / 1024.0) << " KB)" << std::endl;
-        
+
         if (output_file_size <= input_file_size) {
             std::cerr << "  Compression ratio: " << std::fixed << std::setprecision(1) << compression_ratio << "%" << std::endl;
             std::cerr << "  Space saved: " << (input_file_size - output_file_size) << " bytes" << std::endl;
@@ -669,7 +1098,7 @@ int main(int argc, char* argv[]) {
                           << ",\"input_file\":\"" << config.input_file << "\""
                           << ",\"output_file\":\"" << config.output_file << "\""
                           << ",\"rows\":" << row_count
-                          << ",\"columns\":" << headers.size()
+                          << ",\"columns\":" << out_columns
                           << ",\"input_bytes\":" << input_file_size
                           << ",\"output_bytes\":" << output_file_size
                           << ",\"wall_ms\":" << duration_ms
@@ -678,6 +1107,9 @@ int main(int argc, char* argv[]) {
                           << ",\"compression_ratio\":" << std::fixed << std::setprecision(1) << compression_ratio
                           << ",\"row_codec\":\"" << config.row_codec << "\""
                           << ",\"file_codec\":\"" << config.file_codec << "\""
+                          << ",\"sample_rows\":" << config.sample_rows
+                          << ",\"passes\":" << passes
+                          << ",\"widened_columns\":" << widened_columns
                           << "}" << std::endl;
             } else {
                 std::cerr << "[benchmark] csv2bcsv: "
@@ -687,11 +1119,14 @@ int main(int argc, char* argv[]) {
                           << std::fixed << std::setprecision(0) << rows_per_sec << " rows/s\n";
             }
         }
-        
+
+    } catch (const ArgError& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 2;
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         return 1;
     }
-    
+
     return 0;
 }

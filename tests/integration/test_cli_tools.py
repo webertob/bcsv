@@ -532,3 +532,274 @@ class TestEdgeCases:
                  csv_path, bcsv)
         run_tool(tools["bcsv2csv"], bcsv, "-o", rt)
         assert csv_equal(csv_path, rt)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# csv2bcsv: inference widening, header/name/type flags, row/col selection
+# ═══════════════════════════════════════════════════════════════════════
+
+class TestCsv2BcsvInference:
+    def test_widening_after_sample(self, tools, tmp_dir):
+        """Headline regression: a value past the inference sample that overflows
+        the sampled type must widen the column, not silently write 0."""
+        csv_path = tmp_dir / "widen.csv"
+        lines = ["id,val"] + [f"{i},{i % 60000}" for i in range(1400)]
+        lines.append("1400,70000")  # past the 1000-row sample; overflows uint16
+        lines += [f"{i},{i % 100}" for i in range(1401, 1500)]
+        csv_path.write_text("\n".join(lines) + "\n")
+
+        bcsv_path = tmp_dir / "widen.bcsv"
+        run_tool(tools["csv2bcsv"], "-f", csv_path, bcsv_path)
+
+        header = run_tool(tools["bcsvHeader"], bcsv_path).stdout
+        assert "uint32" in header  # widened from uint16
+
+        out_csv = tmp_dir / "widen_out.csv"
+        run_tool(tools["bcsv2csv"], bcsv_path, out_csv)
+        assert csv_cell(out_csv, 1401, 2) == "70000"
+
+    def test_overflow_to_string_with_warning(self, tools, tmp_dir):
+        """A number beyond uint64/double keeps the column STRING + warning."""
+        csv_path = tmp_dir / "huge.csv"
+        lines = ["id,big"] + [f"{i},{i}" for i in range(50)]
+        lines.append("50,99999999999999999999")
+        csv_path.write_text("\n".join(lines) + "\n")
+
+        bcsv_path = tmp_dir / "huge.bcsv"
+        result = run_tool(tools["csv2bcsv"], "-f", "--sample", "10", csv_path, bcsv_path)
+        assert "Warning" in result.stderr and "STRING" in result.stderr
+
+        out_csv = tmp_dir / "huge_out.csv"
+        run_tool(tools["bcsv2csv"], bcsv_path, out_csv)
+        assert csv_cell(out_csv, 51, 2) == "99999999999999999999"  # preserved verbatim
+
+    def test_late_string_no_warning(self, tools, tmp_dir):
+        """A clearly non-numeric late cell widens to STRING silently."""
+        csv_path = tmp_dir / "latestr.csv"
+        lines = ["id,v"] + [f"{i},{i}" for i in range(50)]
+        lines.append("50,hello")
+        csv_path.write_text("\n".join(lines) + "\n")
+
+        bcsv_path = tmp_dir / "latestr.bcsv"
+        result = run_tool(tools["csv2bcsv"], "-f", "--sample", "10", csv_path, bcsv_path)
+        assert "Warning" not in result.stderr
+
+        out_csv = tmp_dir / "latestr_out.csv"
+        run_tool(tools["bcsv2csv"], bcsv_path, out_csv)
+        assert csv_cell(out_csv, 51, 2) == "hello"
+
+    def test_sample_zero_full_scan(self, tools, tmp_dir):
+        """--sample 0 scans everything up front — single write pass, exact types."""
+        csv_path = tmp_dir / "full.csv"
+        lines = ["v"] + ["1"] * 100 + ["70000"]
+        csv_path.write_text("\n".join(lines) + "\n")
+
+        bcsv_path = tmp_dir / "full.bcsv"
+        result = run_tool(tools["csv2bcsv"], "-f", "--sample", "0", "--benchmark", "--json",
+                          csv_path, bcsv_path)
+        assert '"passes":2' in result.stderr  # no rescue needed
+        header = run_tool(tools["bcsvHeader"], bcsv_path).stdout
+        assert "uint32" in header
+
+    def test_uint64_precision_preserved(self, tools, tmp_dir):
+        """Integers in (int64max, uint64max] must infer UINT64, not DOUBLE."""
+        csv_path = tmp_dir / "u64.csv"
+        csv_path.write_text("v\n18446744073709551615\n1\n")
+        bcsv_path = tmp_dir / "u64.bcsv"
+        run_tool(tools["csv2bcsv"], "-f", csv_path, bcsv_path)
+        header = run_tool(tools["bcsvHeader"], bcsv_path).stdout
+        assert "uint64" in header
+        out_csv = tmp_dir / "u64_out.csv"
+        run_tool(tools["bcsv2csv"], bcsv_path, out_csv)
+        assert csv_cell(out_csv, 1, 1) == "18446744073709551615"
+
+
+class TestCsv2BcsvHeaderFlags:
+    CSV = "colA,colB\n1,2.5\n3,4.5\n"
+
+    def test_skip_header_auto_names(self, tools, tmp_dir):
+        csv_path = tmp_dir / "sh.csv"
+        csv_path.write_text(self.CSV)
+        bcsv_path = tmp_dir / "sh.bcsv"
+        run_tool(tools["csv2bcsv"], "-f", "--skip-header", csv_path, bcsv_path)
+        header = run_tool(tools["bcsvHeader"], bcsv_path).stdout
+        assert "column_1" in header and "colA" not in header
+        out_csv = tmp_dir / "sh_out.csv"
+        run_tool(tools["bcsv2csv"], bcsv_path, out_csv)
+        assert csv_rows(out_csv) == 2  # header row consumed, not data
+
+    def test_skip_header_with_names(self, tools, tmp_dir):
+        csv_path = tmp_dir / "shn.csv"
+        csv_path.write_text(self.CSV)
+        bcsv_path = tmp_dir / "shn.bcsv"
+        run_tool(tools["csv2bcsv"], "-f", "--skip-header", "--names", "x,y",
+                 csv_path, bcsv_path)
+        header = run_tool(tools["bcsvHeader"], bcsv_path).stdout
+        assert "x" in header and "y" in header
+
+    def test_names_map_override(self, tools, tmp_dir):
+        csv_path = tmp_dir / "nm.csv"
+        csv_path.write_text(self.CSV)
+        bcsv_path = tmp_dir / "nm.bcsv"
+        run_tool(tools["csv2bcsv"], "-f", "--names", "colB=renamed", csv_path, bcsv_path)
+        header = run_tool(tools["bcsvHeader"], bcsv_path).stdout
+        assert "renamed" in header and "colA" in header
+
+    def test_names_list_wrong_count_fails(self, tools, tmp_dir):
+        csv_path = tmp_dir / "nc.csv"
+        csv_path.write_text(self.CSV)
+        result = run_tool(tools["csv2bcsv"], "-f", "--names", "onlyone",
+                          csv_path, tmp_dir / "nc.bcsv", check=False)
+        assert result.returncode == 2
+
+    def test_duplicate_names_fail(self, tools, tmp_dir):
+        csv_path = tmp_dir / "dup.csv"
+        csv_path.write_text(self.CSV)
+        result = run_tool(tools["csv2bcsv"], "-f", "--names", "same,same",
+                          csv_path, tmp_dir / "dup.bcsv", check=False)
+        assert result.returncode == 2
+
+    def test_no_header_and_skip_header_conflict(self, tools, tmp_dir):
+        csv_path = tmp_dir / "conf.csv"
+        csv_path.write_text(self.CSV)
+        result = run_tool(tools["csv2bcsv"], "-f", "--no-header", "--skip-header",
+                          csv_path, tmp_dir / "conf.bcsv", check=False)
+        assert result.returncode == 2
+
+
+class TestCsv2BcsvForcedTypes:
+    def test_types_map_by_name(self, tools, tmp_dir):
+        csv_path = tmp_dir / "tm.csv"
+        csv_path.write_text("a,b\n1,2\n3,4\n")
+        bcsv_path = tmp_dir / "tm.bcsv"
+        run_tool(tools["csv2bcsv"], "-f", "--types", "b=double", csv_path, bcsv_path)
+        header = run_tool(tools["bcsvHeader"], bcsv_path).stdout
+        assert "double" in header and "uint8" in header
+
+    def test_types_list_with_auto(self, tools, tmp_dir):
+        csv_path = tmp_dir / "tl.csv"
+        csv_path.write_text("a,b\n1,2\n")
+        bcsv_path = tmp_dir / "tl.bcsv"
+        run_tool(tools["csv2bcsv"], "-f", "--types", "int32,auto", csv_path, bcsv_path)
+        header = run_tool(tools["bcsvHeader"], bcsv_path).stdout
+        assert "int32" in header and "uint8" in header
+
+    def test_forced_misfit_clamps_with_warning(self, tools, tmp_dir):
+        csv_path = tmp_dir / "cl.csv"
+        csv_path.write_text("x\n300\n")
+        bcsv_path = tmp_dir / "cl.bcsv"
+        result = run_tool(tools["csv2bcsv"], "-f", "--types", "0=uint8", csv_path, bcsv_path)
+        assert result.returncode == 0
+        assert "clamped" in result.stderr
+        out_csv = tmp_dir / "cl_out.csv"
+        run_tool(tools["bcsv2csv"], bcsv_path, out_csv)
+        assert csv_cell(out_csv, 1, 1) == "255"  # saturated, bcsvCast --static semantics
+
+    def test_strict_aborts_on_forced_misfit(self, tools, tmp_dir):
+        csv_path = tmp_dir / "st.csv"
+        csv_path.write_text("x\n300\n")
+        result = run_tool(tools["csv2bcsv"], "-f", "--strict", "--types", "0=uint8",
+                          csv_path, tmp_dir / "st.bcsv", check=False)
+        assert result.returncode == 1
+        assert not (tmp_dir / "st.bcsv").exists()  # temp cleaned up, no partial output
+
+    def test_bad_spec_fails(self, tools, tmp_dir):
+        csv_path = tmp_dir / "bs.csv"
+        csv_path.write_text("a,b\n1,2\n")
+        result = run_tool(tools["csv2bcsv"], "-f", "--types", "0=notatype",
+                          csv_path, tmp_dir / "bs.bcsv", check=False)
+        assert result.returncode == 2
+
+
+class TestCsv2BcsvSelection:
+    CSV = "a,b,c\n0,10,x0\n1,11,x1\n2,12,x2\n3,13,x3\n4,14,x4\n"
+
+    def _write(self, tmp_dir):
+        p = tmp_dir / "sel.csv"
+        p.write_text(self.CSV)
+        return p
+
+    def test_rows_and_cols(self, tools, tmp_dir):
+        csv_path = self._write(tmp_dir)
+        bcsv_path = tmp_dir / "sel.bcsv"
+        run_tool(tools["csv2bcsv"], "-f", "--rows", "1:3", "--cols", "a,c",
+                 csv_path, bcsv_path)
+        out_csv = tmp_dir / "sel_out.csv"
+        run_tool(tools["bcsv2csv"], bcsv_path, out_csv)
+        assert csv_rows(out_csv) == 3
+        assert csv_cell(out_csv, 1, 1) == "1"
+        assert csv_cell(out_csv, 1, 2) == "x1"
+
+    def test_cols_merged_ranges(self, tools, tmp_dir):
+        csv_path = self._write(tmp_dir)
+        bcsv_path = tmp_dir / "selm.bcsv"
+        run_tool(tools["csv2bcsv"], "-f", "--cols", "0:1,1:2", csv_path, bcsv_path)
+        header = run_tool(tools["bcsvHeader"], bcsv_path).stdout
+        assert "a" in header and "b" in header and "c" in header
+
+    def test_negative_rows_rejected(self, tools, tmp_dir):
+        csv_path = self._write(tmp_dir)
+        result = run_tool(tools["csv2bcsv"], "-f", "--rows", "-5:",
+                          csv_path, tmp_dir / "neg.bcsv", check=False)
+        assert result.returncode == 2
+
+    def test_types_key_outside_cols_fails(self, tools, tmp_dir):
+        csv_path = self._write(tmp_dir)
+        result = run_tool(tools["csv2bcsv"], "-f", "--cols", "a", "--types", "b=int32",
+                          csv_path, tmp_dir / "out.bcsv", check=False)
+        assert result.returncode == 2
+
+    def test_open_ended_rows(self, tools, tmp_dir):
+        csv_path = self._write(tmp_dir)
+        bcsv_path = tmp_dir / "open.bcsv"
+        run_tool(tools["csv2bcsv"], "-f", "--rows", "3:", csv_path, bcsv_path)
+        out_csv = tmp_dir / "open_out.csv"
+        run_tool(tools["bcsv2csv"], bcsv_path, out_csv)
+        assert csv_rows(out_csv) == 2
+
+
+class TestBcsv2CsvSelection:
+    @pytest.fixture()
+    def sel_bcsv(self, tools, tmp_dir):
+        csv_path = tmp_dir / "sel.csv"
+        csv_path.write_text("a,b,c\n0,10,x0\n1,11,x1\n2,12,x2\n3,13,x3\n4,14,x4\n")
+        bcsv_path = tmp_dir / "sel.bcsv"
+        run_tool(tools["csv2bcsv"], "-f", csv_path, bcsv_path)
+        return bcsv_path
+
+    def test_rows_ranges(self, tools, tmp_dir, sel_bcsv):
+        out = tmp_dir / "rows.csv"
+        run_tool(tools["bcsv2csv"], "--rows", "1:2,4", sel_bcsv, out)
+        assert csv_rows(out) == 3
+        assert csv_cell(out, 1, 1) == "1"
+        assert csv_cell(out, 3, 1) == "4"
+
+    def test_rows_negative(self, tools, tmp_dir, sel_bcsv):
+        out = tmp_dir / "neg.csv"
+        run_tool(tools["bcsv2csv"], "--rows", "-2:", sel_bcsv, out)
+        assert csv_rows(out) == 2
+        assert csv_cell(out, 1, 1) == "3"
+
+    def test_cols_by_name_and_index(self, tools, tmp_dir, sel_bcsv):
+        out = tmp_dir / "cols.csv"
+        run_tool(tools["bcsv2csv"], "--cols", "a,2", sel_bcsv, out)
+        first_line = out.read_text().splitlines()[0]
+        assert "a" in first_line and "c" in first_line and "b" not in first_line
+
+    def test_rows_conflicts_with_legacy(self, tools, tmp_dir, sel_bcsv):
+        result = run_tool(tools["bcsv2csv"], "--rows", "0:1", "--slice", "::2",
+                          sel_bcsv, tmp_dir / "x.csv", check=False)
+        assert result.returncode == 2
+        result = run_tool(tools["bcsv2csv"], "--rows", "0:1", "--firstRow", "0",
+                          sel_bcsv, tmp_dir / "y.csv", check=False)
+        assert result.returncode == 2
+
+    def test_unknown_col_name_fails(self, tools, tmp_dir, sel_bcsv):
+        result = run_tool(tools["bcsv2csv"], "--cols", "nope",
+                          sel_bcsv, tmp_dir / "z.csv", check=False)
+        assert result.returncode == 2
+
+    def test_legacy_slice_unchanged(self, tools, tmp_dir, sel_bcsv):
+        out = tmp_dir / "step.csv"
+        run_tool(tools["bcsv2csv"], "--slice", "::2", sel_bcsv, out)
+        assert csv_rows(out) == 3  # rows 0, 2, 4

@@ -25,6 +25,13 @@
 #include <vector>
 #include <bcsv/bcsv.h>
 #include "cli_app.h"
+#include "spec_parse.h"
+
+// ── Arg error type — exit code 2 (same convention as bcsvCast) ──────
+
+struct ArgError : std::invalid_argument {
+    using std::invalid_argument::invalid_argument;
+};
 
 struct Config {
     std::string input_file;
@@ -32,11 +39,13 @@ struct Config {
     char delimiter = ',';
     bool include_header = true;
     bool verbose = false;
-    
+
     // Row range selection options
     int64_t first_row = -1;    // -1 = not specified (0-based indexing)
     int64_t last_row = -1;     // -1 = not specified (0-based indexing, inclusive)
     std::string slice;           // empty = not specified (Python-style slice notation)
+    std::string rows_spec;       // --rows index-range grammar (preferred)
+    std::string cols_spec;       // --cols column selection (indices or names)
     
     // Parsed slice components (internal use)
     int64_t slice_start = INT64_MIN;  // INT64_MIN = not specified
@@ -128,12 +137,21 @@ int main(int argc, char* argv[]) {
     app.add_option("-d,--delimiter", config.delimiter, "Field delimiter")
         ->capture_default_str();
     app.add_flag("--no-header", no_header, "Don't include header row in output");
-    app.add_option("--firstRow", config.first_row, "Start from row N (0-based)")
+    auto* first_opt = app.add_option("--firstRow", config.first_row,
+                                     "Start from row N (0-based) [legacy — prefer --rows]")
         ->check(CLI::NonNegativeNumber);
-    app.add_option("--lastRow", config.last_row, "End at row N (0-based, inclusive)")
+    auto* last_opt = app.add_option("--lastRow", config.last_row,
+                                    "End at row N (0-based, inclusive) [legacy — prefer --rows]")
         ->check(CLI::NonNegativeNumber);
-    app.add_option("--slice", slice_arg,
-                   "Python-style slice notation (overrides firstRow/lastRow)");
+    auto* slice_opt = app.add_option("--slice", slice_arg,
+                   "Python-style slice notation (overrides firstRow/lastRow; use for stepping)");
+    app.add_option("--rows", config.rows_spec,
+                   "Export only these rows, e.g. '0:99,200,-10:' (0-based, inclusive ranges)")
+        ->type_name("RANGES")
+        ->excludes(first_opt)->excludes(last_opt)->excludes(slice_opt);
+    app.add_option("--cols", config.cols_spec,
+                   "Export only these columns, by index range or name, e.g. '0:3,temp,-1'")
+        ->type_name("RANGES");
     app.add_flag("-v,--verbose", config.verbose, "Enable verbose output");
     app.add_flag("--benchmark", config.benchmark,
                  "Print timing stats (wall clock, rows/s, MB/s) to stderr");
@@ -141,19 +159,18 @@ int main(int argc, char* argv[]) {
                  "With --benchmark: emit JSON timing blob to stdout");
 
     app.footer(
-        "Row Selection Examples:\n"
-        "  --firstRow 100 --lastRow 200    # Rows 100-200 (inclusive)\n"
-        "  --slice 10:20                   # Rows 10-19 (Python-style)\n"
-        "  --slice :100                    # First 100 rows\n"
-        "  --slice 50:                     # From row 50 to end\n"
-        "  --slice ::2                     # Every 2nd row\n"
-        "  --slice -10:                    # Last 10 rows\n\n"
+        "Row/Column Selection Examples:\n"
+        "  --rows 0:99,200,-10:            # Rows 0-99, 200, and the last 10\n"
+        "  --cols 0:2,temp                 # Columns 0-2 and the one named 'temp'\n"
+        "  --firstRow 100 --lastRow 200    # Rows 100-200 (inclusive) [legacy]\n"
+        "  --slice ::2                     # Every 2nd row (stepping)\n\n"
         "Examples:\n"
         "  bcsv2csv data.bcsv\n"
         "  bcsv2csv -d ';' data.bcsv output.csv\n"
-        "  bcsv2csv --no-header data.bcsv");
+        "  bcsv2csv --no-header data.bcsv\n\n"
+        "Exit codes: 0 = success, 1 = runtime error, 2 = argument error");
 
-    CLI11_PARSE(app, argc, argv);
+    if (auto rc = bcsv_cli::parseHandled(app, argc, argv, 2)) return *rc;
 
     try {
         config.include_header = !no_header;
@@ -221,13 +238,77 @@ int main(int argc, char* argv[]) {
         }
         
         const auto& layout = reader.layout();
-        
+
         if (config.verbose) {
             std::cerr << "Opened BCSV file successfully" << std::endl;
             std::cerr << "Layout contains " << layout.columnCount() << " columns:" << std::endl;
             std::cerr << layout << std::endl;
         }
-        
+
+        // ── --cols: column selection (indices or names) ──
+        const size_t n_cols = layout.columnCount();
+        std::vector<size_t> out_idx(n_cols);        // input col → output col (SIZE_MAX = dropped)
+        bcsv::Layout out_layout;
+        const bool col_subset = !config.cols_spec.empty();
+        if (col_subset) {
+            std::vector<std::string> names;
+            for (size_t i = 0; i < n_cols; ++i)
+                names.push_back(std::string(layout.columnName(i)));
+            bcsv_cli::IndexRangeSet col_set;
+            try {
+                col_set = bcsv_cli::parseColumnSelection(config.cols_spec, n_cols, names);
+            } catch (const std::exception& e) {
+                throw ArgError(std::string("--cols: ") + e.what());
+            }
+            size_t k = 0;
+            for (size_t i = 0; i < n_cols; ++i) {
+                if (col_set.contains(i)) {
+                    out_layout.addColumn(bcsv::ColumnDefinition(names[i], layout.columnType(i)));
+                    out_idx[i] = k++;
+                } else {
+                    out_idx[i] = std::numeric_limits<size_t>::max();
+                }
+            }
+        } else {
+            for (size_t i = 0; i < n_cols; ++i)
+                out_idx[i] = i;
+        }
+        const bcsv::Layout& csv_layout = col_subset ? out_layout : layout;
+
+        // ── --rows: index-range selection (preferred over legacy flags) ──
+        bcsv_cli::IndexRangeSet row_set;
+        const bool use_row_set = !config.rows_spec.empty();
+        if (use_row_set) {
+            try {
+                if (config.rows_spec.find('-') != std::string::npos) {
+                    // Negative indices count from the end — need the row count.
+                    int64_t total = -1;
+                    if (has_direct_access) {
+                        total = static_cast<int64_t>(da_reader.rowCount());
+                    } else {
+                        total = 0;
+                        while (reader.readNext())
+                            ++total;
+                        reader.close();
+                        if (!reader.open(config.input_file))
+                            throw std::runtime_error("Cannot re-open BCSV file after counting rows");
+                        if (config.verbose)
+                            std::cerr << "Counted " << total << " rows to resolve negative indices"
+                                      << std::endl;
+                    }
+                    row_set = bcsv_cli::parseIndexRanges(config.rows_spec,
+                                                         static_cast<size_t>(total));
+                } else {
+                    row_set = bcsv_cli::parseIndexRangesUnbounded(config.rows_spec);
+                }
+            } catch (const ArgError&) {
+                throw;
+            } catch (const std::exception& e) {
+                throw ArgError(std::string("--rows: ") + e.what());
+            }
+        }
+        bcsv_cli::IndexRangeCursor row_cursor(row_set);
+
         // Resolve row range parameters
         int64_t effective_start = 0;
         int64_t effective_stop = INT64_MAX;  // Will be limited by actual file size
@@ -263,7 +344,7 @@ int main(int argc, char* argv[]) {
         
         // Create CsvWriter — to file or to stdout
         const bool to_stdout = (config.output_file == "-");
-        bcsv::CsvWriter<bcsv::Layout> csv_writer(layout, config.delimiter);
+        bcsv::CsvWriter<bcsv::Layout> csv_writer(csv_layout, config.delimiter);
         if (to_stdout) {
             if (!csv_writer.open(std::cout, config.include_header)) {
                 throw std::runtime_error("Cannot open stdout for CSV output");
@@ -345,10 +426,13 @@ int main(int argc, char* argv[]) {
         }
         
         // Main conversion loop
+        constexpr size_t DROPPED = std::numeric_limits<size_t>::max();
         while (reader.readNext()) {
             bool should_output = false;
-            
-            if (has_negative_indices) {
+
+            if (use_row_set) {
+                should_output = row_cursor.contains(total_rows_read);
+            } else if (has_negative_indices) {
                 // Use pre-calculated mask
                 should_output = (total_rows_read < rows_to_output.size()) && rows_to_output[total_rows_read];
             } else {
@@ -361,23 +445,37 @@ int main(int argc, char* argv[]) {
                     }
                 }
             }
-            
+
             if (should_output) {
-                // Copy row data from BCSV reader to CSV writer via visitConst
-                reader.row().visitConst([&](size_t col, const auto& val) {
-                    csv_writer.row().set(col, val);
-                });
+                // Copy row data from BCSV reader to CSV writer via visitConst.
+                // The subset mapping is kept out of the common path — the
+                // per-cell indirection costs ~10% on wide layouts.
+                if (col_subset) {
+                    reader.row().visitConst([&](size_t col, const auto& val) {
+                        const size_t k = out_idx[col];
+                        if (k != DROPPED)
+                            csv_writer.row().set(k, val);
+                    });
+                } else {
+                    reader.row().visitConst([&](size_t col, const auto& val) {
+                        csv_writer.row().set(col, val);
+                    });
+                }
                 csv_writer.writeRow();
                 ++output_rows_written;
             }
-            
+
             ++total_rows_read;
-            
-            // Early termination for efficiency (when not using negative indices or step > 1)
-            if (!has_negative_indices && effective_step == 1 && static_cast<int64_t>(total_rows_read) >= effective_stop) {
+
+            // Early termination for efficiency
+            if (use_row_set) {
+                if (row_cursor.exhausted(total_rows_read))
+                    break;
+            } else if (!has_negative_indices && effective_step == 1 &&
+                       static_cast<int64_t>(total_rows_read) >= effective_stop) {
                 break;
             }
-            
+
             if (config.verbose && (total_rows_read & 0x3FFF) == 0) {  // Every 16384 rows for better performance
                 std::cerr << "Processed " << total_rows_read << " rows, output " << output_rows_written << " rows..." << std::endl;
             }
@@ -417,7 +515,7 @@ int main(int argc, char* argv[]) {
                           << ",\"input_file\":\"" << config.input_file << "\""
                           << ",\"output_file\":\"" << config.output_file << "\""
                           << ",\"rows\":" << output_rows_written
-                          << ",\"columns\":" << layout.columnCount()
+                          << ",\"columns\":" << csv_layout.columnCount()
                           << ",\"input_bytes\":" << input_file_size
                           << ",\"output_bytes\":" << output_file_size
                           << ",\"wall_ms\":" << bench_dur_ms
@@ -433,10 +531,13 @@ int main(int argc, char* argv[]) {
             }
         }
         
+    } catch (const ArgError& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        return 2;
     } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         return 1;
     }
-    
+
     return 0;
 }

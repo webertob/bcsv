@@ -104,7 +104,9 @@ cmake --build --preset ninja-release-build --target bcsvSampler -j$(nproc)
 
 ## csv2bcsv — CSV to BCSV Converter
 
-Convert CSV files to BCSV format with automatic delimiter detection, aggressive type optimization, and compression.
+Convert CSV files to BCSV format with automatic delimiter detection, validated type
+inference with automatic widening, per-column name/type overrides, row/column
+selection, and compression.
 
 ### Usage
 
@@ -114,6 +116,10 @@ csv2bcsv data.csv                                    # Auto-detect, default outp
 csv2bcsv data.csv output.bcsv                         # Custom output
 csv2bcsv -d ';' --decimal-separator ',' german.csv    # European format
 csv2bcsv -w padded_columns.txt                        # Space/tab-padded columns
+csv2bcsv --skip-header --names 'time,value' data.csv  # Replace a junk header
+csv2bcsv --types 'id=uint64,3:5=float' data.csv       # Force column types
+csv2bcsv --rows '0:9999' --cols '0:3,temp' data.csv   # Convert a subset
+csv2bcsv --sample 0 data.csv                          # Full pre-scan (one write pass)
 csv2bcsv --row-codec delta data.csv output.bcsv       # Explicit delta codec
 csv2bcsv --benchmark data.csv output.bcsv             # Measure throughput
 ```
@@ -125,15 +131,71 @@ csv2bcsv --benchmark data.csv output.bcsv             # Measure throughput
 | `-d, --delimiter CHAR` | Field delimiter (auto-detected if omitted) | auto |
 | `-w, --whitespace` | Treat runs of spaces/tabs as a single delimiter | |
 | `--decimal-separator CHAR` | Decimal separator: `.` or `,` | `.` |
-| `--no-header` | CSV file has no header row | |
+| `--no-header` | CSV file has no header row (first row is data) | |
+| `--skip-header` | Consume and **discard** the header row | |
+| `--names SPEC` | Column names (map or list form, see SPEC below) | header / auto |
+| `--types SPEC` | Force column types (`auto` = infer) | infer all |
+| `--rows RANGES` | Convert only these data rows (0-based, no negatives) | all |
+| `--cols RANGES` | Convert only these columns (index ranges or names) | all |
+| `--sample N` | Rows sampled for inference; `0` = scan whole file first | `1000` |
+| `--tolerance X` | Absolute epsilon for float narrowing/round-trip tests | `0` |
+| `--strict` | Abort instead of clamping forced-type misfits | |
+| `-f, --overwrite` | Overwrite an existing output file | |
 | `-v, --verbose` | Verbose output | |
 | `--benchmark` | Print timing stats to stderr | |
-| `--json` | With `--benchmark`: emit JSON timing blob to stdout | |
+| `--json` | With `--benchmark`: emit JSON timing blob to stderr | |
 | `-h, --help` | Show help message | |
 
-### Type Optimization
+### SPEC grammar (shared with bcsvCast)
 
-All columns are scanned in a first pass to select the most compact type:
+Quote the SPEC — shells expand unquoted `{ }`:
+
+- **map form** `'0=int32,price=float,7:8=double'` — key is a 0-based index, an
+  inclusive `i:j` range (negatives count from the end), or a column **name**;
+  numeric-looking names must be addressed by index.
+- **list form** `'int32,auto,double,...'` — one entry per column, covering all
+  columns; `auto` keeps inference for that column (`--types` only).
+
+`--names` map keys resolve against the original (header/auto) names, e.g.
+`'temp=temperature'`; `--types`/`--cols` keys resolve against the final names.
+
+### Header semantics
+
+| Flags | First row is | Column names |
+|-------|--------------|--------------|
+| *(default)* | header | from header (overridable per-entry with `--names` map) |
+| `--no-header` | data | `column_1..N`, or `--names` |
+| `--skip-header` | discarded | `column_1..N`, or `--names` |
+
+`--no-header --skip-header` is a contradiction (exit 2). Delimiter auto-detection
+always uses the first physical row, even when it is skipped.
+
+### Type inference & automatic widening
+
+Types are inferred from the first `--sample` rows (default 1000) with round-trip
+verification (shared with `bcsvCast --scan`): booleans from `true/false/1/0`
+tokens, exact 64-bit integer parsing (large IDs in `(int64 max, uint64 max]`
+become `UINT64`, not a lossy `DOUBLE`), whole-number columns narrow to the
+smallest integer type, and `FLOAT` is chosen over `DOUBLE` only when every value
+survives the double→float round-trip (within `--tolerance`).
+
+**Every row is validated during conversion.** If a later cell exceeds the
+inferred type, csv2bcsv re-scans the whole file and converts once more with the
+widened types (at most one retry; expect roughly one extra read+write of the
+file, reported as `"passes":3` in the benchmark JSON):
+
+- integers widen along `UINT8→…→UINT64` / `INT8→…→INT64`, floats to `DOUBLE`;
+- a numeric value that fits no 64-bit integer nor a double keeps the column
+  `STRING` **with a warning** (the text is preserved verbatim);
+- a clearly non-numeric cell widens the column to `STRING` silently.
+
+For known-hostile data (e.g. auto-incrementing IDs that outgrow the sample),
+`--sample 0` scans the whole file before writing — guaranteeing a single write
+pass. Forced `--types` columns never widen: misfitting cells are clamped
+(saturated) with a warning summary, or abort the conversion under `--strict`.
+
+The output is written to a temp file and atomically renamed, so a failed or
+aborted conversion never destroys an existing output file.
 
 | Input Data | Detected Type | Savings vs INT64 |
 |------------|---------------|-------------------|
@@ -142,6 +204,8 @@ All columns are scanned in a first pass to select the most compact type:
 | `1000, 50000` | `UINT16` | 75% |
 | `3.14, 2.71` | `FLOAT` | 50% |
 | `3.141592653589793` | `DOUBLE` | — |
+| `9999999999999999999` | `UINT64` | exact (was DOUBLE) |
+| `true, false, 1, 0` | `BOOL` | 87.5% |
 
 ### Delimiter Auto-Detection
 
@@ -164,7 +228,8 @@ even without `-w`.
 
 ## bcsv2csv — BCSV to CSV Converter
 
-Convert BCSV files to CSV format with RFC 4180 compliance. Supports row slicing, custom delimiters, and all BCSV codecs.
+Convert BCSV files to CSV format with RFC 4180 compliance. Supports row/column
+selection, custom delimiters, and all BCSV codecs.
 
 ### Usage
 
@@ -172,7 +237,8 @@ Convert BCSV files to CSV format with RFC 4180 compliance. Supports row slicing,
 bcsv2csv [OPTIONS] INPUT_FILE [OUTPUT_FILE]
 bcsv2csv data.bcsv output.csv                  # Basic conversion
 bcsv2csv -d ';' data.bcsv euro.csv             # European format
-bcsv2csv --slice 10:20 data.bcsv               # Rows 10–19
+bcsv2csv --rows '0:99,-10:' data.bcsv          # Rows 0-99 and the last 10
+bcsv2csv --cols '0:2,temp' data.bcsv           # Columns 0-2 and 'temp'
 bcsv2csv -d $'\t' --no-header data.bcsv        # Tab-separated, no header
 ```
 
@@ -182,22 +248,32 @@ bcsv2csv -d $'\t' --no-header data.bcsv        # Tab-separated, no header
 |--------|-------------|---------|
 | `-d, --delimiter CHAR` | Output field delimiter | `,` |
 | `--no-header` | Omit header row in output | |
-| `--firstRow N` | Start from row N (0-based) | `0` |
-| `--lastRow N` | End at row N (0-based, inclusive) | last |
-| `--slice SLICE` | Python-style slice (overrides firstRow/lastRow) | |
+| `--rows RANGES` | Export only these rows (0-based inclusive ranges, negatives from end) | all |
+| `--cols RANGES` | Export only these columns (index ranges or names) | all |
+| `--firstRow N` | Start from row N (0-based) *(legacy — prefer `--rows`)* | `0` |
+| `--lastRow N` | End at row N (0-based, inclusive) *(legacy — prefer `--rows`)* | last |
+| `--slice SLICE` | Python-style slice *(legacy; still the only way to step)* | |
 | `-v, --verbose` | Verbose output | |
 | `--benchmark` | Print timing stats to stderr | |
 | `-h, --help` | Show help message | |
 
-### Row Slicing
+### Row & Column Selection
+
+`--rows`/`--cols` use the shared index-range grammar (same as bcsvCompare and
+bcsvCast): comma-separated single indices or inclusive `i:j` ranges, open ends
+(`:99`, `100:`), negatives counting from the end. `--cols` entries may also be
+column names (numeric-looking names must be addressed by index).
 
 ```bash
-bcsv2csv --slice 10:20 data.bcsv     # Rows 10–19
-bcsv2csv --slice :100 data.bcsv      # First 100 rows
-bcsv2csv --slice 50: data.bcsv       # From row 50 to end
-bcsv2csv --slice ::2 data.bcsv       # Every 2nd row
-bcsv2csv --slice -10: data.bcsv      # Last 10 rows
+bcsv2csv --rows 0:99 data.bcsv       # First 100 rows
+bcsv2csv --rows '-10:' data.bcsv     # Last 10 rows (quote the leading '-')
+bcsv2csv --cols 'time,3:5' data.bcsv # Column 'time' plus columns 3-5
+bcsv2csv --slice ::2 data.bcsv       # Every 2nd row (stepping is --slice-only)
 ```
+
+`--rows` conflicts with the legacy `--firstRow/--lastRow/--slice` flags (exit 2).
+Negative `--rows` indices need the row count: direct-access files answer it from
+the footer; stream-mode files cost one extra counting pass.
 
 ---
 
@@ -654,7 +730,7 @@ Default mode (no flag): `--optimize` when an output path is present, else `--sca
 
 Quote it (shells expand unquoted `{ }`). Two mutually exclusive forms:
 
-- **Map** — `'0=int32,1=uint64,7:8=float,-1=bool'` (index or `i:j` range `=` type; negative-from-end indices allowed; a subset of columns).
+- **Map** — `'0=int32,price=uint64,7:8=float,-1=bool'` (index, `i:j` range, or column **name** `=` type; negative-from-end indices allowed; a subset of columns; numeric-looking names must be addressed by index).
 - **List** — `'int32,uint64,bool,...'` (one type per column, covering **every** column).
 
 Type names: `bool int8 int16 int32 int64 uint8 uint16 uint32 uint64 float double string`, plus aliases `i8..i64`, `ui8..ui64`/`u8..u64`, `b`, `ch`/`char`/`byte` (→uint8), `f`/`f32`, `d`/`f64`, `str`/`s`, `int`=int32, `long`=int64, `short`, `ushort`, `uint`=uint32, `ulong`.
@@ -666,7 +742,7 @@ Type names: `bool int8 int16 int32 int64 uint8 uint16 uint32 uint64 float double
 | `-o, --output FILE` | Output BCSV file (enables apply) | — |
 | `--in-place` | Rewrite `INPUT_FILE` in place (temp + atomic rename) | — |
 | `--overwrite` | Allow overwriting an existing `OUTPUT_FILE` | — |
-| `--cols SPEC` | Restrict `--scan`/`--optimize` to columns (`0:3,5,7:-1`) | all |
+| `--cols SPEC` | Restrict `--scan`/`--optimize` to columns, by index range or name (`0:3,temp,7:-1`) | all |
 | `--tolerance TOL` | Absolute epsilon for float/int loss tests | 0.0 |
 | `--string-to-value` | `--scan`/`--optimize` also consider STRING→numeric | off |
 | `--json` | Emit the plan/result as JSON on stdout | — |
