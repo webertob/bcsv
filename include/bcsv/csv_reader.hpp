@@ -58,6 +58,7 @@ namespace bcsv {
         file_path_.clear();
         row_pos_ = 0;
         file_line_ = 0;
+        parse_error_count_ = 0;
         row_.clear();
     }
 
@@ -102,6 +103,7 @@ namespace bcsv {
             file_path_ = absolutePath;
             row_pos_ = 0;
             file_line_ = 0;
+            parse_error_count_ = 0;
             row_.clear();
 
             // Read and validate header line
@@ -133,7 +135,54 @@ namespace bcsv {
 
         // Iterative loop — avoids stack overflow on many empty or malformed lines
         while (true) {
-            // Read one complete CSV line (may span multiple raw lines if quoted fields contain newlines)
+            if (!fetchRecord()) {
+                return false;  // clean EOF
+            }
+
+            // Split and parse
+            splitLine(line_buf_);
+
+            if (!parseCells()) {
+                // Parse error — skip this line and try next (iterative, no recursion)
+                err_msg_ = "Warning: Failed to parse CSV line at file line " +
+                           std::to_string(file_line_) + " (data row " + std::to_string(row_pos_) + ")";
+                if constexpr (DEBUG_OUTPUTS) {
+                    std::cerr << err_msg_ << std::endl;
+                }
+                continue;
+            }
+
+            row_pos_++;
+            return true;
+        }
+    }
+
+    /**
+     * @brief Read the next logical record and split it into raw cells, without typed parsing.
+     *
+     * Same record assembly as readNext() (multi-line quoted fields, empty-line skip, \r strip,
+     * BOM strip on the first physical line) but the cells are left as raw string_views
+     * (see rawCells()); the layout is not consulted and row() is not updated. Callers handle
+     * column-count mismatches and unquoting (see unquote()) themselves.
+     */
+    template<LayoutConcept LayoutType>
+    bool CsvReader<LayoutType>::readNextRaw() {
+        if (!isOpen() || !fetchRecord()) {
+            return false;
+        }
+        splitLine(line_buf_);
+        row_pos_++;
+        return true;
+    }
+
+    // ── Private helpers ─────────────────────────────────────────────────
+
+    /// Assemble one logical CSV record into line_buf_ (multi-line quoted fields,
+    /// empty-line skip, trailing-\r strip, UTF-8 BOM strip on the first physical line).
+    /// Returns false on clean EOF.
+    template<LayoutConcept LayoutType>
+    bool CsvReader<LayoutType>::fetchRecord() {
+        while (true) {
             line_buf_.clear();
             bool inQuotes = false;
             size_t rawLinesConsumed = 0;
@@ -145,10 +194,18 @@ namespace bcsv {
                     if (line_buf_.empty()) {
                         return false;  // clean EOF
                     }
-                    // We had partial data — try to parse what we have
+                    // We had partial data — hand back what we have
                     break;
                 }
                 rawLinesConsumed++;
+
+                // Strip BOM if present on the very first physical line (UTF-8 BOM: EF BB BF)
+                if (file_line_ == 0 && rawLinesConsumed == 1 && rawLine.size() >= 3 &&
+                    static_cast<unsigned char>(rawLine[0]) == 0xEF &&
+                    static_cast<unsigned char>(rawLine[1]) == 0xBB &&
+                    static_cast<unsigned char>(rawLine[2]) == 0xBF) {
+                    rawLine.erase(0, 3);
+                }
 
                 if (!line_buf_.empty()) {
                     line_buf_.push_back('\n'); // restore the newline that was inside a quoted field
@@ -174,29 +231,27 @@ namespace bcsv {
             }
 
             // Strip trailing \r for Windows line endings
-            if (!line_buf_.empty() && line_buf_.back() == '\r') {
+            if (line_buf_.back() == '\r') {
                 line_buf_.pop_back();
-            }
-
-            // Split and parse
-            splitLine(line_buf_);
-
-            if (!parseCells()) {
-                // Parse error — skip this line and try next (iterative, no recursion)
-                err_msg_ = "Warning: Failed to parse CSV line at file line " +
-                           std::to_string(file_line_) + " (data row " + std::to_string(row_pos_) + ")";
-                if constexpr (DEBUG_OUTPUTS) {
-                    std::cerr << err_msg_ << std::endl;
+                if (line_buf_.empty()) {
+                    continue;
                 }
-                continue;
             }
 
-            row_pos_++;
             return true;
         }
     }
 
-    // ── Private helpers ─────────────────────────────────────────────────
+    /// Record a typed-cell parse failure: count it, keep a message only for the first one
+    /// (avoids a per-bad-cell string allocation on pathological input).
+    template<LayoutConcept LayoutType>
+    void CsvReader<LayoutType>::noteParseError(const char* type_name, size_t column) {
+        ++parse_error_count_;
+        if (parse_error_count_ == 1) {
+            err_msg_ = std::string("Warning: Invalid ") + type_name + " value at file line " +
+                       std::to_string(file_line_) + ", column " + std::to_string(column);
+        }
+    }
 
     /// Read the CSV header line and validate column count against layout
     template<LayoutConcept LayoutType>
@@ -326,21 +381,19 @@ namespace bcsv {
                     break;
                 }
                 case ColumnType::INT8: {
-                    int v = 0;
+                    int8_t v = 0;
                     auto [ptr, ec] = std::from_chars(trimmedCell.data(), trimmedCell.data() + trimmedCell.size(), v);
                     if (ec != std::errc{} && !trimmedCell.empty()) {
-                        err_msg_ = "Warning: Invalid INT8 value at file line " + std::to_string(file_line_) +
-                                   ", column " + std::to_string(i);
+                        noteParseError("INT8", i);
                     }
-                    row_.set(i, static_cast<int8_t>(v));
+                    row_.set(i, v);
                     break;
                 }
                 case ColumnType::INT16: {
                     int16_t v = 0;
                     auto [ptr, ec] = std::from_chars(trimmedCell.data(), trimmedCell.data() + trimmedCell.size(), v);
                     if (ec != std::errc{} && !trimmedCell.empty()) {
-                        err_msg_ = "Warning: Invalid INT16 value at file line " + std::to_string(file_line_) +
-                                   ", column " + std::to_string(i);
+                        noteParseError("INT16", i);
                     }
                     row_.set(i, v);
                     break;
@@ -349,8 +402,7 @@ namespace bcsv {
                     int32_t v = 0;
                     auto [ptr, ec] = std::from_chars(trimmedCell.data(), trimmedCell.data() + trimmedCell.size(), v);
                     if (ec != std::errc{} && !trimmedCell.empty()) {
-                        err_msg_ = "Warning: Invalid INT32 value at file line " + std::to_string(file_line_) +
-                                   ", column " + std::to_string(i);
+                        noteParseError("INT32", i);
                     }
                     row_.set(i, v);
                     break;
@@ -359,28 +411,25 @@ namespace bcsv {
                     int64_t v = 0;
                     auto [ptr, ec] = std::from_chars(trimmedCell.data(), trimmedCell.data() + trimmedCell.size(), v);
                     if (ec != std::errc{} && !trimmedCell.empty()) {
-                        err_msg_ = "Warning: Invalid INT64 value at file line " + std::to_string(file_line_) +
-                                   ", column " + std::to_string(i);
+                        noteParseError("INT64", i);
                     }
                     row_.set(i, v);
                     break;
                 }
                 case ColumnType::UINT8: {
-                    unsigned v = 0;
+                    uint8_t v = 0;
                     auto [ptr, ec] = std::from_chars(trimmedCell.data(), trimmedCell.data() + trimmedCell.size(), v);
                     if (ec != std::errc{} && !trimmedCell.empty()) {
-                        err_msg_ = "Warning: Invalid UINT8 value at file line " + std::to_string(file_line_) +
-                                   ", column " + std::to_string(i);
+                        noteParseError("UINT8", i);
                     }
-                    row_.set(i, static_cast<uint8_t>(v));
+                    row_.set(i, v);
                     break;
                 }
                 case ColumnType::UINT16: {
                     uint16_t v = 0;
                     auto [ptr, ec] = std::from_chars(trimmedCell.data(), trimmedCell.data() + trimmedCell.size(), v);
                     if (ec != std::errc{} && !trimmedCell.empty()) {
-                        err_msg_ = "Warning: Invalid UINT16 value at file line " + std::to_string(file_line_) +
-                                   ", column " + std::to_string(i);
+                        noteParseError("UINT16", i);
                     }
                     row_.set(i, v);
                     break;
@@ -389,8 +438,7 @@ namespace bcsv {
                     uint32_t v = 0;
                     auto [ptr, ec] = std::from_chars(trimmedCell.data(), trimmedCell.data() + trimmedCell.size(), v);
                     if (ec != std::errc{} && !trimmedCell.empty()) {
-                        err_msg_ = "Warning: Invalid UINT32 value at file line " + std::to_string(file_line_) +
-                                   ", column " + std::to_string(i);
+                        noteParseError("UINT32", i);
                     }
                     row_.set(i, v);
                     break;
@@ -399,8 +447,7 @@ namespace bcsv {
                     uint64_t v = 0;
                     auto [ptr, ec] = std::from_chars(trimmedCell.data(), trimmedCell.data() + trimmedCell.size(), v);
                     if (ec != std::errc{} && !trimmedCell.empty()) {
-                        err_msg_ = "Warning: Invalid UINT64 value at file line " + std::to_string(file_line_) +
-                                   ", column " + std::to_string(i);
+                        noteParseError("UINT64", i);
                     }
                     row_.set(i, v);
                     break;
@@ -415,14 +462,12 @@ namespace bcsv {
                         }
                         auto [ptr, ec] = compat::from_chars(cellStr.data(), cellStr.data() + cellStr.size(), v);
                         if (ec != std::errc{} && !trimmedCell.empty()) {
-                            err_msg_ = "Warning: Invalid FLOAT value at file line " + std::to_string(file_line_) +
-                                       ", column " + std::to_string(i);
+                            noteParseError("FLOAT", i);
                         }
                     } else {
                         auto [ptr, ec] = compat::from_chars(trimmedCell.data(), trimmedCell.data() + trimmedCell.size(), v);
                         if (ec != std::errc{} && !trimmedCell.empty()) {
-                            err_msg_ = "Warning: Invalid FLOAT value at file line " + std::to_string(file_line_) +
-                                       ", column " + std::to_string(i);
+                            noteParseError("FLOAT", i);
                         }
                     }
                     row_.set(i, v);
@@ -438,14 +483,12 @@ namespace bcsv {
                         }
                         auto [ptr, ec] = compat::from_chars(cellStr.data(), cellStr.data() + cellStr.size(), v);
                         if (ec != std::errc{} && !trimmedCell.empty()) {
-                            err_msg_ = "Warning: Invalid DOUBLE value at file line " + std::to_string(file_line_) +
-                                       ", column " + std::to_string(i);
+                            noteParseError("DOUBLE", i);
                         }
                     } else {
                         auto [ptr, ec] = compat::from_chars(trimmedCell.data(), trimmedCell.data() + trimmedCell.size(), v);
                         if (ec != std::errc{} && !trimmedCell.empty()) {
-                            err_msg_ = "Warning: Invalid DOUBLE value at file line " + std::to_string(file_line_) +
-                                       ", column " + std::to_string(i);
+                            noteParseError("DOUBLE", i);
                         }
                     }
                     row_.set(i, v);

@@ -69,6 +69,7 @@ namespace bcsv {
         RowType                 row_;                 // current row, parsed data
         size_t                  row_pos_ = 0;         // 0-based row index (data rows, not header)
         size_t                  file_line_ = 0;       // 1-based raw line counter (including header, blanks)
+        size_t                  parse_error_count_ = 0; // cells that failed typed parsing since open()
 
         char                    delimiter_ = ',';     // field delimiter
         char                    decimal_sep_ = '.';   // decimal separator for float/double
@@ -92,7 +93,10 @@ namespace bcsv {
         bool                    isOpen() const                  { return stream_.is_open(); }
         bool                    open(const FilePath& filepath, bool hasHeader = true);
         bool                    readNext();
+        bool                    readNextRaw();
         const RowType&          row() const                     { return row_; }
+        const std::vector<std::string_view>& rawCells() const   { return cells_; }
+        size_t                  parseErrorCount() const         { return parse_error_count_; }
         size_t                  rowPos() const                  { return row_pos_; }
         size_t                  fileLine() const                { return file_line_; }
 
@@ -101,11 +105,15 @@ namespace bcsv {
         char                    decimalSeparator() const        { return decimal_sep_; }
         bool                    collapseWhitespace() const       { return collapse_whitespace_; }
 
+        /// Unquote a CSV field: removes outer quotes and unescapes doubled quotes
+        static std::string      unquote(std::string_view cell);
+
     private:
+        bool                    fetchRecord();
         bool                    readHeader();
         void                    splitLine(const std::string& line);
         bool                    parseCells();
-        std::string             unquote(std::string_view cell);
+        void                    noteParseError(const char* type_name, size_t column);
     };
 
 } // namespace bcsv

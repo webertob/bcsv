@@ -23,6 +23,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <charconv>
 #include <filesystem>
 #include <fstream>
 #include <cmath>
@@ -1482,4 +1483,171 @@ TEST_F(CsvReaderWriterTest, CloseAndVerify) {
         EXPECT_FALSE(reader.readNext());
         reader.close();
     }
+}
+// ============================================================================
+// Raw-cells mode + parse-error counter (csv2bcsv checked-conversion support)
+// ============================================================================
+
+TEST_F(CsvReaderWriterTest, RawMode_ParityWithTypedRead) {
+    bcsv::Layout layout;
+    layout.addColumn({"i", bcsv::ColumnType::INT32});
+    layout.addColumn({"d", bcsv::ColumnType::DOUBLE});
+    layout.addColumn({"s", bcsv::ColumnType::STRING});
+
+    auto path = tmpFile("raw_parity.csv");
+    {
+        std::ofstream f(path);
+        f << "i,d,s\n";
+        f << "1,1.5,\"a,b\"\n";
+        f << "\n";                       // empty line — skipped in both modes
+        f << "-7,2.25,plain\n";
+    }
+
+    // Typed pass
+    std::vector<std::string> typed;
+    {
+        bcsv::CsvReader<bcsv::Layout> reader(layout);
+        ASSERT_TRUE(reader.open(path));
+        while (reader.readNext()) {
+            typed.push_back(std::to_string(reader.row().get<int32_t>(0)) + "|" +
+                            std::to_string(reader.row().get<double>(1)) + "|" +
+                            reader.row().get<std::string>(2));
+        }
+        reader.close();
+    }
+
+    // Raw pass (no header consumption by the reader; skip it manually)
+    std::vector<std::string> raw;
+    {
+        bcsv::CsvReader<bcsv::Layout> reader(layout);
+        ASSERT_TRUE(reader.open(path, /*hasHeader=*/false));
+        ASSERT_TRUE(reader.readNextRaw());  // header record
+        ASSERT_EQ(reader.rawCells().size(), 3u);
+        EXPECT_EQ(reader.rawCells()[0], "i");
+        while (reader.readNextRaw()) {
+            const auto& cells = reader.rawCells();
+            ASSERT_EQ(cells.size(), 3u);
+            int32_t i = 0;
+            std::from_chars(cells[0].data(), cells[0].data() + cells[0].size(), i);
+            double d = 0;
+            bcsv::compat::from_chars(cells[1].data(), cells[1].data() + cells[1].size(), d);
+            raw.push_back(std::to_string(i) + "|" + std::to_string(d) + "|" +
+                          bcsv::CsvReader<bcsv::Layout>::unquote(cells[2]));
+        }
+        reader.close();
+    }
+
+    EXPECT_EQ(typed, raw);
+}
+
+TEST_F(CsvReaderWriterTest, RawMode_MultiLineQuotedRecord) {
+    bcsv::Layout layout;
+    layout.addColumn({"a", bcsv::ColumnType::STRING});
+    layout.addColumn({"b", bcsv::ColumnType::INT32});
+
+    auto path = tmpFile("raw_multiline.csv");
+    {
+        std::ofstream f(path);
+        f << "a,b\n";
+        f << "\"line1\nline2\",5\n";
+    }
+
+    bcsv::CsvReader<bcsv::Layout> reader(layout);
+    ASSERT_TRUE(reader.open(path, /*hasHeader=*/false));
+    ASSERT_TRUE(reader.readNextRaw());  // header
+    ASSERT_TRUE(reader.readNextRaw());
+    ASSERT_EQ(reader.rawCells().size(), 2u);
+    EXPECT_EQ(bcsv::CsvReader<bcsv::Layout>::unquote(reader.rawCells()[0]), "line1\nline2");
+    EXPECT_EQ(reader.rawCells()[1], "5");
+    EXPECT_FALSE(reader.readNextRaw());
+    reader.close();
+}
+
+TEST_F(CsvReaderWriterTest, RawMode_BomStrippedWithoutHeader) {
+    bcsv::Layout layout;
+    layout.addColumn({"v", bcsv::ColumnType::INT32});
+
+    auto path = tmpFile("raw_bom.csv");
+    {
+        std::ofstream f(path, std::ios::binary);
+        f << "\xEF\xBB\xBF" << "17\n42\n";
+    }
+
+    bcsv::CsvReader<bcsv::Layout> reader(layout);
+    ASSERT_TRUE(reader.open(path, /*hasHeader=*/false));
+    ASSERT_TRUE(reader.readNext());
+    EXPECT_EQ(reader.row().get<int32_t>(0), 17);  // BOM must not corrupt the first value
+    EXPECT_EQ(reader.parseErrorCount(), 0u);
+    ASSERT_TRUE(reader.readNext());
+    EXPECT_EQ(reader.row().get<int32_t>(0), 42);
+    reader.close();
+}
+
+TEST_F(CsvReaderWriterTest, ParseErrorCounter_OutOfRangeAndInvalid) {
+    bcsv::Layout layout;
+    layout.addColumn({"small", bcsv::ColumnType::INT8});
+    layout.addColumn({"u", bcsv::ColumnType::UINT16});
+
+    auto path = tmpFile("parse_errors.csv");
+    {
+        std::ofstream f(path);
+        f << "small,u\n";
+        f << "1,2\n";
+        f << "300,3\n";     // 300 overflows INT8 → error #1 (value still default-ish, unchanged semantics)
+        f << "4,-1\n";      // -1 invalid for UINT16 → error #2
+        f << "5,abc\n";     // abc invalid → error #3
+    }
+
+    bcsv::CsvReader<bcsv::Layout> reader(layout);
+    ASSERT_TRUE(reader.open(path));
+
+    ASSERT_TRUE(reader.readNext());
+    EXPECT_EQ(reader.parseErrorCount(), 0u);
+    EXPECT_TRUE(reader.getErrorMsg().empty());
+
+    ASSERT_TRUE(reader.readNext());
+    EXPECT_EQ(reader.parseErrorCount(), 1u);
+    // Message names the first offending cell (file line 3, column 0) and is kept for later errors
+    EXPECT_TRUE(reader.getErrorMsg().find("INT8") != std::string::npos);
+    EXPECT_TRUE(reader.getErrorMsg().find("line 3") != std::string::npos);
+    EXPECT_TRUE(reader.getErrorMsg().find("column 0") != std::string::npos);
+    const std::string first_msg = reader.getErrorMsg();
+
+    ASSERT_TRUE(reader.readNext());
+    EXPECT_EQ(reader.parseErrorCount(), 2u);
+    EXPECT_EQ(reader.getErrorMsg(), first_msg);  // only the first error builds a message
+
+    ASSERT_TRUE(reader.readNext());
+    EXPECT_EQ(reader.parseErrorCount(), 3u);
+    EXPECT_EQ(reader.getErrorMsg(), first_msg);
+
+    EXPECT_FALSE(reader.readNext());
+    reader.close();
+
+    // Counter resets on reopen
+    ASSERT_TRUE(reader.open(path));
+    EXPECT_EQ(reader.parseErrorCount(), 0u);
+    reader.close();
+}
+
+TEST_F(CsvReaderWriterTest, ParseErrorCounter_EmptyCellsNotCounted) {
+    bcsv::Layout layout;
+    layout.addColumn({"a", bcsv::ColumnType::INT32});
+    layout.addColumn({"b", bcsv::ColumnType::DOUBLE});
+
+    auto path = tmpFile("empty_cells.csv");
+    {
+        std::ofstream f(path);
+        f << "a,b\n";
+        f << ",\n";        // empty cells parse as defaults, not errors
+        f << "1,2.5\n";
+    }
+
+    bcsv::CsvReader<bcsv::Layout> reader(layout);
+    ASSERT_TRUE(reader.open(path));
+    ASSERT_TRUE(reader.readNext());
+    EXPECT_EQ(reader.row().get<int32_t>(0), 0);
+    ASSERT_TRUE(reader.readNext());
+    EXPECT_EQ(reader.parseErrorCount(), 0u);
+    reader.close();
 }
