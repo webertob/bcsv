@@ -97,7 +97,11 @@ jobs:
           cmake -G Ninja -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DBCSV_WERROR=ON \
-            -DBUILD_TESTS=OFF
+              -DBUILD_TESTS=OFF \
+              -DBUILD_BENCHMARKS=OFF \
+              -DBUILD_TOOLS=OFF \
+              -DBUILD_EXAMPLES=OFF \
+              -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
           cmake --build build --target bcsv_c_api --parallel
 
       - name: Configure & Build (Windows)
@@ -123,6 +127,11 @@ jobs:
 
           if [[ "${{ runner.os }}" == "Linux" ]]; then
             objdump -p "$LIB" | awk '/NEEDED/ {print "  needs " $2}'
+            if objdump -p "$LIB" | grep -qE 'NEEDED.*(libstdc\+\+|libgcc_s)'; then
+              echo "  FAIL links the C++ runtime dynamically; the target would need a"
+              echo "       matching libstdc++, which the build container hides here"
+              exit 1
+            fi
             # A version scan alone is not enough: it only sees versioned
             # symbols, and an unresolved C++ ABI symbol or an unversioned libc
             # entry point such as copy_file_range is invisible to it. Loading
@@ -141,7 +150,8 @@ jobs:
             HIGH=$(objdump -T "$LIB" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -1)
             echo "  highest glibc symbol version: ${HIGH:-none}"
           elif [[ "${{ runner.os }}" == "Windows" ]]; then
-            DUMPBIN=$(find "/c/Program Files/Microsoft Visual Studio" -name dumpbin.exe 2>/dev/null | head -1)
+            DUMPBIN="$(cygpath -u "$VCToolsInstallDir" 2>/dev/null)bin/Hostx64/x64/dumpbin.exe"
+            [ -x "$DUMPBIN" ] || DUMPBIN=$(find "/c/Program Files/Microsoft Visual Studio" -name dumpbin.exe 2>/dev/null | head -1)
             IMPORTS=$("$DUMPBIN" //DEPENDENTS "$LIB" | grep -oE '^\s+\S+\.dll' | tr -d ' ')
             echo "$IMPORTS" | sed 's/^/  needs /'
             if echo "$IMPORTS" | grep -qiE 'MSVCP|VCRUNTIME|api-ms-win-crt'; then
