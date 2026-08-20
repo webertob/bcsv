@@ -32,18 +32,27 @@ jobs:
   build-native:
     name: Native ${{ matrix.rid }}
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Built inside manylinux, not on the runner. A library built on
+          # ubuntu-latest carries that runner's glibc (2.39) and will not load
+          # on anything older, which for a package people install into their own
+          # projects is the whole ballgame. manylinux_2_28 is the same image
+          # pybcsv already builds its wheels in - see python/pyproject.toml - so
+          # it is known to compile this C++20 codebase; its GCC is 14.2.
           - rid: linux-x64
             os: ubuntu-latest
+            container: quay.io/pypa/manylinux_2_28_x86_64
             lib-name: libbcsv_c_api.so
             lib-dir: build
 
           - rid: linux-arm64
             os: ubuntu-24.04-arm
+            container: quay.io/pypa/manylinux_2_28_aarch64
             lib-name: libbcsv_c_api.so
             lib-dir: build
 
@@ -60,9 +69,13 @@ jobs:
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
-      - name: Install Ninja (Linux)
+      - name: Install CMake and Ninja (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build
+        run: |
+          # The manylinux image ships neither, and its distro cmake predates
+          # what this project needs. pip carries both as wheels.
+          /opt/python/cp311-cp311/bin/pip install --quiet cmake ninja
+          echo "/opt/python/cp311-cp311/bin" >> "$GITHUB_PATH"
 
       - name: Install Ninja (macOS)
         if: runner.os == 'macOS'
@@ -93,8 +106,49 @@ jobs:
           cmake -G Ninja -B build `
             -DCMAKE_BUILD_TYPE=Release `
             -DBCSV_WERROR=ON `
-            -DBUILD_TESTS=OFF
+            -DBUILD_TESTS=OFF `
+            -DBUILD_BENCHMARKS=OFF `
+            -DBUILD_TOOLS=OFF `
+            -DBUILD_EXAMPLES=OFF `
+            -DCMAKE_POLICY_DEFAULT_CMP0091=NEW `
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
           cmake --build build --target bcsv_c_api --parallel
+
+      - name: Verify the library loads and needs no extra runtime
+        shell: bash
+        run: |
+          set -e
+          LIB="${{ matrix.lib-dir }}/${{ matrix.lib-name }}"
+          echo "=== $LIB ==="
+
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            objdump -p "$LIB" | awk '/NEEDED/ {print "  needs " $2}'
+            # A version scan alone is not enough: it only sees versioned
+            # symbols, and an unresolved C++ ABI symbol or an unversioned libc
+            # entry point such as copy_file_range is invisible to it. Loading
+            # the library is the only check that covers those.
+            cp "$LIB" /tmp/lib.so
+            /opt/python/cp311-cp311/bin/python - <<'PY'
+          import ctypes
+          lib = ctypes.CDLL("/tmp/lib.so")
+          lib.bcsv_layout_create.restype = ctypes.c_void_p
+          lib.bcsv_layout_destroy.argtypes = [ctypes.c_void_p]
+          h = lib.bcsv_layout_create()
+          assert h, "bcsv_layout_create returned null"
+          lib.bcsv_layout_destroy(ctypes.c_void_p(h))
+          print("  PASS loaded, created and destroyed a layout")
+          PY
+            HIGH=$(objdump -T "$LIB" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -1)
+            echo "  highest glibc symbol version: ${HIGH:-none}"
+          elif [[ "${{ runner.os }}" == "Windows" ]]; then
+            DUMPBIN=$(find "/c/Program Files/Microsoft Visual Studio" -name dumpbin.exe 2>/dev/null | head -1)
+            IMPORTS=$("$DUMPBIN" //DEPENDENTS "$LIB" | grep -oE '^\s+\S+\.dll' | tr -d ' ')
+            echo "$IMPORTS" | sed 's/^/  needs /'
+            if echo "$IMPORTS" | grep -qiE 'MSVCP|VCRUNTIME|api-ms-win-crt'; then
+              echo "  FAIL still needs the Visual C++ Redistributable"; exit 1
+            fi
+            echo "  PASS no Visual C++ Redistributable needed"
+          fi
 
       - name: Upload native library
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
