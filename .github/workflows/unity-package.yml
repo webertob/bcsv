@@ -94,14 +94,24 @@ jobs:
       - name: Configure & Build (Unix)
         if: runner.os != 'Windows'
         run: |
+          # The C++ runtime is linked statically on Linux so the artifact does
+          # not need a matching libstdc++ on the target - built here with GCC 14
+          # it would otherwise demand GLIBCXX_3.4.32, far above the glibc floor.
+          # macOS neither needs that nor allows it: libc++ is part of the system
+          # and AppleClang rejects -static-libgcc outright.
+          EXTRA=()
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            EXTRA+=(-DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc")
+          fi
+
           cmake -G Ninja -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DBCSV_WERROR=ON \
-              -DBUILD_TESTS=OFF \
-              -DBUILD_BENCHMARKS=OFF \
-              -DBUILD_TOOLS=OFF \
-              -DBUILD_EXAMPLES=OFF \
-              -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
+            -DBUILD_TESTS=OFF \
+            -DBUILD_BENCHMARKS=OFF \
+            -DBUILD_TOOLS=OFF \
+            -DBUILD_EXAMPLES=OFF \
+            "${EXTRA[@]}"
           cmake --build build --target bcsv_c_api --parallel
 
       - name: Configure & Build (Windows)
