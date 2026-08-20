@@ -181,7 +181,15 @@ if(BUILD_TESTS)
     add_subdirectory(tests)
 endif()
 
-add_subdirectory(benchmark)
+# Benchmarks pull googlebenchmark in through FetchContent, which runs its own
+# compile-and-run probes at configure time. Those fail under a cross-ish
+# toolchain - building the Unity plugin against Unity's Linux sysroot, say - and
+# take the whole configure down with them, even though nothing in the benchmark
+# tree is wanted there. Default ON so existing builds are unchanged.
+option(BUILD_BENCHMARKS "Build benchmark programs" ON)
+if(BUILD_BENCHMARKS)
+    add_subdirectory(benchmark)
+endif()
 
 # ============================================================================
 # Installation
