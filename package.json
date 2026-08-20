@@ -1,0 +1,31 @@
+{
+  "name": "com.bcsv.unity",
+  "version": "1.5.3",
+  "displayName": "BCSV - Binary CSV",
+  "description": "Fast, compact binary format for streaming time-series data. Row-by-row I/O with LZ4 compression, Zero-Order Hold encoding, and crash resilience. P/Invoke bindings to the native bcsv_c_api library.",
+  "unity": "2021.3",
+  "documentationUrl": "https://github.com/webertob/bcsv/blob/main/unity/README.md",
+  "changelogUrl": "https://github.com/webertob/bcsv/blob/main/unity/CHANGELOG.md",
+  "licensesUrl": "https://github.com/webertob/bcsv/blob/main/LICENSE",
+  "license": "MIT",
+  "keywords": [
+    "bcsv",
+    "binary-csv",
+    "time-series",
+    "data-recording",
+    "serialization",
+    "lz4"
+  ],
+  "author": {
+    "name": "Tobias Weber",
+    "email": "weber.tobias.md@gmail.com",
+    "url": "https://github.com/webertob/bcsv"
+  },
+  "samples": [
+    {
+      "displayName": "Basic Recording",
+      "description": "BcsvRecorder component for recording Unity data (transforms, rigidbodies) and a cross-platform API example.",
+      "path": "Samples~/Basic"
+    }
+  ]
+}
