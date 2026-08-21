@@ -109,11 +109,13 @@ jobs:
         shell: bash
         run: |
           set -e
+          PY=python3
+          command -v python3 >/dev/null 2>&1 || PY=python  # Windows runners expose python only
           ARGS=(--skip-manifests --native "${{ matrix.lib-dir }}/${{ matrix.lib-name }}")
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             ARGS+=(--tag "${GITHUB_REF#refs/tags/}")
           fi
-          python3 scripts/check_versions.py "${ARGS[@]}"
+          "$PY" scripts/check_versions.py "${ARGS[@]}"
 
       - name: Upload native library
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

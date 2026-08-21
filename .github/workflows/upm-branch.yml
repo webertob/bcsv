@@ -31,6 +31,11 @@ jobs:
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
+          # A workflow_run checkout defaults to the default branch, not the
+          # commit that triggered it, so the upm branch was being built from
+          # whatever master happened to hold rather than from the tagged
+          # release. Pin it to the commit the Unity Package workflow ran on.
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Determine version
         id: version

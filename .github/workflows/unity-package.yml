@@ -197,9 +197,11 @@ jobs:
           # step that fails if the toolchain resolved a version other than the
           # one the release intends to ship.
           if [[ "${{ runner.os }}" == "Linux" ]]; then
-            PY=/opt/python/cp311-cp311/bin/python
-          else
+            PY=/opt/python/cp311-cp311/bin/python   # manylinux ships no system python3
+          elif command -v python3 >/dev/null 2>&1; then
             PY=python3
+          else
+            PY=python                                # Windows runners expose python only
           fi
           ARGS=(--skip-manifests --native "${{ matrix.lib-dir }}/${{ matrix.lib-name }}")
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
