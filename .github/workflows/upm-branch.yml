@@ -35,19 +35,25 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          # Get version from package.json (always reliable regardless of trigger)
-          VERSION=$(python3 -c "import json; print(json.load(open('unity/package.json'))['version'])")
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "Version: $VERSION"
+          # Read VERSION.txt, not the committed unity/package.json. package.json
+          # is only patched during packing, so the committed copy lags behind
+          # every release - reading it here stamped the upm branch and all its
+          # -upm tags 1.5.3 from v1.5.4 onwards.
+          VERSION="$(cat VERSION.txt)"
 
           # Check if this was triggered by a tag
           HEAD_BRANCH="${{ github.event.workflow_run.head_branch || '' }}"
           if [[ "$HEAD_BRANCH" == v* ]]; then
+            python3 scripts/check_versions.py --tag "$HEAD_BRANCH"
             echo "is_tag=true" >> "$GITHUB_OUTPUT"
             echo "tag=$HEAD_BRANCH" >> "$GITHUB_OUTPUT"
           else
+            python3 scripts/check_versions.py
             echo "is_tag=false" >> "$GITHUB_OUTPUT"
           fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Version: $VERSION"
 
       - name: Install Ninja
         run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build
@@ -111,8 +117,10 @@ jobs:
           cmake -G Ninja -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DBCSV_WERROR=ON \
+            -DBCSV_STRICT_VERSION=ON \
             -DBUILD_TESTS=OFF
           cmake --build build --target bcsv_c_api --parallel
+          python3 scripts/check_versions.py --skip-manifests --native build/libbcsv_c_api.so
           mkdir -p native-artifacts/unity-native-linux-x64
           cp build/libbcsv_c_api.so native-artifacts/unity-native-linux-x64/
 

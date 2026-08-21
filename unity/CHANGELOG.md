@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.13] - 2026-08-21
+
+### Fixed
+- **Package version stamps are correct again.** The `.tgz` in the v1.5.12 release
+  carried Linux natives (`x86_64` and `arm64`) reporting `1.5.11` while the
+  Windows native correctly reported `1.5.12`, so the same recorder wrote
+  different header bytes depending on platform. Data was unaffected — only the
+  version stamped into the file header differed. The Linux jobs build inside a
+  container where git could not read the workspace, and the build silently fell
+  back to a stale version; it now fails instead. See the root `CHANGELOG.md`.
+- **`package.json` on the `upm` branch reported `1.5.3` for every release since
+  v1.5.4.** The branch workflow read the committed `unity/package.json`, which is
+  only patched during packing, instead of the release version. Anyone installing
+  via the `#upm` Git URL saw `1.5.3` regardless of what they actually got.
+- The committed `unity/package.json` now mirrors `VERSION.txt` and is verified on
+  every push, so it can no longer drift from the shipped package.
+
+### Note on version history
+This package tracks the BCSV library version. Entries between 1.5.3 and 1.5.13
+were not recorded here; see the root `CHANGELOG.md` for library changes in that
+range. Packaging changes in 1.5.12 (manylinux Linux builds with a static C++
+runtime, static MSVC runtime on Windows) removed the need for a matching
+`libstdc++` or the Visual C++ Redistributable on target machines.
+
 ## [1.5.3] - 2026-03-22
 
 ### Fixed

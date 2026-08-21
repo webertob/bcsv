@@ -1,36 +1,76 @@
-# BCSV Automated Versioning System
+# BCSV Versioning System
 
 ## Overview
 
-BCSV implements an automated versioning system designed to ensure that:
-1. **Developers** always get the correct version during development builds
-2. **End users** can download header files with embedded version information
-3. **Git tags** and embedded versions stay synchronized automatically
-4. **Header-only distribution** works without requiring CMake or Git
+BCSV ships one version number across five distribution channels - the C++
+headers, the C API natives, PyPI (`pybcsv`), NuGet (`Bcsv`) and the Unity
+package - and stamps that number into every `.bcsv` file header. The system is
+built so that all five agree, and so that a build which *cannot* determine the
+correct version fails instead of guessing.
 
-The system uses Git tags as the single source of truth for version numbers, ensuring consistency across:
-- C++ header files (`include/bcsv/version_generated.h`)
-- CMake builds and configuration
-- GitHub releases and CI/CD workflows
-- Python package on PyPI (`pybcsv`)
+**`VERSION.txt` is the single source of truth.** Git tags do not supply the
+version; they are only checked against it.
+
+That ordering is deliberate. Until v1.5.13 the version was derived from
+`git describe` with `VERSION.txt` as a silent fallback, so any environment where
+git was unavailable produced a wrong-but-plausible version with no warning. This
+is exactly how the v1.5.12 release shipped Linux natives stamped `1.5.11`: those
+jobs build inside a container, git refused to read the workspace ("detected
+dubious ownership"), and the build quietly fell through to a `VERSION.txt` that
+release tagging never updated. Because `version::MINOR` also selects the file
+codec (see `writer.hpp`), a guessed version is not merely a cosmetic provenance
+error - it can change how data is encoded.
 
 ## How It Works
 
-### 🔄 **Development Workflow**
-During development, the version is automatically extracted from Git tags:
-- `GetGitVersion.cmake` reads the latest git tag (e.g., `v1.0.3`)
-- Updates `version_generated.h` with the extracted version
-- Development builds show commits since last tag (e.g., `1.0.3-dev.18-dirty`)
+### Resolving the version
 
-### 🚀 **Release Workflow**
-When a new version is released:
-1. **Developer creates tag**: `git tag v1.0.4 && git push origin v1.0.4`
-2. **GitHub Actions triggers**: The `.github/workflows/release.yml` workflow runs
-3. **Version auto-update**: The workflow updates `version_generated.h` to match the tag
-4. **Auto-commit**: Changes are committed back to the repository
-5. **GitHub Release**: A release is automatically created
+`cmake/GetGitVersion.cmake` reads `VERSION.txt` and then verifies it:
 
-### 📦 **Distribution**
+| Situation | Result |
+|---|---|
+| HEAD is tagged `vX.Y.Z` matching `VERSION.txt` | Version confirmed |
+| HEAD is tagged `vX.Y.Z` **not** matching `VERSION.txt` | **Fatal error** |
+| HEAD is untagged (development build) | `VERSION.txt` used, distance from last tag reported |
+| Git unusable, `BCSV_STRICT_VERSION=OFF` | `VERSION.txt` used, reason reported |
+| Git unusable, `BCSV_STRICT_VERSION=ON` | **Fatal error** |
+
+`-DBCSV_STRICT_VERSION=ON` is set by every release and packaging workflow, so a
+build that cannot verify itself never produces a shippable artifact. Leave it off
+for local development from a tarball or a git-less checkout.
+
+### Checking every stamp
+
+`scripts/check_versions.py` is the single implementation used by developers and
+CI alike. It verifies the committed manifests against `VERSION.txt`, optionally
+cross-checks a git tag, and - most importantly - loads a **built** shared library
+and asks it what version it reports:
+
+```bash
+scripts/check_versions.py                                 # committed manifests
+scripts/check_versions.py --tag v1.5.13                   # and the tag
+scripts/check_versions.py --native build/libbcsv_c_api.so # and the artifact
+```
+
+Checking the binary rather than the build inputs is the point: that is the check
+which catches a toolchain that resolved a different version than intended. Every
+packaging workflow runs it against each native before uploading it.
+
+### Release Workflow
+
+1. **Bump and commit** - `scripts/update_version.sh 1.5.13` writes `VERSION.txt`,
+   `unity/package.json` and `Bcsv.csproj`, then verifies them. Commit this.
+2. **Tag** - `git tag v1.5.13`. The tag must come *after* the bump commit;
+   tagging first is what causes the mismatch this system now rejects.
+3. **Push** - `git push origin master --tags`. The release workflows verify the
+   tag against `VERSION.txt` and fail the release if they disagree.
+
+Note that no workflow commits back to the repository. `release-publish.yml`
+generates `version_generated.h` only inside its own workspace, for the
+header-only include artifact.
+
+### Distribution
+
 Users downloading the repository get:
 - ✅ Correct embedded version in headers
 - ✅ No need for CMake or Git to build
@@ -41,18 +81,25 @@ Users downloading the repository get:
 
 ```
 bcsv/
+├── VERSION.txt                  # SINGLE SOURCE OF TRUTH
 ├── .github/workflows/
-│   └── release.yml              # GitHub Actions workflow for automated releases
+│   ├── release-publish.yml      # Tag-driven GitHub release + include artifact
+│   ├── build-and-publish.yml    # PyPI wheels
+│   ├── csharp-nuget.yml         # NuGet package
+│   ├── unity-package.yml        # Unity .tgz package
+│   └── upm-branch.yml           # Unity install-by-git-URL branch
 ├── cmake/
-│   ├── GetGitVersion.cmake      # Git version extraction for dev builds
+│   ├── GetGitVersion.cmake      # Reads VERSION.txt, verifies against git
 │   └── version.h.in             # Template for version header
 ├── include/bcsv/
-│   └── version_generated.h      # Auto-generated version header (DO NOT EDIT)
+│   └── version_generated.h      # Generated into the BUILD tree (gitignored)
 ├── scripts/
-│   ├── update_version.sh        # Manual version update script
-│   ├── validate_version.sh      # Version validation script
-│   └── validate_version.bat     # Windows version validation
-└── CMakeLists.txt               # Uses VERSION_STRING from git
+│   ├── check_versions.py        # Verify every stamp (used by CI)
+│   ├── update_version.sh        # Bump the release version
+│   └── validate_version.sh      # Wrapper around check_versions.py
+├── unity/package.json           # Mirrors VERSION.txt
+├── csharp/src/Bcsv/Bcsv.csproj  # Mirrors VERSION.txt
+└── CMakeLists.txt               # Uses VERSION_STRING from VERSION.txt
 ```
 
 ## Usage Examples
@@ -65,20 +112,16 @@ bcsv/
 bash scripts/validate_version.sh
 ```
 
-#### Update Version Manually
+#### Set the Release Version
 ```bash
-# Set specific version
-bash scripts/update_version.sh 1.0.5
-
-# Use latest git tag
-bash scripts/update_version.sh
+# Writes VERSION.txt, unity/package.json and Bcsv.csproj, then verifies them
+bash scripts/update_version.sh 1.5.13
 ```
 
 #### Development Build
 ```bash
-mkdir build && cd build
-cmake ..  # Automatically extracts version from git
-cmake --build .
+cmake -B build            # Reads VERSION.txt, verifies it against git tags
+cmake --build build
 ```
 
 ### For End Users
@@ -99,23 +142,18 @@ int main() {
 
 ## Creating a New Release
 
-### Option 1: GitHub Web Interface
-1. Go to GitHub repository → Releases → "Create a new release"
-2. Choose tag: `v1.0.4` (create new tag)
-3. Set title: `Release v1.0.4`
-4. Click "Publish release"
-5. GitHub Actions will automatically update the version header
-
-### Option 2: Command Line
+### Option 1: Command Line (recommended)
 ```bash
-# Create and push tag
-git tag v1.0.4
-git push origin v1.0.4
-
-# GitHub Actions will trigger automatically
+bash scripts/update_version.sh 1.5.13
+git commit -am "release: 1.5.13"
+git tag v1.5.13
+git push origin master --tags
 ```
 
-### Option 3: With Release Notes
+Creating a tag from the GitHub web interface is **not** sufficient on its own:
+the bump commit must exist first, or the release workflows will reject the tag.
+
+### Option 2: With Release Notes
 ```bash
 # Create annotated tag with message
 git tag -a v1.0.4 -m "Release version 1.0.4
@@ -131,7 +169,7 @@ git push origin v1.0.4
 
 BCSV uses [Semantic Versioning](https://semver.org/) with a **unified version**:
 since v1.5.0, the library version and the binary file format version are one and
-the same.  The single version is derived from git tags and is stamped into every
+the same.  The single version comes from `VERSION.txt` and is stamped into every
 `.bcsv` file header.
 
 - **MAJOR**: Incompatible API *and* wire-format changes (breaking in both directions)
@@ -211,16 +249,33 @@ build** if a new enum value is added without updating the registry.
 ## Troubleshooting
 
 ### Version Mismatch Errors
+
 ```bash
-# Check current state
+# Check every stamp against VERSION.txt
 bash scripts/validate_version.sh
-
-# Fix by updating to match git tag
-bash scripts/update_version.sh
-
-# Or create matching git tag
-git tag v$(grep "STRING" include/bcsv/version_generated.h | cut -d'"' -f2)
 ```
+
+**"HEAD is tagged vX.Y.Z but VERSION.txt says A.B.C"** - the bump commit is
+missing or the tag landed on the wrong commit. Either bump and re-tag:
+
+```bash
+bash scripts/update_version.sh X.Y.Z
+git commit -am "release: X.Y.Z"
+git tag -f vX.Y.Z
+```
+
+**"Cannot verify version ... against git tags"** with `BCSV_STRICT_VERSION=ON` -
+git could not read the repository. In a container this is almost always
+ownership:
+
+```bash
+git config --global --add safe.directory "$PWD"
+```
+
+A shallow clone hides tags; use `fetch-depth: 0` in CI or `git fetch --tags`.
+
+Never edit `include/bcsv/version_generated.h` to resolve a mismatch - it is
+gitignored and regenerated into the build tree on every configure.
 
 ### GitHub Actions Not Triggering
 1. Check that tag follows format: `v*.*.*`
@@ -230,9 +285,9 @@ git tag v$(grep "STRING" include/bcsv/version_generated.h | cut -d'"' -f2)
 
 ### CMake Version Warnings
 ```bash
-# If you see "VERSION keyword not followed by a value"
-cd build
-cmake ..  # Should show extracted git version
+# If you see "VERSION keyword not followed by a value", VERSION.txt is
+# missing or malformed - configure now fails outright with an explicit message.
+cmake -B build   # Should print: Version X.Y.Z (VERSION.txt, ...)
 ```
 
 ### C++ shows wrong version
@@ -269,34 +324,17 @@ git commit -m "Manual version update to 1.0.4"
 - Clear audit trail of version changes
 - Consistent GitHub releases
 
-## Migration from Old System
+## Verifying a Release Locally
 
-If upgrading from a manual versioning system:
+Reproduce what CI checks before pushing a tag:
 
-1. **Backup current version**:
-   ```bash
-   cp include/bcsv/version_generated.h include/bcsv/version_generated.h.backup
-   ```
+```bash
+cmake -B build -DBCSV_STRICT_VERSION=ON
+cmake --build build --target bcsv_c_api
+scripts/check_versions.py --tag "v$(cat VERSION.txt)" \
+    --native build/libbcsv_c_api.so
+```
 
-2. **Run validation**:
-   ```bash
-   bash scripts/validate_version.sh
-   ```
-
-3. **Fix any mismatches**:
-   ```bash
-   # Either update header to match git tag
-   bash scripts/update_version.sh
-   
-   # Or create git tag to match header
-   git tag v$(grep "STRING" include/bcsv/version_generated.h | cut -d'"' -f2)
-   ```
-
-4. **Test the system**:
-   ```bash
-   mkdir test_build && cd test_build
-   cmake ..
-   cmake --build .
-   ```
-
-The automated versioning system ensures BCSV can be easily integrated into any project while maintaining clear version tracking and compatibility checking.
+This is the same three-part check the packaging workflows run: the manifests
+agree with `VERSION.txt`, the tag agrees with `VERSION.txt`, and the artifact
+that will actually ship reports the version it claims.

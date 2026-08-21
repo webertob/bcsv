@@ -35,6 +35,20 @@ permissions:
   contents: read
 
 jobs:
+
+  # Cheap guard that runs on every push: the committed manifests are patched
+  # from VERSION.txt only at pack time, so nothing else notices when they
+  # drift. unity/package.json sat at 1.5.3 for nine releases before this.
+  version-consistency:
+    name: Version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+      - name: Check every version stamp against VERSION.txt
+        run: python3 scripts/check_versions.py
+
   # ────────────────────────────────────────────────────────────────
   # Debug builds — every push / PR
   # ────────────────────────────────────────────────────────────────

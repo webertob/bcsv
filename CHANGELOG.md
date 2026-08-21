@@ -10,6 +10,85 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.5.13] - 2026-08-21
+
+Version-stamping fix. `VERSION.txt` is now the single source of truth for every
+distribution channel, and builds that cannot verify their own version fail
+instead of guessing.
+
+### Fixed
+- **Native libraries could ship stamped with the wrong version.** The version was
+  derived from `git describe` with `VERSION.txt` as a *silent* fallback, so any
+  build environment where git was unavailable produced a wrong-but-plausible
+  version with no warning. The v1.5.12 Unity package shipped both Linux natives
+  (`x86_64` and `arm64`) stamped `1.5.11` for this reason: those jobs build
+  inside a manylinux container, git refused to read the workspace ("detected
+  dubious ownership"), and the build fell through to a `VERSION.txt` that
+  release tagging never updated. Windows and macOS, which build on the bare
+  runner, were correct — so the same recorder produced different header bytes
+  per platform. Payload data was unaffected: only the three header bytes
+  covering the patch version and the checksum that follows from it differed.
+- **The Unity `upm` branch was stamped `1.5.3` for nine releases.**
+  `upm-branch.yml` read its version from the *committed* `unity/package.json`,
+  which is only patched during packing. Every `-upm` tag from `v1.5.4` onwards
+  carries `package.json` version `1.5.3`. It now reads `VERSION.txt`.
+- **Stale committed manifests.** `unity/package.json` (`1.5.3`) and
+  `csharp/src/Bcsv/Bcsv.csproj` (`1.5.7`) had drifted from the shipped versions.
+  Both now mirror `VERSION.txt` and are checked on every push.
+
+### Changed
+- **`VERSION.txt` is the single source of truth.** Git tags no longer supply the
+  version; they are verified against it. A tagged build whose tag disagrees with
+  `VERSION.txt` is now a hard configure error, which is precisely the condition
+  that produced the v1.5.12 mismatch. This matters beyond provenance:
+  `version::MINOR` selects the file codec, so a guessed version can change how
+  data is encoded, not just how it is labelled.
+- **`scripts/update_version.sh` now sets the release version everywhere**
+  (`VERSION.txt`, `unity/package.json`, `Bcsv.csproj`) so the bump lands in one
+  commit before tagging. It no longer writes the gitignored
+  `include/bcsv/version_generated.h`.
+- `scripts/validate_version.sh` is now a wrapper around `check_versions.py`; it
+  previously compared against a header that does not exist in a clean checkout.
+- `VERSIONING.md` rewritten: it described tag-as-truth and referenced a
+  `release.yml` workflow and an auto-commit step that do not exist.
+
+### Added
+- **`BCSV_STRICT_VERSION` CMake option.** When on, a build that cannot verify its
+  version against git fails rather than falling back. Enabled in every release
+  and packaging workflow; off by default for local and tarball builds.
+- **`scripts/check_versions.py`** — one implementation, used by developers and
+  every CI workflow. Verifies the committed manifests, optionally cross-checks a
+  git tag, and loads a **built** shared library to confirm the version it
+  actually reports. Every packaging workflow now runs this against each native
+  before uploading it, so the artifact is checked rather than the build inputs.
+- A `version-consistency` job on `ci.yml` and `build-and-publish.yml` catches
+  manifest drift on every push instead of at release time.
+- Linux container build jobs now mark the workspace `safe.directory`, fixing the
+  underlying git failure, and all packaging checkouts use `fetch-depth: 0` so
+  tags are visible.
+
+## [1.5.12] - 2026-08-21
+
+Unity native packaging. No library or format changes.
+
+### Fixed
+- Linux natives are built in `manylinux_2_28` and link the C++ runtime
+  statically, so the Unity package no longer requires a matching `libstdc++` or
+  a glibc as new as the CI runner's.
+- Windows natives link the static MSVC runtime, removing the Visual C++
+  Redistributable requirement.
+
+### Known issue
+- Both Linux natives in this release report version `1.5.11`. Data written is
+  fully portable — only the version stamp in the file header is wrong. Fixed in
+  1.5.13.
+
+### Added
+- `unity/tools/build-windows.ps1` for local Windows plugin builds.
+- Benchmarks are now optional at configure time (`-DBUILD_BENCHMARKS=OFF`).
+
+---
+
 ## [1.5.11] - 2026-07-13
 
 CSV converter rework: validated type inference with automatic widening (no more

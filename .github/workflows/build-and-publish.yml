@@ -18,8 +18,27 @@ env:
   CIBW_SKIP: "pp*"  # Skip PyPy builds
 
 jobs:
+
+  # Runs before anything is built so a version mismatch fails in seconds
+  # rather than after the full wheel matrix.
+  version-consistency:
+    name: Version consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+      - name: Check every version stamp against VERSION.txt
+        run: |
+          ARGS=()
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            ARGS+=(--tag "${GITHUB_REF#refs/tags/}")
+          fi
+          python3 scripts/check_versions.py "${ARGS[@]}"
+
   # ── Build sdist ─────────────────────────────────────────────────────
   build-sdist:
+    needs: version-consistency
     name: Build source distribution
     runs-on: ubuntu-latest
     steps:
@@ -46,6 +65,7 @@ jobs:
 
   # ── Build Linux wheels ──────────────────────────────────────────────
   build-linux:
+    needs: version-consistency
     name: Build Linux wheels (${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
@@ -82,6 +102,7 @@ jobs:
 
   # ── Build Windows wheels ────────────────────────────────────────────
   build-windows:
+    needs: version-consistency
     name: Build Windows wheels (${{ matrix.arch }})
     runs-on: windows-latest
     strategy:
@@ -113,6 +134,7 @@ jobs:
 
   # ── Build macOS wheels ──────────────────────────────────────────────
   build-macos:
+    needs: version-consistency
     name: Build macOS wheels (${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -185,6 +207,34 @@ jobs:
         run: |
           pip install pytest pandas numpy pyarrow
           pip install pybcsv --find-links dist/ --no-index
+
+      - name: Verify the installed wheel reports the expected version
+        shell: bash
+        run: |
+          set -e
+          # On a tag build the wheel version, the compiled extension and
+          # VERSION.txt must all agree. setuptools_scm derives wheel metadata
+          # from the tag while the native extension takes VERSION.txt, so this
+          # is the seam where the two could diverge.
+          EXPECTED="$(cat VERSION.txt)"
+          python - "$EXPECTED" "$GITHUB_REF" <<'PYCHECK'
+          import sys
+          import pybcsv
+
+          expected, ref = sys.argv[1], sys.argv[2]
+          found = pybcsv.__version__
+          print(f"VERSION.txt={expected}  pybcsv.__version__={found}")
+          if ref.startswith("refs/tags/v"):
+              if found != expected:
+                  sys.exit(
+                      f"FAIL wheel reports {found!r} but VERSION.txt says {expected!r}"
+                  )
+              print("PASS wheel version matches VERSION.txt")
+          else:
+              # Untagged builds carry a setuptools_scm dev suffix; only the
+              # release line has to match exactly.
+              print("skipped exact match (not a tag build)")
+          PYCHECK
 
       - name: Run pybcsv test suite
         run: python -m pytest python/tests/ -v --tb=short

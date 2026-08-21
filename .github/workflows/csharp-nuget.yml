@@ -63,6 +63,9 @@ jobs:
 
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          # Needed so the build can verify VERSION.txt against its tag.
+          fetch-depth: 0
 
       - name: Install Ninja (Linux)
         if: runner.os == 'Linux'
@@ -88,6 +91,7 @@ jobs:
           cmake -G Ninja -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DBCSV_WERROR=ON \
+            -DBCSV_STRICT_VERSION=ON \
             -DBUILD_TESTS=OFF
           cmake --build build --target bcsv_c_api --parallel
 
@@ -97,8 +101,19 @@ jobs:
           cmake -G Ninja -B build `
             -DCMAKE_BUILD_TYPE=Release `
             -DBCSV_WERROR=ON `
+            -DBCSV_STRICT_VERSION=ON `
             -DBUILD_TESTS=OFF
           cmake --build build --target bcsv_c_api --parallel
+
+      - name: Verify the stamped version
+        shell: bash
+        run: |
+          set -e
+          ARGS=(--skip-manifests --native "${{ matrix.lib-dir }}/${{ matrix.lib-name }}")
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            ARGS+=(--tag "${GITHUB_REF#refs/tags/}")
+          fi
+          python3 scripts/check_versions.py "${ARGS[@]}"
 
       - name: Upload native library
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -137,13 +152,18 @@ jobs:
           echo "=== Staged native libraries ==="
           find csharp/src/Bcsv/runtimes -type f
 
-      - name: Extract version from tag or set dev version
+      - name: Resolve version from VERSION.txt
         id: version
         run: |
+          # Same source of truth the natives were built from; the tag is only
+          # cross-checked against it, never used as the version itself.
+          RELEASE_VERSION="$(cat VERSION.txt)"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+            python3 scripts/check_versions.py --tag "${GITHUB_REF#refs/tags/}"
+            VERSION="$RELEASE_VERSION"
           else
-            VERSION="0.0.0-dev.$(date +%Y%m%d%H%M%S)"
+            python3 scripts/check_versions.py
+            VERSION="${RELEASE_VERSION}-dev.$(date +%Y%m%d%H%M%S)"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Package version: $VERSION"

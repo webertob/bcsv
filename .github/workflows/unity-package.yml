@@ -68,6 +68,22 @@ jobs:
 
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          # Tags are needed so the build can verify VERSION.txt against the
+          # tag it claims to be. The default shallow fetch hides them.
+          fetch-depth: 0
+
+      - name: Trust the workspace (Linux containers)
+        if: matrix.container != ''
+        run: |
+          # These jobs run in a container while the workspace is created by the
+          # runner, so git sees a directory owned by someone else and refuses:
+          # "detected dubious ownership". Every git call then fails, and before
+          # BCSV_STRICT_VERSION existed the build quietly fell back to a stale
+          # VERSION.txt - that is how v1.5.12 shipped Linux natives stamped
+          # 1.5.11 while Windows, which runs on the bare runner, was correct.
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git -C "$GITHUB_WORKSPACE" describe --tags --always
 
       - name: Install CMake and Ninja (Linux)
         if: runner.os == 'Linux'
@@ -107,6 +123,7 @@ jobs:
           cmake -G Ninja -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DBCSV_WERROR=ON \
+            -DBCSV_STRICT_VERSION=ON \
             -DBUILD_TESTS=OFF \
             -DBUILD_BENCHMARKS=OFF \
             -DBUILD_TOOLS=OFF \
@@ -120,6 +137,7 @@ jobs:
           cmake -G Ninja -B build `
             -DCMAKE_BUILD_TYPE=Release `
             -DBCSV_WERROR=ON `
+            -DBCSV_STRICT_VERSION=ON `
             -DBUILD_TESTS=OFF `
             -DBUILD_BENCHMARKS=OFF `
             -DBUILD_TOOLS=OFF `
@@ -170,6 +188,25 @@ jobs:
             echo "  PASS no Visual C++ Redistributable needed"
           fi
 
+      - name: Verify the stamped version
+        shell: bash
+        run: |
+          set -e
+          # Ask the built binary what version it thinks it is. Checking the
+          # artifact rather than the build inputs is the point: this is the
+          # step that fails if the toolchain resolved a version other than the
+          # one the release intends to ship.
+          if [[ "${{ runner.os }}" == "Linux" ]]; then
+            PY=/opt/python/cp311-cp311/bin/python
+          else
+            PY=python3
+          fi
+          ARGS=(--skip-manifests --native "${{ matrix.lib-dir }}/${{ matrix.lib-name }}")
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            ARGS+=(--tag "${GITHUB_REF#refs/tags/}")
+          fi
+          "$PY" scripts/check_versions.py "${ARGS[@]}"
+
       - name: Upload native library
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -208,13 +245,20 @@ jobs:
           echo "=== Staged native libraries ==="
           find unity/Runtime/Plugins -type f
 
-      - name: Extract version from tag or set dev version
+      - name: Resolve version from VERSION.txt
         id: version
         run: |
+          # VERSION.txt is the source of truth the natives were built from, so
+          # the package must carry the same number rather than re-deriving one
+          # from the ref. On a tag build the two are cross-checked and the job
+          # fails if they disagree.
+          RELEASE_VERSION="$(cat VERSION.txt)"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/v}"
+            python3 scripts/check_versions.py --tag "${GITHUB_REF#refs/tags/}"
+            VERSION="$RELEASE_VERSION"
           else
-            VERSION="0.0.0-dev.$(date +%Y%m%d%H%M%S)"
+            python3 scripts/check_versions.py
+            VERSION="${RELEASE_VERSION}-dev.$(date +%Y%m%d%H%M%S)"
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Package version: $VERSION"

@@ -1,0 +1,133 @@
+#!/usr/bin/env python3
+# Copyright (c) 2025 Tobias Weber <weber.tobias.md@gmail.com>
+#
+# This file is part of the BCSV library.
+#
+# Licensed under the MIT License. See LICENSE file in the project root
+# for full license information.
+
+"""Verify every version stamp in the repository agrees with VERSION.txt.
+
+VERSION.txt is the single source of truth (see cmake/GetGitVersion.cmake). The
+manifests below are patched from it at pack time, but they are also committed,
+so they drift silently unless something checks them - which is how the Unity
+package.json sat at 1.5.3 for nine releases.
+
+The --native check is the one that matters at release time: it loads a built
+shared library and asks it what version it thinks it is. Checking the binary
+rather than the build inputs is what catches a toolchain that resolved the
+version differently from what the release intended.
+
+Usage:
+    scripts/check_versions.py                       # check committed manifests
+    scripts/check_versions.py --tag v1.5.13         # also require the tag to match
+    scripts/check_versions.py --native build/libbcsv_c_api.so
+"""
+
+from __future__ import annotations
+
+import argparse
+import ctypes
+import json
+import re
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+VERSION_RE = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
+
+
+def read_source_of_truth() -> str:
+    path = ROOT / "VERSION.txt"
+    if not path.exists():
+        sys.exit(f"FAIL VERSION.txt missing at {path}")
+    version = path.read_text().strip()
+    if not VERSION_RE.match(version):
+        sys.exit(f"FAIL VERSION.txt contains {version!r}, not a valid X.Y.Z version")
+    return version
+
+
+def check_unity_manifest(expected: str) -> list[str]:
+    path = ROOT / "unity" / "package.json"
+    if not path.exists():
+        return [f"{path.relative_to(ROOT)} not found"]
+    found = json.loads(path.read_text()).get("version")
+    if found != expected:
+        return [f"unity/package.json says {found!r}, expected {expected!r}"]
+    return []
+
+
+def check_csproj(expected: str) -> list[str]:
+    path = ROOT / "csharp" / "src" / "Bcsv" / "Bcsv.csproj"
+    if not path.exists():
+        return [f"{path.relative_to(ROOT)} not found"]
+    match = re.search(r"<Version>([^<]+)</Version>", path.read_text())
+    if not match:
+        return ["csharp/src/Bcsv/Bcsv.csproj has no <Version> element"]
+    if match.group(1) != expected:
+        return [f"Bcsv.csproj says {match.group(1)!r}, expected {expected!r}"]
+    return []
+
+
+def check_tag(expected: str, tag: str) -> list[str]:
+    if tag != f"v{expected}":
+        return [
+            f"git tag {tag!r} does not match VERSION.txt {expected!r}; "
+            f"bump VERSION.txt in a commit before tagging (see VERSIONING.md)"
+        ]
+    return []
+
+
+def check_native(expected: str, lib_path: str) -> list[str]:
+    """Load the built library and ask it for its own version string."""
+    path = Path(lib_path)
+    if not path.exists():
+        return [f"native library not found: {lib_path}"]
+    try:
+        lib = ctypes.CDLL(str(path.resolve()))
+    except OSError as exc:
+        return [f"could not load {lib_path}: {exc}"]
+    lib.bcsv_version.restype = ctypes.c_char_p
+    found = lib.bcsv_version().decode()
+    if found != expected:
+        return [
+            f"{lib_path} reports version {found!r}, expected {expected!r} - "
+            f"the build resolved a different version than the release intends"
+        ]
+    print(f"  OK   {lib_path} reports {found}")
+    return []
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--tag", help="git tag this build claims to be (e.g. v1.5.13)")
+    parser.add_argument("--native", action="append", default=[],
+                        help="path to a built shared library to load and verify")
+    parser.add_argument("--skip-manifests", action="store_true",
+                        help="only run the --tag / --native checks")
+    args = parser.parse_args()
+
+    expected = read_source_of_truth()
+    print(f"VERSION.txt: {expected}")
+
+    problems: list[str] = []
+    if not args.skip_manifests:
+        problems += check_unity_manifest(expected)
+        problems += check_csproj(expected)
+    if args.tag:
+        problems += check_tag(expected, args.tag)
+    for lib in args.native:
+        problems += check_native(expected, lib)
+
+    if problems:
+        print(f"\nFAIL {len(problems)} version mismatch(es):", file=sys.stderr)
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
+
+    print("PASS all version stamps agree")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,50 +1,35 @@
 cmake_minimum_required(VERSION 3.15...3.30)
 project(pybcsv LANGUAGES C CXX)
 
-# ── Version from Git ────────────────────────────────────────────────────
-find_package(Git QUIET)
-if(GIT_FOUND)
-    execute_process(
-        COMMAND ${GIT_EXECUTABLE} describe --tags --match "v[0-9]*.[0-9]*.[0-9]*" --abbrev=0
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/..
-        OUTPUT_VARIABLE BCSV_GIT_TAG
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        ERROR_QUIET
-        RESULT_VARIABLE GIT_RESULT
-    )
-    if(GIT_RESULT EQUAL 0)
-        string(REGEX MATCH "([0-9]+)\\.([0-9]+)\\.([0-9]+)" _ ${BCSV_GIT_TAG})
-        set(BCSV_VERSION_MAJOR ${CMAKE_MATCH_1})
-        set(BCSV_VERSION_MINOR ${CMAKE_MATCH_2})
-        set(BCSV_VERSION_PATCH ${CMAKE_MATCH_3})
-        set(BCSV_VERSION_STRING "${BCSV_VERSION_MAJOR}.${BCSV_VERSION_MINOR}.${BCSV_VERSION_PATCH}")
-    endif()
+# ── Version from VERSION.txt ────────────────────────────────────────────
+# VERSION.txt is the single source of truth, mirroring cmake/GetGitVersion.cmake.
+# Deriving this from `git describe` instead meant a wheel built where git was
+# unavailable silently stamped whatever the last committed fallback happened to
+# be. sync_headers.py copies VERSION.txt next to this file for sdist builds, so
+# both the full checkout and the sdist find it.
+set(_PY_VERSION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION.txt")
+if(NOT EXISTS "${_PY_VERSION_FILE}")
+    set(_PY_VERSION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/VERSION.txt")
 endif()
-if(NOT DEFINED BCSV_VERSION_STRING)
-    # Read fallback from VERSION.txt file (always shipped in sdist)
-    # Check parent directory (full checkout) then current directory (sdist)
-    set(_PY_VERSION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/../VERSION.txt")
-    if(NOT EXISTS "${_PY_VERSION_FILE}")
-        set(_PY_VERSION_FILE "${CMAKE_CURRENT_SOURCE_DIR}/VERSION.txt")
-    endif()
-    if(EXISTS "${_PY_VERSION_FILE}")
-        file(READ "${_PY_VERSION_FILE}" _PY_FALLBACK_VERSION)
-        string(STRIP "${_PY_FALLBACK_VERSION}" _PY_FALLBACK_VERSION)
-        string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)" _PY_FB_MATCH "${_PY_FALLBACK_VERSION}")
-        if(_PY_FB_MATCH)
-            set(BCSV_VERSION_MAJOR ${CMAKE_MATCH_1})
-            set(BCSV_VERSION_MINOR ${CMAKE_MATCH_2})
-            set(BCSV_VERSION_PATCH ${CMAKE_MATCH_3})
-            set(BCSV_VERSION_STRING "${_PY_FALLBACK_VERSION}")
-        endif()
-    endif()
-    if(NOT DEFINED BCSV_VERSION_STRING)
-        set(BCSV_VERSION_MAJOR 0)
-        set(BCSV_VERSION_MINOR 0)
-        set(BCSV_VERSION_PATCH 0)
-        set(BCSV_VERSION_STRING "0.0.0.dev0")
-    endif()
+if(NOT EXISTS "${_PY_VERSION_FILE}")
+    message(FATAL_ERROR
+        "[pybcsv] VERSION.txt not found in either ${CMAKE_CURRENT_SOURCE_DIR}/.. or "
+        "${CMAKE_CURRENT_SOURCE_DIR}. Run sync_headers.py or build from the project root.")
 endif()
+
+file(READ "${_PY_VERSION_FILE}" _PY_FILE_VERSION)
+string(STRIP "${_PY_FILE_VERSION}" _PY_FILE_VERSION)
+string(REGEX MATCH "^([0-9]+)\\.([0-9]+)\\.([0-9]+)$" _PY_FV_MATCH "${_PY_FILE_VERSION}")
+if(NOT _PY_FV_MATCH)
+    message(FATAL_ERROR
+        "[pybcsv] ${_PY_VERSION_FILE} contains '${_PY_FILE_VERSION}', not a valid X.Y.Z version.")
+endif()
+
+set(BCSV_VERSION_MAJOR ${CMAKE_MATCH_1})
+set(BCSV_VERSION_MINOR ${CMAKE_MATCH_2})
+set(BCSV_VERSION_PATCH ${CMAKE_MATCH_3})
+set(BCSV_VERSION_STRING "${_PY_FILE_VERSION}")
+
 message(STATUS "[pybcsv] Version: ${BCSV_VERSION_STRING}")
 
 # Set variables expected by cmake/version.h.in template
