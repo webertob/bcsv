@@ -15,6 +15,10 @@ on:
       - 'include/**'
       - 'src/bcsv_c_api.cpp'
       - 'CMakeLists.txt'
+      # The packing scripts decide what ships and whether it is fit to ship,
+      # so a change to either has to be exercised like a change to unity/.
+      - 'scripts/pack-unity.sh'
+      - 'scripts/check-unity-package.sh'
       - '.github/workflows/unity-package.yml'
   pull_request:
     paths:
@@ -22,6 +26,8 @@ on:
       - 'include/**'
       - 'src/bcsv_c_api.cpp'
       - 'CMakeLists.txt'
+      - 'scripts/pack-unity.sh'
+      - 'scripts/check-unity-package.sh'
   workflow_dispatch:
 
 permissions:
