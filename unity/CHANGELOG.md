@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **The package no longer trips Unity's "no meta file, but it's in an immutable
+  folder" warning.** It shipped `tools/build-windows.ps1` — a maintainer script
+  for building the Windows native — with no `.meta` files. A package installed
+  from a tarball or a git URL lives in an immutable folder, so Unity cannot
+  generate the missing metas itself and instead logged two warnings on every
+  import and every domain reload. The script was never package content: it now
+  lives at `scripts/build-unity-windows.ps1` in the repository root, and `unity/`
+  holds only what a consumer actually installs.
+
+### Changed
+- **Packing selects what to ship instead of copying the directory.** Both the
+  `.tgz` workflow and the `upm` branch workflow copied `unity/*` wholesale, so
+  any file added under `unity/` reached consumers whether or not it belonged in
+  the package — which is how the build script shipped in the first place. They
+  now copy an explicit list and fail if any staged file would ship without a
+  `.meta`, matching the packing scripts in the sibling Unity packages.
+
+### Added
+- **`.meta` files for the Basic sample.** The sample shipped without them, so
+  importing it minted fresh GUIDs for `BcsvRecorder` and `BcsvUnityExample` —
+  different for every user and different again on every re-import, which breaks
+  any scene or prefab referencing those components. The GUIDs are now fixed by
+  the package. Existing imported copies keep the GUIDs they were given; re-import
+  the sample to adopt the stable ones.
+
 ## [1.5.13] - 2026-08-21
 
 ### Fixed

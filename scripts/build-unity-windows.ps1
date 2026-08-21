@@ -23,12 +23,12 @@
 #>
 param(
     [string]$Configuration = 'Release',
-    [string]$BuildDir     = "$PSScriptRoot\..\..\build\unity-windows",
-    [string]$OutputDir    = "$PSScriptRoot\..\Runtime\Plugins\Windows\x86_64"
+    [string]$BuildDir     = "$PSScriptRoot\..\build\unity-windows",
+    [string]$OutputDir    = "$PSScriptRoot\..\unity\Runtime\Plugins\Windows\x86_64"
 )
 
 $ErrorActionPreference = 'Stop'
-$repo = Resolve-Path "$PSScriptRoot\..\.."
+$repo = Resolve-Path "$PSScriptRoot\.."
 
 function Invoke-Checked {
     param([string]$Exe, [string[]]$Arguments)

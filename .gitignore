@@ -28,6 +28,13 @@ obj/
 *.tmp
 *.temp
 *~
+# ...but not directories ending in "~". Unity's AssetDatabase ignores any name
+# ending in "~", which is how a UPM package ships content it does not want
+# imported - Samples~ here, Documentation~ in other packages. Without this
+# negation the editor-backup rule above swallows the whole directory, and files
+# added to a sample are ignored silently: that is how Samples~/Basic came to
+# ship without its .meta files.
+!*~/
 .DS_Store
 Thumbs.db
 *.idx

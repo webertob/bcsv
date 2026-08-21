@@ -281,16 +281,14 @@ jobs:
 
       - name: Pack .tgz (UPM format)
         run: |
-          # UPM .tgz must contain a top-level "package/" directory
-          mkdir -p staging/package
-          cp -r unity/* staging/package/
-          # Include the license from root
-          cp LICENSE staging/package/LICENSE.md
+          # UPM .tgz must contain a top-level "package/" directory.
+          # pack-unity.sh selects what ships; check-unity-package.sh refuses to
+          # let the job continue if anything staged would import badly.
+          ./scripts/pack-unity.sh staging/package
+          ./scripts/check-unity-package.sh staging/package
 
-          cd staging
           TARBALL="com.bcsv.unity-${{ steps.version.outputs.version }}.tgz"
-          tar -czf "../${TARBALL}" package/
-          cd ..
+          tar -czf "${TARBALL}" -C staging package
 
           ls -lh "${TARBALL}"
           echo "tarball=${TARBALL}" >> "$GITHUB_OUTPUT"

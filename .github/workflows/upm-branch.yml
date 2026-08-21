@@ -131,13 +131,10 @@ jobs:
 
       - name: Prepare upm branch content
         run: |
-          mkdir -p upm-staging
-
-          # Copy unity package files to root of staging area
-          cp -r unity/* upm-staging/
-
-          # Copy license from project root
-          cp LICENSE upm-staging/LICENSE.md
+          # Same selection the .tgz uses, so a #upm install and a tarball
+          # install give a consumer the same files. The branch is installed by
+          # git URL, which is immutable to Unity just as a tarball is.
+          ./scripts/pack-unity.sh upm-staging
 
           # Stage native libraries into Plugins structure
           PLUGINS="upm-staging/Runtime/Plugins"
@@ -176,6 +173,17 @@ jobs:
               f.write('\n')
           print(f'package.json version: {pkg[\"version\"]}')
           "
+
+          # Last thing before the branch is published: natives are staged and
+          # the version is patched, so this sees exactly what a consumer gets.
+          #
+          # Note this stops the fallback path from publishing. When no artifacts
+          # can be downloaded only the Linux x64 native is built, which leaves
+          # the other three plugin .meta files without an asset - a branch that
+          # installs cleanly on Windows and then fails at the first P/Invoke,
+          # while README promises binaries for all four platforms. Better to
+          # leave the branch on its previous good state and fail here.
+          ./scripts/check-unity-package.sh upm-staging
 
           echo "=== UPM branch contents ==="
           find upm-staging -type f | head -40

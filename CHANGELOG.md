@@ -10,6 +10,27 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Changed
+- `unity/tools/build-windows.ps1` moved to `scripts/build-unity-windows.ps1`.
+  It is a repository build script, not package content, and living under
+  `unity/` meant it shipped to consumers without a `.meta` — logging "has no
+  meta file, but it's in an immutable folder" on every domain reload for anyone
+  who installed the package. `unity/` now holds only what a consumer installs,
+  and `scripts/pack-unity.sh` selects that content explicitly while
+  `scripts/check-unity-package.sh` refuses to ship a package whose `.meta` files
+  are missing, orphaned, or malformed.
+
+### Fixed
+- **`.gitignore` no longer swallows Unity's hidden package directories.** The
+  editor-backup rule `*~` matches directories as well as files, so everything
+  under `unity/Samples~/` was ignored and files added to a sample never reached
+  the repository — which is why the Basic sample shipped without `.meta` files.
+  A `!*~/` negation re-includes the directories while still ignoring backups.
+
+---
+
 ## [1.5.13] - 2026-08-21
 
 Version-stamping fix. `VERSION.txt` is now the single source of truth for every
