@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [1.5.14] - 2026-08-22
+
 ### Fixed
 - **The package no longer trips Unity's "no meta file, but it's in an immutable
   folder" warning.** It shipped `tools/build-windows.ps1` — a maintainer script

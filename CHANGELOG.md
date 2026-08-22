@@ -12,6 +12,14 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+---
+
+## [1.5.14] - 2026-08-22
+
+Unity package hygiene. The package no longer logs a warning on every domain
+reload, and packing now decides what ships instead of copying a directory and
+hoping.
+
 ### Changed
 - `unity/tools/build-windows.ps1` moved to `scripts/build-unity-windows.ps1`.
   It is a repository build script, not package content, and living under
