@@ -173,13 +173,41 @@ the same.  The single version comes from `VERSION.txt` and is stamped into every
 `.bcsv` file header.
 
 - **MAJOR**: Incompatible API *and* wire-format changes (breaking in both directions)
-- **MINOR**: Backward-compatible new functionality (new codecs, new column types, etc.)
-- **PATCH**: Backward-compatible bug fixes (wire format unchanged)
+- **MINOR**: New functionality that **changes the wire format** — new codecs, new
+  column types, new header sections, new feature-flag bits.  A reader built
+  before the bump cannot open a file that uses one (Rule B below).
+- **PATCH**: Everything else that is backward compatible — bug fixes, and
+  **additive API surface that leaves the wire format untouched**: a new keyword
+  argument, a new CLI flag, a new binding method, a new tool.
+
+Because the version number is *also* the file-format version stamped into every
+header, spending a MINOR on a language-binding addition would falsely signal a
+format change to every reader.  That is why additive API lands as PATCH here and
+not as MINOR, which a strict reading of SemVer alone would suggest.
+
+**Lock step means version parity, not feature parity.** All five channels ship
+the same number, because that number is also the file-format version. A release
+may well add something to only one binding — a Python keyword argument, a C#
+helper — and the other four still bump. What each binding actually exposes at a
+given version is recorded in the feature matrix in
+[docs/API_OVERVIEW.md](docs/API_OVERVIEW.md); keep it current in the same commit
+as the feature, or it goes stale silently.
+
+**The deciding question:** *does a reader that predates this change still open
+every file the new code writes?*
+
+| Answer | Bump |
+|---|---|
+| Yes | **PATCH** |
+| No — new files need the new reader | **MINOR** |
+| No in both directions | **MAJOR** |
 
 ### Examples
 
 - `v1.5.0` → `1.5.0` (Unified version baseline)
 - `v1.5.1` → `1.5.1` (Bug fix — wire format identical to 1.5.0)
+- `v1.5.15` → `1.5.15` (New `null_policy` argument on `parquet_to_bcsv` — additive
+  API, wire format identical to 1.5.14, so every 1.5.x reader opens its output)
 - `v1.6.0` → `1.6.0` (New codec or feature — can still read 1.5.x files)
 - `v2.0.0` → `2.0.0` (Breaking — cannot read v1.x files, and vice versa)
 

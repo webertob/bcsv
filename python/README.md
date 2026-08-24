@@ -156,6 +156,11 @@ parquet2bcsv input.parquet -o output.bcsv
 #   --row-codec {delta,zoh,flat}          row codec (default: delta)
 #   --file-codec {packet_lz4_batch,...}   file codec (default: packet_lz4_batch)
 #   --chunk-size N                        rows per streamed batch (default: 512000)
+#   --null-policy {reject,nan,zero}       Parquet nulls (default: reject)
+#   --no-metadata2json                    skip <output>.meta.json
+#   --no-source-hash                      omit the source Parquet's SHA-256
+#   --no-bcsv-hash                        omit the output BCSV's SHA-256 (weakens the
+#                                         companion's binding to a heuristic)
 #   -f/--force                            overwrite an existing output
 
 # BCSV → Parquet
@@ -164,6 +169,7 @@ bcsv2parquet input.bcsv -o output.parquet
 #   --slice 10:100          Python-style row slice
 #   --unflatten (default)   reconstruct nested structs from dotted/bracketed names
 #   --no-unflatten          keep flat columns (names like 'a.b', 'vals[0]')
+#   --no-json2metadata      ignore <input>.meta.json instead of restoring it
 #   --parquet-compression {none,snappy,gzip,zstd,lz4}
 ```
 
@@ -171,8 +177,49 @@ bcsv2parquet input.bcsv -o output.parquet
 columns using dotted (`location.lat`) and bracketed (`vals[0]`) names;
 `bcsv2parquet --unflatten` reverses this. Notes and limitations:
 
-- **No nulls:** BCSV has no null representation — a null in any converted column
-  is rejected with the offending row number. Filter nulls before converting.
+- **Nulls** (`--null-policy`): BCSV has no null representation, so you pick
+  what a null becomes:
+
+  | policy | float16/32/64 | integers, bool, string |
+  |---|---|---|
+  | `reject` *(default)* | abort, naming column and row | abort |
+  | `nan` | `NaN` | abort |
+  | `zero` | `0.0` | `0` / `False` / `""` |
+
+  `nan` is the honest choice for float columns: `NaN` is a real IEEE-754 value
+  BCSV round-trips bit-exactly, and it stays visibly *not a measurement*. It
+  aborts on other types because there is no such value for an integer or a bool.
+  `zero` fills every type with the BCSV default — what an unset cell already
+  holds — and is the only policy that can carry integer, bool or string nulls.
+
+  Both filling policies lose information, differently. `nan` only loses it when
+  the column *also* holds genuine NaNs, in which case the two collapse and
+  `bcsv2parquet` cannot separate them. `zero` is unconditionally lossy: a filled
+  zero is indistinguishable from a measured zero, so nothing downstream can tell
+  the sample was missing. Choose it only when a consumer genuinely treats
+  `0`/`False`/`""` as absent.
+- **File-level metadata** (`--no-metadata2json` / `--no-json2metadata`): BCSV's
+  header has no key/value section, so `parquet2bcsv` writes the source's Parquet
+  key/value metadata to `<output>.meta.json` (`metadata2json=True` by default)
+  and `bcsv2parquet` restores it into the output footer
+  (`json2metadata=True` by default). pyarrow's internal `ARROW:schema` key is
+  excluded. The file is optional in both directions: suppress its generation
+  with `--no-metadata2json`, and `bcsv2parquet` works fine without one — the
+  output simply carries no key/value metadata.
+
+  It records the BCSV file's SHA-256 and refuses to be applied to a file whose
+  digest does not match, so a document left over from an earlier conversion to
+  the same output name cannot stamp unrelated data with someone else's
+  provenance. `--no-bcsv-hash` skips that read pass, but then the binding rests
+  on byte size and row count alone — a heuristic two recordings of the same
+  shape can both satisfy, not an identity check.
+
+  An in-format metadata channel is planned for 1.6.0; this one will keep working
+  when it lands.
+- **Random access:** the `packet*` file codecs write a footer index, so
+  `ReaderDirectAccess` / `BcsvReader.Read(index)` work on the output. The
+  `stream` and `stream_lz4` codecs write no packets and no footer — the result
+  is **sequential-only** and `parquet2bcsv` warns when you ask for one.
 - **Type widening:** `float16`/`bfloat16` widen to `float32`; `large_string`
   maps to `string`.
 - **Unsupported types** (variable-length lists, maps, timestamps, decimals,

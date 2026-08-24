@@ -14,6 +14,119 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.5.15] - 2026-08-24
+
+Answers all of R1–R4 of the `diss-digital-twin` T13 requirements: a null policy
+for the Parquet transcoder, a file-level metadata JSON companion readable from
+Python and C#/Unity, a corrected feature matrix, and a seekability guard.
+**The wire format is unchanged** — every 1.5.x reader opens files written by
+this code, so this is a PATCH under the clarified rule in `VERSIONING.md`.
+
+### Added
+
+- **`parquet_to_bcsv(null_policy=...)` / `parquet2bcsv --null-policy`** — BCSV
+  has no null type, and until now a single Parquet null aborted the whole
+  conversion. `"reject"` (the default) keeps exactly that behaviour and its
+  message. `"nan"` fills nulls in **float** columns with `NaN` — a real
+  IEEE-754 value BCSV already round-trips bit-exactly — and still aborts on
+  every other type, naming the column and row, because there is no such value
+  for an integer or a bool. `"zero"` fills **every** column with the BCSV
+  default (`0` / `False` / `""`) — what an unset BCSV cell already holds — and
+  is the only policy that can carry integer, bool or string nulls; it is
+  unconditionally lossy, since a filled zero is indistinguishable from a
+  measured one. The fill is explicit rather than left to `write_batch`'s
+  `to_numpy()` conversion, which would turn an integer null into `INT_MIN`
+  rather than `0`. The returned dict gains `nulls_filled`.
+- **File-level metadata JSON companion** — `parquet_to_bcsv` writes the
+  source's Parquet key/value metadata (minus pyarrow's internal `ARROW:schema`)
+  to `<output>.meta.json` together with the source's SHA-256, and
+  `bcsv_to_parquet` restores it into the output footer. The document records
+  the BCSV file's SHA-256 and is refused if it does not match, so it cannot be
+  applied to data it does not describe. Controlled by `metadata2json=` /
+  `--no-metadata2json` on the writer and `json2metadata=` / `--no-json2metadata`
+  on the reader, plus `source_hash=` / `--no-source-hash`, `bcsv_hash=` /
+  `--no-bcsv-hash` (skips the digest, leaving only a size-and-row-count
+  heuristic), and `metadata=` for an explicit override. Optional in both directions: the
+  `.bcsv` never depends on it, and a conversion back to Parquet without one
+  simply carries no key/value metadata. BCSV's 24-byte header has no key/value
+  section; an in-format channel is planned for 1.6.0 and this one will keep
+  working when it lands.
+
+- **`BcsvMetadata.ReadCompanion()` for C# and Unity** — reads the
+  `<file>.bcsv.meta.json` companion, so a C#/Unity consumer can check a file's
+  provenance (release id, contract marker) without a Python round trip. Returns
+  `null` when absent, throws `BcsvException` when malformed or when the document
+  does not describe the file beside it. No third-party dependency: Unity 2021.3
+  has no `System.Text.Json`, so the JSON reader is hand-rolled and internal.
+  **Transitional — scheduled for deletion.** It exists only because the format
+  has no metadata section; 1.6.0 adds one as `BcsvReader.Metadata` and this class
+  goes with it, after a deprecation release. See item E12 in `ToDo.md`. Point one
+  call site at it rather than building a layer on top.
+
+### Changed
+
+- **`parquet_to_bcsv` warns when the output is not randomly addressable** — the
+  `stream` and `stream_lz4` file codecs write no packets and no footer, so
+  `ReaderDirectAccess` / `BcsvReader.Read(index)` fail on the result and cannot
+  rebuild an index. The `packet*` codecs (including the default) always wrote
+  one and still do; only the warning is new.
+- **CI runs the pybcsv test suite on every push and pull request** — a new
+  `pybcsv` job builds the bindings and runs `python/tests/`. That directory is
+  not registered with ctest (only `tests/integration/*.py` is), so the entire
+  Python suite, including the Parquet transcoders, previously ran only in the
+  tag-driven publish workflow: a regression landed on master and surfaced in the
+  middle of a release.
+- **`docs/API_OVERVIEW.md` and `VERSIONING.md` now say what lock step means** —
+  all five channels ship one version number because it is also the file-format
+  version, so version parity is not feature parity, and the feature matrix is
+  the record of what each binding actually exposes.
+- **`VERSIONING.md` now states the rule the project actually follows** — MINOR
+  is for changes that move the wire format; additive API surface that leaves it
+  untouched (a keyword argument, a CLI flag, a binding method) ships as PATCH.
+  Because the version number is also the file-format version, spending a MINOR
+  on a language-binding addition would falsely signal a format change to every
+  reader. Adds the deciding question and a worked example.
+
+### Fixed
+
+- **A stale `<file>.meta.json` could stamp unrelated data with someone else's
+  provenance** — the document is addressed only by path, so re-converting to an
+  existing output name while suppressing metadata left the previous document in
+  place, and `bcsv_to_parquet` then applied it to the new data. Writing a BCSV
+  file without a new document now deletes any stale one, and each document
+  records the BCSV file's SHA-256 (plus byte size and row count as cheap
+  pre-checks) so a mismatched one is refused rather than applied. Size and rows
+  alone were a heuristic — two recordings of the same shape share both — which
+  is why the digest is the actual binding. Found in review before release.
+- **`python/VERSION.txt` was committed and three releases stale (1.5.11)** while
+  `check_versions.py` reported "all version stamps agree". It is a
+  `sync_headers.py` artifact consumed only by sdist builds, where it is the
+  fallback `python/CMakeLists.txt` reads — so an sdist built without running
+  `sync_headers.py` first stamped 1.5.11 silently. This is the same shape as the
+  v1.5.12 incident documented in `VERSIONING.md`. The file is now gitignored,
+  `check_versions.py` fails on a stale copy if one is present, and
+  `update_version.sh` refreshes it when it exists.
+- **Documentation: `Columnar bulk I/O` was marked unsupported for C and Python**
+  in the `docs/API_OVERVIEW.md` feature matrix. Both have it — C through
+  `bcsv_reader_read_columns` and the vectorized bulk get/set block, Python
+  through `read_columns` / `write_columns` (covered by
+  `test_pybcsv_columnar.py`). Only the C++ core genuinely lacks a first-class
+  API, per backlog item 23.a. Found by auditing the whole matrix after the delta
+  row below turned out to be wrong.
+- **Two pandas tests failed instead of skipping when pandas was absent** —
+  `test_pandas_roundtrip` and `test_csv_conversion` in
+  `python/tests/test_pybcsv_pandas.py` are plain pytest functions, so the
+  `skipUnless` on the surrounding TestCase class did not cover them. They now
+  carry their own guard, which is the correct behaviour for an optional
+  dependency.
+- **Documentation: the C# feature matrix wrongly showed delta encoding as
+  unsupported** (`docs/API_OVERVIEW.md`). C# contains no codec logic at all —
+  `BcsvWriter` selects the codec through `bcsv_writer_create_delta` and reading
+  dispatches natively from the file header flags. Covered by existing tests in
+  `csharp/tests/Bcsv.Tests/BcsvTests.cs` and `tests/bcsv_c_api_full_test.c`.
+
+---
+
 ## [1.5.14] - 2026-08-22
 
 Unity package hygiene. The package no longer logs a warning on every domain

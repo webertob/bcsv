@@ -250,9 +250,24 @@ Caveats at the boundaries:
   float columns — both are written as `NaN`. Non-float columns cannot
   represent missing values and are coerced with a warning (or use
   `nan_policy="raise"`).
-- **Parquet** (`pybcsv.parquet_utils`): NaN values pass through; Parquet
-  *nulls* are a distinct concept and are rejected on import (fill them
-  first).
+- **Parquet** (`pybcsv.parquet_utils`): NaN values pass through. Parquet
+  *nulls* are a distinct concept; `parquet_to_bcsv(null_policy=...)` decides
+  what happens to them — `"reject"` (the default) aborts naming the column and
+  row; `"nan"` fills **float** columns (float16/32/64, i.e. C++ `float` and
+  `double`) with NaN and still aborts on every other type; `"zero"` fills every
+  column with the BCSV default (`0` / `False` / `""`), which is what an unset
+  BCSV cell already holds. Both filling policies lose information: `"nan"` only
+  where a column also holds genuine NaNs (the two collapse and
+  `bcsv_to_parquet` cannot separate them), `"zero"` unconditionally — a filled
+  zero is indistinguishable from a measured zero.
+- Parquet **file-level key/value metadata** has no home in the BCSV header, so
+  the transcoders carry it in a `<output>.meta.json` companion file — written by
+  `parquet_to_bcsv(metadata2json=True)`, read back by
+  `bcsv_to_parquet(json2metadata=True)`, both on by default and both optional,
+  and readable from C#/Unity via `BcsvMetadata.ReadCompanion`. The document
+  records the BCSV file's SHA-256 and is refused if it does not match, so
+  provenance cannot attach to data it does not describe. An in-format channel is
+  planned for 1.6.0, after which the companion and `BcsvMetadata` are retired.
 - BCSV has **no null type**: `NaN` is a value, not a missing-data marker.
 
 ### String Types

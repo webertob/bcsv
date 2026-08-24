@@ -81,6 +81,20 @@ The binary core already round-trips NaN/Inf bit-exactly except two static-layout
 Priorities chosen to close the measured gaps vs Parquet (`review_2026-07-11.md` §3) while keeping
 the streaming row-wise write path intact. Order = suggested implementation order.
 
+> **Confirmed for the 1.6.0 scope (2026-08-24).** Four things are wanted in this release and are
+> already tracked below — this note fixes them as *in scope* rather than candidates:
+> **FP16 and FP8 column types** (E9, which also carries FP128 — decide whether FP128 rides along
+> or is deferred, since it is the only one of the three with no hardware and no obvious consumer),
+> **dictionary encoding** (E4, currently scoped per-packet and string-only — E9's low-precision
+> floats and E5's column hints both want it generalised to any low-cardinality column, so scope
+> E4 as a generic per-packet dictionary with strings as the first user), and **header
+> compression** (E11, new — see below).
+>
+> Together these are the release's size story: E3 (zstd) compresses the payload, E4 removes
+> repeated values, E9 shrinks the values themselves, and E11 removes the fixed overhead that
+> survives all three. Wide-and-idle files — the 1000-channel case the design targets — pay all
+> four costs today.
+
 - [ ] E1: **Delta002 header suppression** — when a row's header equals the previous row's and no
       payload follows, emit the ZoH-style 0-length row (or 1-bit repeat marker). Removes the
       per-row header floor (⌈header_bits/8⌉, e.g. ~375 B/row for 1000 float channels) for idle
@@ -108,6 +122,24 @@ the streaming row-wise write path intact. Order = suggested implementation order
       `std::ostream` (stdin/stdout piping, network). API addition; format unchanged.
       Includes CLI piping support + docs/examples (bcsvCat/bcsvMore-style usage).
 - [ ] E8: pybcsv/C# surface for E1–E7 as applicable; parquet converters pick up dictionary/stats.
+- [ ] E12: **In-format file metadata, and retire `BcsvMetadata`** (raised 2026-08-24 by T13's R2)
+      — an arbitrary `map<string, string>` in the file header behind a new FileFlags bit, written
+      by `Writer`, exposed as `Reader::metadata()` / `BcsvReader.Metadata` / `pybcsv`, and carried
+      through `parquet_to_bcsv` / `bcsv_to_parquet` in both directions. BCSV's 24-byte header has
+      no key/value section today, which is why 1.5.15 shipped the `<file>.bcsv.meta.json`
+      companion as a stopgap.
+      **Retirement is part of this item, not a follow-up.** When the in-format channel lands:
+      * delete `csharp/src/Bcsv/BcsvMetadata.cs`, `unity/Runtime/Scripts/BcsvMetadata.cs` (+ its
+        `.meta`), and `csharp/tests/Bcsv.Tests/BcsvMetadataTests.cs` — including the hand-rolled
+        `MiniJson`, which exists only because Unity 2021.3 has no `System.Text.Json` and the Unity
+        package carries no third-party dependencies;
+      * keep `pybcsv`'s `read_metadata_json` for one minor release so existing companions stay
+        readable, with `bcsv_to_parquet` preferring in-format pairs over the companion;
+      * drop the "Parquet conversion, null policies and the metadata JSON companion are
+        Python-only" note from the `docs/API_OVERVIEW.md` feature matrix.
+      Removing a public C# type is a breaking API change, so it lands on a MINOR at the earliest.
+      Announce the deprecation in the release that ships the in-format channel and delete in the
+      next one — do not do both in the same release.
 - [ ] E10: **Unify typed CSV cell parsing in CsvReader** (from the 2026-07-13 tools review) —
       csv2bcsv's checked conversion (`parseCellChecked` + slow paths) and the library's
       `CsvReader::parseCells` are two implementations with deliberate divergences (strict
@@ -122,6 +154,27 @@ the streaming row-wise write path intact. Order = suggested implementation order
       csv2bcsv FLOAT16/FLOAT128 decimal-place heuristics were removed in the 2026-07 tools
       rework (they were dead code — `BCSV_HAS_FLOAT16/128` was never defined) — the new
       inference is round-trip-exact and caps at FLOAT/DOUBLE until these types land.
+      **Confirmed in scope for 1.6.0** (see the note at the top of this section). Notes for the
+      design: FP16 is `std::float16_t` where available with a soft-float fallback for the embedded
+      targets; FP8 has two competing IEEE-adjacent layouts (E4M3 / E5M2) and picking one is a
+      wire-format commitment, so decide it explicitly rather than by implementation accident.
+      Both need `ColumnType` values, delta002 type-grouped loop instantiations, and a row in the
+      `nan_inf_test` matrix — the NaN/Inf guarantee must hold for them too.
+- [ ] E11: **Header compression** (requested 2026-08-24) — two distinct overheads share the name;
+      both are wanted, and they are independent pieces of work:
+      * **File header** — column names are stored uncompressed and concatenated. At 1000+ columns
+        with long dotted names (the `parquet2bcsv` flattening produces e.g.
+        `plc.metrology_estimate_tcp.x`) this is tens of KB before the first row, and it is paid
+        again by every reader that opens the file. Candidates: LZ4-compress the name block behind
+        a FileFlags bit, or factor the common dotted prefixes into a small prefix table.
+        Measure first on a real 1052-column layout — if the win is under a few KB it is not worth
+        a flag bit.
+      * **Row header** — the per-row bitfield floor that E1 attacks by suppression. E1 removes it
+        for *idle* rows; it does not shrink it for active ones. If E1's measurements show the
+        floor still dominating on sparse-but-not-idle data, the follow-up is a narrower encoding
+        (entropy-coded or run-length header codes) rather than more suppression.
+      Sequence E11 after E1 and E9: E1 settles how much row-header cost is left, and E9 changes
+      the per-column header width, so measuring before both have landed measures the wrong thing.
 
 ## 2.0.0 — reserved (nothing currently requires it)
 

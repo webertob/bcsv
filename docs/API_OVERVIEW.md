@@ -393,17 +393,40 @@ See [INTEROPERABILITY.md](INTEROPERABILITY.md) for cross-language examples and b
 | Random access | ✅ | ✅ | ✅ | ✅ |
 | Compression (LZ4) | ✅ | ✅ | ✅ | ✅ |
 | Zero-Order Hold | ✅ | ✅ | ✅ | ✅ |
-| Delta encoding | ✅ | ✅ | ✅ | ❌ |
+| Delta encoding | ✅ | ✅ | ✅ | ✅ |
 | CSV read/write | ✅ | ✅ | ✅ | ✅ |
 | Checksums (xxHash64) | ✅ | ✅ | ✅ | ✅ |
 | Crash recovery | ✅ | ✅ | ✅ | ✅ |
 | Sampler (filter/project) | ✅ | ✅ | ✅ | ✅ |
 | Row visitor | ✅ | ✅ | ❌ | ❌ |
 | Static typing | ✅ | ❌ | ❌ | ❌ |
-| Columnar bulk I/O | ❌ | ❌ | ❌ | ✅ |
+| Columnar bulk I/O | ❌ | ✅ | ✅ | ✅ |
 | Pandas integration | N/A | N/A | ✅ | N/A |
 | Polars integration | N/A | N/A | ✅ | N/A |
 | Header-only | ✅ | ❌ | ❌ | ❌ |
+
+**Reading this table.** All five distribution channels ship the *same version
+number* — it is also the file-format version (see [VERSIONING.md](../VERSIONING.md)).
+Version parity is not feature parity: this table is the record of what each
+binding actually exposes at that version. A `❌` here means "not surfaced in this
+language", not "the format cannot do it".
+
+Notes on the current gaps:
+
+- **Columnar bulk I/O** is implemented in the C API layer and surfaced by C,
+  Python (`read_columns` / `write_columns`) and C#. The C++ core has no
+  first-class API for it yet — see backlog item 23.a.
+- **Row visitor** is a C++/C construct; Python and C# read rows through typed
+  accessors instead.
+- **Parquet conversion and null policies** are Python-only
+  (`parquet2bcsv` / `bcsv2parquet`). Files they produce are ordinary BCSV and are
+  readable from every binding.
+- **File-level metadata** rides in a `<file>.bcsv.meta.json` companion, written by
+  Python and readable from Python (`read_metadata_json`) and C#/Unity
+  (`BcsvMetadata.ReadCompanion`). C and C++ have no reader for it. All of this is
+  a stopgap: the format gains an in-format metadata section in 1.6.0, after which
+  `BcsvMetadata` is deleted — see item E12 in `ToDo.md`. Do not build long-lived
+  code against it.
 
 ---
 

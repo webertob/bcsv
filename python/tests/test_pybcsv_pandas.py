@@ -20,6 +20,7 @@ import unittest
 import warnings
 
 import numpy as np
+import pytest
 
 try:
     import pandas as pd
@@ -377,9 +378,16 @@ class TestPandasIntegration(unittest.TestCase):
 
 # ---------------------------------------------------------------------------
 # CSV conversion tests (originally from test_pandas.py)
+#
+# These are plain pytest functions, so they need their own guard -- the
+# skipUnless on TestPandasIntegration above does not cover them, and without it
+# they FAIL rather than skip when the optional pandas dependency is absent.
 # ---------------------------------------------------------------------------
 
+requires_pandas = pytest.mark.skipif(not HAS_PANDAS, reason="pandas not installed")
 
+
+@requires_pandas
 def test_pandas_roundtrip():
     """Test pandas DataFrame roundtrip (pytest-style)."""
     df = pd.DataFrame(
@@ -404,6 +412,7 @@ def test_pandas_roundtrip():
         os.unlink(filename)
 
 
+@requires_pandas
 def test_csv_conversion():
     """Test CSV to BCSV and back conversion."""
     csv_data = "id,name,value\n1,Alice,123.45\n2,Bob,678.90\n3,Charlie,111.22"

@@ -37,6 +37,7 @@ show_usage() {
     echo "  VERSION.txt                      (single source of truth)"
     echo "  unity/package.json               (Unity Package Manager)"
     echo "  csharp/src/Bcsv/Bcsv.csproj      (NuGet)"
+    echo "  python/VERSION.txt               (generated; refreshed only if present)"
     echo ""
     echo "Arguments:"
     echo "  VERSION    Version to set, X.Y.Z (e.g. 1.5.13)"
@@ -102,6 +103,14 @@ csproj.write_text(re.sub(r"<Version>[^<]+</Version>", f"<Version>{version}</Vers
 print(f"  csharp/src/Bcsv/Bcsv.csproj -> {version}")
 PY
     print_success "Packaging manifests updated"
+
+    # python/VERSION.txt is generated (gitignored) and only consumed by sdist
+    # builds, but a stale copy in the working tree would make check_versions.py
+    # fail below.  Refresh it if it exists; never create one that did not.
+    if [ -f "python/VERSION.txt" ]; then
+        echo "$target_version" > python/VERSION.txt
+        print_info "  python/VERSION.txt (generated) -> $target_version"
+    fi
 
     python3 scripts/check_versions.py
 

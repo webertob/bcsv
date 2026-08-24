@@ -4,11 +4,15 @@ Core conversion logic and CLI entry points for parquet2bcsv and bcsv2parquet.
 """
 
 import argparse
+import hashlib
 import json
+import math
 import os
+import re
 import sys
 import time
-from typing import List, Optional, Set, Tuple, Union
+import warnings
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 import pyarrow as pa
 import pyarrow.compute as pc
@@ -692,6 +696,308 @@ def _check_nulls(batch: pa.RecordBatch, row_offset: int) -> None:
         )
 
 
+NULL_POLICIES = ("reject", "nan", "zero")
+
+# Float types whose nulls "nan" may fill.  float16 is here because
+# flatten_parquet_schema widens it to BCSV FLOAT (see the type-mapping note at
+# the top of this module); the fill happens before that widening.
+_FLOAT_ARROW_TYPES = (pa.float16(), pa.float32(), pa.float64())
+
+
+def _zero_scalar(arrow_type: pa.DataType) -> pa.Scalar:
+    """The BCSV default value for `arrow_type`, as an Arrow scalar.
+
+    Matches what an unset BCSV cell holds: Row zero-initialises its scalar
+    storage (see include/bcsv/row.hpp), and the string path writes "".
+    """
+    if arrow_type in (pa.string(), pa.large_string()):
+        return pa.scalar("", type=arrow_type)
+    if arrow_type == pa.bool_():
+        return pa.scalar(False, type=arrow_type)
+    return pa.scalar(0, type=arrow_type)
+
+
+def _apply_null_policy(
+    batch: pa.RecordBatch, row_offset: int, policy: str
+) -> Tuple[pa.RecordBatch, int]:
+    """Enforce `policy` on the nulls in `batch`, returning (batch, filled_count).
+
+    ``"reject"`` (default) is the historical behaviour: any null in any column
+    raises.
+
+    ``"nan"`` fills nulls in float columns with NaN -- a real IEEE-754 value
+    that BCSV round-trips bit-exactly -- and still raises for every other type,
+    because there is no such value for an integer or a bool.  The asymmetry is
+    deliberate: it keeps the missing-ness visible in the data.
+
+    ``"zero"`` fills nulls in *every* column with the BCSV default -- 0, False
+    or "" -- which is what an unset BCSV cell holds.  This is lossy in a way
+    ``"nan"`` is not: a filled zero is indistinguishable from a measured zero,
+    so nothing downstream can tell that the sample was missing.  It is the only
+    policy that can carry nulls in integer, bool and string columns.
+
+    See docs/INTEROPERABILITY.md.
+    """
+    if policy not in NULL_POLICIES:
+        raise ValueError(
+            f"Invalid null_policy: {policy!r}. Valid: {', '.join(NULL_POLICIES)}"
+        )
+
+    if policy == "reject":
+        _check_nulls(batch, row_offset)
+        return batch, 0
+
+    filled = 0
+    columns = None  # built lazily; None means "nothing changed"
+    for i in range(len(batch.schema)):
+        col = batch.column(i)
+        if col.null_count == 0:
+            continue
+
+        field = batch.schema.field(i)
+        if policy == "nan" and field.type not in _FLOAT_ARROW_TYPES:
+            # Same message shape as _check_nulls, so the caller sees the same
+            # column-and-row detail whichever policy refused.
+            first_null = pc.index(pc.is_null(col), True).as_py()
+            location = (
+                f" at row {row_offset + first_null}"
+                if first_null is not None and first_null >= 0
+                else ""
+            )
+            raise ValueError(
+                f"Null value detected in column '{field.name}'{location}, of type "
+                f"{field.type}. null_policy='nan' fills nulls in float columns "
+                "only -- there is no NaN for this type. Use null_policy='zero' to "
+                "fill it with the BCSV default, or filter the column before "
+                "conversion."
+            )
+
+        if columns is None:
+            columns = [batch.column(c) for c in range(len(batch.schema))]
+        filled += col.null_count
+        fill = (
+            pa.scalar(math.nan, type=field.type)
+            if policy == "nan"
+            else _zero_scalar(field.type)
+        )
+        # Explicit fill rather than relying on write_batch's to_numpy(): an
+        # integer null that reaches that path becomes INT_MIN, not 0.
+        columns[i] = pc.fill_null(col, fill)
+
+    if columns is None:
+        return batch, 0
+    return pa.RecordBatch.from_arrays(columns, schema=batch.schema), filled
+
+
+# ---- File-level metadata JSON companion (R2) ----
+
+METADATA_JSON_SUFFIX = ".meta.json"
+METADATA_JSON_VERSION = 1
+
+# pyarrow stores its own serialised Arrow schema under this key in the Parquet
+# footer.  It is an implementation detail, not user metadata: copying it into
+# the JSON would bloat the file and re-stamping it on the way back would
+# describe the wrong schema.
+_ARROW_INTERNAL_METADATA_KEYS = {b"ARROW:schema", b"pandas"}
+
+
+def metadata_json_path(bcsv_path: str) -> str:
+    """Path of the metadata JSON companion belonging to `bcsv_path`."""
+    return bcsv_path + METADATA_JSON_SUFFIX
+
+
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _file_sha256(path: str, chunk: int = 1 << 20) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(chunk), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _parquet_key_value_metadata(pf: pq.ParquetFile) -> Dict[str, str]:
+    """File-level key/value metadata of `pf`, minus pyarrow's internal keys."""
+    raw = pf.metadata.metadata or {}
+    out = {}
+    for key, value in raw.items():
+        if key in _ARROW_INTERNAL_METADATA_KEYS:
+            continue
+        try:
+            out[key.decode("utf-8")] = value.decode("utf-8")
+        except UnicodeDecodeError:
+            warnings.warn(
+                f"Skipping non-UTF-8 Parquet metadata key {key!r}; it cannot be "
+                "represented in the metadata JSON.",
+                stacklevel=2,
+            )
+    return out
+
+
+def read_metadata_json(
+    bcsv_path: str, expected_rows: Optional[int] = None
+) -> Optional[Dict[str, str]]:
+    """Read the key/value metadata JSON for `bcsv_path`, or None if absent.
+
+    Raises ValueError if the file exists but is unreadable, or if it does not
+    belong to `bcsv_path`.  Both are refusals on purpose: a provenance record
+    that is silently skipped, or silently applied to the wrong data, is worse
+    than no provenance record at all.
+
+    Args:
+        expected_rows: Row count of the BCSV file, when the caller already
+            knows it.  Checked against the recorded count if both are present.
+    """
+    path = metadata_json_path(bcsv_path)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            doc = json.load(fh)
+        meta = doc["key_value_metadata"]
+        if not isinstance(meta, dict):
+            raise TypeError("key_value_metadata is not an object")
+    except (json.JSONDecodeError, KeyError, TypeError, OSError) as exc:
+        raise ValueError(
+            f"Metadata JSON '{path}' exists but could not be read: {exc}. "
+            "Delete it or pass json2metadata=False to ignore it."
+        ) from exc
+
+    _verify_metadata_json_binds_to(doc, path, bcsv_path, expected_rows)
+    return {str(k): str(v) for k, v in meta.items()}
+
+
+def _binding_int(doc: dict, key: str, path: str) -> Optional[int]:
+    """Read an integral binding field, refusing a malformed one.
+
+    A field that is present but not a non-negative integer is a corrupt
+    document, not an absent field: skipping it would silently drop the very
+    check the caller is relying on.
+    """
+    if key not in doc or doc[key] is None:
+        return None
+    value = doc[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(
+            f"Metadata JSON '{path}': '{key}' is {value!r}, not a number."
+        )
+    if value != int(value) or value < 0:
+        raise ValueError(
+            f"Metadata JSON '{path}': '{key}' is {value!r}, not a non-negative "
+            "integer."
+        )
+    return int(value)
+
+
+def _verify_metadata_json_binds_to(
+    doc: dict, path: str, bcsv_path: str, expected_rows: Optional[int]
+) -> None:
+    """Refuse a metadata JSON that does not describe this BCSV file.
+
+    The JSON is addressed only by path, so a document left behind by an earlier
+    conversion to the same output name would otherwise be applied to unrelated
+    data -- stamping it with someone else's provenance.
+
+    `bcsv_sha256` is the identity check and is written by default.  `bcsv_bytes`
+    and `bcsv_rows` are cheap pre-checks that fail faster and with a clearer
+    message; on their own they are only a *heuristic* -- two unrelated
+    recordings of the same shape can share a size and a row count -- so when the
+    digest is absent (``bcsv_hash=False``) that is what the guarantee degrades
+    to, and the error message says so.
+    """
+    recorded_bytes = _binding_int(doc, "bcsv_bytes", path)
+    file_exists = os.path.exists(bcsv_path)
+    if recorded_bytes is not None and file_exists:
+        actual = os.path.getsize(bcsv_path)
+        if actual != recorded_bytes:
+            raise ValueError(
+                f"Metadata JSON '{path}' does not describe '{bcsv_path}': it "
+                f"records a {recorded_bytes}-byte file, but that file is "
+                f"{actual} bytes. It is most likely left over from an earlier "
+                "conversion to the same output name. Delete it, regenerate it, "
+                "or pass json2metadata=False."
+            )
+
+    recorded_rows = _binding_int(doc, "bcsv_rows", path)
+    if (
+        recorded_rows is not None
+        and expected_rows is not None
+        and recorded_rows != expected_rows
+    ):
+        raise ValueError(
+            f"Metadata JSON '{path}' does not describe '{bcsv_path}': it "
+            f"records {recorded_rows} rows, but the file holds {expected_rows}. "
+            "It is most likely left over from an earlier conversion to the same "
+            "output name. Delete it, regenerate it, or pass json2metadata=False."
+        )
+
+    recorded_digest = doc.get("bcsv_sha256")
+    if recorded_digest is None:
+        return
+    if not isinstance(recorded_digest, str) or not _SHA256_RE.match(recorded_digest):
+        raise ValueError(
+            f"Metadata JSON '{path}': 'bcsv_sha256' is {recorded_digest!r}, not a "
+            "SHA-256 hex digest."
+        )
+    if not file_exists:
+        return
+    actual_digest = _file_sha256(bcsv_path)
+    if actual_digest != recorded_digest:
+        raise ValueError(
+            f"Metadata JSON '{path}' does not describe '{bcsv_path}': the file's "
+            f"SHA-256 is {actual_digest}, but the document records "
+            f"{recorded_digest}. The provenance in it belongs to different data. "
+            "Delete it, regenerate it, or pass json2metadata=False."
+        )
+
+
+def _write_metadata_json(
+    bcsv_path: str,
+    source_path: str,
+    metadata: Dict[str, str],
+    source_hash: bool,
+    rows: int,
+    bcsv_hash: bool = True,
+) -> str:
+    doc = {
+        "metadata_json_version": METADATA_JSON_VERSION,
+        "source_path": os.path.basename(source_path),
+        "source_sha256": _file_sha256(source_path) if source_hash else None,
+        # Binds this document to the BCSV file beside it -- see
+        # _verify_metadata_json_binds_to.  The digest is the identity check;
+        # size and row count are cheap pre-checks, and are only a heuristic on
+        # their own.
+        "bcsv_sha256": _file_sha256(bcsv_path) if bcsv_hash else None,
+        "bcsv_bytes": os.path.getsize(bcsv_path),
+        "bcsv_rows": rows,
+        "key_value_metadata": metadata,
+    }
+    path = metadata_json_path(bcsv_path)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    return path
+
+
+def _discard_stale_metadata_json(bcsv_path: str) -> None:
+    """Remove a metadata JSON left over from an earlier conversion.
+
+    Called whenever the BCSV file is (re)written without a new one: the old
+    document describes data that no longer exists at this path.
+    """
+    path = metadata_json_path(bcsv_path)
+    if os.path.exists(path):
+        try:
+            os.remove(path)
+        except OSError as exc:
+            warnings.warn(
+                f"Could not remove stale metadata JSON '{path}': {exc}. It now "
+                "describes different data; delete it by hand.",
+                stacklevel=3,
+            )
+
+
 # ---- Selection & helpers ----
 
 
@@ -793,11 +1099,59 @@ def parquet_to_bcsv(
     verbose: bool = False,
     benchmark: bool = False,
     json_output: bool = False,
+    null_policy: str = "reject",
+    metadata2json: bool = True,
+    source_hash: bool = True,
+    bcsv_hash: bool = True,
 ) -> dict:
     """Convert a Parquet file to BCSV with streaming batches.
 
     The BCSV layout is derived automatically from the Parquet schema.
+
+    Args:
+        null_policy: How to handle Parquet nulls, which BCSV has no type for:
+
+            * ``"reject"`` (default) -- raise on the first null in any column.
+            * ``"nan"`` -- fill nulls in float columns (float16/32/64, i.e. C++
+              ``float`` and ``double``) with NaN, and still raise for every
+              other type.  NaN is a real IEEE-754 value that BCSV round-trips
+              bit-exactly; there is no equivalent for an integer or a bool, so a
+              null there stays an error.
+            * ``"zero"`` -- fill nulls in *every* column with the BCSV default
+              (0, False or ""), matching what an unset BCSV cell holds.  The
+              only policy that can carry nulls in integer, bool and string
+              columns.
+
+            Both filling policies lose information, but differently.  ``"nan"``
+            keeps the missing-ness visible unless the column also holds genuine
+            NaNs, in which case the two collapse and ``bcsv_to_parquet`` cannot
+            separate them again.  ``"zero"`` is unconditionally lossy: a filled
+            zero is indistinguishable from a measured zero.  Prefer ``"nan"``
+            for float columns, and reach for ``"zero"`` only when a downstream
+            consumer genuinely treats 0/False/"" as "absent".
+        metadata2json: Write the source's file-level Parquet key/value metadata
+            to ``<output_path>.meta.json`` so ``bcsv_to_parquet`` can restore
+            it.  BCSV's header has no key/value section of its own (see R2 in
+            docs/INTEROPERABILITY.md).  Set False to suppress the file
+            entirely; the ``.bcsv`` itself does not depend on it.
+        source_hash: Include the source Parquet file's SHA-256 in the metadata
+            JSON, as a record of where the data came from.  Set False to skip
+            hashing multi-GB inputs.
+        bcsv_hash: Include the *output* BCSV file's SHA-256, which is what binds
+            the document to the file beside it -- ``bcsv_to_parquet`` refuses a
+            document whose digest does not match. Set False to skip the extra
+            read pass; the binding then degrades to a size and row-count
+            heuristic, which two recordings of the same shape can both satisfy.
+
+    Returns:
+        dict with ``rows``, ``elapsed_s``, ``nulls_filled`` and
+        ``metadata_json`` (its path, or None if none was written).
     """
+    if null_policy not in NULL_POLICIES:
+        raise ValueError(
+            f"Invalid null_policy: {null_policy!r}. Valid: {', '.join(NULL_POLICIES)}"
+        )
+
     if not force and os.path.exists(output_path):
         raise FileExistsError(
             f"Output file '{output_path}' already exists. Use --force to overwrite."
@@ -817,6 +1171,19 @@ def parquet_to_bcsv(
     rg_count = pf.metadata.num_row_groups
     flags, effective_level = _resolve_codec_flags(file_codec, compression_level)
 
+    # Stream-mode files carry no packets and no footer, so they have no row
+    # index: ReaderDirectAccess.open() fails on them outright and cannot rebuild
+    # one.  Warn rather than refuse -- sequential-only output is a legitimate
+    # choice, it just must not be a surprise.
+    if file_codec in ("stream", "stream_lz4"):
+        warnings.warn(
+            f"file_codec='{file_codec}' writes a sequential-only BCSV file: it has "
+            "no packet index, so random access (ReaderDirectAccess / "
+            "BcsvReader.Read(index)) will fail on the output. Use a 'packet*' "
+            "codec if you need row-level random access.",
+            stacklevel=2,
+        )
+
     if verbose:
         print(
             f"Converting {pf.metadata.num_rows} rows, "
@@ -825,6 +1192,7 @@ def parquet_to_bcsv(
             file=sys.stderr,
         )
 
+    nulls_filled = 0
     with pybcsv.Writer(bcsv_layout, row_codec) as writer:
         writer.open(
             output_path,
@@ -835,18 +1203,45 @@ def parquet_to_bcsv(
         )
         for batch in pf.iter_batches(batch_size=chunk_size):
             flat = flatten_batch(batch, flat_schema, flat_arrow_schema)
-            _check_nulls(flat, total_rows)
+            flat, filled = _apply_null_policy(flat, total_rows, null_policy)
+            nulls_filled += filled
             writer.write_batch(flat)
             total_rows += len(flat)
-            del batch, flat
+            del batch, filled, flat
+
+    metadata_json_written = None
+    kv = _parquet_key_value_metadata(pf) if metadata2json else {}
+    if kv:
+        metadata_json_written = _write_metadata_json(
+            output_path, input_path, kv, source_hash, total_rows, bcsv_hash
+        )
+    else:
+        # The BCSV file was just (re)written; any metadata JSON sitting at this
+        # path describes data that no longer exists here.  Leaving it would let
+        # bcsv_to_parquet stamp this file with someone else's provenance.
+        _discard_stale_metadata_json(output_path)
 
     elapsed = time.monotonic() - t0
     _emit_benchmark(benchmark, json_output, total_rows, elapsed)
 
     if verbose:
+        if nulls_filled:
+            what = "NaN" if null_policy == "nan" else "the BCSV default (0/False/\"\")"
+            print(
+                f"Filled {nulls_filled} null(s) with {what} "
+                f"(null_policy='{null_policy}')",
+                file=sys.stderr,
+            )
+        if metadata_json_written:
+            print(f"Metadata JSON written: {metadata_json_written}", file=sys.stderr)
         print(f"Output written: {output_path}", file=sys.stderr)
 
-    return {"rows": total_rows, "elapsed_s": round(elapsed, 4)}
+    return {
+        "rows": total_rows,
+        "elapsed_s": round(elapsed, 4),
+        "nulls_filled": nulls_filled,
+        "metadata_json": metadata_json_written,
+    }
 
 
 def bcsv_to_parquet(
@@ -862,8 +1257,20 @@ def bcsv_to_parquet(
     verbose: bool = False,
     benchmark: bool = False,
     json_output: bool = False,
+    json2metadata: bool = True,
+    metadata: Optional[Dict[str, str]] = None,
 ) -> dict:
-    """Convert a BCSV file to Parquet with streaming batches."""
+    """Convert a BCSV file to Parquet with streaming batches.
+
+    Args:
+        json2metadata: Restore file-level key/value metadata from
+            ``<input_path>.meta.json`` if it exists, stamping it into the output
+            Parquet footer.  See ``parquet_to_bcsv(metadata2json=...)``.  The
+            file is optional: if it is absent the conversion proceeds and the
+            output simply carries no key/value metadata.
+        metadata: Explicit key/value metadata for the output footer.  Takes
+            precedence over the metadata JSON.
+    """
     if not force and os.path.exists(output_path):
         raise FileExistsError(
             f"Output file '{output_path}' already exists. Use --force to overwrite."
@@ -871,11 +1278,18 @@ def bcsv_to_parquet(
 
     t0 = time.monotonic()
 
+    # Deferred until the row count is known, so the metadata JSON can be checked
+    # against the file it claims to describe.
+    kv_metadata = metadata
+
     da = pybcsv.ReaderDirectAccess()
     da.open(input_path)
     bcsv_layout = da.layout()
     total_rows = da.row_count()
     da.close()
+
+    if kv_metadata is None and json2metadata:
+        kv_metadata = read_metadata_json(input_path, expected_rows=total_rows)
 
     col_names, col_types, slice_start, slice_end = _parse_selection(
         bcsv_layout, total_rows, columns, row_slice
@@ -936,6 +1350,14 @@ def bcsv_to_parquet(
         )
 
     def _create_writer(schema: pa.Schema) -> pq.ParquetWriter:
+        if kv_metadata:
+            # Merge onto whatever pyarrow already put there (ARROW:schema), so
+            # the restored pairs join the footer rather than replacing it.
+            merged = dict(schema.metadata or {})
+            merged.update(
+                {k.encode("utf-8"): v.encode("utf-8") for k, v in kv_metadata.items()}
+            )
+            schema = schema.with_metadata(merged)
         return pq.ParquetWriter(
             output_path,
             schema,
@@ -1087,6 +1509,33 @@ def parquet2bcsv_cli() -> None:
         help="Internal batch size (default: 512000)",
     )
     parser.add_argument(
+        "--null-policy",
+        default="reject",
+        choices=list(NULL_POLICIES),
+        help="Parquet nulls: 'reject' aborts (default); 'nan' fills float "
+        "columns with NaN and aborts on any other type; 'zero' fills every "
+        "column with the BCSV default (0/False/\"\") -- lossy, a filled zero "
+        "is indistinguishable from a measured one",
+    )
+    parser.add_argument(
+        "--no-metadata2json",
+        action="store_true",
+        help="Do not write <output>.meta.json with the source's key/value metadata",
+    )
+    parser.add_argument(
+        "--no-source-hash",
+        action="store_true",
+        help="Omit the source Parquet's SHA-256 from <output>.meta.json "
+        "(faster on large inputs)",
+    )
+    parser.add_argument(
+        "--no-bcsv-hash",
+        action="store_true",
+        help="Omit the output BCSV's SHA-256 from <output>.meta.json. Skips one "
+        "read pass, but the document then binds to its file only by size and row "
+        "count -- a heuristic, not an identity check",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -1120,6 +1569,10 @@ def parquet2bcsv_cli() -> None:
             verbose=args.verbose,
             benchmark=args.benchmark,
             json_output=args.json,
+            null_policy=args.null_policy,
+            metadata2json=not args.no_metadata2json,
+            source_hash=not args.no_source_hash,
+            bcsv_hash=not args.no_bcsv_hash,
         )
     except (ValueError, FileExistsError, FileNotFoundError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
@@ -1219,6 +1672,12 @@ def bcsv2parquet_cli() -> None:
         action="store_true",
         help="With --benchmark: JSON timing to stdout",
     )
+    parser.add_argument(
+        "--no-json2metadata",
+        action="store_true",
+        help="Ignore <input>.meta.json instead of restoring its key/value "
+        "metadata into the Parquet footer",
+    )
 
     args = parser.parse_args()
     output = args.output or f"{args.input}.parquet"
@@ -1242,6 +1701,7 @@ def bcsv2parquet_cli() -> None:
             verbose=args.verbose,
             benchmark=args.benchmark,
             json_output=args.json,
+            json2metadata=not args.no_json2metadata,
         )
     except (ValueError, FileExistsError, FileNotFoundError) as exc:
         print(f"Error: {exc}", file=sys.stderr)

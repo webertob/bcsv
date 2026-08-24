@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.5.15] - 2026-08-24
+
+### Added
+
+- **`BcsvMetadata.ReadCompanion(path)`** — reads the `<file>.bcsv.meta.json`
+  companion written by pybcsv's `parquet2bcsv`, which carries file-level
+  key/value metadata (provenance, release identifiers, contract markers) that
+  the BCSV header has no room for. Returns `null` when no companion exists, and
+  throws `BcsvException` when one is malformed or does not describe the file
+  beside it: the document records the BCSV file's SHA-256, and a companion left
+  over from an earlier conversion to the same output name must not silently
+  stamp unrelated data with someone else's provenance. Byte size and row count
+  are checked first as cheap pre-checks; a binding field that is present but
+  malformed is rejected rather than skipped. No third-party dependency; the JSON reader is hand-rolled because
+  Unity 2021.3 has no `System.Text.Json`.
+
+  ```csharp
+  var meta = BcsvMetadata.ReadCompanion(path, expectedRows: reader.RowCount);
+  if (meta != null && meta["rotation_contract"] != "unit_xyzw_v1")
+      throw new InvalidOperationException("wrong contract");
+  ```
+
+  **Transitional — scheduled for deletion.** This class exists only because the
+  format has no metadata section. Version 1.6.0 adds one, exposed as
+  `BcsvReader.Metadata`, and `BcsvMetadata` is removed after a deprecation
+  release (roadmap item E12). Keep usage to a single call site so the migration
+  is a one-line change.
+
+---
+
 ## [1.5.14] - 2026-08-22
 
 ### Fixed
