@@ -30,6 +30,7 @@
 #include <cmath>     // HUGE_VAL, HUGE_VALF
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>   // std::memcpy
 #include <string>
 
 // ── Feature detection ──────────────────────────────────────────────────
@@ -68,6 +69,125 @@ namespace bcsv::compat {
             return (dp && *dp) ? *dp : '.';
         }
 
+        // ── std::from_chars grammar scanner ────────────────────────────
+        //
+        // strtod accepts more than std::from_chars does: leading whitespace, a
+        // leading '+', and hex literals such as 0x1p3.  That made a CSV cell
+        // parse on macOS and fail on Linux for the same file.  Scanning the
+        // input against the from_chars grammar first, and handing strtod only
+        // the matched prefix, makes the two agree -- and gives the length up
+        // front, so the copy below fits in a stack buffer.
+        //
+        // Grammar (chars_format::general), per [charconv.from.chars]:
+        //     [-] ( digits [ . [digits] ] | . digits ) [ (e|E) [+|-] digits ]
+        //   | [-] inf | infinity                          (case-insensitive)
+        //   | [-] nan [ ( alnum-or-underscore* ) ]        (case-insensitive)
+        // Note there is no leading '+', no whitespace and no hex form.
+
+        constexpr bool isDigit(char c) { return c >= '0' && c <= '9'; }
+
+        /// ASCII lower-case. Deliberately not std::tolower, which is
+        /// locale-dependent and takes an int.
+        constexpr char toLowerAscii(char c) {
+            return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+        }
+
+        constexpr bool isNanBodyChar(char c) {
+            return isDigit(c) || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+        }
+
+        /// True when [p, last) begins with `word`, compared case-insensitively.
+        inline bool startsWithIgnoreCase(const char* p, const char* last, const char* word) {
+            for (; *word; ++p, ++word) {
+                if (p == last || toLowerAscii(*p) != *word) return false;
+            }
+            return true;
+        }
+
+        /// End of the longest prefix of [first, last) that std::from_chars
+        /// would accept, or `first` when there is no valid prefix at all.
+        inline const char* scanGeneralFormat(const char* first, const char* last) {
+            const char* p = first;
+            if (p != last && *p == '-') ++p;      // no '+', matching from_chars
+
+            // "infinity" before "inf": the longest match wins.
+            if (startsWithIgnoreCase(p, last, "infinity")) return p + 8;
+            if (startsWithIgnoreCase(p, last, "inf"))      return p + 3;
+
+            if (startsWithIgnoreCase(p, last, "nan")) {
+                const char* afterNan = p + 3;
+                if (afterNan != last && *afterNan == '(') {
+                    const char* q = afterNan + 1;
+                    while (q != last && isNanBodyChar(*q)) ++q;
+                    if (q != last && *q == ')') return q + 1;   // nan(chars)
+                }
+                return afterNan;                                 // bare nan
+            }
+
+            const char* digitsStart = p;
+            while (p != last && isDigit(*p)) ++p;
+            const bool hasIntegerPart = p != digitsStart;
+
+            bool hasFractionPart = false;
+            if (p != last && *p == '.') {
+                const char* fracStart = ++p;
+                while (p != last && isDigit(*p)) ++p;
+                hasFractionPart = p != fracStart;
+            }
+            // A lone "." or "-" is not a number.
+            if (!hasIntegerPart && !hasFractionPart) return first;
+
+            const char* mantissaEnd = p;
+
+            // The exponent joins the match only when it is complete: for "1e"
+            // and "1e+", from_chars consumes just "1".
+            if (p != last && (*p == 'e' || *p == 'E')) {
+                const char* q = p + 1;
+                if (q != last && (*q == '+' || *q == '-')) ++q;
+                const char* expDigits = q;
+                while (q != last && isDigit(*q)) ++q;
+                if (q != expDigits) return q;
+            }
+            return mantissaEnd;
+        }
+
+        /// Null-terminated, mutable copy of a scanned number.
+        ///
+        /// strtod needs null termination, which a string_view into a CSV buffer
+        /// cannot give it, and the copy has to be mutable so the decimal point
+        /// can be retargeted.  The grammar scan bounds the length, so in
+        /// practice this never leaves the stack -- the previous std::string cost
+        /// an allocation for every value parsed, which is a poor trade on the
+        /// embedded targets that actually use this path.
+        class ScannedNumber {
+        public:
+            ScannedNumber(const char* first, const char* end)
+                : size_(static_cast<size_t>(end - first))
+            {
+                if (size_ < kInlineCapacity) {
+                    std::memcpy(stack_, first, size_);
+                    stack_[size_] = '\0';
+                    data_ = stack_;
+                } else {
+                    heap_.assign(first, end);
+                    data_ = heap_.data();
+                }
+            }
+
+            char*  data() { return data_; }
+            size_t size() const { return size_; }
+
+        private:
+            // Comfortably past the longest shortest-round-trip double ("%.17g"
+            // is ~24 chars); anything longer is pathological and takes the heap.
+            static constexpr size_t kInlineCapacity = 64;
+
+            char        stack_[kInlineCapacity];
+            std::string heap_;
+            char*       data_;
+            size_t      size_;
+        };
+
         /// Rewrite the single decimal separator in `s` from `from` to `to`.
         /// A number carries at most one, so stop at the first.
         inline void retargetDecimalPoint(char* s, size_t n, char from, char to) {
@@ -77,16 +197,17 @@ namespace bcsv::compat {
             }
         }
 
-        /// float parse via strtof, with std::from_chars value semantics.
+        /// float parse via strtof, with std::from_chars semantics.
         inline std::from_chars_result from_chars(const char* first, const char* last, float& value) {
-            std::string s(first, last);
-            retargetDecimalPoint(s.data(), s.size(), '.', localeDecimalPoint());
-            char* end = nullptr;
-            errno = 0;
-            float v = std::strtof(s.c_str(), &end);
-            std::ptrdiff_t consumed = end - s.c_str();
-            if (end == s.c_str())
+            const char* end = scanGeneralFormat(first, last);
+            if (end == first)
                 return {first, std::errc::invalid_argument};
+
+            ScannedNumber text(first, end);
+            retargetDecimalPoint(text.data(), text.size(), '.', localeDecimalPoint());
+
+            errno = 0;
+            const float v = std::strtof(text.data(), nullptr);
             // C lets strtof raise ERANGE when the result underflows to a
             // *representable subnormal*, and both glibc and Apple's libc do.
             // That is a correct parse, not a range error -- reporting it as one
@@ -94,26 +215,27 @@ namespace bcsv::compat {
             // overflow to +/-inf and flush-to-zero are genuine failures, and
             // std::from_chars leaves `value` untouched for those.
             if (errno == ERANGE && (v == 0.0f || v == HUGE_VALF || v == -HUGE_VALF))
-                return {first + consumed, std::errc::result_out_of_range};
+                return {end, std::errc::result_out_of_range};
             value = v;
-            return {first + consumed, std::errc{}};
+            return {end, std::errc{}};
         }
 
-        /// double parse via strtod, with std::from_chars value semantics.
+        /// double parse via strtod, with std::from_chars semantics.
         inline std::from_chars_result from_chars(const char* first, const char* last, double& value) {
-            std::string s(first, last);
-            retargetDecimalPoint(s.data(), s.size(), '.', localeDecimalPoint());
-            char* end = nullptr;
-            errno = 0;
-            double v = std::strtod(s.c_str(), &end);
-            std::ptrdiff_t consumed = end - s.c_str();
-            if (end == s.c_str())
+            const char* end = scanGeneralFormat(first, last);
+            if (end == first)
                 return {first, std::errc::invalid_argument};
+
+            ScannedNumber text(first, end);
+            retargetDecimalPoint(text.data(), text.size(), '.', localeDecimalPoint());
+
+            errno = 0;
+            const double v = std::strtod(text.data(), nullptr);
             // See the float overload: a subnormal result is a successful parse.
             if (errno == ERANGE && (v == 0.0 || v == HUGE_VAL || v == -HUGE_VAL))
-                return {first + consumed, std::errc::result_out_of_range};
+                return {end, std::errc::result_out_of_range};
             value = v;
-            return {first + consumed, std::errc{}};
+            return {end, std::errc{}};
         }
 
         /// float format via snprintf — shortest round-trip representation.

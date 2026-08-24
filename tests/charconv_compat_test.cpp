@@ -211,6 +211,114 @@ TEST(CharconvFallback, ReportsHowMuchItConsumed) {
     EXPECT_EQ(r.ptr, text.data() + 3) << "ptr must point just past the number";
 }
 
+// ── Accept/reject parity with std::from_chars ──────────────────────────
+// strtod is more permissive than from_chars, so before the grammar scanner a
+// CSV cell could parse on macOS and fail on Linux for the same file. These pin
+// the three classes where they used to diverge.
+
+TEST(CharconvFallbackParity, RejectsLeadingWhitespace) {
+    for (const char* text : {" 1.5", "\t1.5", "\n1.5", "  42"}) {
+        double v = 99.0;
+        auto r = parse(text, v);
+        EXPECT_EQ(r.ec, std::errc::invalid_argument) << "[" << text << "]";
+        EXPECT_EQ(v, 99.0);
+    }
+}
+
+TEST(CharconvFallbackParity, RejectsLeadingPlus) {
+    for (const char* text : {"+1.5", "+0", "+inf"}) {
+        double v = 99.0;
+        auto r = parse(text, v);
+        EXPECT_EQ(r.ec, std::errc::invalid_argument) << "[" << text << "]";
+        EXPECT_EQ(v, 99.0);
+    }
+    // A leading '-' is still accepted -- only '+' is outside the grammar.
+    double v = 0;
+    ASSERT_EQ(parse("-1.5", v).ec, std::errc{});
+    EXPECT_EQ(v, -1.5);
+}
+
+TEST(CharconvFallbackParity, DoesNotParseHexLiterals) {
+    // from_chars(general) stops after the leading "0"; strtod would read 16.
+    struct { const char* text; double value; std::ptrdiff_t used; } cases[] = {
+        {"0x10", 0.0, 1}, {"0x1p3", 0.0, 1}, {"-0x10", -0.0, 2},
+    };
+    for (const auto& c : cases) {
+        double v = 99.0;
+        const std::string text = c.text;
+        auto r = parse(text, v);
+        EXPECT_EQ(r.ec, std::errc{}) << c.text;
+        EXPECT_EQ(v, c.value) << c.text;
+        EXPECT_EQ(r.ptr - text.data(), c.used) << c.text;
+    }
+}
+
+TEST(CharconvFallbackParity, AcceptsTheSpellingsFromCharsAccepts) {
+    // inf/infinity/nan are in the grammar, case-insensitively, and nan may
+    // carry a parenthesised payload.
+    for (const char* text : {"inf", "INF", "Inf", "infinity", "INFINITY"}) {
+        double v = 0;
+        auto r = parse(text, v);
+        EXPECT_EQ(r.ec, std::errc{}) << text;
+        EXPECT_TRUE(std::isinf(v)) << text;
+    }
+    for (const char* text : {"nan", "NAN", "NaN", "nan(123)", "nan(_x9)"}) {
+        double v = 0;
+        auto r = parse(text, v);
+        EXPECT_EQ(r.ec, std::errc{}) << text;
+        EXPECT_TRUE(std::isnan(v)) << text;
+    }
+    // ".5" and "5." are valid; a bare "." is not.
+    double v = 0;
+    EXPECT_EQ(parse(".5", v).ec, std::errc{});
+    EXPECT_EQ(v, 0.5);
+    EXPECT_EQ(parse("5.", v).ec, std::errc{});
+    EXPECT_EQ(v, 5.0);
+    v = 99.0;
+    EXPECT_EQ(parse(".", v).ec, std::errc::invalid_argument);
+    EXPECT_EQ(v, 99.0);
+}
+
+TEST(CharconvFallbackParity, TakesAnExponentOnlyWhenComplete) {
+    // "1e" and "1e+" have no exponent digits, so only "1" is consumed.
+    struct { const char* text; std::ptrdiff_t used; } cases[] = {
+        {"1e", 1}, {"1e+", 1}, {"1e-", 1}, {"1e5", 3}, {"1e+5", 4}, {"1e-5", 4},
+    };
+    for (const auto& c : cases) {
+        const std::string text = c.text;
+        double v = 0;
+        auto r = parse(text, v);
+        EXPECT_EQ(r.ec, std::errc{}) << c.text;
+        EXPECT_EQ(r.ptr - text.data(), c.used) << c.text;
+    }
+}
+
+// ── No allocation on the hot path ──────────────────────────────────────
+
+TEST(CharconvFallback, HandlesLiteralsTooLongForTheInlineBuffer) {
+    // ScannedNumber keeps short numbers on the stack and spills to the heap
+    // beyond its inline capacity; the spill path must still be correct.
+    const std::string longZeros = "0." + std::string(200, '0') + "1";
+    double v = -1;
+    auto r = parse(longZeros, v);
+    EXPECT_EQ(r.ec, std::errc{});
+    EXPECT_EQ(r.ptr - longZeros.data(), static_cast<std::ptrdiff_t>(longZeros.size()));
+    EXPECT_GT(v, 0.0);
+
+    // 300 nines is ~1e299 -- long enough to spill, still inside double range.
+    const std::string longDigits(300, '9');
+    double w = 0;
+    auto rw = parse(longDigits, w);
+    EXPECT_EQ(rw.ec, std::errc{});
+    EXPECT_GT(w, 1e298);
+
+    // 400 nines genuinely overflows, on the heap path.
+    const std::string overflowing(400, '9');
+    double o = 5.0;
+    EXPECT_EQ(parse(overflowing, o).ec, std::errc::result_out_of_range);
+    EXPECT_EQ(o, 5.0) << "value untouched on overflow";
+}
+
 // ── Locale independence ────────────────────────────────────────────────
 
 /// Restores LC_NUMERIC on destruction. setlocale is process-global, and gtest
@@ -300,6 +408,10 @@ const char* const kAgreedInputs[] = {
     "2.2250738585072014e-308", "1.7976931348623157e308",
     "1e400", "-1e400", "1e-400",
     "abc", "", "1.5xyz",
+    // The classes where strtod used to be more permissive than from_chars.
+    " 1.5", "\t1.5", "+1.5", "0x10", "0x1p3", "-0x10",
+    "inf", "INF", "infinity", "nan", "NaN", "nan(123)",
+    ".5", "5.", ".", "1e", "1e+", "1e-5", "--1", "-",
 };
 
 TEST(CharconvFallbackDifferential, MatchesStdFromCharsDouble) {
@@ -312,7 +424,13 @@ TEST(CharconvFallbackDifferential, MatchesStdFromCharsDouble) {
         EXPECT_EQ(rm.ec, rs.ec) << "[" << text << "] error codes diverge";
         EXPECT_EQ(rm.ptr - text, rs.ptr - text) << "[" << text << "] consumed length diverges";
         if (rs.ec == std::errc{}) {
-            EXPECT_EQ(mine, theirs) << "[" << text << "] parsed value diverges";
+            if (std::isnan(theirs)) {
+                EXPECT_TRUE(std::isnan(mine)) << "[" << text << "] expected NaN";
+            } else {
+                EXPECT_EQ(mine, theirs) << "[" << text << "] parsed value diverges";
+                EXPECT_EQ(std::signbit(mine), std::signbit(theirs))
+                    << "[" << text << "] sign diverges";
+            }
         } else {
             EXPECT_EQ(mine, 7.0) << "[" << text << "] value must be untouched on failure";
             EXPECT_EQ(theirs, 7.0) << "[" << text << "] sanity";
@@ -328,8 +446,13 @@ TEST(CharconvFallbackDifferential, MatchesStdFromCharsFloat) {
         auto rs = std::from_chars(text, text + n, theirs);
 
         EXPECT_EQ(rm.ec, rs.ec) << "[" << text << "] error codes diverge";
+        EXPECT_EQ(rm.ptr - text, rs.ptr - text) << "[" << text << "] consumed length diverges";
         if (rs.ec == std::errc{}) {
-            EXPECT_EQ(mine, theirs) << "[" << text << "] parsed value diverges";
+            if (std::isnan(theirs)) {
+                EXPECT_TRUE(std::isnan(mine)) << "[" << text << "] expected NaN";
+            } else {
+                EXPECT_EQ(mine, theirs) << "[" << text << "] parsed value diverges";
+            }
         }
     }
 }

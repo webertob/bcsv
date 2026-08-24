@@ -224,15 +224,6 @@ Learnings captured from the 1.5.10 release gate (2026-07-12):
   is a shared free function, hoisting the (duplicated) encode/decodeDelta
   helpers out of the two Delta002 classes is the natural follow-up.
 
-- **charconv fallback parity** (from the 2026-08-24 macOS CI investigation) — `bcsv::compat::fallback`
-  now matches `std::from_chars` on *values*, but not on what it *accepts*: `strtod` takes a leading
-  `'+'`, hex literals (`0x1p3`) and leading whitespace, all of which `std::from_chars` rejects. So a
-  CSV cell can parse on macOS and fail on Linux. Decide whether to tighten the fallback (changes what
-  input is valid — may break callers relying on the looser behaviour) or to document the divergence.
-  The differential tests in `tests/charconv_compat_test.cpp` are where the parity table would live.
-- **charconv fallback allocates per value** — `fallback::from_chars` builds a `std::string` for
-  strtod's null-termination on every cell parsed. A small stack buffer with a heap fallback for long
-  inputs would suit the CSV hot loop on the platforms that use it. Measure before changing.
 - Sampler: conditional assignments, wildcards, index-based conditions (was item 25/28);
   performance phase 2 (was item 21, phase 1 complete).
 - CLI tools: remaining ideas — bcsvInspect (validate+repair+info unification), bcsvCompress

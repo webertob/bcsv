@@ -38,6 +38,21 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- **The charconv fallback now accepts exactly what `std::from_chars` accepts.**
+  `strtod` is more permissive than `from_chars`: it skips leading whitespace,
+  takes a leading `'+'`, and reads hex literals such as `0x1p3`. So the same CSV
+  cell could parse on macOS and be rejected on Linux. The fallback now scans the
+  input against the `from_chars` grammar first and hands `strtod` only the
+  matched prefix. **This makes macOS stricter**, matching the behaviour Linux and
+  Windows have always had — a file that relied on `+1.5`, a leading space, or a
+  hex literal parsing on macOS was already failing everywhere else. Verified
+  against `std::from_chars` over 400 000 randomised inputs with no divergence.
+- **The fallback no longer allocates per parsed value.** It built a
+  `std::string` for `strtod`'s null termination on every cell. The grammar scan
+  gives the length up front, so short numbers now use a stack buffer and only
+  pathological literals reach the heap — measured at zero allocations for 9 000
+  parses. This matters most on the embedded targets, which are the platforms
+  that actually take this path.
 - **The charconv fallback is now compiled on every platform**, not just the ones
   that use it. It previously lived inside `#if !BCSV_HAS_FLOAT_CHARCONV`, so on
   Linux it was never even parsed — which is how both bugs above survived a green
