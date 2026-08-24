@@ -129,13 +129,18 @@ jobs:
             build-preset: clang-debug-build
             build-dir: build/clang-debug
 
+          # Ninja rather than the "Visual Studio 17 2022" generator presets:
+          # windows-latest no longer ships VS 2022, so those presets fail at
+          # configure with "could not find any instance of Visual Studio".
+          # msvc-dev-cmd (below) puts cl.exe on PATH, which is all Ninja needs,
+          # and this stops CI depending on a specific VS major version.
+          # These presets are single-config, so no cmake-config is required.
           - name: Windows MSVC
             os: windows-latest
             compiler: msvc
-            configure-preset: msvc-debug
-            build-preset: msvc-debug-build
-            build-dir: build/msvc-debug
-            cmake-config: Debug
+            configure-preset: ninja-msvc-debug
+            build-preset: ninja-msvc-debug-build
+            build-dir: build/ninja-msvc-debug
 
           - name: macOS Apple Clang
             os: macos-latest
@@ -162,6 +167,13 @@ jobs:
       - name: Install Ninja (macOS)
         if: runner.os == 'macOS'
         run: brew install ninja
+
+      # The Windows matrix entries use the Ninja MSVC presets (see the note
+      # there). Ninja ships with some runner images and not others, so install
+      # it rather than depend on the image.
+      - name: Install Ninja (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ninja -y --no-progress
 
       - name: Setup MSVC
         if: matrix.compiler == 'msvc'
@@ -216,13 +228,13 @@ jobs:
             build-preset: clang-release-build
             build-dir: build/clang-release
 
+          # See the Windows MSVC note in the debug matrix above.
           - name: Windows MSVC (Release)
             os: windows-latest
             compiler: msvc
-            configure-preset: msvc-release
-            build-preset: msvc-release-build
-            build-dir: build/msvc-release
-            cmake-config: Release
+            configure-preset: ninja-msvc-release
+            build-preset: ninja-msvc-release-build
+            build-dir: build/ninja-msvc-release
 
           - name: macOS Apple Clang (Release)
             os: macos-latest
@@ -249,6 +261,13 @@ jobs:
       - name: Install Ninja (macOS)
         if: runner.os == 'macOS'
         run: brew install ninja
+
+      # The Windows matrix entries use the Ninja MSVC presets (see the note
+      # there). Ninja ships with some runner images and not others, so install
+      # it rather than depend on the image.
+      - name: Install Ninja (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ninja -y --no-progress
 
       - name: Setup MSVC
         if: matrix.compiler == 'msvc'
