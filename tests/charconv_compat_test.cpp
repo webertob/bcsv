@@ -341,8 +341,11 @@ private:
 class CommaLocaleTest : public ::testing::Test {
 protected:
     static const char* findCommaLocale() {
+        // POSIX spellings first, then the Windows forms, so the suite runs
+        // rather than skips on both.
         for (const char* name : {"de_DE.UTF-8", "de_DE.utf8", "de_DE",
-                                 "fr_FR.UTF-8", "fr_FR", "nl_NL.UTF-8"}) {
+                                 "fr_FR.UTF-8", "fr_FR", "nl_NL.UTF-8",
+                                 "de-DE", "fr-FR", "German_Germany.1252"}) {
             ScopedNumericLocale probe(name);
             if (probe.applied() && *std::localeconv()->decimal_point == ',')
                 return name;
@@ -432,8 +435,15 @@ TEST(CharconvFallbackDifferential, MatchesStdFromCharsDouble) {
                     << "[" << text << "] sign diverges";
             }
         } else {
+            // The fallback leaves `value` alone on a range error, which is what
+            // [charconv.from.chars] specifies and what libstdc++ does.
             EXPECT_EQ(mine, 7.0) << "[" << text << "] value must be untouched on failure";
-            EXPECT_EQ(theirs, 7.0) << "[" << text << "] sanity";
+            // Deliberately no assertion about `theirs` here: implementations
+            // disagree. Microsoft's STL stores the clamped result (+/-inf for
+            // "1e400", 0 for "1e-400") where libstdc++ leaves the value
+            // untouched, so asserting either one fails on the other platform.
+            // Only the error code and consumed length are portable, and both
+            // are checked above.
         }
     }
 }
