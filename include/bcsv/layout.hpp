@@ -18,6 +18,12 @@
 
 #include "bcsv/definitions.h"
 #include "layout.h"
+// layout.h pulls in column_name_index.h (declarations); the matching
+// definitions must come with it, or a TU that includes layout.hpp without the
+// bcsv.h umbrella gets declarations only. That linked on Linux purely because
+// another TU happened to emit the weak instantiation, and failed on
+// macOS/arm64 Release with an undefined ColumnNameIndex<0>::clear().
+#include "column_name_index.hpp"
 #include <algorithm>
 #include <array>
 #include <cstddef>

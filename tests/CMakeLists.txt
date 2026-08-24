@@ -126,7 +126,7 @@ if(Python3_FOUND)
         ENVIRONMENT "BCSV_BUILD_DIR=${CMAKE_BINARY_DIR}"
     )
 
-    # Skips itself (exit 0) when pyarrow/pybcsv are not installed.
+    # Skips itself when pyarrow/pybcsv are not installed -- see SKIP_RETURN_CODE below.
     add_test(NAME pytest_parquet_tools
         COMMAND ${Python3_EXECUTABLE} -m pytest
             "${CMAKE_CURRENT_SOURCE_DIR}/integration/test_parquet_tools.py" -v
@@ -135,6 +135,12 @@ if(Python3_FOUND)
     set_tests_properties(pytest_parquet_tools PROPERTIES
         TIMEOUT 300
         ENVIRONMENT "BCSV_BUILD_DIR=${CMAKE_BINARY_DIR}"
+        # test_parquet_tools.py guards its optional deps with
+        # pytest.importorskip, so where pyarrow is absent the whole module is
+        # skipped, pytest collects nothing and exits 5 ("no tests collected").
+        # Without this, that correct skip reads as a ctest failure -- which is
+        # why CI was red on machines without pyarrow while passing locally.
+        SKIP_RETURN_CODE 5
     )
 endif()
 
