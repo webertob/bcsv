@@ -12,6 +12,41 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Two silent wrong-value bugs in the float charconv fallback**
+  (`bcsv::compat`, used for CSV parsing and formatting). Both were reachable
+  only where the standard library lacks the floating-point `std::from_chars` /
+  `std::to_chars` overloads — Apple libc++, and likely the STM32/Zynq toolchains
+  BCSV targets. Linux and Windows dispatch to `std::` and were never affected.
+  - **A representable subnormal was discarded.** C permits `strtod`/`strtof` to
+    raise `ERANGE` when the result underflows to a subnormal, and both glibc and
+    Apple's libc do. The shim treated any `ERANGE` as fatal and returned
+    `result_out_of_range` without assigning the value, so `CsvReader` kept its
+    zero-initialised `0` *and* counted a parse error. Now only overflow to ±inf
+    and flush-to-zero are reported, matching `std::from_chars`, which also leaves
+    the caller's value untouched on a genuine range error. Caught by macOS CI as
+    `NanInfFileTest.CsvBridgeSpecialValues`.
+  - **Parsing and formatting followed the process locale.** `strtod` and
+    `snprintf("%g")` read and write the *locale's* decimal point, while this
+    shim's contract — like `std::from_chars` — is always `'.'`. Under a
+    comma-decimal locale `strtod("1.5")` returns `1` and `to_chars(1.5)` emitted
+    `"1,5"` into CSV. This collided directly with the `decimal_sep_` feature,
+    which normalises the user's separator *to* `'.'` before parsing. Both
+    directions now translate at the boundary rather than touching the process
+    locale, which is global and unsafe for a library to change.
+
+### Changed
+
+- **The charconv fallback is now compiled on every platform**, not just the ones
+  that use it. It previously lived inside `#if !BCSV_HAS_FLOAT_CHARCONV`, so on
+  Linux it was never even parsed — which is how both bugs above survived a green
+  CI. The implementations moved to `bcsv::compat::fallback`, the feature test
+  now only selects a dispatcher, and `BCSV_HAS_FLOAT_CHARCONV` is overridable so
+  a build can force the fallback path. New `tests/charconv_compat_test.cpp`
+  exercises it directly on all platforms, including a differential suite that
+  pins it against `std::from_chars`/`to_chars` wherever both exist.
+
 ---
 
 ## [1.5.15] - 2026-08-24
