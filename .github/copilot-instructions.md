@@ -59,7 +59,7 @@ include/bcsv/         # Header-only C++ library (.h = declarations, .hpp = imple
   codec_file/          # File codecs (stream, packet, LZ4 variants)
   sampler/             # Bytecode VM for row filtering/projection
 src/tools/             # 11 CLI tools (csv2bcsv, bcsv2csv, bcsvHead/Tail/Header, bcsvSampler, bcsvGenerator, bcsvValidate, bcsvRepair, bcsvCast, bcsvCompare)
-tests/                 # GTest suite (25 .cpp) + C API tests (3 .c) + shell integration tests
+tests/                 # GTest suite (35 .cpp) + C API tests (3 .c) + shell integration tests
 benchmark/             # Python orchestrator + Google Benchmark executables
 python/                # nanobind bindings + pandas integration
 unity/                 # C# / Unity bindings (P/Invoke)
@@ -117,7 +117,7 @@ re-litigating settled decisions.
 
 ## Deep Reference
 
-- `SKILLS.md` — full AI skills reference (API classes, source inventory, all conventions)
+- `SKILLS.md` — public API classes, source-file inventory, CMake options/presets, codec-registry recipe
 - `ARCHITECTURE.md` — design philosophy, binary format spec, roadmap
 - `docs/adr/README.md` — architectural decision records (ADRs)
 - `src/tools/CLI_TOOLS.md` — all 11 CLI tools with options and examples
