@@ -503,9 +503,19 @@ Notes on the current gaps:
   full read of that file, so `ReadCompanion(path, expectedRows, verifyDigest:
   false)` keeps only the cheap `bcsv_bytes` / `bcsv_rows` pre-checks for callers
   who open a large recording through random access. Verify once at ingest, skip
-  it per open. All of this is a stopgap: the format gains an in-format metadata
-  section in 1.6.0, after which `BcsvMetadata` is deleted — see item E12 in
-  `ToDo.md`. Do not build long-lived code against it.
+  it per open. **Both readers return only the document's `key_value_metadata`
+  object**, which is copied verbatim out of the source Parquet footer; the
+  document level around it (`metadata_json_version`, `source_path`,
+  `source_sha256`, `bcsv_sha256`, `bcsv_bytes`, `bcsv_rows`) is consumed by the
+  binding check and is not exposed. The two levels share one namespace, so the
+  same key can appear at both and mean different things — at the document level
+  `source_sha256` is the digest of the *Parquet input*, while a pipeline whose
+  earlier stage stamped `source_sha256` into that Parquet's footer leaves a
+  second, different digest under that name inside `key_value_metadata`. Parse
+  the JSON directly when you need the document level. All of this is a stopgap:
+  the format gains an in-format metadata section in 1.6.0, after which
+  `BcsvMetadata` is deleted — see item E12 in `ToDo.md`. Do not build long-lived
+  code against it.
 
 ---
 

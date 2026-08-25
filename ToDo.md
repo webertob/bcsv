@@ -200,6 +200,22 @@ the streaming row-wise write path intact. Order = suggested implementation order
       Removing a public C# type is a breaking API change, so it lands on a MINOR at the earliest.
       Announce the deprecation in the release that ships the in-format channel and delete in the
       next one — do not do both in the same release.
+      **Settle the namespace collision while designing this** (reported 2026-08-25 by a
+      `com.bcsv.unity` consumer). The companion has two levels — the document level
+      (`metadata_json_version`, `source_path`, `source_sha256`, `bcsv_sha256`,
+      `bcsv_bytes`, `bcsv_rows`) and the `key_value_metadata` object copied verbatim out
+      of the Parquet footer — and `read_metadata_json` / `BcsvMetadata.ReadCompanion`
+      return only the inner one. Their pipeline is raw → parquet → bcsv and stamps its own
+      `source_sha256` at the raw → parquet step, so every companion carries two different
+      digests under that one name and a consumer moving off hand-parsed JSON onto
+      `ReadCompanion` silently swaps which link of the chain they are checking. Documented
+      on both readers for now (2026-08-25) rather than fixed, because this item deletes the
+      companion anyway. **The in-format map inherits the same hazard**: if
+      `parquet_to_bcsv` keeps passing footer pairs through unfiltered while the format also
+      records provenance, `Reader::metadata()` reproduces the defect exactly. Decide the
+      rule up front — reserved key prefix, a separate provenance struct outside the map, or
+      a refusal at write time when a source key collides — and do not leave it to a
+      follow-up.
       **All four bindings expose `metadata()` in the same release as the C++ core** — C++, C#,
       Unity and pybcsv together. Requested 2026-08-25 by T13, and the right default anyway:
       `com.bcsv.unity` is what that project consumes, and a binding that lands a release late

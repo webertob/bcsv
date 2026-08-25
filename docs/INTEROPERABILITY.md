@@ -266,8 +266,16 @@ Caveats at the boundaries:
   `bcsv_to_parquet(json2metadata=True)`, both on by default and both optional,
   and readable from C#/Unity via `BcsvMetadata.ReadCompanion`. The document
   records the BCSV file's SHA-256 and is refused if it does not match, so
-  provenance cannot attach to data it does not describe. An in-format channel is
-  planned for 1.6.0, after which the companion and `BcsvMetadata` are retired.
+  provenance cannot attach to data it does not describe. Both readers hand back
+  only the `key_value_metadata` object — the Parquet footer pairs — and not the
+  document level that surrounds it (`source_path`, `source_sha256`,
+  `bcsv_sha256`, `bcsv_bytes`, `bcsv_rows`, `metadata_json_version`). The two
+  levels share a namespace: `source_sha256` at the document level is the digest
+  of the Parquet *input*, so a chain that already recorded a `source_sha256` in
+  the Parquet footer ends up with two different digests under one name at two
+  levels, describing two different links. Parse the JSON yourself for the
+  document level. An in-format channel is planned for 1.6.0, after which the
+  companion and `BcsvMetadata` are retired.
 - BCSV has **no null type**: `NaN` is a value, not a missing-data marker.
 
 ### String Types

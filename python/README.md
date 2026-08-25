@@ -245,6 +245,18 @@ columns using dotted (`location.lat`) and bracketed (`vals[0]`) names;
   on byte size and row count alone — a heuristic two recordings of the same
   shape can both satisfy, not an identity check.
 
+  `read_metadata_json` and `BcsvMetadata.ReadCompanion` return only the
+  document's `key_value_metadata` object — the Parquet footer pairs, verbatim.
+  The document level around it (`metadata_json_version`, `source_path`,
+  `source_sha256`, `bcsv_sha256`, `bcsv_bytes`, `bcsv_rows`) describes the
+  conversion itself and is not returned; parse the JSON if you need it. Mind
+  that the two levels share one namespace: `source_sha256` at the document level
+  is the digest of the **Parquet input**, while a pipeline that stamped its own
+  `source_sha256` into the Parquet footer leaves a different digest under the
+  same name inside `key_value_metadata`. Same name, two levels, two different
+  links of the chain — `source_path`, `bcsv_sha256`, `bcsv_bytes`, `bcsv_rows`
+  and `metadata_json_version` behave the same way.
+
   An in-format metadata channel is planned for 1.6.0; this one will keep working
   when it lands.
 - **Random access:** the `packet*` file codecs write a footer index, so

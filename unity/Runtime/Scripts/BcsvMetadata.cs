@@ -14,6 +14,23 @@ namespace BCSV
     /// </summary>
     /// <remarks>
     /// <para>
+    /// <b>The companion has two levels, and this class returns only the inner one.</b>
+    /// The document level — <c>metadata_json_version</c>, <c>source_path</c>,
+    /// <c>source_sha256</c>, <c>bcsv_sha256</c>, <c>bcsv_bytes</c>, <c>bcsv_rows</c> — is what
+    /// <c>parquet2bcsv</c> recorded about its own conversion, so the <c>source_sha256</c>
+    /// there is the digest of the <b>Parquet input</b>. The inner
+    /// <c>key_value_metadata</c> object is copied verbatim out of that Parquet file's
+    /// footer, so it belongs to whatever step produced the Parquet. Nothing keeps the
+    /// two levels apart: a pipeline whose earlier stage stamped its own
+    /// <c>source_sha256</c> into the footer yields a companion carrying two different
+    /// digests under that one name, describing two different links in the chain.
+    /// <c>ReadCompanion</c> returns the inner one; the document-level fields are
+    /// consumed by the binding check and are not exposed, so read the JSON directly if
+    /// you need them. <c>source_path</c>, <c>bcsv_sha256</c>, <c>bcsv_bytes</c>,
+    /// <c>bcsv_rows</c> and <c>metadata_json_version</c> collide the same way — a key
+    /// in the returned pairs does not mean what the same key means one level up.
+    /// </para>
+    /// <para>
     /// <b>Transitional — scheduled for removal.</b> This class exists only because
     /// the BCSV format has no key/value metadata section. Version 1.6.0 adds one,
     /// exposed as <c>BcsvReader.Metadata</c>, and this class is retired in the first
@@ -61,7 +78,10 @@ namespace BCSV
         /// Row count of the BCSV file, if known (e.g. <c>reader.RowCount</c>). When
         /// non-negative it is checked against the recorded count. Pass -1 to skip.
         /// </param>
-        /// <returns>The metadata pairs, or <c>null</c> if no companion exists.</returns>
+        /// <returns>
+        /// The <c>key_value_metadata</c> pairs, or <c>null</c> if no companion exists.
+        /// The document-level fields are not returned — see the remarks on this class.
+        /// </returns>
         /// <exception cref="BcsvException">
         /// The companion exists but is malformed, or does not describe
         /// <paramref name="bcsvPath"/>.
@@ -89,7 +109,10 @@ namespace BCSV
         /// multi-gigabyte recording to touch a few rows of it — verify once at ingest,
         /// pass <c>false</c> per open.
         /// </param>
-        /// <returns>The metadata pairs, or <c>null</c> if no companion exists.</returns>
+        /// <returns>
+        /// The <c>key_value_metadata</c> pairs, or <c>null</c> if no companion exists.
+        /// The document-level fields are not returned — see the remarks on this class.
+        /// </returns>
         /// <exception cref="BcsvException">
         /// The companion exists but is malformed, or does not describe
         /// <paramref name="bcsvPath"/>.

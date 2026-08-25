@@ -896,6 +896,23 @@ def read_metadata_json(
 ) -> Optional[Dict[str, str]]:
     """Read the key/value metadata JSON for `bcsv_path`, or None if absent.
 
+    Returns only the document's ``key_value_metadata`` object -- the pairs
+    copied verbatim out of the source Parquet file's footer.  The document
+    level around it (``metadata_json_version``, ``source_path``,
+    ``source_sha256``, ``bcsv_sha256``, ``bcsv_bytes``, ``bcsv_rows``) is what
+    `parquet_to_bcsv` recorded about its own conversion; it is consumed by the
+    binding check and is *not* returned.  Read the JSON directly if you need it.
+
+    The two levels share one namespace with nothing to keep them apart, so a
+    key here does not necessarily mean what the same key means one level up.
+    ``source_sha256`` is the case that bites: at the document level it is the
+    digest of the **Parquet input** to this conversion, while a pipeline whose
+    earlier stage stamped its own ``source_sha256`` into the Parquet footer
+    puts a second, different digest under that name inside
+    ``key_value_metadata`` -- two different links of the same chain, one name.
+    ``source_path``, ``bcsv_sha256``, ``bcsv_bytes``, ``bcsv_rows`` and
+    ``metadata_json_version`` collide the same way.
+
     Raises ValueError if the file exists but is unreadable, or if it does not
     belong to `bcsv_path`.  Both are refusals on purpose: a provenance record
     that is silently skipped, or silently applied to the wrong data, is worse
@@ -1016,6 +1033,16 @@ def _write_metadata_json(
     rows: int,
     bcsv_hash: bool = True,
 ) -> str:
+    # `metadata` goes in under `key_value_metadata` untouched, so a key it
+    # carries can share a name with one of the document-level fields written
+    # here without either shadowing the other -- they sit at different levels.
+    # `source_sha256` is the one that has actually confused consumers: this
+    # one is the digest of `source_path`, the Parquet input, while an upstream
+    # stage that stamped `source_sha256` into that Parquet's footer leaves a
+    # different digest under the same name one level down.  Documented on
+    # `read_metadata_json` and on the C#/Unity `BcsvMetadata`; the collision
+    # rule belongs to E12, which replaces this document with an in-format
+    # metadata section.
     doc = {
         "metadata_json_version": METADATA_JSON_VERSION,
         "source_path": os.path.basename(source_path),
