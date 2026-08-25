@@ -242,6 +242,14 @@ public class BcsvTests : IDisposable
                 writer.Row.SetInt32(1, i);
                 writer.WriteRow();
             }
+
+            // Assert the codec actually took effect, not merely that the data
+            // survives. Every codec round-trips correctly, so a writer silently
+            // substituting a different one is invisible to a read-back check —
+            // which is how "flat" spent several releases producing delta files
+            // (bcsv_writer_create took Writer<Layout>'s default template
+            // argument). Only the header distinguishes them.
+            AssertRowCodec(writer.FileFlags, codec);
         }
 
         using var reader = new BcsvReader();
@@ -726,6 +734,82 @@ public class BcsvTests : IDisposable
     {
         using var reader = new BcsvReader();
         Assert.Throws<BcsvException>(() => reader.Open("/nonexistent/path.bcsv"));
+    }
+
+    /// <summary>Asserts that a header's row-codec bits say what was asked for.</summary>
+    private static void AssertRowCodec(FileFlags flags, string codec)
+    {
+        bool zoh   = flags.HasFlag(FileFlags.ZeroOrderHold);
+        bool delta = flags.HasFlag(FileFlags.DeltaEncoding);
+
+        switch (codec)
+        {
+            case "flat":
+                Assert.False(zoh,   "flat must not set the zero-order-hold bit");
+                Assert.False(delta, "flat must not set the delta bit");
+                break;
+            case "zoh":
+                Assert.True(zoh,    "zoh must set the zero-order-hold bit");
+                Assert.False(delta, "zoh must not set the delta bit");
+                break;
+            case "delta":
+                Assert.True(delta,  "delta must set the delta bit");
+                Assert.False(zoh,   "delta must not set the zero-order-hold bit");
+                break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(codec), codec, "unknown codec");
+        }
+    }
+
+    /// <summary>
+    /// The row-codec bits of <c>Open</c>'s flags argument are discarded and set
+    /// from the constructor's codec instead, so that a header cannot claim a
+    /// codec the rows were not written with. That is deliberate; what it was not,
+    /// before 1.5.17, was observable — the only way to find out what a file
+    /// carried was to close it and reopen it.
+    /// </summary>
+    [Fact]
+    public void Writer_ReportsTheFlagsItActuallyWrote_NotTheOnesRequested()
+    {
+        var path = TmpFile("writer_flags.bcsv");
+        using var layout = new BcsvLayout();
+        layout.AddColumn("x", ColumnType.Int32);
+
+        using (var writer = new BcsvWriter(layout, "zoh"))
+        {
+            // Ask for the delta bit, with a zoh writer. It cannot be honoured.
+            writer.Open(path, flags: FileFlags.BatchCompress | FileFlags.DeltaEncoding);
+            writer.Row.SetInt32(0, 1);
+            writer.WriteRow();
+
+            Assert.True(writer.FileFlags.HasFlag(FileFlags.ZeroOrderHold));
+            Assert.False(writer.FileFlags.HasFlag(FileFlags.DeltaEncoding));
+
+            // The bits that are the caller's to set do survive.
+            Assert.True(writer.FileFlags.HasFlag(FileFlags.BatchCompress));
+        }
+
+        // And what the writer reported is what a reader finds in the file.
+        using var reader = new BcsvReader();
+        reader.Open(path);
+        Assert.True(reader.FileFlags.HasFlag(FileFlags.ZeroOrderHold));
+        Assert.False(reader.FileFlags.HasFlag(FileFlags.DeltaEncoding));
+    }
+
+    /// <summary>
+    /// An unrecognised codec name used to fall through to delta, so a typo
+    /// recorded in a codec nobody asked for. pybcsv has always rejected one;
+    /// this makes the two bindings agree.
+    /// </summary>
+    [Theory]
+    [InlineData("Delta")]   // right codec, wrong case
+    [InlineData("zho")]     // transposed
+    [InlineData("")]
+    public void Writer_RefusesAnUnknownRowCodec(string codec)
+    {
+        using var layout = new BcsvLayout();
+        layout.AddColumn("x", ColumnType.Int32);
+        Assert.Throws<ArgumentException>(() => new BcsvWriter(layout, codec));
     }
 
     [Fact]

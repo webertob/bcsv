@@ -1,6 +1,6 @@
 {
   "name": "com.bcsv.unity",
-  "version": "1.5.16",
+  "version": "1.5.17",
   "displayName": "BCSV - Binary CSV",
   "description": "Fast, compact binary format for streaming time-series data. Row-by-row I/O with LZ4 compression, Zero-Order Hold encoding, and crash resilience. P/Invoke bindings to the native bcsv_c_api library.",
   "unity": "2021.3",
@@ -24,7 +24,7 @@
   "samples": [
     {
       "displayName": "Basic Recording",
-      "description": "BcsvRecorder component for recording Unity data (transforms, rigidbodies) and a cross-platform API example.",
+      "description": "Wires the BcsvRecorder and BcsvPlayer runtime components to a demo scene, plus a cross-platform API example.",
       "path": "Samples~/Basic"
     }
   ]

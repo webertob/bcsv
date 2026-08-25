@@ -19,6 +19,7 @@ on:
       # so a change to either has to be exercised like a change to unity/.
       - 'scripts/pack-unity.sh'
       - 'scripts/check-unity-package.sh'
+      - 'scripts/run-unity-tests.sh'
       - '.github/workflows/unity-package.yml'
   pull_request:
     paths:
@@ -220,6 +221,91 @@ jobs:
         with:
           name: unity-native-${{ matrix.rid }}
           path: ${{ matrix.lib-dir }}/${{ matrix.lib-name }}
+          retention-days: 7
+
+  # ── Run the package's EditMode tests in a real editor ───────────────
+  #
+  # Opt-in: without a UNITY_LICENSE secret the job reports a notice and does
+  # nothing, so a fork or a repository that has not configured Unity CI is not
+  # broken by its presence. Configure UNITY_LICENSE (and UNITY_EMAIL /
+  # UNITY_PASSWORD for a Personal licence) to turn it on.
+  #
+  # Until then the same tests are run manually with
+  #   scripts/run-unity-tests.sh <path-to-Unity-executable>
+  # which stages the native plugin placeholders the editor would otherwise
+  # delete. See the comment at the top of that script.
+  unity-tests:
+    name: Unity EditMode tests
+    needs: build-native
+    runs-on: ubuntu-latest
+    env:
+      UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+      UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+      UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+    steps:
+      - name: Is a Unity licence configured?
+        id: licence
+        run: |
+          if [ -z "${UNITY_LICENSE:-}" ]; then
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No UNITY_LICENSE secret; skipping the editor run. \
+          Run scripts/run-unity-tests.sh locally before releasing."
+          else
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        if: steps.licence.outputs.have == 'true'
+
+      - name: Download the linux-x64 native
+        if: steps.licence.outputs.have == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: unity-native-linux-x64
+          path: native-linux-x64
+
+      - name: Assemble a project around the package
+        if: steps.licence.outputs.have == 'true'
+        run: |
+          set -euo pipefail
+          # The editor deletes any .meta with no asset beside it, and three of
+          # the plugin sidecars describe binaries this job does not download.
+          # Placeholders keep them from being tidied away mid-run.
+          printf 'placeholder' > unity/Runtime/Plugins/Windows/x86_64/bcsv_c_api.dll
+          printf 'placeholder' > unity/Runtime/Plugins/Linux/arm64/libbcsv_c_api.so
+          printf 'placeholder' > unity/Runtime/Plugins/macOS/libbcsv_c_api.dylib
+          cp native-linux-x64/libbcsv_c_api.so unity/Runtime/Plugins/Linux/x86_64/
+
+          mkdir -p testproj/Packages testproj/Assets testproj/ProjectSettings
+          cat > testproj/Packages/manifest.json <<'JSON'
+          {
+            "dependencies": {
+              "com.bcsv.unity": "file:../../unity",
+              "com.unity.test-framework": "1.4.5"
+            },
+            "testables": [ "com.bcsv.unity" ]
+          }
+          JSON
+
+      - name: EditMode tests
+        if: steps.licence.outputs.have == 'true'
+        # NOT SHA-pinned, unlike every other action here. Pin it to a
+        # verified commit of game-ci/unity-test-runner v4 when this job is
+        # first enabled — a hash written without checking it is worse than
+        # a tag, because it looks pinned.
+        uses: game-ci/unity-test-runner@v4
+        with:
+          projectPath: testproj
+          unityVersion: 6000.0.81f1
+          testMode: editmode
+          artifactsPath: unity-test-results
+
+      - name: Publish results
+        if: steps.licence.outputs.have == 'true' && always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unity-editmode-results
+          path: unity-test-results
           retention-days: 7
 
   # ── Pack Unity .tgz package ─────────────────────────────────────────

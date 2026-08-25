@@ -52,6 +52,7 @@ set(TEST_SOURCES
     repair_test.cpp
     batch_codec_recovery_test.cpp
     format_hardening_test.cpp
+    version_gate_test.cpp
     nan_inf_test.cpp
     charconv_compat_test.cpp
     test_cast.cpp

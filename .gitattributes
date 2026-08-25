@@ -7,3 +7,40 @@
 *.hpp whitespace=cr-at-eol
 *.cpp whitespace=cr-at-eol
 *.cs  whitespace=cr-at-eol
+
+# ── Unity YAML ────────────────────────────────────────────────────────────
+# Scenes, prefabs and .asset files are YAML that git's line-based merge will
+# silently corrupt: it can produce a file that parses but describes a different
+# hierarchy, which is worse than a conflict.  UnityYAMLMerge understands them and
+# ships inside every editor install, at
+#   <editor>/Editor/Data/Tools/UnityYAMLMerge
+#
+# THESE LINES DO NOTHING ON THEIR OWN.  A merge driver named here has to exist in
+# each developer's git config, once per machine:
+#
+#   git config --global merge.unityyamlmerge.name "Unity YAML merge"
+#   git config --global merge.unityyamlmerge.driver \
+#     '<editor>/Editor/Data/Tools/UnityYAMLMerge merge -p %O %A %B %A'
+#
+# The package ships no scenes or prefabs today, so this is a guard placed before
+# it is needed rather than after: a demo scene under Samples~ is the obvious
+# thing to add next, and adding it is not the moment anyone will remember this.
+*.unity   merge=unityyamlmerge  eol=lf
+*.prefab  merge=unityyamlmerge  eol=lf
+*.asset   merge=unityyamlmerge  eol=lf
+*.mat     merge=unityyamlmerge  eol=lf
+*.anim    merge=unityyamlmerge  eol=lf
+*.controller merge=unityyamlmerge eol=lf
+
+# .meta files are YAML too, but UnityYAMLMerge is documented for scenes and
+# prefabs and has nothing useful to say about them.  What matters for a .meta is
+# that its guid survives: every scene and prefab in every consuming project
+# refers to assets by that guid, so losing or duplicating one silently breaks
+# references everywhere, with no error at import time.
+#
+# They are near-identical to one another apart from that guid, which makes git's
+# rename detection pair them up across unrelated files -- a real observation from
+# the 1.5.17 recorder move, not a hypothetical.  Left as normal text so conflicts
+# surface rather than being auto-resolved; scripts/check-unity-package.sh asserts
+# the guids are present, well-formed and unique.
+*.meta    eol=lf

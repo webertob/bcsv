@@ -170,6 +170,72 @@ public class BcsvMetadataTests : IDisposable
         Assert.Contains("belongs to different data", ex.Message);
     }
 
+    /// <summary>Writes a file whose companion records a digest that is valid
+    /// hex but belongs to different data.</summary>
+    private string WriteWrongDigestPair(string name, string extraFields = "")
+    {
+        string bcsv = Path_(name);
+        File.WriteAllText(bcsv, "payload bytes");
+        string wrong = new string('a', 64);
+        File.WriteAllText(bcsv + BcsvMetadata.CompanionSuffix,
+            "{\"bcsv_sha256\": \"" + wrong + "\"" + extraFields +
+            ", \"key_value_metadata\": {\"k\": \"v\"}}");
+        return bcsv;
+    }
+
+    [Fact]
+    public void ReadCompanion_SkipsDigest_WhenVerifyDigestIsFalse()
+    {
+        // The caller that cannot afford to read the file it is about to open
+        // through direct access: the digest is wrong, and is never consulted.
+        string bcsv = WriteWrongDigestPair("skipdigest.bcsv");
+        Assert.Equal("v", BcsvMetadata.ReadCompanion(bcsv, -1, verifyDigest: false)!["k"]);
+        Assert.Throws<BcsvException>(() => BcsvMetadata.ReadCompanion(bcsv, -1, verifyDigest: true));
+    }
+
+    [Fact]
+    public void ReadCompanion_KeepsCheapChecks_WhenVerifyDigestIsFalse()
+    {
+        // Skipping the digest must not turn ReadCompanion into a no-op: the
+        // stale-companion case that bcsv_bytes catches still has to fail.
+        string bcsv = WriteWrongDigestPair("skipdigest_bytes.bcsv", ", \"bcsv_bytes\": 999999");
+        var ex = Assert.Throws<BcsvException>(
+            () => BcsvMetadata.ReadCompanion(bcsv, -1, verifyDigest: false));
+        Assert.Contains("999999-byte file", ex.Message);
+    }
+
+    [Fact]
+    public void ReadCompanion_KeepsRowCheck_WhenVerifyDigestIsFalse()
+    {
+        string bcsv = WriteWrongDigestPair("skipdigest_rows.bcsv", ", \"bcsv_rows\": 42");
+        var ex = Assert.Throws<BcsvException>(
+            () => BcsvMetadata.ReadCompanion(bcsv, expectedRows: 41, verifyDigest: false));
+        Assert.Contains("42 rows", ex.Message);
+    }
+
+    [Fact]
+    public void ReadCompanion_RejectsMalformedDigestField_EvenWhenNotVerifying()
+    {
+        // A present-but-malformed field is a corrupt document either way, and
+        // refusing it costs no I/O.
+        string bcsv = Path_("baddigest.bcsv");
+        File.WriteAllText(bcsv, "payload bytes");
+        File.WriteAllText(bcsv + BcsvMetadata.CompanionSuffix,
+            """{"bcsv_sha256": "not-a-digest", "key_value_metadata": {"k": "v"}}""");
+        var ex = Assert.Throws<BcsvException>(
+            () => BcsvMetadata.ReadCompanion(bcsv, -1, verifyDigest: false));
+        Assert.Contains("not a SHA-256 hex digest", ex.Message);
+    }
+
+    [Fact]
+    public void ReadCompanion_DefaultOverloadStillVerifies()
+    {
+        // The two-argument overload keeps 1.5.16 behaviour exactly.
+        string bcsv = WriteWrongDigestPair("default_verifies.bcsv");
+        Assert.Throws<BcsvException>(() => BcsvMetadata.ReadCompanion(bcsv));
+        Assert.Throws<BcsvException>(() => BcsvMetadata.ReadCompanion(bcsv, -1));
+    }
+
     [Fact]
     public void ReadCompanion_ThrowsOnMalformedJson()
     {

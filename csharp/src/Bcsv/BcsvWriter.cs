@@ -19,7 +19,15 @@ public sealed class BcsvWriter : IDisposable
         {
             "flat" => NativeMethods.bcsv_writer_create(layout.Handle),
             "zoh"  => NativeMethods.bcsv_writer_create_zoh(layout.Handle),
-            _      => NativeMethods.bcsv_writer_create_delta(layout.Handle),
+            "delta" => NativeMethods.bcsv_writer_create_delta(layout.Handle),
+
+            // Anything else used to land here as delta, so a typo recorded
+            // happily in a codec nobody asked for and the file gave no sign
+            // of it. pybcsv has always rejected an unknown name; this makes
+            // the two agree.
+            _ => throw new ArgumentException(
+                    $"Unknown row codec: '{rowCodec}'. Use \"delta\", \"zoh\", or \"flat\".",
+                    nameof(rowCodec)),
         };
         if (_handle == 0)
             throw new BcsvException("Failed to create writer");
@@ -43,6 +51,27 @@ public sealed class BcsvWriter : IDisposable
         }
     }
 
+    /// <summary>Opens <paramref name="filename"/> for writing.</summary>
+    /// <param name="flags">
+    /// File-structure flags. <b>The row-codec bits are ignored here</b> — see the
+    /// remarks.
+    /// </param>
+    /// <remarks>
+    /// <para>
+    /// <see cref="FileFlags.ZeroOrderHold"/> and <see cref="FileFlags.DeltaEncoding"/>
+    /// are <b>output-only</b>. Whatever is passed for them is discarded and replaced
+    /// from the row codec chosen in the constructor, because a header claiming one
+    /// codec while the rows were produced by another is a file no reader can trust.
+    /// So <c>Open(path, flags: FileFlags.ZeroOrderHold)</c> compiles, looks right and
+    /// does nothing: to record zero-order-hold, pass <c>"zoh"</c> to
+    /// <see cref="BcsvWriter(BcsvLayout, string)"/> instead.
+    /// </para>
+    /// <para>
+    /// The bits this argument does honour are <see cref="FileFlags.NoFileIndex"/>,
+    /// <see cref="FileFlags.StreamMode"/> and <see cref="FileFlags.BatchCompress"/>.
+    /// <see cref="FileFlags"/> reports what actually reached the header.
+    /// </para>
+    /// </remarks>
     public void Open(string filename, bool overwrite = false,
                      int compression = BcsvDefaults.CompressionLevel,
                      int blockSizeKb = BcsvDefaults.BlockSizeKb,
@@ -54,6 +83,10 @@ public sealed class BcsvWriter : IDisposable
     }
 
     /// <summary>Tries to open a file. Returns false on failure (no exception).</summary>
+    /// <remarks>
+    /// The row-codec bits of <paramref name="flags"/> are ignored exactly as they
+    /// are by <see cref="Open"/> — see its remarks.
+    /// </remarks>
     public bool TryOpen(string filename, bool overwrite = false,
                         int compression = BcsvDefaults.CompressionLevel,
                         int blockSizeKb = BcsvDefaults.BlockSizeKb,
@@ -62,6 +95,15 @@ public sealed class BcsvWriter : IDisposable
         return NativeMethods.bcsv_writer_open(_handle, filename, overwrite,
             compression, blockSizeKb, (int)flags);
     }
+
+    /// <summary>The flags actually written to the file header.</summary>
+    /// <remarks>
+    /// Not necessarily the flags passed to <see cref="Open"/>: the row-codec bits
+    /// are replaced from the codec this writer was constructed with. Read this to
+    /// find out what a file really carries rather than assuming the request was
+    /// honoured. Meaningful only while the writer is open.
+    /// </remarks>
+    public FileFlags FileFlags => (FileFlags)NativeMethods.bcsv_writer_file_flags(_handle);
 
     public void Close() => NativeMethods.bcsv_writer_close(_handle);
     public void Flush() => NativeMethods.bcsv_writer_flush(_handle);

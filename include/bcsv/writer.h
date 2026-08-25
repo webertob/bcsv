@@ -86,6 +86,16 @@ namespace bcsv {
         void                    close();
         void                    flush();
         uint8_t                 compressionLevel() const        { return file_header_.getCompressionLevel(); }
+
+        /// The flags actually written to the file header, which are not
+        /// necessarily the ones passed to open(): the row-codec bits are
+        /// replaced from the compile-time codec so the header can never
+        /// disagree with the codec that produced the rows (see
+        /// ROW_CODEC_FLAGS_MASK in writer.hpp). Exposed so a caller can check
+        /// what it actually got instead of assuming, which nothing but
+        /// reopening the file allowed before 1.5.17. Meaningful only once the
+        /// file is open.
+        FileFlags               fileFlags() const               { return file_header_.getFlags(); }
         const std::string&      getErrorMsg() const             { return err_msg_; }
         const FilePath&         filePath() const                { return file_path_; }
         const LayoutType&       layout() const                  { return row_.layout(); }

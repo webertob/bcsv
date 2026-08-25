@@ -1299,6 +1299,82 @@ static void test_cross_format(void) {
 }
 
 /* ── Multi-packet file (10K rows) ──────────────────────────────────── */
+/* ------------------------------------------------------------------------
+ * Row-codec selection, and the flags the header ends up carrying.
+ *
+ * Two defects met here, both silent, both fixed in 1.5.17:
+ *
+ *   1. bcsv_writer_create is documented as the flat writer and tagged its
+ *      handle Type::Flat, but constructed bcsv::Writer<Layout> — which takes
+ *      the DEFAULT template argument, RowCodecDelta002. So every caller asking
+ *      for flat got delta, including both C# bindings, which route "flat" here.
+ *      Nothing reported it: the file was valid, its header honestly said delta,
+ *      and only comparing the header against the request would have shown it.
+ *
+ *   2. There was no way to ask a writer what it had written. The row-codec
+ *      flags are set from the codec rather than from bcsv_writer_open's flags
+ *      argument, so the only way to check was to close the file and reopen it.
+ *      bcsv_writer_file_flags answers it directly.
+ *
+ * The assertion that matters is that the three constructors produce three
+ * DIFFERENT codecs, and that each writer agrees with the reader about which.
+ * ---------------------------------------------------------------------- */
+static void test_row_codec_selection_and_flags(void) {
+    TEST_START("Row Codec Selection and File Flags");
+
+    /* ZERO_ORDER_HOLD=1, BATCH_COMPRESS=8, DELTA_ENCODING=16 */
+    const int expect[3] = { 8, 1 | 8, 8 | 16 };
+    const char* names[3] = { "flat", "zoh", "delta" };
+    int reported[3];
+
+    for (int i = 0; i < 3; i++) {
+        char path[256];
+        snprintf(path, sizeof(path), "test_codec_flags_%d.bcsv", i);
+
+        bcsv_layout_t layout = bcsv_layout_create();
+        bcsv_layout_add_column(layout, 0, "v", BCSV_TYPE_INT32);
+
+        bcsv_writer_t writer = (i == 0) ? bcsv_writer_create(layout)
+                             : (i == 1) ? bcsv_writer_create_zoh(layout)
+                                        : bcsv_writer_create_delta(layout);
+        TEST_ASSERT(writer != NULL, "writer created");
+
+        /* Ask for BATCH_COMPRESS only. The row-codec bits are not ours to set;
+         * whatever we passed for them would be replaced anyway. */
+        TEST_ASSERT(bcsv_writer_open(writer, path, true, 6, 64, 8), "writer opened");
+
+        bcsv_row_t row = bcsv_writer_row(writer);
+        for (int r = 0; r < 64; r++) {
+            bcsv_row_set_int32(row, 0, r);
+            bcsv_writer_next(writer);
+        }
+
+        reported[i] = bcsv_writer_file_flags(writer);
+        bcsv_writer_close(writer);
+
+        TEST_ASSERT_EQ_INT(reported[i], expect[i],
+                           "writer reports the codec it was constructed with");
+
+        bcsv_reader_t reader = bcsv_reader_create();
+        TEST_ASSERT(bcsv_reader_open(reader, path), "reader opened");
+        TEST_ASSERT_EQ_INT(bcsv_reader_file_flags(reader), reported[i],
+                           "reader and writer agree on the header flags");
+        bcsv_reader_close(reader);
+        bcsv_reader_destroy(reader);
+
+        bcsv_writer_destroy(writer);
+        bcsv_layout_destroy(layout);
+        remove(path);
+        printf("  %-5s -> flags %d\n", names[i], reported[i]);
+    }
+
+    /* The point of the whole test: three constructors, three codecs. Before
+     * 1.5.17 flat and delta were the same writer and this would have failed. */
+    TEST_ASSERT(reported[0] != reported[2], "flat is not delta");
+    TEST_ASSERT(reported[1] != reported[2], "zoh is not delta");
+    TEST_ASSERT(reported[0] != reported[1], "flat is not zoh");
+}
+
 static void test_multi_packet(void) {
     TEST_START("Multi-Packet File (10K rows)");
 
@@ -1406,6 +1482,9 @@ int main(void) {
 
     /* Cross-format */
     test_cross_format();
+
+    /* Row codec selection */
+    test_row_codec_selection_and_flags();
 
     /* Multi-packet */
     test_multi_packet();

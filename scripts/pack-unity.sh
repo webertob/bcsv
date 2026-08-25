@@ -22,7 +22,11 @@ mkdir -p "$DEST"
 # nothing says so. That is how tools/build-windows.ps1 came to ship, warning
 # "has no meta file, but it's in an immutable folder" on every domain reload for
 # everyone who installed the package.
-for item in package.json Runtime Samples~ README.md CHANGELOG.md LICENSE.md; do
+# Tests/ ships deliberately: its .asmdef carries defineConstraints
+# UNITY_INCLUDE_TESTS, so the assembly is skipped entirely unless a consumer
+# opts the package into their testables. Leaving it out would mean the
+# package could never be verified against an actual installation.
+for item in package.json Runtime Tests Samples~ README.md CHANGELOG.md LICENSE.md; do
 	[ -e "$ROOT/unity/$item" ] || continue
 	cp -r "$ROOT/unity/$item" "$DEST/"
 	# Sidecar .meta travels with the asset. Names ending in "~" are invisible to

@@ -751,24 +751,28 @@ NB_MODULE(_bcsv, m) {
             ss << layout;
             return ss.str(); });
 
-    // FileFlags enum — controls codec selection and file structure
-    nb::enum_<bcsv::FileFlags>(m, "FileFlags", nb::is_arithmetic())
+    // FileFlags enum — controls codec selection and file structure.
+    //
+    // is_flag AND is_arithmetic: nanobind maps the pair onto enum.IntFlag, which
+    // is the only one of its three enum shapes that can both hold a combination
+    // of bits and still convert to int. is_arithmetic alone gives IntEnum, which
+    // cannot represent a combination; is_flag alone gives Flag, which can, but
+    // is no longer an int (see nb_enum.cpp, "factory_name").
+    //
+    // Until 1.5.17 this was is_arithmetic with the operators bound by hand,
+    // returning a bare int from __or__ — so BATCH_COMPRESS | ZERO_ORDER_HOLD
+    // produced 9, the FileFlags parameter of every write function rejected that
+    // as the wrong type, and FileFlags(9) raised ValueError. No combination of
+    // flags was expressible from Python at all. IntFlag supplies |, &, ^ and ~
+    // itself, so the hand-written operators are gone with it.
+    nb::enum_<bcsv::FileFlags>(m, "FileFlags", nb::is_flag(), nb::is_arithmetic())
         .value("NONE", bcsv::FileFlags::NONE)
         .value("ZERO_ORDER_HOLD", bcsv::FileFlags::ZERO_ORDER_HOLD)
         .value("NO_FILE_INDEX", bcsv::FileFlags::NO_FILE_INDEX)
         .value("STREAM_MODE", bcsv::FileFlags::STREAM_MODE)
         .value("BATCH_COMPRESS", bcsv::FileFlags::BATCH_COMPRESS)
         .value("DELTA_ENCODING", bcsv::FileFlags::DELTA_ENCODING)
-        .export_values()
-        .def("__or__", [](bcsv::FileFlags a, bcsv::FileFlags b) -> int {
-            return static_cast<int>(static_cast<uint16_t>(a) | static_cast<uint16_t>(b));
-        })
-        .def("__and__", [](bcsv::FileFlags a, bcsv::FileFlags b) -> int {
-            return static_cast<int>(static_cast<uint16_t>(a) & static_cast<uint16_t>(b));
-        })
-        .def("__invert__", [](bcsv::FileFlags a) -> int {
-            return static_cast<int>(static_cast<uint16_t>(~a));
-        });
+        .export_values();
 
     // Writer class - variant-based, supports runtime codec selection
     nb::class_<PyWriter>(m, "Writer")
@@ -822,6 +826,10 @@ NB_MODULE(_bcsv, m) {
         .def("row_count", [](PyWriter& pw) { return pw.visit([](auto& w) { return w.rowCount(); }); })
         .def("row_codec", [](PyWriter& pw) -> const std::string& { return pw.codec_name_; })
         .def("compression_level", [](PyWriter& pw) { return pw.visit([](auto& w) { return w.compressionLevel(); }); })
+        // The flags actually in the header, which are not necessarily the ones
+        // passed to open(): the row-codec bits come from row_codec instead, so
+        // the header cannot disagree with the rows. Since 1.5.17.
+        .def("file_flags", [](PyWriter& pw) { return pw.visit([](auto& w) { return w.fileFlags(); }); })
         .def("layout", [](PyWriter& pw) -> const bcsv::Layout& { return pw.visit([](auto& w) -> const bcsv::Layout& { return w.layout(); }); }, nb::rv_policy::reference_internal)
         .def("__enter__", [](PyWriter& pw) -> PyWriter& { return pw; }, nb::rv_policy::reference)
         .def("__exit__", [](PyWriter& pw, nb::args) { pw.visit([](auto& w) { w.close(); }); })
@@ -916,7 +924,7 @@ NB_MODULE(_bcsv, m) {
             return r.readNext(); })
                           .def("close", [](ReaderT& reader) { nb::gil_scoped_release release; reader.close(); })
                           .def("is_open", &ReaderT::isOpen)
-                          .def("file_flags", [](ReaderT& r) -> int { return static_cast<int>(r.fileFlags()); })
+                          .def("file_flags", [](ReaderT& r) { return r.fileFlags(); })
                           .def("compression_level", [](ReaderT& r) { return r.compressionLevel(); })
                           .def("row_pos", &ReaderT::rowPos)
                           .def("version_string", [](ReaderT& r) { return r.fileHeader().versionString(); })
@@ -1107,7 +1115,7 @@ NB_MODULE(_bcsv, m) {
         .def("layout", &DaReaderT::layout, nb::rv_policy::reference_internal)
         .def("close", [](DaReaderT& r) { nb::gil_scoped_release release; r.close(); })
         .def("is_open", &DaReaderT::isOpen)
-        .def("file_flags", [](DaReaderT& r) -> int { return static_cast<int>(r.fileFlags()); })
+        .def("file_flags", [](DaReaderT& r) { return r.fileFlags(); })
         .def("compression_level", [](DaReaderT& r) { return r.compressionLevel(); })
         .def("version_string", [](DaReaderT& r) { return r.fileHeader().versionString(); })
         .def("creation_time", [](DaReaderT& r) { return r.fileHeader().getCreationTime(); })

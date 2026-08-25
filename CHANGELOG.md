@@ -10,7 +10,172 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.5.17] - 2026-08-25
+
+### Added
+
+- **`BcsvMetadata.ReadCompanion` can skip the SHA-256 verification**
+  (C# and Unity): `ReadCompanion(path, expectedRows, verifyDigest: false)` keeps
+  the cheap `bcsv_bytes` / `bcsv_rows` pre-checks and never reads the BCSV file.
+  Requested by a consumer whose replay path opens multi-gigabyte recordings
+  through random access: hashing to establish provenance made a windowed reader
+  read the whole file on every open — 948 MB, ~0.5 s warm, per scene load — which
+  is the exact cost `Read(long index)` exists to avoid. The digest remains the
+  identity check and remains the default; skipping it leaves a heuristic, since
+  two recordings of the same shape can share size and row count. Verify once
+  where a file enters a project, skip it per open.
+
+  Added as a separate three-argument overload rather than a third optional
+  parameter: C# bakes default argument values into the call site, so an added
+  optional parameter would break callers already compiled against the assembly.
+
+- **`BCSV.BcsvPlayer`, the recorder's mirror** (Unity package only) — plays a
+  recording back into a running scene, driven by the same `BcsvSampleClock` and
+  the same `Advance(dt)` / `Trigger()` pacing, with channels bound by name to
+  setters. It deliberately does not read the recording's own timestamps: a
+  recording's time channel is a column like any other and the component cannot
+  know which one, so rows are presented at the rate asked for and the file's time
+  arrives as an ordinary binding. Execution order -1000, the mirror of the
+  recorder's +1000. See `unity/CHANGELOG.md` for the full entry.
+
+- **`BCSV.BcsvRecorder`, a supported Unity Runtime component** (Unity package
+  only) — promoted from `Samples~`, where using it meant copying it and a copy
+  stopped receiving fixes. Adds a first-class `sampleRateHz` backed by
+  `BcsvSampleClock`, `[DefaultExecutionOrder(1000)]` so it runs last in a
+  `FixedUpdate` step, and external pacing via `Advance(dt)` / `Trigger()`. It
+  writes no time column: that is a channel the caller defines. Sampling is chosen
+  per channel — zero-order hold by default, or a boxcar average that genuinely
+  anti-aliases when recording slower than the host runs, or linear interpolation
+  onto the sample instant. See
+  `unity/CHANGELOG.md` for the full entry, including the three sample defects it
+  does not carry forward.
+
+- **`BcsvSampleClock`** (C# and Unity) — the decimator every recorder built on
+  this library was writing for itself. `Advance(dt)` reports how many sample
+  instants fell inside the host step just taken: 0 on most steps when recording
+  slower than the simulation, 1 when the rates match, k when a step spans several
+  periods. Callers loop over the count and never branch on the regime.
+
+  It exists because the naive version of this is wrong in a way nothing reports.
+  Resetting the accumulator to zero on each edge — rather than carrying the
+  remainder — silently rounds the requested rate down to a divisor of the host
+  step rate: on a 1 kHz simulation, 300 Hz becomes 250 Hz, 400 Hz becomes 333 Hz,
+  and 999 Hz becomes 500 Hz. That defect has now been written at least twice by
+  consumers of this library, once by re-implementing a recorder rather than using
+  the packaged sample that already avoided it. Carrying the remainder makes the
+  individual intervals uneven and the mean rate exact, which is the trade a
+  recording wants.
+
+  No time base, no time column, no file access: a recording's time channel stays
+  the caller's to define, in whatever unit and width it wants. The phase is
+  single-precision, which is sufficient *because* the clock advances by relative
+  intervals only and never accumulates absolute time — the error is a bounded
+  random walk of about 2e-7 s over an hour at 1 kHz, not a drift. That stops
+  holding the moment a clock wants a ppm-class rate offset, which this one does
+  not.
+
+  `EdgeFraction(index, dt)` reports where an edge fell inside the step it was
+  advanced by, which is what a caller sampling once per step needs in order to
+  place a row at the sample instant rather than at the step boundary.
+
+- **A writer can now report the flags it actually wrote** — `Writer::fileFlags()`
+  (C++), `bcsv_writer_file_flags` (C), `BcsvWriter.FileFlags` (C# and Unity),
+  `Writer.file_flags()` (Python). Until now only a *reader* could answer that, so
+  checking what a file carried meant closing it and reopening it.
+
+  This exists because the answer is not the question. `Open`'s `flags` argument
+  does not decide the row codec — the writer strips those bits and sets them from
+  its own codec, so a header can never claim a codec the rows were not written
+  with. That is deliberate and correct; what it was not is visible. Asking for
+  `BATCH_COMPRESS` alone gives a header of 24 with the delta codec, 9 with zoh
+  and 8 with flat, and nothing said so. Documented under "File Flags, and the two
+  that are output-only" in `docs/API_OVERVIEW.md`, on the enum members
+  themselves, and in XML docs on `Open`/`TryOpen`, which had none.
+
+- `tests/version_gate_test.cpp` — the file-format version rules (VERSIONING.md
+  Rules A/B/C) had no test. Eight cases stamp patched version bytes into real
+  files and assert the reader's verdict, including the case a MINOR relies on: a
+  file from a newer minor is refused outright rather than parsed to the point
+  where a new header section has moved the packet stream. One case pins the
+  boundary deliberately — an unknown `FileFlags` bit on its own is *not* a gate,
+  so a feature bit must ship with the `version::MINOR` bump that gates it.
+
+### Fixed
+
+- **`BcsvSampleClock.TryFromRate`** — a non-throwing counterpart to `FromRate`,
+  for a caller holding a rate it did not choose. The inline test it replaces,
+  `hertz > 0 ? FromRate(hertz) : EveryStep()`, is wrong at both ends: a negative
+  rate and a NaN both fail the comparison and come back as "every step", while an
+  infinite one passes it and throws. Both Unity components used that pattern and
+  built their clock *after* opening the file, so an infinite rate threw with a
+  native handle already in hand.
+
+- **`scripts/check-unity-package.sh` now rejects duplicate asset guids**, and
+  `.gitattributes` gained Unity YAML handling. A `.meta` file's guid is how every
+  scene and prefab in a consuming project refers to an asset, and a duplicate is
+  the one `.meta` fault nothing reports at import time — references simply rebind
+  to whichever asset resolves first, in someone else's project, weeks later.
+  `.meta` files are also near-identical to each other apart from that guid, which
+  makes git pair them across unrelated paths as renames; that was observed while
+  moving the recorder out of `Samples~` in this release, not hypothesised. Scene,
+  prefab and `.asset` files are now routed to `UnityYAMLMerge`, with the
+  per-machine merge-driver configuration written down beside the rule, since the
+  attribute does nothing without it.
+
+- **`bcsv_writer_create` returned a delta writer, so the flat row codec was
+  unreachable from the C API and from both C# bindings.** It is documented as the
+  flat writer and tagged its handle `Type::Flat`, but constructed
+  `bcsv::Writer<bcsv::Layout>` — which takes the *default* template argument,
+  `RowCodecDelta002`. `bcsv_writer_create_zoh` and `_delta` name their codecs
+  explicitly; this one did not, and picked up delta by omission.
+
+  `new BcsvWriter(layout, "flat")` therefore produced a delta-encoded file, in
+  both the NuGet and Unity packages, which route `"flat"` through this entry
+  point. Python was unaffected — its binding constructs `WriterFlat` directly,
+  which is why `pybcsv` could produce flat files and nothing else could.
+
+  **No data was ever wrong and no file needs re-encoding.** The output was a
+  valid delta file whose header honestly said delta; the request was what got
+  lost. Only someone comparing a file's flags against what they asked for would
+  have noticed, and before this release there was no writer-side way to do that.
+  Guarded now on both paths: a C API test asserting the three constructors
+  produce three different codecs and that writer and reader agree on each, and
+  `WriteRead_AllCodecs` in the C# suite, which round-tripped all three codecs
+  throughout without noticing — every codec reproduces the data correctly, so
+  only the header distinguishes them. It checks the header now.
+
+- **`BcsvWriter` rejects an unknown row codec instead of silently using delta.**
+  The C# constructors mapped `"flat"` and `"zoh"` and sent *everything else* to
+  delta, so `"Delta"`, `"zho"` or a typo recorded happily in a codec nobody asked
+  for. It throws `ArgumentException` now, which is what `pybcsv` has always done
+  — the two bindings disagreed, and C# was the one that was wrong.
+
+- **`pybcsv.FileFlags` could not express a combination of flags at all.** It was
+  bound with `nb::is_arithmetic()`, which nanobind maps onto `enum.IntEnum`, and
+  bound `__or__`/`__and__`/`__invert__` by hand to return a bare `int`. So
+  `BATCH_COMPRESS | NO_FILE_INDEX` produced `10`, the `FileFlags` parameter of
+  every write function rejected that as the wrong type, and `FileFlags(10)`
+  raised `ValueError`. There was no way to ask for two flags at once from Python.
+
+  It is now `nb::is_flag(), nb::is_arithmetic()`, which nanobind maps onto
+  `enum.IntFlag` — the one shape that both holds a combination and remains an
+  `int`. The hand-written operators are gone; `IntFlag` supplies them. Unknown
+  bits are preserved rather than rejected, so a file written by a newer minor
+  version still reads. `Reader.file_flags()` returns a `FileFlags` rather than a
+  bare `int`, so the round-trip is symmetric. C# was never affected.
+
+  The tests that were here passed throughout, because they only asserted that a
+  combination differs from `NONE` and that `int()` of one is non-zero — both true
+  of a bare `int`. They assert the type and a round-trip through a real file now.
+
+- **`Reader::open` no longer replaces the reason a header was rejected with a
+  generic message.** `readFileHeader()` records the specific failure —
+  `"Error: Incompatible file version: 1.6 (Expected: 1.5 or earlier)"`,
+  `"Invalid magic number..."`, `"Column type mismatch at index N..."` — and
+  `open()` then threw `"Failed to read file header"`, whose text overwrote it in
+  the catch. Every caller of `getErrorMsg()`, in every binding, saw the generic
+  string; `docs/ERROR_HANDLING.md` has documented the specific ones as
+  observable since 1.5.0. Found by the version-gate test above.
 
 ---
 
@@ -962,7 +1127,7 @@ Includes MSVC/Windows build and test portability fixes.
 
 ---
 
-[Unreleased]: https://github.com/webertob/bcsv/compare/v1.5.16...HEAD
+[1.5.17]: https://github.com/webertob/bcsv/compare/v1.5.16...v1.5.17
 [1.5.16]: https://github.com/webertob/bcsv/compare/v1.5.15...v1.5.16
 [1.5.6]: https://github.com/webertob/bcsv/compare/v1.5.5...v1.5.6
 [1.5.5]: https://github.com/webertob/bcsv/compare/v1.5.4...v1.5.5

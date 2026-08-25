@@ -119,6 +119,135 @@ public class BcsvReadExample : MonoBehaviour
 }
 ```
 
+### Recording a Scene
+
+`BcsvRecorder` is a supported component, not a sample: add it to a GameObject,
+subscribe the channels you want, and it owns the file for you.
+
+```csharp
+using BCSV;
+using UnityEngine;
+
+[RequireComponent(typeof(BcsvRecorder))]
+public class MyRecording : MonoBehaviour
+{
+    void Awake()
+    {
+        var rec = GetComponent<BcsvRecorder>();
+
+        // The recorder writes no time column of its own — what a recording
+        // calls time is yours to define, in whatever unit and width fits.
+        rec.Track("t", () => Time.fixedTimeAsDouble);
+
+        rec.Track("speed", () => body.linearVelocity.magnitude);
+        rec.Track("grounded", () => controller.isGrounded);
+        rec.TrackTransform(transform);
+
+        rec.sampleRateHz = 100f;   // 0 records one row per physics step
+    }
+}
+```
+
+The column type is inferred from the getter, so a channel cannot be declared one
+type and fed another, and reading a value does not allocate.
+
+**Sample rate.** The achievable rate is quantised to the physics step rate, and
+the remainder is carried rather than discarded — so 300 Hz on a 1 kHz project
+alternates 4, 3, 3 ms intervals and the *mean* rate is exactly 300 Hz. The naive
+alternative, resetting the accumulator on each row, silently records 250 Hz
+instead. Use `BcsvSampleClock` directly if you want that decimation without the
+component.
+
+**Sampling is chosen per channel.** The default is `Latest` — the value at the
+sample instant, a zero-order hold — and it is the only mode for `bool` and
+`string` channels, which have no mean and nothing to interpolate; those overloads
+do not take the argument at all.
+
+```csharp
+rec.Track("pos.x", () => t.position.x, BcsvRecorder.Sampling.Average);
+rec.Track("state", () => machine.State);          // string: Latest, necessarily
+```
+
+| mode | what a row holds | when it earns its keep |
+|---|---|---|
+| `Latest` | the value at the sample instant | the default; the only mode that reads the getter solely on steps that produce a row |
+| `Average` | the mean of every host step since the previous row | recording *slower* than the host: a real anti-alias filter, applied before the decimation |
+| `Interpolate` | linear between the host samples either side of the instant | recording *at or above* the host rate: aligns rows to the instants asked for |
+
+Averaging is the mode that matters when decimating. Recording a 1 kHz simulation
+at 50 Hz puts the Nyquist frequency at 25 Hz, and content above it does not
+disappear — it folds down and lands in the recording indistinguishable from real
+signal. Measured on a 410 Hz tone recorded at 50 Hz: `Latest` reproduces it at
+**full amplitude** as a 10 Hz alias, while `Average` attenuates it by a factor of
+33.
+
+Interpolation is the other direction and does not do the same job: nothing the
+host never sampled can be recovered by interpolating what it did, so it is rate
+alignment rather than filtering. It also builds each row partly from a value one
+step old, which misrepresents a channel that steps rather than varies smoothly.
+
+Both filtered modes call their getter on **every** host step, not only on the ones
+that produce a row — which is why they are opted into per channel. `SamplesEveryStep`
+reports whether any channel does.
+
+**Execution order** is fixed at 1000 so the recorder runs last in a
+`FixedUpdate` step. Without a declared order Unity may run it part way through
+the objects being recorded, and a row then mixes values from two steps —
+which shows up as channels that should agree exactly instead differing by
+precisely one sample.
+
+**Pacing.** Set `pacing = BcsvRecorder.Pacing.External` and `FixedUpdate` does
+nothing; drive it yourself with `Advance(dt)` for a rate, or `Trigger()` to place
+a single row at an event. Useful for a test rig with its own pump, or for
+recording on a controller step rather than a physics step.
+
+### Replaying a Recording
+
+`BcsvPlayer` is the recorder's mirror: the same clock, the same `Advance(dt)` /
+`Trigger()` pacing, and channels bound by name — but pushing values into the
+scene instead of pulling them out.
+
+```csharp
+[RequireComponent(typeof(BcsvPlayer))]
+public class MyReplay : MonoBehaviour
+{
+    Vector3 pos;
+
+    void Awake()
+    {
+        var player = GetComponent<BcsvPlayer>();
+        player.BindFloat("Cube_0.position.x", v => pos.x = v)
+              .BindFloat("Cube_0.position.y", v => pos.y = v)
+              .BindFloat("Cube_0.position.z", v => pos.z = v)
+              .BindDouble("t", v => recordedTime = v);
+
+        player.Completed += () => Debug.Log("done");
+    }
+
+    void FixedUpdate() => transform.position = pos;   // runs after the player
+}
+```
+
+Bindings are named per type (`BindFloat`, `BindInt32`, `BindString`, …) rather
+than overloaded on one name. A setter's parameter type cannot be inferred from a
+lambda the way a getter's return type can, so a single `Bind` would be ambiguous
+at every call site.
+
+**It does not read the recording's own timestamps**, and cannot: a recording's
+idea of time is a column like any other, under whatever name and unit its author
+chose. Rows are presented at `playbackRateHz` and the file's time channel arrives
+as an ordinary binding. *If that rate does not match the rate the file was
+recorded at, playback runs fast or slow and nothing detects it.*
+
+Every binding is checked against the file's real layout before a row is played —
+a missing column or a wrong type stops playback with all the mismatches listed at
+once, not one per run.
+
+`Seek(index)`, `Play()`, `Pause()` and `loop` cover scrubbing and repeat.
+**Execution order is -1000**, the mirror of the recorder's +1000: a player is a
+source, so everything consuming its values must run after it. The two bracket a
+`FixedUpdate` step between them.
+
 ## Package Structure
 
 ```
@@ -141,15 +270,23 @@ unity/
 │   │   ├── BcsvCsvWriter.cs     # CSV text writer
 │   │   ├── BcsvSampler.cs       # Expression filter/projection
 │   │   ├── BcsvColumns.cs       # Columnar bulk I/O
+│   │   ├── BcsvMetadata.cs      # Sidecar metadata companion reader
+│   │   ├── BcsvDefaults.cs      # Shared writer defaults
+│   │   ├── BcsvSampleClock.cs   # Decides when a row is written
+│   │   ├── BcsvRecorder.cs      # Recording component
+│   │   ├── BcsvPlayer.cs        # Playback component
 │   │   └── BcsvVersion.cs       # Library version query
 │   └── Plugins/
 │       ├── Windows/x86_64/      # bcsv_c_api.dll
 │       ├── Linux/x86_64/        # libbcsv_c_api.so
 │       ├── Linux/arm64/         # libbcsv_c_api.so
 │       └── macOS/               # libbcsv_c_api.dylib (universal)
+├── Tests/
+│   └── Editor/                  # EditMode tests (opt in via `testables`)
 └── Samples~/
     └── Basic/
-        ├── BcsvRecorder.cs      # Data recording component
+        ├── BcsvRecorderDemo.cs  # Wires BcsvRecorder to the demo scene
+        ├── BcsvPlayerDemo.cs    # Replays what the recorder demo wrote
         └── BcsvUnityExample.cs  # API demo
 ```
 

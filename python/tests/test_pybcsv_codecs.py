@@ -101,6 +101,20 @@ class TestCodecSelection(unittest.TestCase):
 
 
 class TestFileFlags(unittest.TestCase):
+    """FileFlags must be able to express a combination, not just one bit.
+
+    Until 1.5.17 it could not.  The binding declared it ``nb::is_arithmetic()``,
+    which nanobind maps onto ``enum.IntEnum``, and bound ``__or__`` by hand to
+    return a bare ``int``.  So ``BATCH_COMPRESS | NO_FILE_INDEX`` produced ``10``
+    rather than a ``FileFlags``, every write function rejected it as the wrong
+    argument type, and ``FileFlags(10)`` raised ``ValueError`` — there was no way
+    to ask for two flags at once from Python at all.  C# was unaffected.
+
+    The tests that were here passed throughout, because they only asserted that
+    a combination differs from ``NONE`` and that ``int()`` of one is non-zero,
+    both of which a bare ``int`` satisfies.  These assert the type and the
+    round-trip through a real file instead.
+    """
 
     def test_flags_exist(self):
         self.assertIsNotNone(pybcsv.FileFlags.NONE)
@@ -110,14 +124,56 @@ class TestFileFlags(unittest.TestCase):
         self.assertIsNotNone(pybcsv.FileFlags.BATCH_COMPRESS)
         self.assertIsNotNone(pybcsv.FileFlags.DELTA_ENCODING)
 
-    def test_flags_bitwise_or(self):
-        combined = pybcsv.FileFlags.ZERO_ORDER_HOLD | pybcsv.FileFlags.STREAM_MODE
-        self.assertNotEqual(combined, pybcsv.FileFlags.NONE)
+    def test_combining_flags_yields_a_FileFlags_not_an_int(self):
+        combined = pybcsv.FileFlags.BATCH_COMPRESS | pybcsv.FileFlags.NO_FILE_INDEX
+        self.assertIsInstance(combined, pybcsv.FileFlags)
+        self.assertEqual(int(combined), 10)
+
+    def test_a_combination_can_be_reconstructed_from_its_value(self):
+        self.assertEqual(pybcsv.FileFlags(10),
+                         pybcsv.FileFlags.BATCH_COMPRESS | pybcsv.FileFlags.NO_FILE_INDEX)
 
     def test_flags_bitwise_and(self):
-        combined = pybcsv.FileFlags.ZERO_ORDER_HOLD | pybcsv.FileFlags.STREAM_MODE
-        result = combined & pybcsv.FileFlags.ZERO_ORDER_HOLD
-        self.assertNotEqual(int(result), 0)
+        combined = pybcsv.FileFlags.BATCH_COMPRESS | pybcsv.FileFlags.NO_FILE_INDEX
+        self.assertEqual(combined & pybcsv.FileFlags.BATCH_COMPRESS,
+                         pybcsv.FileFlags.BATCH_COMPRESS)
+        self.assertIn(pybcsv.FileFlags.NO_FILE_INDEX, combined)
+
+    def test_flags_still_convert_to_int(self):
+        # IntFlag rather than Flag: callers and the C API both need the integer.
+        self.assertEqual(int(pybcsv.FileFlags.BATCH_COMPRESS), 8)
+
+    def test_a_two_bit_combination_survives_a_write_and_a_read(self):
+        """The end the defect actually blocked: passing a combination to a writer.
+
+        The row-codec bits are set from the codec rather than from this argument
+        (see ``ROW_CODEC_FLAGS_MASK`` in ``writer.hpp``), so a delta file always
+        reads back with DELTA_ENCODING set whatever was asked for.  What must
+        survive is everything outside that mask.
+        """
+        asked = pybcsv.FileFlags.BATCH_COMPRESS | pybcsv.FileFlags.NO_FILE_INDEX
+        path = _tmp()
+        try:
+            layout = pybcsv.Layout()
+            layout.add_column("a", pybcsv.ColumnType.INT32)
+            writer = pybcsv.Writer(layout, "delta")
+            self.assertTrue(writer.open(path, True, 6, 64, asked))
+            for i in range(32):
+                writer.write_row([i])
+            writer.close()
+
+            reader = pybcsv.Reader()
+            reader.open(path)
+            got = reader.file_flags()
+            reader.close()
+
+            outside_mask = ~(pybcsv.FileFlags.ZERO_ORDER_HOLD
+                             | pybcsv.FileFlags.DELTA_ENCODING)
+            self.assertEqual(int(got & outside_mask), int(asked & outside_mask))
+            self.assertIn(pybcsv.FileFlags.NO_FILE_INDEX, got)
+            self.assertIn(pybcsv.FileFlags.BATCH_COMPRESS, got)
+        finally:
+            os.unlink(path)
 
 
 # ─── Writer metadata ─────────────────────────────────────────────────────

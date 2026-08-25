@@ -241,6 +241,20 @@ if (file_header.versionMajor() != version::MAJOR ||     // Rule A
     → reject                                             // Rule C: patch not checked
 ```
 
+All three rules are covered by `tests/version_gate_test.cpp`, which stamps
+patched version bytes into real files.  **This gate is what makes a MINOR safe.**
+A new header section or feature bit may move the packet stream precisely because
+every older reader refuses the file outright rather than parsing the prefix it
+recognises and then reading packets from the wrong offset.  Note the corollary
+the tests also pin: `FileHeader::readFromBinary` does *not* validate `FileFlags`,
+so an unknown feature bit alone is not a gate — a feature bit must ship with the
+`version::MINOR` bump that gates it.
+
+Two direct callers of `FileHeader::readFromBinary` sit outside `Reader` and so
+outside this gate: `bcsvRepair` (`src/tools/bcsvRepair.cpp`), and anything using
+`FileHeader::getBinarySize(layout)` to locate the first packet.  Both need
+updating in the same change that adds a header section.
+
 ## Codec Registry
 
 Backward compatibility for minor versions is achieved through **version-gated

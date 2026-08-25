@@ -56,6 +56,26 @@ while IFS= read -r meta; do
 "
 	fi
 done < <(find . -name '*.meta' | sort)
+# Two assets sharing a guid is the one .meta failure that no import-time error
+# reports. Every scene and prefab in every consuming project refers to assets by
+# guid, so a duplicate silently rebinds references to whichever asset Unity
+# resolves first, and the symptom appears in someone else's project weeks later.
+#
+# It is not hypothetical here: .meta files are near-identical apart from the
+# guid, so git pairs them across unrelated paths as renames -- observed when the
+# recorder moved from Samples~ to Runtime in 1.5.17. A rename that carried the
+# old guid onto a new asset while the old one still existed would land exactly
+# here.
+dupes="$(find . -name '*.meta' -exec sed -n 's/^guid: //p' {} \; | sort | uniq -d)"
+if [ -n "$dupes" ]; then
+	echo "these guids are used by more than one asset:" >&2
+	for g in $dupes; do
+		echo "  $g" >&2
+		grep -rl "^guid: $g\$" . --include='*.meta' | sed 's/^/    /' >&2
+	done
+	fail=1
+fi
+
 if [ -n "$bad" ]; then
 	echo "malformed .meta files:" >&2
 	printf '%s' "$bad" | sed 's/^/  /' >&2

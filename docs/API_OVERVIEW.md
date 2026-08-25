@@ -369,6 +369,81 @@ For Unity game engine integration, BCSV provides a dedicated set of C# bindings 
 
 ---
 
+## File Flags, and the two that are output-only
+
+`FileFlags` is a bit set carried in every file's header, and it is reported by
+every binding. Three of its five members are settings a caller chooses; **two are
+outputs, and passing them to a writer does nothing.**
+
+| flag | value | settable at open? |
+|---|---:|---|
+| `NO_FILE_INDEX` | 2 | yes |
+| `STREAM_MODE` | 4 | yes |
+| `BATCH_COMPRESS` | 8 | yes |
+| `ZERO_ORDER_HOLD` | 1 | **no — set from the row codec** |
+| `DELTA_ENCODING` | 16 | **no — set from the row codec** |
+
+The row-codec bits describe how the rows in a file were actually encoded, so
+they cannot be a request. A writer strips them from whatever the caller passed
+and sets them from its own codec, because a header claiming one codec while the
+rows were produced by another is a file no reader can trust:
+
+```cpp
+// include/bcsv/writer.hpp
+const FileFlags safeFlags = (flags & ~ROW_CODEC_FLAGS_MASK)
+                          | RowCodecFileFlags<CodecType>::value;
+```
+
+That is correct and deliberate. What it is not is visible — so **this compiles,
+reads as if it works, and has no effect**:
+
+```csharp
+writer.Open(path, flags: FileFlags.ZeroOrderHold | FileFlags.BatchCompress);
+```
+
+The codec is chosen where the writer is constructed, and nowhere else:
+
+```cpp
+bcsv::Writer<Layout, ZoHCodec> writer(layout);   // C++: a template argument
+```
+```csharp
+new BcsvWriter(layout, "zoh");                   // C#
+```
+```python
+pybcsv.Writer(layout, "zoh")                     # Python
+```
+
+Asking for `BATCH_COMPRESS` (8) alone, with three different codecs, gives three
+different headers — and none of them is 8:
+
+| row codec | asked | in the file |
+|---|---:|---|
+| `delta` | 8 | 24 = `BATCH_COMPRESS \| DELTA_ENCODING` |
+| `zoh` | 8 | 9 = `ZERO_ORDER_HOLD \| BATCH_COMPRESS` |
+| `flat` | 8 | 8 = `BATCH_COMPRESS` |
+
+**Since 1.5.17 a writer will tell you what it actually wrote**, rather than
+requiring the file to be closed and reopened to find out:
+
+| API | |
+|---|---|
+| C++ | `writer.fileFlags()` |
+| C | `bcsv_writer_file_flags(writer)` |
+| C# / Unity | `writer.FileFlags` |
+| Python | `writer.file_flags()` |
+
+The reader has always reported the same thing for a file it has open
+(`reader.fileFlags()`, `bcsv_reader_file_flags`, `reader.FileFlags`,
+`reader.file_flags()`).
+
+> **Python before 1.5.17 could not express a combination at all.** `FileFlags`
+> was bound as an `IntEnum` with hand-written operators returning a bare `int`,
+> so `BATCH_COMPRESS | NO_FILE_INDEX` produced `10`, every write function
+> rejected it as the wrong type, and `FileFlags(10)` raised `ValueError`. It is
+> an `IntFlag` now and combines normally. C# was never affected.
+
+---
+
 ## Interoperability
 
 All APIs produce **identical binary format** - files are 100% compatible:
@@ -423,10 +498,14 @@ Notes on the current gaps:
   readable from every binding.
 - **File-level metadata** rides in a `<file>.bcsv.meta.json` companion, written by
   Python and readable from Python (`read_metadata_json`) and C#/Unity
-  (`BcsvMetadata.ReadCompanion`). C and C++ have no reader for it. All of this is
-  a stopgap: the format gains an in-format metadata section in 1.6.0, after which
-  `BcsvMetadata` is deleted — see item E12 in `ToDo.md`. Do not build long-lived
-  code against it.
+  (`BcsvMetadata.ReadCompanion`). C and C++ have no reader for it. The companion
+  records a SHA-256 of the BCSV file as its identity check; verifying it costs a
+  full read of that file, so `ReadCompanion(path, expectedRows, verifyDigest:
+  false)` keeps only the cheap `bcsv_bytes` / `bcsv_rows` pre-checks for callers
+  who open a large recording through random access. Verify once at ingest, skip
+  it per open. All of this is a stopgap: the format gains an in-format metadata
+  section in 1.6.0, after which `BcsvMetadata` is deleted — see item E12 in
+  `ToDo.md`. Do not build long-lived code against it.
 
 ---
 

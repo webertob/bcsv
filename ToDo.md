@@ -200,6 +200,40 @@ the streaming row-wise write path intact. Order = suggested implementation order
       Removing a public C# type is a breaking API change, so it lands on a MINOR at the earliest.
       Announce the deprecation in the release that ships the in-format channel and delete in the
       next one — do not do both in the same release.
+      **All four bindings expose `metadata()` in the same release as the C++ core** — C++, C#,
+      Unity and pybcsv together. Requested 2026-08-25 by T13, and the right default anyway:
+      `com.bcsv.unity` is what that project consumes, and a binding that lands a release late
+      forces a consumer to keep the companion path and the in-format path alive simultaneously,
+      which is worse than either alone. `scripts/check_pinvoke_parity.py` guards P/Invoke parity
+      but not managed helpers, so this one is on the release checklist, not on CI.
+      **Prerequisites inside the library, from auditing the header-parse path 2026-08-25:**
+      * `Reader::readFileHeader()` gates the version (VERSIONING.md Rule B), which is what makes
+        a new header section safe for existing readers — a 1.5.x reader refuses a 1.6.0 file
+        outright rather than reading packets from an offset the new section moved. Now covered by
+        `tests/version_gate_test.cpp`; keep it passing.
+      * `FileHeader::readFromBinary` does **not** validate `FileFlags`, so the new metadata bit is
+        not itself a gate. The `version::MINOR` bump is the gate; the bit only says what is there.
+      * `src/tools/bcsvRepair.cpp` calls `readFromBinary` directly, outside that gate, and locates
+        the first packet with `FileHeader::getBinarySize(layout)` — a layout-only computation that
+        a metadata section invalidates. Both must be updated with the section, or repair will
+        misparse exactly the files this item creates.
+- [ ] E13: **Record source nullability, do not restore it** (raised 2026-08-24 by T13, decided
+      2026-08-25) — `parquet_to_bcsv(null_policy="nan")` fills Parquet nulls with NaN, and the
+      obvious symmetry for `bcsv_to_parquet` — turn every float NaN back into a null — is wrong:
+      a corpus can hold genuine NaNs in one column family and nulls in another, so the reverse
+      transcode would invent nullability the source schema never had (T13 measured 1.1 M genuine
+      NaNs in a non-nullable family). The fix is provenance, not inference:
+      * `parquet_to_bcsv` records, per column, whether the *source* field was nullable and how
+        many nulls it filled there. `_apply_null_policy` already computes `col.null_count` per
+        column and throws it into one aggregate (`nulls_filled`); keep it keyed by field name.
+        Home is the E12 metadata section, not the companion — sequence this after E12.
+      * `bcsv_to_parquet` never restores nulls by default. An opt-in restore is then *checkable*
+        rather than a guess: convert NaN back to null only in columns recorded as source-nullable,
+        and only where the column's NaN count equals the recorded fill count — otherwise refuse
+        and say which column disagreed. A bare list of nullable names cannot make that check.
+      * Note the companion is only written when the source carries footer key/value pairs
+        (`parquet_utils.py`, `if kv:`); null provenance has to force it, or land with E12.
+      Not blocking for T13 — they restore nullability from the Parquet schema they hold.
 - [ ] E10: **Unify typed CSV cell parsing in CsvReader** (from the 2026-07-13 tools review) —
       csv2bcsv's checked conversion (`parseCellChecked` + slow paths) and the library's
       `CsvReader::parseCells` are two implementations with deliberate divergences (strict
@@ -247,6 +281,48 @@ the streaming row-wise write path intact. Order = suggested implementation order
         (entropy-coded or run-length header codes) rather than more suppression.
       Sequence E11 after E1 and E9: E1 settles how much row-header cost is left, and E9 changes
       the per-column header width, so measuring before both have landed measures the wrong thing.
+
+- [ ] E14: **Read-side prefetch for the remaining codecs, and strided reads** (requested
+      2026-08-25 by `diss-abb-irb4600`, for real-time replay in Unity) — a replay driven at a
+      1 ms step cannot afford a synchronous whole-packet decompress on the row that crosses a
+      packet boundary. Audited on the way in, and **most of this already exists**:
+      * `FileCodecPacketLZ4Batch001` — the default codec — already double-buffers the read side
+        on a background thread, so a boundary is a pointer swap and `readRow()` stays
+        O(VLE decode). Nothing to do for the steady state.
+      * **The first boundary in a file is the exception**: the BG thread starts lazily, so that
+        one packet is decompressed synchronously on the caller's thread
+        (`file_codec_packet_lz4_batch001.h`, the `[LIB-4]` comment in `decodeNextRow`). Every
+        later boundary is prefetched.
+
+        **Do not "fix" this by starting the thread in `setupRead`** — that was the first idea
+        and it is wrong. The lazy start is deliberate and the comment says why: a caller may
+        read from the same `std::istream` between `open()` and the first row, and
+        `ReaderDirectAccess::readFileFooter` does exactly that, with `tellg`/`seekg` on
+        `Base::stream_` (`reader.hpp`) immediately after `setupRead` returns. A background
+        thread pulling packets off that stream concurrently would move the position underneath
+        it. Checked 2026-08-25 while scoping 1.5.17, and left alone for that reason.
+
+        The shape that could work is starting the prefetch on the first *sequential* `readRow`
+        instead, by which point the footer read has happened and `seekToPacket` already stops
+        the thread for direct access. That is a concurrency change to the default codec, so it
+        wants the `clang-tsan` preset and a test that interleaves direct access with sequential
+        reads — not a patch-release drive-by. Its whole payoff is one packet's decompress per
+        file, once.
+      * **The other three file codecs have no prefetch at all** — `FileCodecPacket001`,
+        `FileCodecPacketLZ4001` and `FileCodecStreamLZ4001` contain no `bg_thread_`/`read_next_`.
+        A caller who opts out of `BATCH_COMPRESS` stalls on *every* boundary. Either lift the
+        double-buffer into something shared, or document that batch is the codec for latency-
+        sensitive reading.
+      * **Strides are genuinely new.** Nothing implements "give me every Nth row" —
+        `sampler_window.h`'s window is expression lookahead, not decimation. Note the honest
+        ceiling before promising savings: packets decompress whole, so a stride saves row
+        deserialization, not I/O. `ReaderDirectAccess` already has the packet cache and
+        `readRow(index)`, so the cheap version is a thin layer on that; real I/O savings need
+        Packet002 (see 2.0.0), same as E6.
+      Scale note for the requester: at the default 8 MiB `blockSizeKB` their recordings are
+      ~0.5 MB, i.e. a single packet with no boundaries at all, so none of this bites them yet —
+      it starts at ~8 MiB of compressed data. Shrinking `blockSizeKB` is the zero-library-work
+      lever, traded against the compression ratio that made a whole recording fit in one block.
 
 ## 2.0.0 — reserved (nothing currently requires it)
 

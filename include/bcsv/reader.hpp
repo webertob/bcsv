@@ -125,7 +125,14 @@ namespace bcsv {
             
             // Read file header
             if(!readFileHeader()) {
-                throw std::runtime_error("Failed to read file header");
+                // readFileHeader() has already recorded *why* it failed --
+                // incompatible version, bad magic, column-type mismatch.  A
+                // generic message here would replace it in the catch below,
+                // and those specific strings are documented as observable in
+                // docs/ERROR_HANDLING.md.
+                throw std::runtime_error(err_msg_.empty()
+                                             ? std::string("Error: Failed to read file header")
+                                             : err_msg_);
             }
 
             // Initialize file-level codec (framing, decompression, checksums)

@@ -204,6 +204,9 @@ internal static partial class NativeMethods
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern byte bcsv_writer_compression_level(nint writer);
 
+    [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
+    internal static extern int bcsv_writer_file_flags(nint writer);
+
     // ── Row ────────────────────────────────────────────────────────────
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
     internal static extern nint bcsv_row_create(nint layout);

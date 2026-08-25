@@ -388,17 +388,42 @@ if result:
 
 ### FileFlags
 
-```python
-pybcsv.FileFlags.NONE
-pybcsv.FileFlags.ZERO_ORDER_HOLD
-pybcsv.FileFlags.NO_FILE_INDEX
-pybcsv.FileFlags.STREAM_MODE
-pybcsv.FileFlags.BATCH_COMPRESS
-pybcsv.FileFlags.DELTA_ENCODING
+An `enum.IntFlag`, so members combine and the result is still a `FileFlags`:
 
-# Combinable with | and &
+```python
 flags = pybcsv.FileFlags.BATCH_COMPRESS | pybcsv.FileFlags.NO_FILE_INDEX
+pybcsv.FileFlags(10)                       # reconstructs the same combination
+pybcsv.FileFlags.NO_FILE_INDEX in flags    # True
 ```
+
+> Combining flags did not work before **1.5.17** — the binding produced a bare
+> `int`, which every write function then rejected as the wrong type. Any single
+> flag worked; nothing else did. Upgrade if you need more than one.
+
+**Three of the five are settings; two are outputs.**
+
+| flag | value | settable at `open()`? |
+|---|---:|---|
+| `NO_FILE_INDEX` | 2 | yes |
+| `STREAM_MODE` | 4 | yes |
+| `BATCH_COMPRESS` | 8 | yes |
+| `ZERO_ORDER_HOLD` | 1 | **no — comes from `row_codec`** |
+| `DELTA_ENCODING` | 16 | **no — comes from `row_codec`** |
+
+The row-codec bits describe how the rows were actually encoded, so they are not
+a request: a writer replaces whatever you pass for them with its own codec's
+value, because a header claiming one codec while the rows use another is a file
+no reader can trust. Choose the codec where it is actually chosen:
+
+```python
+writer = pybcsv.Writer(layout, "zoh")      # here — not in open()'s flags
+writer.open(path, flags=pybcsv.FileFlags.BATCH_COMPRESS)
+writer.file_flags()                        # what actually reached the header
+```
+
+`Writer.file_flags()` is new in 1.5.17; `Reader.file_flags()` has always
+reported the same thing for a file it has open. See
+[docs/API_OVERVIEW.md](../docs/API_OVERVIEW.md) for the full account.
 
 ### Utility Functions
 

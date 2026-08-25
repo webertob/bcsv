@@ -32,6 +32,13 @@ namespace Bcsv;
 /// same shape can share both. When the writer omitted the digest
 /// (<c>--no-bcsv-hash</c>) that heuristic is all there is.
 /// </para>
+/// <para>
+/// Verifying the digest costs a full read of the BCSV file, which is the very
+/// cost a caller opening a large recording through direct access is trying to
+/// avoid. The three-argument overload of <see cref="ReadCompanion(string, long, bool)"/>
+/// lets that caller keep the cheap pre-checks alone: verify once where the file
+/// enters the project, skip it on the hot path.
+/// </para>
 /// </remarks>
 public static class BcsvMetadata
 {
@@ -46,7 +53,8 @@ public static class BcsvMetadata
     }
 
     /// <summary>
-    /// Read the key/value metadata companion for <paramref name="bcsvPath"/>.
+    /// Read the key/value metadata companion for <paramref name="bcsvPath"/>,
+    /// verifying the recorded digest against the file.
     /// </summary>
     /// <param name="bcsvPath">Path to the <c>.bcsv</c> file (not the companion).</param>
     /// <param name="expectedRows">
@@ -60,6 +68,37 @@ public static class BcsvMetadata
     /// </exception>
     public static IReadOnlyDictionary<string, string>? ReadCompanion(
         string bcsvPath, long expectedRows = -1)
+        => ReadCompanion(bcsvPath, expectedRows, verifyDigest: true);
+
+    /// <summary>
+    /// Read the key/value metadata companion for <paramref name="bcsvPath"/>,
+    /// choosing which binding checks to pay for.
+    /// </summary>
+    /// <param name="bcsvPath">Path to the <c>.bcsv</c> file (not the companion).</param>
+    /// <param name="expectedRows">
+    /// Row count of the BCSV file, if known (e.g. <c>reader.RowCount</c>). When
+    /// non-negative it is checked against the recorded count. Pass -1 to skip.
+    /// </param>
+    /// <param name="verifyDigest">
+    /// <c>true</c> to hash the BCSV file and compare it against the recorded
+    /// <c>bcsv_sha256</c> — the identity check. <c>false</c> to keep only the cheap
+    /// pre-checks, <c>bcsv_bytes</c> and <c>bcsv_rows</c>, which read no file data
+    /// at all. Skipping the digest trades certainty for a full read of the file:
+    /// bytes and rows together are a heuristic, since two recordings of the same
+    /// shape can share both. It is the right trade for a reader that opens a
+    /// multi-gigabyte recording to touch a few rows of it — verify once at ingest,
+    /// pass <c>false</c> per open.
+    /// </param>
+    /// <returns>The metadata pairs, or <c>null</c> if no companion exists.</returns>
+    /// <exception cref="BcsvException">
+    /// The companion exists but is malformed, or does not describe
+    /// <paramref name="bcsvPath"/>.
+    /// </exception>
+    // A separate overload rather than a third optional parameter: C# bakes default
+    // argument values into the call site, so adding one would break callers already
+    // compiled against this assembly.
+    public static IReadOnlyDictionary<string, string>? ReadCompanion(
+        string bcsvPath, long expectedRows, bool verifyDigest)
     {
         string path = CompanionPath(bcsvPath);
         if (!File.Exists(path)) return null;
@@ -86,7 +125,7 @@ public static class BcsvMetadata
                 "Delete it or regenerate it with parquet2bcsv.", ex);
         }
 
-        VerifyBindsTo(doc, path, bcsvPath, expectedRows);
+        VerifyBindsTo(doc, path, bcsvPath, expectedRows, verifyDigest);
 
         if (!doc.TryGetValue("key_value_metadata", out object? raw) ||
             raw is not Dictionary<string, object?> pairs)
@@ -135,10 +174,13 @@ public static class BcsvMetadata
     /// <c>_verify_metadata_json_binds_to</c> in pybcsv's parquet_utils:
     /// <c>bcsv_sha256</c> is the identity check, while <c>bcsv_bytes</c> and
     /// <c>bcsv_rows</c> are cheap pre-checks that on their own are only a
-    /// heuristic — two recordings of the same shape can share both.
+    /// heuristic — two recordings of the same shape can share both. With
+    /// <paramref name="verifyDigest"/> false the identity check is skipped and
+    /// that heuristic is all that runs.
     /// </summary>
     private static void VerifyBindsTo(
-        Dictionary<string, object?> doc, string path, string bcsvPath, long expectedRows)
+        Dictionary<string, object?> doc, string path, string bcsvPath, long expectedRows,
+        bool verifyDigest)
     {
         bool fileExists = File.Exists(bcsvPath);
 
@@ -167,10 +209,13 @@ public static class BcsvMetadata
         if (!doc.TryGetValue("bcsv_sha256", out object? rawDigest) || rawDigest is null) return;
         if (rawDigest is not string digest || !IsSha256Hex(digest))
         {
+            // Checked even when the digest is not verified: a field that is present
+            // but malformed is a corrupt document, and saying so costs no I/O.
+            // Same rule as BindingInt.
             throw new BcsvException(
                 $"Metadata companion '{path}': 'bcsv_sha256' is not a SHA-256 hex digest.");
         }
-        if (!fileExists) return;
+        if (!verifyDigest || !fileExists) return;
         string actualDigest = FileSha256(bcsvPath);
         if (!string.Equals(actualDigest, digest, StringComparison.Ordinal))
         {

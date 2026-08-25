@@ -175,6 +175,11 @@ size_t              bcsv_writer_index   (const_bcsv_writer_t writer);           
 
 const char*         bcsv_writer_error_msg       (const_bcsv_writer_t writer);    // per-handle error message
 uint8_t             bcsv_writer_compression_level(const_bcsv_writer_t writer);   // compression level
+/* Flags actually written to the header, which are not necessarily the ones
+ * passed to bcsv_writer_open: the row-codec bits (ZERO_ORDER_HOLD,
+ * DELTA_ENCODING) are replaced from the writer's own codec so the header can
+ * never disagree with it. Check here rather than assuming. Since 1.5.17. */
+int                 bcsv_writer_file_flags      (const_bcsv_writer_t writer);
 
 // ============================================================================
 // CSV Reader API

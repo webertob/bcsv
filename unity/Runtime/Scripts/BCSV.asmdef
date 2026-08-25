@@ -9,6 +9,12 @@
   "precompiledReferences": [],
   "autoReferenced": true,
   "defineConstraints": [],
-  "versionDefines": [],
+  "versionDefines": [
+    {
+      "name": "com.unity.modules.physics",
+      "expression": "",
+      "define": "BCSV_HAS_PHYSICS"
+    }
+  ],
   "noEngineReferences": false
 }

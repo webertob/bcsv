@@ -71,6 +71,7 @@ struct WriterHandle {
     const bcsv::Layout* (*layout_fn)(const void*);
     const std::string*  (*errorMsg_fn)(const void*);
     uint8_t (*compressionLevel_fn)(const void*);
+    int     (*fileFlags_fn)(const void*);
 #ifdef _WIN32
     const wchar_t* (*filePath_fn)(const void*);
 #else
@@ -96,6 +97,7 @@ WriterHandle* createWriterHandle(WriterHandle::Type type, W* writer) {
     h->layout_fn   = [](const void* p) -> const bcsv::Layout*  { return &static_cast<const W*>(p)->layout(); };
     h->errorMsg_fn = [](const void* p) -> const std::string*   { return &static_cast<const W*>(p)->getErrorMsg(); };
     h->compressionLevel_fn = [](const void* p) -> uint8_t { return static_cast<const W*>(p)->compressionLevel(); };
+    h->fileFlags_fn = [](const void* p) -> int { return static_cast<int>(static_cast<const W*>(p)->fileFlags()); };
     h->filePath_fn = [](const void* p) { return static_cast<const W*>(p)->filePath().c_str(); };
     h->open_fn     = [](void* p, const char* fn, bool ow, size_t cl, size_t bs, bcsv::FileFlags ff) -> bool {
         return static_cast<W*>(p)->open(fn, ow, cl, bs, ff);
@@ -451,7 +453,14 @@ bcsv_writer_t bcsv_writer_create(bcsv_layout_t layout) {
         auto& l = layout ? *static_cast<bcsv::Layout*>(layout) : empty;
         return reinterpret_cast<bcsv_writer_t>(
             createWriterHandle(WriterHandle::Type::Flat,
-                               new bcsv::Writer<bcsv::Layout>(l)));
+                               // WriterFlat, not Writer<Layout>: the latter takes
+                               // the default template argument, which is
+                               // RowCodecDelta002.  Until 1.5.17 this function
+                               // was documented as the flat writer, tagged its
+                               // handle Type::Flat, and returned a delta writer —
+                               // so "flat" was unreachable through the C API and
+                               // through both C# bindings, which route it here.
+                               new bcsv::WriterFlat<bcsv::Layout>(l)));
     })())
 }
 
@@ -599,6 +608,12 @@ uint8_t bcsv_writer_compression_level(const_bcsv_writer_t writer) {
     if (null_handle("bcsv_writer_compression_level", writer)) return 0u;
     auto* h = static_cast<const WriterHandle*>(writer);
     BCSV_CAPI_TRY_RETURN("bcsv_writer_compression_level", 0u, h->compressionLevel_fn(h->ptr))
+}
+
+int bcsv_writer_file_flags(const_bcsv_writer_t writer) {
+    if (null_handle("bcsv_writer_file_flags", writer)) return 0;
+    auto* h = static_cast<const WriterHandle*>(writer);
+    BCSV_CAPI_TRY_RETURN("bcsv_writer_file_flags", 0, h->fileFlags_fn(h->ptr))
 }
 
 // ============================================================================
