@@ -1,0 +1,176 @@
+# Changelog
+
+All notable changes to the BCSV Unity package will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+---
+
+## [1.5.15] - 2026-08-24
+
+### Added
+
+- **`BcsvMetadata.ReadCompanion(path)`** — reads the `<file>.bcsv.meta.json`
+  companion written by pybcsv's `parquet2bcsv`, which carries file-level
+  key/value metadata (provenance, release identifiers, contract markers) that
+  the BCSV header has no room for. Returns `null` when no companion exists, and
+  throws `BcsvException` when one is malformed or does not describe the file
+  beside it: the document records the BCSV file's SHA-256, and a companion left
+  over from an earlier conversion to the same output name must not silently
+  stamp unrelated data with someone else's provenance. Byte size and row count
+  are checked first as cheap pre-checks; a binding field that is present but
+  malformed is rejected rather than skipped. No third-party dependency; the JSON reader is hand-rolled because
+  Unity 2021.3 has no `System.Text.Json`.
+
+  ```csharp
+  var meta = BcsvMetadata.ReadCompanion(path, expectedRows: reader.RowCount);
+  if (meta != null && meta["rotation_contract"] != "unit_xyzw_v1")
+      throw new InvalidOperationException("wrong contract");
+  ```
+
+  **Transitional — scheduled for deletion.** This class exists only because the
+  format has no metadata section. Version 1.6.0 adds one, exposed as
+  `BcsvReader.Metadata`, and `BcsvMetadata` is removed after a deprecation
+  release (roadmap item E12). Keep usage to a single call site so the migration
+  is a one-line change.
+
+---
+
+## [1.5.14] - 2026-08-22
+
+### Fixed
+- **The package no longer trips Unity's "no meta file, but it's in an immutable
+  folder" warning.** It shipped `tools/build-windows.ps1` — a maintainer script
+  for building the Windows native — with no `.meta` files. A package installed
+  from a tarball or a git URL lives in an immutable folder, so Unity cannot
+  generate the missing metas itself and instead logged two warnings on every
+  import and every domain reload. The script was never package content: it now
+  lives at `scripts/build-unity-windows.ps1` in the repository root, and `unity/`
+  holds only what a consumer actually installs.
+
+### Changed
+- **Packing selects what to ship instead of copying the directory.** Both the
+  `.tgz` workflow and the `upm` branch workflow copied `unity/*` wholesale, so
+  any file added under `unity/` reached consumers whether or not it belonged in
+  the package — which is how the build script shipped in the first place. They
+  now copy an explicit list and fail if any staged file would ship without a
+  `.meta`, matching the packing scripts in the sibling Unity packages.
+
+### Added
+- **`.meta` files for the Basic sample.** The sample shipped without them, so
+  importing it minted fresh GUIDs for `BcsvRecorder` and `BcsvUnityExample` —
+  different for every user and different again on every re-import, which breaks
+  any scene or prefab referencing those components. The GUIDs are now fixed by
+  the package. Existing imported copies keep the GUIDs they were given; re-import
+  the sample to adopt the stable ones.
+
+## [1.5.13] - 2026-08-21
+
+### Fixed
+- **Package version stamps are correct again.** The `.tgz` in the v1.5.12 release
+  carried Linux natives (`x86_64` and `arm64`) reporting `1.5.11` while the
+  Windows native correctly reported `1.5.12`, so the same recorder wrote
+  different header bytes depending on platform. Data was unaffected — only the
+  version stamped into the file header differed. The Linux jobs build inside a
+  container where git could not read the workspace, and the build silently fell
+  back to a stale version; it now fails instead. See the root `CHANGELOG.md`.
+- **`package.json` on the `upm` branch reported `1.5.3` for every release since
+  v1.5.4.** The branch workflow read the committed `unity/package.json`, which is
+  only patched during packing, instead of the release version. Anyone installing
+  via the `#upm` Git URL saw `1.5.3` regardless of what they actually got.
+- The committed `unity/package.json` now mirrors `VERSION.txt` and is verified on
+  every push, so it can no longer drift from the shipped package.
+
+### Note on version history
+This package tracks the BCSV library version. Entries between 1.5.3 and 1.5.13
+were not recorded here; see the root `CHANGELOG.md` for library changes in that
+range. Packaging changes in 1.5.12 (manylinux Linux builds with a static C++
+runtime, static MSVC runtime on Windows) removed the need for a matching
+`libstdc++` or the Visual C++ Redistributable on target machines.
+
+## [1.5.3] - 2026-03-22
+
+### Fixed
+- `BCSV.asmdef` now sets `allowUnsafeCode: true` (required by Span-based BcsvRow array accessors)
+
+## [1.5.2] - 2026-03-22
+
+### Fixed
+- `ColumnDefinition` reverted from `readonly record struct` to `readonly struct` for C# 9.0 / Unity Mono compatibility
+- `WriteColumns` now accepts an `overwrite` parameter (default `false`) instead of silently overwriting
+
+### Added
+- **BcsvCsvReader**: CSV text file reader with `IEnumerable<BcsvRow>` and `TryOpen()`
+- **BcsvCsvWriter**: CSV text file writer with `TryOpen()`
+- **BcsvSampler**: Expression-based filter/projection over a `BcsvReader` with `IEnumerable`
+- **BcsvColumns**: Columnar (column-oriented) bulk read/write with `ColumnData`
+- **BcsvVersion**: Static class for querying native library version
+- **BcsvException**: Dedicated exception type for native operation failures
+- **ColumnDefinition**: Readonly struct describing a single column (name, type, index)
+- **SamplerMode** enum in `BcsvNative.cs`
+- `BcsvReader.ReadBatch(int maxRows)` for columnar batch reads
+- `BcsvReader.Read(long index)` for random access
+- `BcsvReader.TryOpen()` / `BcsvWriter.TryOpen()` — bool-returning alternatives to throwing `Open()`
+- `BcsvLayout.Clone()`, `ColumnCountByType()`, `RowDataSize`, `ToString()`
+- `BcsvLayout` now implements `IReadOnlyList<ColumnDefinition>` with indexer and foreach
+- `BcsvLayout.AddColumn()` returns `this` for fluent chaining
+- `BcsvReader` implements `IEnumerable<BcsvRow>` for foreach iteration
+- `BcsvWriter.Write(BcsvRow)` writes an external row
+- `BcsvRow.ColumnCount`, `ToString()`, and complete `Span<T>`-based array accessors
+- P/Invoke coverage expanded from 91 to 153+ functions (full C API parity)
+- Version API: `bcsv_version()`, `bcsv_version_major/minor/patch()`
+- `CompressionLevel`, `FileFlags`, `ErrorMessage` properties on Reader/Writer
+
+### Changed
+- **BREAKING**: `BcsvRow` is now a lightweight `readonly struct` (non-owning handle). Removed `BcsvRowBase`, `BcsvRowRef`, `BcsvRowRefConst` class hierarchy.
+- **BREAKING**: `BcsvWriter` constructor takes `string rowCodec` parameter (`"flat"`, `"zoh"`, `"delta"`; default `"delta"`). Removed `BcsvWriterZoH` subclass.
+- **BREAKING**: `Open()` on Reader/Writer now throws `BcsvException` on failure instead of returning `bool`. Use `TryOpen()` for non-throwing variant.
+- **BREAKING**: `writer.Next()` renamed to `writer.WriteRow()`
+- **BREAKING**: `reader.Next()` renamed to `reader.ReadNext()`
+- **BREAKING**: `reader.CountRows()` replaced with `reader.RowCount` property
+- **BREAKING**: `reader.Index` replaced with `reader.CurrentIndex`
+- **BREAKING**: Default `overwrite` parameter changed from `true` to `false` across all writers
+- P/Invoke layer modernized: `IntPtr` → `nint`/`nuint`, added `[MarshalAs]` attributes for bool/string marshalling
+- `BcsvNative.DllName` renamed to `BcsvNative.Lib`
+- `link.xml` updated: removed old types, added all new types
+- Samples updated for new API
+
+### Removed
+- `BcsvRowBase`, `BcsvRowRef`, `BcsvRowRefConst` (replaced by `BcsvRow` struct)
+- `BcsvWriterZoH` (use `new BcsvWriter(layout, "zoh")` instead)
+- `BcsvRow.Create()`, `BcsvRow.Clone()`, `row.Assign()` (BcsvRow is now non-owning)
+- `WriteRow(params object[])`, `WriteRows()`, `ReadAll()`, `ReadAllRows()` helper methods
+- `BcsvLayout(BcsvLayout other)` copy constructor (use `Clone()`)
+
+## [1.5.0] - 2026-03-22
+
+### Added
+- `upm` branch with pre-built native binaries — Git URL installs now work without local builds
+- Tarball (`.tgz`) from GitHub Releases includes pre-built natives for all platforms
+- `.meta` files for all package assets (stable GUIDs)
+- `upm-branch.yml` workflow auto-updates the `upm` branch after each build
+
+### Fixed
+- Replaced `UIntPtr.MaxValue` with .NET Standard 2.1 compatible `(UIntPtr)ulong.MaxValue`
+- Updated `package.json` version to 1.5.0
+- README updated: Git URL now points to `#upm` branch with pre-built natives
+
+## [1.4.3] - 2026-03-21
+
+### Added
+- Initial UPM package structure (`package.json`, assembly definition, Samples~)
+- GitHub Actions workflow for multi-platform native builds and `.tgz` packaging
+- `FileFlags` enum: `NoFileIndex`, `StreamMode`, `BatchCompress`, `DeltaEncoding`
+
+### Fixed
+- Double-free bug in `BcsvRowBase.Layout` (now uses non-owning handle)
+- README path references (`unity/plugin/` → `unity/Runtime/Scripts/`)
+
+[Unreleased]: https://github.com/webertob/bcsv/compare/v1.5.3...HEAD
+[1.5.3]: https://github.com/webertob/bcsv/compare/v1.5.2...v1.5.3
+[1.5.2]: https://github.com/webertob/bcsv/compare/v1.5.1...v1.5.2
+[1.5.0]: https://github.com/webertob/bcsv/compare/v1.4.3...v1.5.0
+[1.4.3]: https://github.com/webertob/bcsv/releases/tag/v1.4.3
