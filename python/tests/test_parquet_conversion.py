@@ -259,6 +259,105 @@ class TestUnflattenSchema(unittest.TestCase):
         self.assertEqual(len(schema), 1)
         self.assertEqual(schema.field(0).name, "a")
 
+    def test_unflatten_scalar_fixed_list(self):
+        names = ["vals[0]", "vals[1]", "vals[2]"]
+        types = [pybcsv.ColumnType.FLOAT] * 3
+        schema = unflatten_schema_to_arrow(names, types)
+        self.assertEqual(schema.field(0).type, pa.list_(pa.float32(), 3))
+
+    def test_unflatten_list_of_struct(self):
+        """A list whose elements are structs must not collapse to list<int64>."""
+        names = ["imu[0].x", "imu[0].y", "imu[1].x", "imu[1].y"]
+        types = [pybcsv.ColumnType.FLOAT] * 4
+        schema = unflatten_schema_to_arrow(names, types)
+        element = pa.struct([pa.field("x", pa.float32()), pa.field("y", pa.float32())])
+        self.assertEqual(schema.field(0).type, pa.list_(element, 2))
+
+    def test_unflatten_list_of_nested_struct(self):
+        names = [
+            "ve[0].accel.x",
+            "ve[0].transform.affine.m00",
+            "ve[1].accel.x",
+            "ve[1].transform.affine.m00",
+        ]
+        types = [pybcsv.ColumnType.FLOAT, pybcsv.ColumnType.DOUBLE] * 2
+        schema = unflatten_schema_to_arrow(names, types)
+        element = pa.struct(
+            [
+                pa.field("accel", pa.struct([pa.field("x", pa.float32())])),
+                pa.field(
+                    "transform",
+                    pa.struct(
+                        [
+                            pa.field(
+                                "affine",
+                                pa.struct([pa.field("m00", pa.float64())]),
+                            )
+                        ]
+                    ),
+                ),
+            ]
+        )
+        self.assertEqual(schema.field(0).type, pa.list_(element, 2))
+
+    def test_unflatten_list_of_struct_of_list(self):
+        names = ["z[0].v[0]", "z[0].v[1]", "z[1].v[0]", "z[1].v[1]"]
+        types = [pybcsv.ColumnType.DOUBLE] * 4
+        schema = unflatten_schema_to_arrow(names, types)
+        element = pa.struct([pa.field("v", pa.list_(pa.float64(), 2))])
+        self.assertEqual(schema.field(0).type, pa.list_(element, 2))
+
+    def test_unflatten_flatten_schema_identity(self):
+        """flatten(unflatten(x)) == x for a FixedSizeList<struct<...>> schema."""
+        element = pa.struct(
+            [pa.field("x", pa.float32()), pa.field("y", pa.float32())]
+        )
+        original = pa.schema(
+            [pa.field("t", pa.uint64()), pa.field("imu", pa.list_(element, 2))]
+        )
+        flat = flatten_parquet_schema(original)
+        names = [n for n, _ in flat]
+        types = [_ARROW_TO_BCSV[t] for _, t in flat]
+        self.assertEqual(
+            names, ["t", "imu[0].x", "imu[0].y", "imu[1].x", "imu[1].y"]
+        )
+        self.assertEqual(unflatten_schema_to_arrow(names, types), original)
+
+    def test_unflatten_sparse_list_indices_rejected(self):
+        """A gap in the indices is reported as a gap, not as a missing column."""
+        names = ["x[0]", "x[2]"]
+        types = [pybcsv.ColumnType.INT32] * 2
+        with self.assertRaises(ValueError) as ctx:
+            unflatten_schema_to_arrow(names, types)
+        self.assertIn("not dense", str(ctx.exception))
+        self.assertIn("x[1]", str(ctx.exception))
+
+    def test_unflatten_list_and_struct_on_same_name_rejected(self):
+        """'a[0]' plus 'a.b' is contradictory — reject instead of dropping one."""
+        names = ["a[0]", "a.b"]
+        types = [pybcsv.ColumnType.INT32] * 2
+        with self.assertRaises(ValueError) as ctx:
+            unflatten_schema_to_arrow(names, types)
+        self.assertIn("a[0]", str(ctx.exception))
+        self.assertIn("a.b", str(ctx.exception))
+
+    def test_unflatten_leaf_and_parent_collision_rejected(self):
+        """'a' as a leaf and 'a.b' as a path cannot both be represented."""
+        for names in (["a", "a.b"], ["a.b", "a"], ["x[0]", "x[0].y"]):
+            with self.subTest(names=names):
+                types = [pybcsv.ColumnType.INT32] * len(names)
+                with self.assertRaises(ValueError) as ctx:
+                    unflatten_schema_to_arrow(names, types)
+                self.assertIn("leaf column and a nested parent", str(ctx.exception))
+
+    def test_unflatten_ragged_list_elements_rejected(self):
+        """Elements of one list must agree on type."""
+        names = ["a[0].x", "a[1].y"]
+        types = [pybcsv.ColumnType.INT32] * 2
+        with self.assertRaises(ValueError) as ctx:
+            unflatten_schema_to_arrow(names, types)
+        self.assertIn("must share one type", str(ctx.exception))
+
 
 class TestFlatSchemaToBcsvLayout(unittest.TestCase):
     """Test _flat_schema_to_bcsv_layout builds layout from flattened schema."""
@@ -830,6 +929,150 @@ class TestNullPolicyEndToEnd(_TempDirCase):
         with self.assertRaises(ValueError):
             parquet_to_bcsv(src, out, force=True, null_policy="bogus")
         self.assertFalse(os.path.exists(out))
+
+
+class TestListOfStructRoundTrip(_TempDirCase):
+    """FixedSizeList<struct<...>> survives parquet -> bcsv -> parquet."""
+
+    def _round_trip(self, table: pa.Table) -> pa.Table:
+        src = self.path("src.parquet")
+        mid = self.path("mid.bcsv")
+        out = self.path("out.parquet")
+        pq.write_table(table, src)
+        parquet_to_bcsv(
+            src, mid, force=True, metadata2json=False, source_hash=False,
+            bcsv_hash=False,
+        )
+        bcsv_to_parquet(mid, out, force=True)
+        return pq.read_table(out)
+
+    def test_values_and_type_survive(self):
+        element = pa.struct(
+            [pa.field("x", pa.float32()), pa.field("y", pa.float32())]
+        )
+        # Every leaf distinct, so a bad element/row interleave cannot pass.
+        rows = [
+            [{"x": r * 10 + 1.0, "y": r * 10 + 2.0},
+             {"x": r * 10 + 3.0, "y": r * 10 + 4.0}]
+            for r in range(4)
+        ]
+        table = pa.table(
+            {
+                "t": pa.array(range(4), pa.uint64()),
+                "imu": pa.array(rows, pa.list_(element, 2)),
+            }
+        )
+        result = self._round_trip(table)
+        self.assertEqual(result.schema, table.schema)
+        self.assertEqual(result.to_pylist(), table.to_pylist())
+
+    def test_flat_columns_are_the_bracketed_names(self):
+        element = pa.struct([pa.field("x", pa.float32())])
+        table = pa.table(
+            {"imu": pa.array([[{"x": 1.0}, {"x": 2.0}]], pa.list_(element, 2))}
+        )
+        src = self.path("src.parquet")
+        mid = self.path("mid.bcsv")
+        pq.write_table(table, src)
+        parquet_to_bcsv(
+            src, mid, force=True, metadata2json=False, source_hash=False,
+            bcsv_hash=False,
+        )
+        reader = pybcsv.Reader()
+        reader.open(mid)
+        names = reader.layout().get_column_names()
+        reader.close()
+        self.assertEqual(names, ["imu[0].x", "imu[1].x"])
+
+    def test_struct_nested_inside_the_list_element(self):
+        """The recordings' shape: ve.icm42688[i].transform.affine.m_00."""
+        element = pa.struct(
+            [
+                pa.field("accel", pa.struct([pa.field("x", pa.float32())])),
+                pa.field(
+                    "transform",
+                    pa.struct(
+                        [
+                            pa.field(
+                                "affine",
+                                pa.struct(
+                                    [
+                                        pa.field("m00", pa.float64()),
+                                        pa.field("m01", pa.float64()),
+                                    ]
+                                ),
+                            )
+                        ]
+                    ),
+                ),
+            ]
+        )
+        rows = [
+            [
+                {"accel": {"x": r + 0.5},
+                 "transform": {"affine": {"m00": r * 1.0, "m01": r * 2.0}}},
+                {"accel": {"x": r + 9.5},
+                 "transform": {"affine": {"m00": r * 3.0, "m01": r * 4.0}}},
+            ]
+            for r in range(3)
+        ]
+        table = pa.table(
+            {
+                "n": pa.array([1, 2, 3], pa.int32()),
+                "ve": pa.array(rows, pa.list_(element, 2)),
+            }
+        )
+        result = self._round_trip(table)
+        self.assertEqual(result.schema, table.schema)
+        self.assertEqual(result.to_pylist(), table.to_pylist())
+
+    def test_scalar_list_inside_the_list_element(self):
+        element = pa.struct([pa.field("v", pa.list_(pa.float64(), 2))])
+        table = pa.table(
+            {
+                "z": pa.array(
+                    [
+                        [{"v": [1.0, 2.0]}, {"v": [3.0, 4.0]}],
+                        [{"v": [5.0, 6.0]}, {"v": [7.0, 8.0]}],
+                    ],
+                    pa.list_(element, 2),
+                )
+            }
+        )
+        result = self._round_trip(table)
+        self.assertEqual(result.schema, table.schema)
+        self.assertEqual(result.to_pylist(), table.to_pylist())
+
+    def test_string_leaves_in_the_list_element(self):
+        element = pa.struct(
+            [pa.field("s", pa.string()), pa.field("i", pa.int16())]
+        )
+        table = pa.table(
+            {
+                "tags": pa.array(
+                    [
+                        [{"s": "a", "i": 1}, {"s": "b", "i": 2}],
+                        [{"s": "c", "i": 3}, {"s": "d", "i": 4}],
+                    ],
+                    pa.list_(element, 2),
+                )
+            }
+        )
+        result = self._round_trip(table)
+        self.assertEqual(result.schema, table.schema)
+        self.assertEqual(result.to_pylist(), table.to_pylist())
+
+    def test_scalar_fixed_list_still_round_trips(self):
+        table = pa.table(
+            {
+                "vals": pa.array(
+                    [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]], pa.list_(pa.float32(), 3)
+                )
+            }
+        )
+        result = self._round_trip(table)
+        self.assertEqual(result.schema, table.schema)
+        self.assertEqual(result.to_pylist(), table.to_pylist())
 
 
 class TestSeekabilityWarning(_TempDirCase):

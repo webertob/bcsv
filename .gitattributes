@@ -1,0 +1,9 @@
+# Some C++ headers and sources in this repo are stored with CRLF line endings
+# (a historical accident, but converting them now would rewrite whole files for
+# no benefit).  Without this, `git diff --check` reports the CR at end-of-line as
+# "trailing whitespace" on every added line in those files, which buries any real
+# whitespace problem in the noise.
+*.h  whitespace=cr-at-eol
+*.hpp whitespace=cr-at-eol
+*.cpp whitespace=cr-at-eol
+*.cs  whitespace=cr-at-eol

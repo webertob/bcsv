@@ -190,7 +190,7 @@ BCSV requires **C++20** with full library support for `<span>`, `<bit>`, `<conce
 
 ## Project Status
 
-**Current Version:** v1.5.8
+**Current Version:** v1.5.16
 
 ### Delivered
 

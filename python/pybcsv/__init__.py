@@ -125,6 +125,9 @@ __all__ = [
     "Sampler",
     "CsvWriter",
     "CsvReader",
+    # Native defaults
+    "DEFAULT_COMPRESSION_LEVEL",
+    "DEFAULT_PACKET_SIZE_KB",
     # Enums and types
     "ColumnType",
     "ColumnDefinition",

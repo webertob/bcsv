@@ -63,6 +63,57 @@ jobs:
           name: built-sdist
           path: dist/*.tar.gz
 
+  # ── Build a wheel from the sdist ────────────────────────────────────
+  # The wheel jobs below all build from the repository root, where CMake prefers
+  # the parent include/ directory. That masks a stale python/include/ — the
+  # bundled copy an sdist actually ships and a standalone build actually
+  # compiles. A header change committed without re-syncing therefore produced a
+  # green CI and an sdist that would not compile. This job is the only one that
+  # compiles what we publish to PyPI as source.
+  test-sdist:
+    needs: build-sdist
+    name: Build and test wheel from sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: '3.12'
+
+      - name: Download sdist
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: built-sdist
+          path: dist
+
+      - name: Build a wheel from the sdist alone
+        run: |
+          set -e
+          pip install build
+          mkdir -p extracted
+          tar xzf dist/*.tar.gz -C extracted --strip-components=1
+          # Built from the extracted tree only: no parent include/ to fall back
+          # on, so this compiles the bundled headers and CLI sources.
+          python -m build --wheel extracted/ --outdir wheelhouse/
+
+      - name: Install it and check it works
+        run: |
+          set -e
+          pip install pytest numpy pyarrow
+          pip install pybcsv --find-links wheelhouse/ --no-index
+          python -c "
+          import pybcsv
+          print('version', pybcsv.__version__)
+          print('default compression level', pybcsv.DEFAULT_COMPRESSION_LEVEL)
+          "
+
+      - name: Run the test suite against the sdist-built wheel
+        # Run from outside the extracted tree: sitting in it puts its pybcsv/
+        # source directory ahead of the installed wheel on sys.path, and the
+        # source directory has no compiled extension, so every test errors on
+        # import and the wheel never gets exercised.
+        working-directory: /tmp
+        run: python -m pytest "$GITHUB_WORKSPACE/extracted/tests" -q
+
   # ── Build Linux wheels ──────────────────────────────────────────────
   build-linux:
     needs: version-consistency
@@ -242,7 +293,7 @@ jobs:
   # ── Publish to PyPI (Trusted Publisher / OIDC) ──────────────────────
   publish-testpypi:
     name: Publish to TestPyPI
-    needs: [build-sdist, build-linux, build-windows, build-macos, test-wheel]
+    needs: [build-sdist, test-sdist, build-linux, build-windows, build-macos, test-wheel]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     environment: testpypi
@@ -271,7 +322,7 @@ jobs:
 
   publish-pypi:
     name: Publish to PyPI
-    needs: [build-sdist, build-linux, build-windows, build-macos, test-wheel]
+    needs: [build-sdist, test-sdist, build-linux, build-windows, build-macos, test-wheel]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     environment: pypi

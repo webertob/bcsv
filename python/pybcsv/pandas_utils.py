@@ -20,6 +20,7 @@ except ImportError:
     pd = None
 
 from . import Layout, ColumnType, Writer, Reader, FileFlags
+from . import DEFAULT_COMPRESSION_LEVEL
 
 # Import columnar I/O if available (requires numpy headers in bindings)
 try:
@@ -104,7 +105,7 @@ def _get_pandas_dtype_from_bcsv_type(col_type: ColumnType) -> Union[str, np.dtyp
 
 def write_dataframe(df,
                     filename: str,
-                    compression_level: int = 1,
+                    compression_level: int = DEFAULT_COMPRESSION_LEVEL,
                     row_codec: str = "delta",
                     type_hints: Optional[Dict[str, ColumnType]] = None,
                     strict: bool = False,
@@ -118,7 +119,8 @@ def write_dataframe(df,
     Args:
         df: The pandas DataFrame to write
         filename: Output BCSV filename (str or pathlib.Path)
-        compression_level: Compression level (0=no compression, 1-9=LZ4 compression level, default: 1)
+        compression_level: Compression level (0=no compression, 1-9=LZ4; 6+ selects
+            LZ4HC on the default batch codec, default: 6)
         row_codec: Row codec to use ('flat', 'zoh', or 'delta', default: 'delta')
         type_hints: Optional dictionary mapping column names to specific BCSV types
         strict: If True, raise ValueError when any column contains NaN/None
@@ -351,7 +353,7 @@ def to_csv(bcsv_filename: str, csv_filename: str, **csv_kwargs) -> None:
 
 def from_csv(csv_filename: str, 
             bcsv_filename: str,
-            compression_level: int = 1,
+            compression_level: int = DEFAULT_COMPRESSION_LEVEL,
             type_hints: Optional[Dict[str, ColumnType]] = None,
             **csv_kwargs) -> None:
     """
@@ -360,7 +362,8 @@ def from_csv(csv_filename: str,
     Args:
         csv_filename: Input CSV file (str or pathlib.Path)
         bcsv_filename: Output BCSV file (str or pathlib.Path)
-        compression_level: Compression level (0=no compression, 1-9=LZ4 compression level, default: 1)
+        compression_level: Compression level (0=no compression, 1-9=LZ4; 6+ selects
+            LZ4HC on the default batch codec, default: 6)
         type_hints: Optional dictionary mapping column names to specific BCSV types
         **csv_kwargs: Additional arguments passed to pandas.read_csv()
     """

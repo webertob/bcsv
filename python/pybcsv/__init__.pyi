@@ -21,6 +21,8 @@ from ._bcsv import (
     read_to_arrow as read_to_arrow,
     write_from_arrow as write_from_arrow,
     type_to_string as type_to_string,
+    DEFAULT_COMPRESSION_LEVEL as DEFAULT_COMPRESSION_LEVEL,
+    DEFAULT_PACKET_SIZE_KB as DEFAULT_PACKET_SIZE_KB,
     BOOL as BOOL,
     UINT8 as UINT8,
     UINT16 as UINT16,
@@ -43,7 +45,7 @@ _POLARS_UTILS_AVAILABLE: bool
 def write_dataframe(
     df: object,
     filename: str,
-    compression_level: int = 1,
+    compression_level: int = 6,
     row_codec: str = "delta",
     type_hints: Optional[Dict[str, ColumnType]] = None,
     strict: bool = False,
@@ -57,7 +59,7 @@ def to_csv(bcsv_filename: str, csv_filename: str, **csv_kwargs: object) -> None:
 def from_csv(
     csv_filename: str,
     bcsv_filename: str,
-    compression_level: int = 1,
+    compression_level: int = 6,
     type_hints: Optional[Dict[str, ColumnType]] = None,
     **csv_kwargs: object,
 ) -> None: ...
@@ -70,7 +72,7 @@ def write_polars(
     df: object,
     filename: str,
     row_codec: str = "delta",
-    compression_level: int = 1,
+    compression_level: int = 6,
 ) -> None: ...
 def iter_arrow_batches(
     reader: ReaderDirectAccess,

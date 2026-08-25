@@ -17,6 +17,46 @@ Versioning policy for this roadmap:
 
 ---
 
+## Release 1.5.16 — Parquet size gap, closed without touching the wire format
+
+Driven by user reports of BCSV files 30-50% larger than the equivalent Parquet. Measured
+against `~/ws/diss-recordings` (228 recordings, 300-1052 columns, 56.4 M rows, 23.2 GB of
+Parquet); a 17-file sample covering every column-count group in that corpus was 1.49x Parquet
+at the old default and swung 0.71x-2.24x per file.
+
+**The cause was the default compression level, not the layout.** `compression_level = 1` maps
+to `LZ4_compress_fast` at *acceleration 9* — the weakest setting LZ4 offers. Levels 1-5 land
+within 4% of each other on this data; the cliff is at 6, where `LZ4BlockCompressor::init()`
+switches to LZ4HC.
+
+- [x] Default compression level 1 → 6 everywhere (`bcsv::DEFAULT_COMPRESSION_LEVEL`), across
+      C++, pybcsv, the CLI tools, C# and Unity. "Everywhere" was initially overclaimed — the
+      first pass changed `Writer::open` and `BcsvWriter.Open` but left `BcsvColumns.WriteColumns`
+      (C# and Unity), `parquet2bcsv --compression-level`, and the pandas/polars wrappers writing
+      level 1, so the level you got depended on which entry point you called. Every managed
+      default now references `BcsvDefaults.CompressionLevel` and every Python default
+      `pybcsv.DEFAULT_COMPRESSION_LEVEL`, so there is no literal left to drift. Guarded by
+      `python/tests/test_default_compression_level.py` and
+      `csharp/tests/Bcsv.Tests/BcsvDefaultsTests.cs`, which assert on the *written file header*
+      rather than on source literals. **1.49x → 1.08x** on the sample, for ~48% more
+      write CPU. Both numbers are width-dependent: on the synthetic macro profiles (50-84
+      columns, mostly changing) the same switch is only -5% size for +7% write CPU, because
+      there is little long-range redundancy for LZ4HC's larger window to find. Quote the range,
+      not one number. Verified PATCH-safe against `VERSIONING.md`'s deciding question: LZ4HC emits
+      ordinary LZ4 blocks, `LZ4BlockDecompressor` is stateless, and `resolveFileCodecId()` only
+      tests `level > 0` — a **BCSV 1.5.10** binary reads the new files and renders byte-identical
+      CSV. Regression test: `BCSVTestSuite.CompressionLevels_DefaultAndLevelInvariance`.
+- [x] Type-grouped columnar fill in the Python bindings (`ColumnFillPlan` / `ColumnStorePlan` in
+      `bindings.cpp`). The old code ran a `switch` on `ColumnType` per *cell* — 132 M dispatches
+      for a 950-column, 139k-row file — which made the Arrow path 4.8x slower than the format.
+      Full Arrow scan **0.98 s → 0.46 s**; columnar write path 1.43 s → 1.17 s.
+
+Left on the table, deliberately (all need a wire-format change, so 1.6.0+): the row header is
+still 48% of the uncompressed delta output, and column-grouping the packet payload is worth a
+further 16-18% — see E1, E3 and the Packet002 note below, all now carrying measured numbers.
+
+---
+
 ## Release 1.5.10 — correctness & hardening (no format/API change)
 
 Detailed execution plan: `plan_1.5.10.md`. Items reference findings in `review_2026-07-11.md` §2.
@@ -95,10 +135,23 @@ the streaming row-wise write path intact. Order = suggested implementation order
 > survives all three. Wide-and-idle files — the 1000-channel case the design targets — pay all
 > four costs today.
 
-- [ ] E1: **Delta002 header suppression** — when a row's header equals the previous row's and no
-      payload follows, emit the ZoH-style 0-length row (or 1-bit repeat marker). Removes the
-      per-row header floor (⌈header_bits/8⌉, e.g. ~375 B/row for 1000 float channels) for idle
-      periods. New row-codec version (delta003 or flag bit); old readers reject new files cleanly.
+- [ ] E1: **Per-packet idle-column elision** (re-scoped 2026-08-25 — was "Delta002 header
+      suppression", per-row). **The original per-row form is dead: it fires on 0 rows.**
+      Measured on three real recordings from `~/ws/diss-recordings` (650, 950 and 1012 columns,
+      63k–139k rows): *not one row* had a header equal to its predecessor's, and not one row
+      was entirely ZoH. With 650+ channels something always changes, so there is never an idle
+      row to suppress. The idleness is real but it is **per column, not per row**: in the
+      950-column file **567 columns (60%) are identical in every one of 139 464 rows**, costing
+      61% of the header bits and zero payload.
+      New scope: a per-packet bitmap of columns that are entirely ZoH within that packet, whose
+      header bits are then omitted for every row in the packet (2.1 KB of bitmap for the
+      950-column file at 8192 rows/packet). Measured effect:
+      * raw row header −60% (334 → 122 B/row),
+      * **uncompressed packet mode: ~30% smaller file — this is where the value is**,
+      * LZ4/zstd-compressed mode: **~2%**, because the compressor already removes that
+        redundancy on its own.
+      So land and message it as an **embedded / packet-raw** feature, not as a size-vs-Parquet
+      lever. Still a new row-codec version (delta003 or flag bit); old readers reject cleanly.
 - [ ] E2: **Per-packet column min/max statistics** — optional footer section (or per-packet stats
       block): per numeric column min/max. Enables packet skipping for time-range and predicate
       reads (turns scan-class queries into seek-class at 8 MB granularity). Backward compatible
@@ -107,6 +160,13 @@ the streaming row-wise write path intact. Order = suggested implementation order
       compression-ratio lever (delta output is entropy-coder friendly); closes most of the
       noisy-float/string size gap vs parquet+zstd. LZ4 remains default for embedded/streaming.
       Optional dependency (CMake option, like the batch codec).
+      **Measured 2026-08-25** (delta002 output of the 950-column recording, 8 MB blocks,
+      Parquet+ZSTD = 36.87 MB): zstd-1 → 45.7 MB (1.24x), zstd-3 → 43.6 MB (1.18x),
+      zstd-9 → 40.2 MB (1.09x). For comparison BCSV's own LZ4 on the same data is 65.3 MB at
+      level 1 and 47.3 MB at level 6 (LZ4HC). **zstd-1 matches LZ4HC's ratio at roughly ten
+      times LZ4HC's compression speed** (≈680 MB/s vs ≈50–80 MB/s); it gives back decompression
+      speed (≈2 GB/s vs LZ4's ≈6–8 GB/s), which the read profile shows is not on the critical
+      path — full-scan decode is identical at level 1, level 9 and uncompressed.
 - [ ] E4: **Per-packet string dictionary** (was parking-lot item 27) — store each distinct string
       once per packet, reference by integer ID. Closes the 2–3× string-heavy size gap; speeds
       string reads. Synergy: pybcsv Arrow export can emit dictionary arrays (zero-copy
@@ -154,9 +214,15 @@ the streaming row-wise write path intact. Order = suggested implementation order
       csv2bcsv FLOAT16/FLOAT128 decimal-place heuristics were removed in the 2026-07 tools
       rework (they were dead code — `BCSV_HAS_FLOAT16/128` was never defined) — the new
       inference is round-trip-exact and caps at FLOAT/DOUBLE until these types land.
-      **Confirmed in scope for 1.6.0** (see the note at the top of this section). Notes for the
-      design: FP16 is `std::float16_t` where available with a soft-float fallback for the embedded
-      targets; FP8 has two competing IEEE-adjacent layouts (E4M3 / E5M2) and picking one is a
+      **Confirmed in scope for 1.6.0** (see the note at the top of this section).
+      **Measured 2026-08-25 — FP16 is not a size lever on wide sensor data, so do not scope it
+      as one.** Across three real recordings, the float columns that survive an FP16 round-trip
+      *exactly* hold only **2.6%, 16.5% and 3.0% of the delta payload** respectively: they are
+      overwhelmingly the constant channels, which already cost zero payload. Halving those bytes
+      moves under 4% of the file. FP16/FP8 remain worth having for callers who *know* their data
+      is low-precision (raw IMU counts and similar) — just not as part of the size story.
+      Notes for the design: FP16 is `std::float16_t` where available with a soft-float fallback
+      for the embedded targets; FP8 has two competing IEEE-adjacent layouts (E4M3 / E5M2) and picking one is a
       wire-format commitment, so decide it explicitly rather than by implementation accident.
       Both need `ColumnType` values, delta002 type-grouped loop instantiations, and a row in the
       `nan_inf_test` matrix — the NaN/Inf guarantee must hold for them too.
@@ -169,6 +235,12 @@ the streaming row-wise write path intact. Order = suggested implementation order
         a FileFlags bit, or factor the common dotted prefixes into a small prefix table.
         Measure first on a real 1052-column layout — if the win is under a few KB it is not worth
         a flag bit.
+        **Measured 2026-08-25, on exactly that layout:** the name block is **29 092 B**, which
+        compresses to **6 697 B (LZ4)** or **2 102 B (zstd)** — a best case of ~27 KB saved
+        against a 42.0 MB file, i.e. **0.06%**. By the criterion this item set itself, the
+        file-header half does not earn a flag bit *for size*. It may still be worth doing for
+        open latency on very small files or when opening thousands of files, which is a
+        different argument and should be made on its own numbers.
       * **Row header** — the per-row bitfield floor that E1 attacks by suppression. E1 removes it
         for *idle* rows; it does not shrink it for active ones. If E1's measurements show the
         floor still dominating on sparse-but-not-idle data, the follow-up is a narrower encoding
@@ -183,7 +255,19 @@ Semantic versioning applies to the library API; all items above are additive, so
 
 - **Packet002 hybrid row-columnar packets**: the batch codec already buffers full packets;
   transpose to per-column chunklets at flush (per-column encodings: BSS for floats, dictionary
-  for strings, RLE-bitpacked bools; per-chunklet offset table). Streaming `writeRow()`, crash
+  for strings, RLE-bitpacked bools; per-chunklet offset table).
+  **Measured 2026-08-25** — simulated by transposing real delta002 output. Grouping the payload
+  by column (`[header block][payload block, column-major]`) is worth a further **16–18% on top
+  of zstd**: on the 950-column recording zstd-3 goes 1.18x → 0.85x of Parquet, and zstd-1
+  1.24x → 0.97x. Two findings that should shape the design:
+  * **No offset table is needed for the payload.** The header block already determines every
+    column's payload length, so per-column offsets are recovered by summing the codes. (An
+    offset table is still needed if the *header* is transposed too, which is what buys real
+    sparse-column reads.)
+  * **Byte-stream-split hurts here.** BSS on top of column grouping made the 650- and
+    950-column files *larger* (0.67x → 0.73x and 0.88x → 0.95x at zstd-3); delta002's XOR
+    deltas are already VLE-stripped to variable length, so BSS misaligns them. Do not port
+    Parquet's BSS reflexively — measure per encoding. Streaming `writeRow()`, crash
   resilience, and the packet index are untouched. This is the only item that closes the measured
   10–50× sparse-column read gap vs Parquet, and it unlocks SIMD type-homogeneous decode and
   parallel reads. Bundle with: nulls as a first-class concept (optional), formal endianness

@@ -375,11 +375,26 @@ reader.open("data.bcsv")  # Decompression automatic
 reader.Open("data.bcsv");  // Decompression automatic
 ```
 
-**Compression levels:**
-- **0**: No compression (fastest write)
-- **1-3**: Fast compression
-- **4-6**: Balanced (recommended)
-- **7-9**: Maximum compression (slower write)
+**Compression levels** (default: **6**):
+
+`level` is not a smooth dial — it selects between two LZ4 compressors, and which
+one depends on the file codec:
+
+| level | `packet_lz4_batch` (default codec) | `packet_lz4`, `stream_lz4` |
+|-------|-----------------------------------|----------------------------|
+| 0     | no compression                    | no compression             |
+| 1-5   | `LZ4_compress_fast`, acceleration `10 - level` | `LZ4_compress_fast`, acceleration `10 - level` |
+| 6-9   | **LZ4HC**, hc level `level + 3`   | still `LZ4_compress_fast` (per-row blocks are too small for HC) |
+
+So on the default codec the step from 5 to 6 is a change of compressor, not an
+increment. Measured on wide sensor recordings (650-1052 columns): levels 1-5 land
+within 4% of each other, level 6 is ~27% smaller for ~50-70% more write CPU, and
+levels 7-9 add well under 1% for substantially more CPU again.
+
+The level is written into the file header but a reader only tests `level > 0` to
+decide whether the payload is compressed. LZ4HC emits ordinary LZ4 blocks, so
+**files written at any level are readable by every 1.5.x reader** — the level is a
+writer-side choice with no wire-format consequence.
 
 ---
 

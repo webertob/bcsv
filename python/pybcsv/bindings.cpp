@@ -13,6 +13,7 @@
 #include <nanobind/stl/optional.h>
 #include <nanobind/ndarray.h>
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cstring>
 #include <limits>
@@ -253,28 +254,64 @@ namespace {
         }
     }
 
-    template<typename RowType>
-    inline void fill_numpy_cell(const RowType& row, size_t col,
-                                bcsv::ColumnType ct, void* buf, size_t row_idx) {
-        switch (ct) {
-#define X(T, E) \
-    case E: static_cast<T*>(buf)[row_idx] = row.template get<T>(col); break;
-            BCSV_FOR_EACH_NUMERIC_TYPE(X)
-#undef X
-            default: break; // strings handled separately
+    // ── Type-grouped columnar fill ────────────────────────────────────
+    //
+    // Transposing a row-wise file into column-major buffers used to run
+    // a per-cell helper that switched over ColumnType for every single
+    // value.  On a wide file that is the dominant cost -- a 950-column,
+    // 139k-row recording is 132 M switch dispatches, and because the types are
+    // interleaved within each row the indirect branch mispredicts constantly.
+    //
+    // ColumnFillPlan hoists the dispatch out of the row loop: columns are
+    // bucketed by type once per batch, then each bucket is drained by a loop
+    // with a compile-time T, so the per-cell work is a typed load and a typed
+    // store with a fully predictable branch.  This mirrors what the row codecs
+    // already do with forEachScalarType (see row_codec_delta002.hpp).
+    struct ColumnFillPlan {
+        struct Entry {
+            size_t src;   ///< column index in the source row
+            void*  dst;   ///< base of that column's output buffer
+        };
+        /// Indexed by static_cast<size_t>(ColumnType); STRING is left empty and
+        /// handled by the caller, which owns the string storage.
+        std::array<std::vector<Entry>, 12> by_type{};
+
+        void add(bcsv::ColumnType ct, size_t src, void* dst) {
+            by_type[static_cast<size_t>(ct)].push_back(Entry{src, dst});
         }
-    }
+    };
 
     template<typename RowType>
-    inline void set_from_numpy(RowType& row, size_t col,
-                               bcsv::ColumnType ct, const void* buf, size_t row_idx) {
-        switch (ct) {
-#define X(T, E) \
-    case E: row.set(col, static_cast<const T*>(buf)[row_idx]); break;
-            BCSV_FOR_EACH_NUMERIC_TYPE(X)
+    BCSV_ALWAYS_INLINE void fill_row_grouped(const ColumnFillPlan& plan,
+                                             const RowType& row, size_t row_idx) {
+#define X(T, E)                                                              \
+        for (const auto& e : plan.by_type[static_cast<size_t>(E)])           \
+            static_cast<T*>(e.dst)[row_idx] = row.template get<T>(e.src);
+        BCSV_FOR_EACH_NUMERIC_TYPE(X)
 #undef X
-            default: break; // strings handled separately
+    }
+
+    /// Write-direction mirror of ColumnFillPlan: same reasoning, same shape.
+    struct ColumnStorePlan {
+        struct Entry {
+            size_t      dst;   ///< column index in the destination row
+            const void* src;   ///< base of that column's input buffer
+        };
+        std::array<std::vector<Entry>, 12> by_type{};
+
+        void add(bcsv::ColumnType ct, size_t dst, const void* src) {
+            by_type[static_cast<size_t>(ct)].push_back(Entry{dst, src});
         }
+    };
+
+    template<typename RowType>
+    BCSV_ALWAYS_INLINE void store_row_grouped(const ColumnStorePlan& plan,
+                                              RowType& row, size_t row_idx) {
+#define X(T, E)                                                              \
+        for (const auto& e : plan.by_type[static_cast<size_t>(E)])           \
+            row.set(e.dst, static_cast<const T*>(e.src)[row_idx]);
+        BCSV_FOR_EACH_NUMERIC_TYPE(X)
+#undef X
     }
 
     // ── Shared columnar write loop ────────────────────────────────────
@@ -296,15 +333,17 @@ namespace {
             nb::gil_scoped_release release;
             if (!w.open(filename, true, compression_level, bcsv::DEFAULT_PACKET_SIZE_KB, flags))
                 throw std::runtime_error("Failed to open file for writing: " + filename);
+            ColumnStorePlan plan;
+            std::vector<size_t> str_cols;
+            for (size_t c = 0; c < num_cols; ++c) {
+                if (is_string[c]) str_cols.push_back(c);
+                else              plan.add(col_types[c], c, bufs[c]);
+            }
             for (size_t r = 0; r < num_rows; ++r) {
                 auto& row = w.row();
-                for (size_t c = 0; c < num_cols; ++c) {
-                    if (is_string[c]) {
-                        row.set(c, string_cols[c][r]);
-                    } else {
-                        set_from_numpy(row, c, col_types[c], bufs[c], r);
-                    }
-                }
+                store_row_grouped(plan, row, r);
+                for (size_t c : str_cols)
+                    row.set(c, string_cols[c][r]);
                 w.writeRow();
             }
             w.close();
@@ -643,6 +682,13 @@ namespace {
 NB_MODULE(_bcsv, m) {
     m.doc() = "Python bindings for the BCSV (Binary CSV) library";
 
+    // Native defaults, exposed so Python callers (and the CLI entry points in
+    // parquet_utils.py) can reference one source of truth instead of repeating
+    // the literal.  Repeated literals are how parquet2bcsv's --compression-level
+    // ended up defaulting to 1 while parquet_to_bcsv() defaulted to 6.
+    m.attr("DEFAULT_COMPRESSION_LEVEL") = bcsv::DEFAULT_COMPRESSION_LEVEL;
+    m.attr("DEFAULT_PACKET_SIZE_KB") = bcsv::DEFAULT_PACKET_SIZE_KB;
+
     // ColumnType enum
     nb::enum_<bcsv::ColumnType>(m, "ColumnType")
         .value("BOOL", bcsv::ColumnType::BOOL)
@@ -738,7 +784,7 @@ NB_MODULE(_bcsv, m) {
                 throw std::runtime_error("Failed to open file for writing: " + filename +
                                          (err.empty() ? "" : " (" + err + ")"));
             }
-            return success; }, nb::arg("filename"), nb::arg("overwrite") = false, nb::arg("compression_level") = 1, nb::arg("block_size_kb") = bcsv::DEFAULT_PACKET_SIZE_KB, nb::arg("flags") = DEFAULT_FILE_FLAGS)
+            return success; }, nb::arg("filename"), nb::arg("overwrite") = false, nb::arg("compression_level") = bcsv::DEFAULT_COMPRESSION_LEVEL, nb::arg("block_size_kb") = bcsv::DEFAULT_PACKET_SIZE_KB, nb::arg("flags") = DEFAULT_FILE_FLAGS)
         .def("write_row", [](PyWriter& pw, const nb::list& values) {
             const auto& layout = pw.visit([](auto& w) -> const bcsv::Layout& { return w.layout(); });
             if (values.size() != layout.columnCount())
@@ -834,14 +880,17 @@ NB_MODULE(_bcsv, m) {
                     nb::gil_scoped_release rel;
                     pw.visit([&bufs, &string_cols, &col_types, &is_string,
                               out_cols, num_rows](auto& w) {
+                        ColumnStorePlan plan;
+                        std::vector<size_t> str_cols;
+                        for (size_t c = 0; c < out_cols; ++c) {
+                            if (is_string[c]) str_cols.push_back(c);
+                            else              plan.add(col_types[c], c, bufs[c]);
+                        }
                         auto& row = w.row();
                         for (int64_t r = 0; r < num_rows; ++r) {
-                            for (size_t c = 0; c < out_cols; ++c) {
-                                if (is_string[c])
-                                    row.set(c, string_cols[c][r]);
-                                else
-                                    set_from_numpy(row, c, col_types[c], bufs[c], r);
-                            }
+                            store_row_grouped(plan, row, static_cast<size_t>(r));
+                            for (size_t c : str_cols)
+                                row.set(c, string_cols[c][r]);
                             w.writeRow();
                         }
                     });
@@ -932,19 +981,23 @@ NB_MODULE(_bcsv, m) {
                 }
             }
 
+            // Bucket the numeric columns by type once (see ColumnFillPlan).
+            ColumnFillPlan plan;
+            std::vector<size_t> str_cols;
+            for (size_t c = 0; c < num_cols; ++c) {
+                if (is_str[c]) str_cols.push_back(c);
+                else           plan.add(col_types[c], c, bufs[c]);
+            }
+
             // Read loop under GIL release
             size_t rows_read = 0;
             {
                 nb::gil_scoped_release release;
                 while (rows_read < batch_size && r.readNext()) {
                     const auto& row = r.row();
-                    for (size_t c = 0; c < num_cols; ++c) {
-                        if (is_str[c]) {
-                            string_cols[c].emplace_back(row.template get<std::string>(c));
-                        } else {
-                            fill_numpy_cell(row, c, col_types[c], bufs[c], rows_read);
-                        }
-                    }
+                    fill_row_grouped(plan, row, rows_read);
+                    for (size_t c : str_cols)
+                        string_cols[c].emplace_back(row.template get<std::string>(c));
                     ++rows_read;
                 }
             }
@@ -1105,19 +1158,26 @@ NB_MODULE(_bcsv, m) {
                         numeric_bufs[c].resize(batch_size * bcsv_type_byte_width(col_types[c]));
                 }
 
+                // Bucket the numeric columns by type once, so the row loop below
+                // costs a typed load + store per cell instead of a switch.
+                ColumnFillPlan plan;
+                std::vector<size_t> str_cols;
+                for (size_t c = 0; c < out_cols; ++c) {
+                    if (col_types[c] == bcsv::ColumnType::STRING)
+                        str_cols.push_back(c);
+                    else
+                        plan.add(col_types[c], col_indices[c], numeric_bufs[c].data());
+                }
+
                 size_t actual = 0;
                 {
                     nb::gil_scoped_release rel;
                     for (size_t ri = 0; ri < batch_size; ++ri) {
                         if (!r.read(start_row + ri)) break;
                         const auto& row = r.row();
-                        for (size_t c = 0; c < out_cols; ++c) {
-                            if (col_types[c] == bcsv::ColumnType::STRING)
-                                string_bufs[c].emplace_back(row.template get<std::string>(col_indices[c]));
-                            else
-                                fill_numpy_cell(row, col_indices[c], col_types[c],
-                                                numeric_bufs[c].data(), ri);
-                        }
+                        fill_row_grouped(plan, row, ri);
+                        for (size_t c : str_cols)
+                            string_bufs[c].emplace_back(row.template get<std::string>(col_indices[c]));
                         ++actual;
                     }
                 }
@@ -1261,19 +1321,23 @@ NB_MODULE(_bcsv, m) {
             }
         }
 
+        // Bucket the numeric columns by type once (see ColumnFillPlan).
+        ColumnFillPlan plan;
+        std::vector<size_t> str_cols;
+        for (size_t c = 0; c < num_cols; ++c) {
+            if (is_string[c]) str_cols.push_back(c);
+            else              plan.add(col_types[c], c, bufs[c]);
+        }
+
         // Phase 3: Entire read loop under GIL release — strings stay in C++
         {
             nb::gil_scoped_release release;
             size_t row_idx = 0;
             while (reader.readNext()) {
                 const auto& row = reader.row();
-                for (size_t c = 0; c < num_cols; ++c) {
-                    if (is_string[c]) {
-                        string_cols[c].emplace_back(row.template get<std::string>(c));
-                    } else {
-                        fill_numpy_cell(row, c, col_types[c], bufs[c], row_idx);
-                    }
-                }
+                fill_row_grouped(plan, row, row_idx);
+                for (size_t c : str_cols)
+                    string_cols[c].emplace_back(row.template get<std::string>(c));
                 ++row_idx;
             }
             reader.close();
@@ -1352,7 +1416,7 @@ NB_MODULE(_bcsv, m) {
         // Write via shared helper
         write_columnar_core(layout, row_codec, filename, num_rows, num_cols,
                             bufs, string_cols, is_string, col_types,
-                            compression_level, flags); }, nb::arg("filename"), nb::arg("columns"), nb::arg("col_order"), nb::arg("col_types"), nb::arg("row_codec") = "delta", nb::arg("compression_level") = 1, nb::arg("flags") = DEFAULT_FILE_FLAGS, "Write a dict of numpy arrays/lists to a BCSV file");
+                            compression_level, flags); }, nb::arg("filename"), nb::arg("columns"), nb::arg("col_order"), nb::arg("col_types"), nb::arg("row_codec") = "delta", nb::arg("compression_level") = bcsv::DEFAULT_COMPRESSION_LEVEL, nb::arg("flags") = DEFAULT_FILE_FLAGS, "Write a dict of numpy arrays/lists to a BCSV file");
 
     // ── Arrow C Data Interface: read_to_arrow ──────────────────────────
 
@@ -1422,21 +1486,26 @@ NB_MODULE(_bcsv, m) {
                         numeric_bufs[c].resize(batch_rows * bcsv_type_byte_width(col_types[c]));
                 }
 
+                // Bucket the numeric columns by type once (see ColumnFillPlan).
+                // Rebuilt per chunk because the buffers are reallocated each time.
+                ColumnFillPlan plan;
+                std::vector<size_t> str_cols;
+                for (size_t c = 0; c < out_cols; ++c) {
+                    if (col_types[c] == bcsv::ColumnType::STRING)
+                        str_cols.push_back(c);
+                    else
+                        plan.add(col_types[c], col_indices[c], numeric_bufs[c].data());
+                }
+
                 // Read chunk under GIL release
                 size_t actual_rows = 0;
                 {
                     nb::gil_scoped_release release;
                     for (size_t r = 0; r < batch_rows && reader.readNext(); ++r) {
                         const auto& row = reader.row();
-                        for (size_t c = 0; c < out_cols; ++c) {
-                            size_t src_col = col_indices[c];
-                            if (col_types[c] == bcsv::ColumnType::STRING) {
-                                string_bufs[c].emplace_back(row.template get<std::string>(src_col));
-                            } else {
-                                fill_numpy_cell(row, src_col, col_types[c],
-                                                numeric_bufs[c].data(), r);
-                            }
-                        }
+                        fill_row_grouped(plan, row, r);
+                        for (size_t c : str_cols)
+                            string_bufs[c].emplace_back(row.template get<std::string>(col_indices[c]));
                         ++actual_rows;
                     }
                 }
@@ -1468,20 +1537,24 @@ NB_MODULE(_bcsv, m) {
                     numeric_bufs[c].resize(total_rows * bcsv_type_byte_width(col_types[c]));
             }
 
+            // Bucket the numeric columns by type once (see ColumnFillPlan).
+            ColumnFillPlan plan;
+            std::vector<size_t> str_cols;
+            for (size_t c = 0; c < out_cols; ++c) {
+                if (col_types[c] == bcsv::ColumnType::STRING)
+                    str_cols.push_back(c);
+                else
+                    plan.add(col_types[c], col_indices[c], numeric_bufs[c].data());
+            }
+
             size_t row_idx = 0;
             {
                 nb::gil_scoped_release release;
                 while (reader.readNext()) {
                     const auto& row = reader.row();
-                    for (size_t c = 0; c < out_cols; ++c) {
-                        size_t src_col = col_indices[c];
-                        if (col_types[c] == bcsv::ColumnType::STRING) {
-                            string_bufs[c].emplace_back(row.template get<std::string>(src_col));
-                        } else {
-                            fill_numpy_cell(row, src_col, col_types[c],
-                                            numeric_bufs[c].data(), row_idx);
-                        }
-                    }
+                    fill_row_grouped(plan, row, row_idx);
+                    for (size_t c : str_cols)
+                        string_bufs[c].emplace_back(row.template get<std::string>(col_indices[c]));
                     ++row_idx;
                 }
                 reader.close();
@@ -1591,5 +1664,5 @@ NB_MODULE(_bcsv, m) {
                             static_cast<size_t>(num_rows),
                             static_cast<size_t>(num_cols),
                             bufs, string_cols, is_string, col_types,
-                             compression_level, flags); }, nb::arg("filename"), nb::arg("table"), nb::arg("row_codec") = "delta", nb::arg("compression_level") = 1, nb::arg("flags") = DEFAULT_FILE_FLAGS, "Write a pyarrow Table/RecordBatch to a BCSV file");
+                             compression_level, flags); }, nb::arg("filename"), nb::arg("table"), nb::arg("row_codec") = "delta", nb::arg("compression_level") = bcsv::DEFAULT_COMPRESSION_LEVEL, nb::arg("flags") = DEFAULT_FILE_FLAGS, "Write a pyarrow Table/RecordBatch to a BCSV file");
 }

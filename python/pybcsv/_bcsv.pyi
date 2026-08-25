@@ -4,6 +4,12 @@ from collections.abc import Sequence
 import enum
 from typing import overload
 
+DEFAULT_COMPRESSION_LEVEL: int
+"""Default LZ4 compression level used by every writer entry point."""
+
+DEFAULT_PACKET_SIZE_KB: int
+"""Default packet/block size in KiB."""
+
 class ColumnType(enum.Enum):
     BOOL = 0
 
@@ -121,7 +127,7 @@ class Writer:
         self,
         filename: str,
         overwrite: bool = False,
-        compression_level: int = 1,
+        compression_level: int = 6,
         block_size_kb: int = 8192,
         flags: FileFlags = FileFlags.BATCH_COMPRESS,
     ) -> bool: ...
@@ -307,7 +313,7 @@ def write_columns(
     col_order: list,
     col_types: list,
     row_codec: str = "delta",
-    compression_level: int = 1,
+    compression_level: int = 6,
     flags: FileFlags = FileFlags.BATCH_COMPRESS,
 ) -> None:
     """Write a dict of numpy arrays/lists to a BCSV file"""
@@ -324,7 +330,7 @@ def write_from_arrow(
     filename: str,
     table: object,
     row_codec: str = "delta",
-    compression_level: int = 1,
+    compression_level: int = 6,
     flags: FileFlags = FileFlags.BATCH_COMPRESS,
 ) -> None:
     """Write a pyarrow Table/RecordBatch to a BCSV file"""

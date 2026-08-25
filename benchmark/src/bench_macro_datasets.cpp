@@ -83,6 +83,12 @@ enum class CodecSelection { All, Dense, ZoH, Delta, Primary };
 struct ModeSelection {
     StorageSelection storage = StorageSelection::All;
     CodecSelection codec = CodecSelection::All;
+    // Deliberately pinned to 1, NOT bcsv::DEFAULT_COMPRESSION_LEVEL.  Every stored
+    // baseline under benchmark/results/ was produced at level 1; tracking the library
+    // default would silently make new runs incomparable with all of them (level 6 is
+    // LZ4HC, roughly a third the write throughput and ~27% smaller output).  Change
+    // this only together with a re-baseline, and pass --compression=N to measure
+    // what users actually get from the default.
     size_t compressionLevel = 1;
 };
 

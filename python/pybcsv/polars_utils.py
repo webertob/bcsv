@@ -11,8 +11,10 @@ import os
 
 try:
     from ._bcsv import read_to_arrow as _read_to_arrow, write_from_arrow as _write_from_arrow
+    from ._bcsv import DEFAULT_COMPRESSION_LEVEL
 except ImportError:
     from _bcsv import read_to_arrow as _read_to_arrow, write_from_arrow as _write_from_arrow
+    from _bcsv import DEFAULT_COMPRESSION_LEVEL
 
 import polars as pl
 
@@ -34,7 +36,7 @@ def read_polars(filename: str, columns=None, chunk_size: int = 0):
 
 
 def write_polars(df, filename: str, row_codec: str = "delta",
-                 compression_level: int = 1):
+                 compression_level: int = DEFAULT_COMPRESSION_LEVEL):
     """Write a Polars DataFrame to a BCSV file via Arrow zero-copy.
 
     Args:

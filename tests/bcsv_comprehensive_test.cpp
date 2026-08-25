@@ -2110,6 +2110,74 @@ TEST_F(BCSVTestSuite, CompressionLevels_CrossCompatibility) {
     }
 }
 
+// The compression level is a writer-side choice with no wire-format consequence:
+// LZ4HC (levels 6-9) emits ordinary LZ4 blocks and LZ4BlockDecompressor reads
+// both kinds without being told which, while a reader only ever tests
+// `level > 0` (see resolveFileCodecId).  That property is what lets the default
+// level change inside a PATCH release, so pin it down explicitly: every level
+// must decode to byte-identical rows, across the fast/HC boundary at 5->6.
+TEST_F(BCSVTestSuite, CompressionLevels_DefaultAndLevelInvariance) {
+    bcsv::Layout layout;
+    layout.addColumn({"id",    bcsv::ColumnType::UINT32});
+    layout.addColumn({"label", bcsv::ColumnType::STRING});
+    layout.addColumn({"value", bcsv::ColumnType::DOUBLE});
+
+    const size_t test_rows = 500;
+    auto label = [](size_t i) { return "row_" + std::to_string(i % 7); };
+    auto value = [](size_t i) { return static_cast<double>(i) * 0.125; };
+
+    // The default must be DEFAULT_COMPRESSION_LEVEL, not whatever open() happens
+    // to inherit -- a silent revert here is exactly the regression to catch.
+    {
+        bcsv::Writer<bcsv::Layout> writer(layout);
+        const std::string          f = test_dir_ + "/level_default.bcsv";
+        ASSERT_TRUE(writer.open(f, true)) << "default open() failed";
+        EXPECT_EQ(writer.compressionLevel(), bcsv::DEFAULT_COMPRESSION_LEVEL)
+            << "Writer::open() default compression level drifted";
+        writer.close();
+
+        bcsv::Reader<bcsv::Layout> reader;
+        ASSERT_TRUE(reader.open(f));
+        EXPECT_EQ(reader.compressionLevel(), bcsv::DEFAULT_COMPRESSION_LEVEL)
+            << "default level did not round-trip through the file header";
+        reader.close();
+    }
+
+    for (size_t level = 0; level <= 9; ++level) {
+        const std::string f = test_dir_ + "/level_inv_" + std::to_string(level) + ".bcsv";
+        {
+            bcsv::Writer<bcsv::Layout> writer(layout);
+            ASSERT_TRUE(writer.open(f, true, level)) << "open failed at level " << level;
+            EXPECT_EQ(writer.compressionLevel(), level) << "level not stored at " << level;
+            for (size_t i = 0; i < test_rows; ++i) {
+                writer.row().set(0, static_cast<uint32_t>(i));
+                writer.row().set(1, label(i));
+                writer.row().set(2, value(i));
+                writer.writeRow();
+            }
+            writer.close();
+        }
+        {
+            bcsv::Reader<bcsv::Layout> reader;
+            ASSERT_TRUE(reader.open(f)) << "reopen failed at level " << level;
+            EXPECT_EQ(reader.compressionLevel(), level);
+            size_t count = 0;
+            while (reader.readNext()) {
+                const auto& row = reader.row();
+                ASSERT_EQ(row.get<uint32_t>(0), static_cast<uint32_t>(count))
+                    << "id mismatch at row " << count << ", level " << level;
+                ASSERT_EQ(row.get<std::string>(1), label(count))
+                    << "label mismatch at row " << count << ", level " << level;
+                ASSERT_DOUBLE_EQ(row.get<double>(2), value(count))
+                    << "value mismatch at row " << count << ", level " << level;
+                ++count;
+            }
+            reader.close();
+            EXPECT_EQ(count, test_rows) << "row count mismatch at level " << level;
+        }
+    }
+}
+
 TEST_F(BCSVTestSuite, CompressionLevels_ValidationAndRestrictions) {
     std::cout << "\nTesting compression level validation and restrictions..." << std::endl;
 

@@ -399,8 +399,8 @@ bcsvSampler -c 'X[0][1] > 0' -s 'X[0][0], X[0][1]' data.bcsv out.bcsv  # Both
 | `-c, --conditional EXPR` | Row filter (boolean expression) | none (pass all) |
 | `-s, --selection EXPR` | Column projection (comma-separated) | none (all) |
 | `-m, --mode MODE` | Boundary mode: `truncate` or `expand` | `truncate` |
-| `--compression-level N` | LZ4 compression level | `1` |
-| `--block-size N` | Block size in KB | `64` |
+| `--compression-level N` | LZ4 compression level (6+ = LZ4HC on the batch codec) | `6` |
+| `--block-size N` | Block size in KB | `8192` |
 | `-f, --overwrite` | Overwrite output file | |
 | `--disassemble` | Print compiled bytecode and exit | |
 | `-v, --verbose` | Verbose progress output | |
@@ -457,8 +457,8 @@ bcsvGenerator -p weather_timeseries -d random -o stress.bcsv  # Random (stress t
 | `-d, --data-mode MODE` | `timeseries` or `random` | `timeseries` |
 | `--file-codec CODEC` | File codec (see below) | `packet_lz4_batch` |
 | `--row-codec CODEC` | Row codec: `delta`, `zoh`, `flat` | `delta` |
-| `--compression-level N` | LZ4 compression level | `1` |
-| `--block-size N` | Block size in KB | `64` |
+| `--compression-level N` | LZ4 compression level (6+ = LZ4HC on the batch codec) | `6` |
+| `--block-size N` | Block size in KB | `8192` |
 | `-f, --overwrite` | Overwrite output file | |
 | `-v, --verbose` | Verbose output | |
 | `--list` | List all profiles and exit | |

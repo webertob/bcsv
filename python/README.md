@@ -226,8 +226,15 @@ columns using dotted (`location.lat`) and bracketed (`vals[0]`) names;
   dictionaries) are rejected with a clear error.
 - **Column names ending in `_`** are rejected (the unflatten escape protocol
   reserves trailing underscores).
-- **Colliding names:** if a literal dotted column (`a.b`) and a struct path both
-  map to the same nested path, `--unflatten` fails loudly; use `--no-unflatten`.
+- **Lists of structs** round-trip: `FixedSizeList<struct<x, y>>` flattens to
+  `field[0].x`, `field[0].y`, `field[1].x`, … and `--unflatten` rebuilds the
+  nested type, including structs and fixed-size lists nested inside the element.
+- **Ambiguous names:** `--unflatten` fails loudly rather than guessing when the
+  flat names cannot describe one nested schema — a literal dotted column (`a.b`)
+  colliding with a struct path, a name used as both a leaf and a parent (`a` plus
+  `a.b`), a name used as both a list and a struct (`a[0]` plus `a.b`), list
+  indices with a gap (`x[0]` and `x[2]` but no `x[1]`), or list elements that
+  disagree on type. Use `--no-unflatten` to keep the flat columns.
 
 ## Available Types
 
@@ -269,7 +276,7 @@ layout[i]             # ColumnDefinition at index i
 ```python
 writer = pybcsv.Writer(layout: Layout, row_codec: str = "delta")
 writer.open(filename: str, overwrite: bool = False,
-            compression_level: int = 1, block_size_kb: int = 8192,
+            compression_level: int = 6, block_size_kb: int = 8192,
             flags: FileFlags = FileFlags.BATCH_COMPRESS)  # raises RuntimeError on failure
 writer.write_row(values: list)
 writer.write_rows(rows: list[list])     # batch write
@@ -398,19 +405,19 @@ flags = pybcsv.FileFlags.BATCH_COMPRESS | pybcsv.FileFlags.NO_FILE_INDEX
 ```python
 # Pandas integration (requires pandas)
 pybcsv.write_dataframe(df, filename,
-                       compression_level=1,
+                       compression_level=6,
                        row_codec="delta",
                        type_hints=None)  # dict[str, ColumnType]
 pybcsv.read_dataframe(filename, columns=None)  # -> pd.DataFrame
 
 # CSV conversion (requires pandas)
-pybcsv.from_csv(csv_file, bcsv_file, compression_level=1, type_hints=None)
+pybcsv.from_csv(csv_file, bcsv_file, compression_level=6, type_hints=None)
 pybcsv.to_csv(bcsv_file, csv_file)
 
 # Columnar I/O (numpy arrays)
 pybcsv.read_columns(filename) -> dict[str, np.ndarray | list[str]]
 pybcsv.write_columns(filename, columns, col_order, col_types,
-                     row_codec="delta", compression_level=1)
+                     row_codec="delta", compression_level=6)
 # Type utilities
 pybcsv.type_to_string(column_type) -> str
 ```

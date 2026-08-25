@@ -44,7 +44,8 @@ public sealed class BcsvWriter : IDisposable
     }
 
     public void Open(string filename, bool overwrite = false,
-                     int compression = 1, int blockSizeKb = 8192,
+                     int compression = BcsvDefaults.CompressionLevel,
+                     int blockSizeKb = BcsvDefaults.BlockSizeKb,
                      FileFlags flags = FileFlags.BatchCompress)
     {
         if (!NativeMethods.bcsv_writer_open(_handle, filename, overwrite,
@@ -54,7 +55,8 @@ public sealed class BcsvWriter : IDisposable
 
     /// <summary>Tries to open a file. Returns false on failure (no exception).</summary>
     public bool TryOpen(string filename, bool overwrite = false,
-                        int compression = 1, int blockSizeKb = 8192,
+                        int compression = BcsvDefaults.CompressionLevel,
+                        int blockSizeKb = BcsvDefaults.BlockSizeKb,
                         FileFlags flags = FileFlags.BatchCompress)
     {
         return NativeMethods.bcsv_writer_open(_handle, filename, overwrite,

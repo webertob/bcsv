@@ -377,6 +377,17 @@ def _strip_escape_suffixes(parts: List[Union[str, int]]) -> List[Union[str, int]
     return [p.rstrip("_") if isinstance(p, str) else p for p in parts]
 
 
+def _render_path(parts: List[Union[str, int]]) -> str:
+    """Render decomposed path components back into a flat column name."""
+    out = ""
+    for part in parts:
+        if isinstance(part, int):
+            out += f"[{part}]"
+        else:
+            out = f"{out}.{part}" if out else part
+    return out
+
+
 def _find_flat_column(col_map: dict, lookup_key: str) -> Optional[pa.Array]:
     """Look up a column in col_map by exact name."""
     return col_map.get(lookup_key)
@@ -397,17 +408,87 @@ def _build_trie(names: List[str], types: List[pa.DataType]) -> _TrieNode:
     """
     root: _TrieNode = {}
 
+    def _conflict(name: str, prefix: List[Union[str, int]]) -> ValueError:
+        path = _render_path(prefix)
+        return ValueError(
+            f"Cannot unflatten: column '{name}' requires '{path}' to be both a "
+            "leaf column and a nested parent. Re-run with --no-unflatten to "
+            "keep the flat columns."
+        )
+
     for name, arrow_type in zip(names, types):
         parts = _decompose_name(name)
         stripped = _strip_escape_suffixes(parts)
         node = root
-        for part in stripped[:-1]:
+        for depth, part in enumerate(stripped[:-1]):
             if part not in node:
                 node[part] = {}
+            elif not isinstance(node[part], dict):
+                # 'a' already holds a type and 'a.b' wants to descend into it.
+                raise _conflict(name, stripped[: depth + 1])
             node = node[part]  # type: ignore[assignment]
-        node[stripped[-1]] = arrow_type  # type: ignore[index]
+        leaf = stripped[-1]
+        if isinstance(node.get(leaf), dict):
+            # 'a.b' already built a subtree and 'a' wants the same slot; keeping
+            # either one silently discards the other.
+            raise _conflict(name, stripped)
+        node[leaf] = arrow_type  # type: ignore[index]
 
     return root
+
+
+def _trie_node_to_type(node: object, path: str) -> pa.DataType:
+    """Convert one trie node into the Arrow type it describes.
+
+    A node is either a pa.DataType (leaf column), a dict with str keys
+    (struct), or a dict with int keys (fixed-size list).  List elements are
+    built by recursing, so a list of structs reconstructs as
+    fixed_size_list<struct<...>> rather than collapsing to a scalar type.
+    """
+    if not isinstance(node, dict):
+        return node  # type: ignore[return-value]
+
+    if not node:
+        return pa.struct([])
+
+    int_keys = sorted(k for k in node if isinstance(k, int))
+    str_keys = [k for k in node if isinstance(k, str)]
+
+    if int_keys and str_keys:
+        raise ValueError(
+            f"Cannot unflatten '{path}': it is indexed as a list "
+            f"({path}[{int_keys[0]}]) and used as a struct ({path}.{str_keys[0]}) "
+            "at the same time. Re-run with --no-unflatten to keep the flat columns."
+        )
+
+    if int_keys:
+        if int_keys != list(range(len(int_keys))):
+            missing = sorted(set(range(max(int_keys) + 1)) - set(int_keys))
+            raise ValueError(
+                f"Cannot unflatten '{path}': list indices are not dense from 0 "
+                f"(missing {', '.join(f'{path}[{i}]' for i in missing)}). "
+                "Re-run with --no-unflatten to keep the flat columns."
+            )
+        element_types = [
+            _trie_node_to_type(node[i], f"{path}[{i}]") for i in int_keys
+        ]
+        first = element_types[0]
+        for idx, etype in zip(int_keys, element_types):
+            if etype != first:
+                raise ValueError(
+                    f"Cannot unflatten '{path}': element {idx} has type "
+                    f"'{etype}' but element {int_keys[0]} has type '{first}'. "
+                    "All elements of a fixed-size list must share one type. "
+                    "Re-run with --no-unflatten to keep the flat columns."
+                )
+        return pa.list_(first, len(int_keys))
+
+    return pa.struct(
+        [
+            pa.field(k, _trie_node_to_type(node[k], f"{path}.{k}"))
+            for k in str_keys
+        ]
+    )
 
 
 def _trie_to_arrow_field(trie: _TrieNode) -> List[pa.Field]:
@@ -423,43 +504,8 @@ def _trie_to_arrow_field(trie: _TrieNode) -> List[pa.Field]:
     for key, value in trie.items():
         if isinstance(key, int):
             continue
-
         str_key = str(key)
-
-        if value is None or not isinstance(value, dict):
-            fields.append(pa.field(str_key, value))
-            continue
-
-        inner = value
-        if not inner:
-            fields.append(pa.field(str_key, pa.struct([])))
-            continue
-
-        int_keys = [k for k in inner if isinstance(k, int)]
-        str_keys = [k for k in inner if isinstance(k, str)]
-
-        if int_keys and not str_keys:
-            max_idx = max(int_keys)
-            base_type = inner.get(int_keys[0])
-            if not isinstance(base_type, pa.DataType):
-                base_type = pa.int64()
-            fields.append(pa.field(str_key, pa.list_(base_type, max_idx + 1)))
-
-        elif str_keys:
-            struct_children: List[pa.Field] = []
-            for ck, cv in inner.items():
-                if not isinstance(ck, str):
-                    continue
-                if isinstance(cv, dict):
-                    child_fields = _trie_to_arrow_field({ck: cv})
-                    if child_fields:
-                        struct_children.append(child_fields[0])
-                elif cv is not None:
-                    struct_children.append(pa.field(ck, cv))
-            fields.append(pa.field(str_key, pa.struct(struct_children)))
-
-        else:
-            fields.append(pa.field(str_key, pa.struct([])))
+        fields.append(pa.field(str_key, _trie_node_to_type(value, str_key)))
 
     return fields
 
@@ -560,9 +606,19 @@ def _build_nested_array(
 
     if pa.types.is_fixed_size_list(field.type):
         list_size = field.type.list_size
+        element_field = field.type.value_field
+        element_is_nested = pa.types.is_struct(
+            element_field.type
+        ) or pa.types.is_fixed_size_list(element_field.type)
         chunks: List[pa.Array] = []
         for idx in range(list_size):
             bracket = f"{lookup_key}[{idx}]"
+            if element_is_nested:
+                # Elements are structs (or lists) — their leaves live in flat
+                # columns named 'parent[idx].sub...', so recurse instead of
+                # looking for a single column called 'parent[idx]'.
+                chunks.append(_build_nested_array(element_field, col_map, bracket))
+                continue
             arr = _find_flat_column(col_map, bracket)
             if arr is not None:
                 chunks.append(arr)
@@ -1092,7 +1148,7 @@ def parquet_to_bcsv(
     output_path: str,
     row_codec: str = "delta",
     file_codec: str = "packet_lz4_batch",
-    compression_level: int = 1,
+    compression_level: int = pybcsv.DEFAULT_COMPRESSION_LEVEL,
     packet_size_kb: int = 1024,
     chunk_size: int = 512000,
     force: bool = False,
@@ -1493,8 +1549,11 @@ def parquet2bcsv_cli() -> None:
     parser.add_argument(
         "--compression-level",
         type=int,
-        default=1,
-        help="LZ4 compression level 0-9 (default: 1)",
+        default=pybcsv.DEFAULT_COMPRESSION_LEVEL,
+        help=(
+            "LZ4 compression level 0-9 "
+            f"(default: {pybcsv.DEFAULT_COMPRESSION_LEVEL})"
+        ),
     )
     parser.add_argument(
         "--packet-size-kb",

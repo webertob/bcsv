@@ -113,6 +113,30 @@ namespace bcsv {
     constexpr size_t MIN_PACKET_SIZE         = 64 * 1024;                       // 64KB minimum packet size
     constexpr size_t DEFAULT_PACKET_SIZE_KB  = 8192;                            // 8MB default packet size (in KB, for Writer::open blockSizeKB param)
     constexpr size_t MAX_PACKET_SIZE         = 1024 * 1024 * 1024;              // 1GB maximum packet size
+
+    /**
+     * @brief Default LZ4 compression level for Writer::open().
+     *
+     * "Level" is not a smooth 1-9 dial — it selects between two different LZ4
+     * compressors, and which one depends on the file codec:
+     *
+     *   FileCodecPacketLZ4Batch001 (the default codec, whole-packet blocks)
+     *     levels 1-5 : LZ4_compress_fast, acceleration = 10 - level
+     *     levels 6-9 : LZ4HC,             hc level     = level + 3
+     *
+     *   FileCodecPacketLZ4001 / FileCodecStreamLZ4001 (per-row blocks)
+     *     levels 1-9 : LZ4_compress_fast, acceleration = 10 - level  (never HC)
+     *
+     * The jump from 5 to 6 on the batch codec is therefore a step change, not an
+     * increment: on wide sensor recordings levels 1-5 are within 4% of each other
+     * while level 6 is ~27% smaller.  6 is the default because that is where the
+     * ratio is; 7-9 cost significantly more CPU for well under 1% further gain.
+     *
+     * Compression level does not affect the wire format — LZ4HC emits ordinary
+     * LZ4 blocks, and LZ4BlockDecompressor reads both without being told which.
+     * Only `level > 0` is meaningful to a reader (see resolveFileCodecId).
+     */
+    constexpr size_t DEFAULT_COMPRESSION_LEVEL = 6;
     /**
      * @brief Feature flag bit positions (Reserved for future optional features)
      * 

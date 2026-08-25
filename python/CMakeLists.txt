@@ -72,6 +72,30 @@ execute_process(
 list(APPEND CMAKE_PREFIX_PATH "${NB_DIR}")
 find_package(nanobind CONFIG REQUIRED)
 
+# ── Keep the bundled copies fresh ───────────────────────────────────────
+# python/include/ and python/src/ are generated (gitignored) copies of the
+# project headers and CLI sources; they are what an sdist ships, and therefore
+# what a standalone build compiles.  Nothing but this step keeps them in step
+# with include/ — a header change committed without re-running sync_headers.py
+# used to produce an sdist that would not compile, while builds from the project
+# root stayed green because CMake prefers the parent include/ below.  Syncing at
+# configure time (with sdist.cmake = true in pyproject.toml, so this runs before
+# an sdist is assembled) removes the chance to forget.
+set(SYNC_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/sync_headers.py")
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../include/bcsv/bcsv.h" AND EXISTS "${SYNC_SCRIPT}")
+    execute_process(
+        COMMAND ${Python_EXECUTABLE} "${SYNC_SCRIPT}" --force
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        RESULT_VARIABLE _SYNC_RESULT
+        OUTPUT_VARIABLE _SYNC_OUTPUT
+        ERROR_VARIABLE _SYNC_OUTPUT
+    )
+    if(NOT _SYNC_RESULT EQUAL 0)
+        message(FATAL_ERROR "[pybcsv] sync_headers.py failed:\n${_SYNC_OUTPUT}")
+    endif()
+    message(STATUS "[pybcsv] Synced bundled headers and CLI sources")
+endif()
+
 # ── Source files ────────────────────────────────────────────────────────
 # Prefer parent project's include/ (always available in full checkout / CI).
 # Fall back to local python/include/ (populated by sync_headers.py for standalone builds).

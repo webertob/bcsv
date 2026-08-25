@@ -92,6 +92,28 @@ def check_python_version_file(expected: str) -> list[str]:
     return []
 
 
+def check_readme_version(expected: str) -> list[str]:
+    """README.md advertises the current version to anyone landing on the repo.
+
+    Nothing patches it at pack time, so it drifts silently exactly like the
+    manifests above did -- it sat at v1.5.8 for seven releases while this script
+    reported "all version stamps agree", because it was not looking.
+    """
+    path = ROOT / "README.md"
+    if not path.exists():
+        return [f"{path.name} not found"]
+    match = re.search(r"^\*\*Current Version:\*\* v(.+)$", path.read_text(),
+                      re.MULTILINE)
+    if not match:
+        return [
+            "README.md has no '**Current Version:** vX.Y.Z' line - if it moved, "
+            "update check_readme_version() rather than dropping the check"
+        ]
+    if match.group(1) != expected:
+        return [f"README.md says v{match.group(1)}, expected v{expected}"]
+    return []
+
+
 def check_tag(expected: str, tag: str) -> list[str]:
     if tag != f"v{expected}":
         return [
@@ -138,6 +160,7 @@ def main() -> int:
         problems += check_unity_manifest(expected)
         problems += check_python_version_file(expected)
         problems += check_csproj(expected)
+        problems += check_readme_version(expected)
     if args.tag:
         problems += check_tag(expected, args.tag)
     for lib in args.native:

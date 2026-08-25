@@ -12,31 +12,53 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-### Fixed
+---
 
-- **Two silent wrong-value bugs in the float charconv fallback**
-  (`bcsv::compat`, used for CSV parsing and formatting). Both were reachable
-  only where the standard library lacks the floating-point `std::from_chars` /
-  `std::to_chars` overloads — Apple libc++, and likely the STM32/Zynq toolchains
-  BCSV targets. Linux and Windows dispatch to `std::` and were never affected.
-  - **A representable subnormal was discarded.** C permits `strtod`/`strtof` to
-    raise `ERANGE` when the result underflows to a subnormal, and both glibc and
-    Apple's libc do. The shim treated any `ERANGE` as fatal and returned
-    `result_out_of_range` without assigning the value, so `CsvReader` kept its
-    zero-initialised `0` *and* counted a parse error. Now only overflow to ±inf
-    and flush-to-zero are reported, matching `std::from_chars`, which also leaves
-    the caller's value untouched on a genuine range error. Caught by macOS CI as
-    `NanInfFileTest.CsvBridgeSpecialValues`.
-  - **Parsing and formatting followed the process locale.** `strtod` and
-    `snprintf("%g")` read and write the *locale's* decimal point, while this
-    shim's contract — like `std::from_chars` — is always `'.'`. Under a
-    comma-decimal locale `strtod("1.5")` returns `1` and `to_chars(1.5)` emitted
-    `"1,5"` into CSV. This collided directly with the `decimal_sep_` feature,
-    which normalises the user's separator *to* `'.'` before parsing. Both
-    directions now translate at the boundary rather than touching the process
-    locale, which is global and unsafe for a library to change.
+## [1.5.16] - 2026-08-25
 
 ### Changed
+
+- **The default LZ4 compression level is now 6 (was 1).** This changes the bytes every
+  BCSV writer produces, so it is called out first. On a 23.2 GB corpus of wide sensor
+  recordings (300-1052 columns) the default output went from **1.49x the size of the
+  equivalent Parquet to 1.08x** — the reported "BCSV files are 30-50 % larger" gap, closed
+  by a configuration change.
+
+  The old default was the weakest setting LZ4 offers. `compression_level` selects between
+  two different compressors, and level 1 meant `LZ4_compress_fast` at *acceleration 9*.
+  Levels 1-5 land within 4 % of each other on real data; the step from 5 to 6 is where
+  `LZ4BlockCompressor` switches to LZ4HC, and it is worth ~27 % on its own. Levels 7-9 add
+  well under 1 % for substantially more CPU, so 6 is the knee of the curve, not the maximum.
+
+  **The wire format is unchanged and this is backward compatible in both directions.**
+  LZ4HC emits ordinary LZ4 blocks; `LZ4BlockDecompressor` reads both kinds without being
+  told which, and a reader only ever tests `level > 0` (`resolveFileCodecId`). Verified by
+  having a **BCSV 1.5.10** binary read files written at the new default and render
+  byte-identical CSV. Nothing needs re-encoding, and older readers are unaffected.
+
+  **Both the win and the cost scale with how wide and idle the data is**, so quote the range,
+  not a single number. On the wide sensor corpus above (650-1052 columns, most channels
+  constant) level 6 is **-28 % size for +48 % write CPU** — the long-range redundancy is
+  exactly what LZ4HC's larger search window finds. On the synthetic macro benchmark profiles
+  (50-84 columns, mostly changing) the same switch is **-5 % size for +7 % write CPU**: little
+  redundancy to find, so little to pay for. Narrow, fast-changing writers barely notice this
+  change in either direction.
+
+  Read speed is not affected: a full sequential decode of the 950-column file takes 0.20 s at
+  level 1, at level 9 and uncompressed alike, because LZ4 decompression is not the bottleneck.
+  Callers who need the old write throughput can pass `compression_level=1` explicitly; the new
+  default is exposed as `bcsv::DEFAULT_COMPRESSION_LEVEL`.
+
+  The `packet_lz4` and `stream_lz4` codecs compress per row and never reach LZ4HC, so for
+  them the new default means acceleration 4 instead of 9: measured at -3.9 % size for
+  +1.3-2.0 % write time. They were left on the same dial rather than special-cased.
+
+- The level -> compressor mapping is now documented where users can see it
+  (`docs/INTEROPERABILITY.md`, `bcsv::DEFAULT_COMPRESSION_LEVEL`). "Level 1-9" reads like a
+  smooth dial and is not: it is two compressors with a cliff at 6, and which one you get
+  depends on the file codec. `src/tools/CLI_TOOLS.md` also carried a stale `--block-size`
+  default of 64 KB; the tools have used 8192 KB for some time.
+
 
 - **The charconv fallback now accepts exactly what `std::from_chars` accepts.**
   `strtod` is more permissive than `from_chars`: it skips leading whitespace,
@@ -61,6 +83,109 @@ This project uses [Semantic Versioning](https://semver.org/).
   a build can force the fallback path. New `tests/charconv_compat_test.cpp`
   exercises it directly on all platforms, including a differential suite that
   pins it against `std::from_chars`/`to_chars` wherever both exist.
+
+### Performance
+
+- **The Python Arrow and columnar read paths are roughly 2x faster on wide files.** Building
+  column-major output from a row-wise file ran a `switch` over `ColumnType` for every single
+  cell — 132 M dispatches for a 950-column x 139 464-row recording, with the types
+  interleaved within each row so the indirect branch mispredicted constantly. Columns are now
+  bucketed by type once per batch and each bucket drained by a loop with a compile-time type,
+  mirroring what the row codecs already do with `forEachScalarType`.
+
+  Measured on that file: full `iter_arrow_batches` scan **0.98 s -> 0.46 s**, `read_to_arrow`
+  0.91 s -> 0.43 s, and the columnar write path 1.43 s -> 1.17 s. Applies to `read_batch`,
+  `read_arrow_batch`, `read_columns`, `read_to_arrow`, `write_columns` and
+  `write_from_arrow`. No API change.
+
+  For reference the underlying format decodes the same file in 0.20 s using 9 MB of RSS, so
+  the Arrow bridge is now ~2.3x the raw decode rather than ~4.8x. The remainder is the
+  transpose itself — 950 concurrent output streams — which needs a tiled copy to improve
+  further.
+
+### Fixed
+
+- **The new default compression level was not actually applied everywhere.** The first pass
+  changed `Writer::open` and `BcsvWriter.Open` but left several user-facing entry points
+  writing level 1, so the same data compressed differently depending on which API you
+  called: `BcsvColumns.WriteColumns` (C# and Unity), `parquet2bcsv --compression-level`
+  (whose argparse default said 1 while the `parquet_to_bcsv()` function default said 6), and
+  the pandas/polars wrappers. Every one of them now resolves the level from a single named
+  constant — `BcsvDefaults.CompressionLevel` in C#/Unity, `pybcsv.DEFAULT_COMPRESSION_LEVEL`
+  (newly exported from the native `bcsv::DEFAULT_COMPRESSION_LEVEL`) in Python — so there is
+  no literal left to drift. `python/README.md`'s documented signatures still showed level 1
+  and were corrected.
+
+  The regression tests assert on the **written file header** (`Reader.compression_level()`,
+  `BcsvReader.CompressionLevel`) rather than on source literals, since a source-literal check
+  is exactly what would have passed while the files disagreed. See
+  `python/tests/test_default_compression_level.py` and
+  `csharp/tests/Bcsv.Tests/BcsvDefaultsTests.cs`.
+
+  The benchmark harness (`bench_macro_datasets.cpp`) deliberately keeps level 1, documented
+  in place: every stored baseline under `benchmark/results/` was produced at that level.
+
+- **The source distribution did not compile.** `python/include/` and `python/src/` are
+  generated copies of the project headers and CLI sources — they are what an sdist ships and
+  therefore what a standalone build compiles, but nothing kept them in step with `include/`.
+  A header change committed without re-running `sync_headers.py` left the packaged copy
+  without `bcsv::DEFAULT_COMPRESSION_LEVEL` while the packaged `bindings.cpp` referenced it,
+  so building a wheel from the sdist failed. Builds from the project root stayed green
+  because CMake prefers the parent `include/`, which is precisely what hid it.
+
+  `python/CMakeLists.txt` now re-runs `sync_headers.py` at configure time, and
+  `sdist.cmake = true` makes that happen before an sdist is assembled, so the bundled copies
+  cannot lag. A new `test-sdist` CI job builds a wheel from the generated sdist and runs the
+  suite against it — the only job that compiles what we publish as source — and publishing
+  now depends on it.
+
+  While there: the sdist no longer ships `python/dist/`, which was carrying stale build
+  output (a 1.5.7 wheel inside a 1.5.16 sdist). 2.1 MB → 632 KB.
+
+- **`bcsv_to_parquet` could not reconstruct `FixedSizeList<struct<...>>` columns.**
+  `parquet_to_bcsv` flattens a list of structs into `field[i].subfield` columns, but the
+  reverse direction never learned that shape, so any BCSV holding one failed to convert
+  with `ValueError: Cannot find array for 'imu[0]'`. Present since the Parquet bridge
+  landed; the two directions were asymmetric. No data was ever lost or silently corrupted
+  — the flat columns in the `.bcsv` were always correct and readable via
+  `read_to_arrow()`; only the conversion back to nested Parquet failed, and it failed
+  loudly. Two defects had to be fixed together:
+  - `_trie_to_arrow_field` guessed `pa.int64()` for any list element it could not read as
+    a scalar type, quietly rebuilding `list<struct<x, y>>` as `list<int64>`. Element types
+    are now built by recursion, so structs, nested structs, and lists inside list elements
+    all reconstruct; there is no fallback type left to guess wrong.
+  - `_build_nested_array` looked for one flat column per list element, which cannot exist
+    when the element is a struct. It now recurses into nested element types, exactly as
+    the struct branch already did.
+- **Four silently-wrong unflatten shapes now raise instead.** Each produced a confusing
+  downstream error or dropped a column: list indices with a gap (`x[0]`, `x[2]`) claimed a
+  dense size and then failed looking for `x[1]`; a name used as both list and struct
+  (`a[0]` plus `a.b`) dropped the indexed columns; a name that is both a leaf and a path
+  prefix (`a` plus `a.b`) either crashed with an opaque `TypeError` or discarded one of the
+  two columns; and elements of one list disagreeing on type took element 0's type for all
+  of them. All four now say what is wrong and point at `--no-unflatten`.
+
+- **Two silent wrong-value bugs in the float charconv fallback**
+  (`bcsv::compat`, used for CSV parsing and formatting). Both were reachable
+  only where the standard library lacks the floating-point `std::from_chars` /
+  `std::to_chars` overloads — Apple libc++, and likely the STM32/Zynq toolchains
+  BCSV targets. Linux and Windows dispatch to `std::` and were never affected.
+  - **A representable subnormal was discarded.** C permits `strtod`/`strtof` to
+    raise `ERANGE` when the result underflows to a subnormal, and both glibc and
+    Apple's libc do. The shim treated any `ERANGE` as fatal and returned
+    `result_out_of_range` without assigning the value, so `CsvReader` kept its
+    zero-initialised `0` *and* counted a parse error. Now only overflow to ±inf
+    and flush-to-zero are reported, matching `std::from_chars`, which also leaves
+    the caller's value untouched on a genuine range error. Caught by macOS CI as
+    `NanInfFileTest.CsvBridgeSpecialValues`.
+  - **Parsing and formatting followed the process locale.** `strtod` and
+    `snprintf("%g")` read and write the *locale's* decimal point, while this
+    shim's contract — like `std::from_chars` — is always `'.'`. Under a
+    comma-decimal locale `strtod("1.5")` returns `1` and `to_chars(1.5)` emitted
+    `"1,5"` into CSV. This collided directly with the `decimal_sep_` feature,
+    which normalises the user's separator *to* `'.'` before parsing. Both
+    directions now translate at the boundary rather than touching the process
+    locale, which is global and unsafe for a library to change.
 
 ---
 
@@ -837,7 +962,8 @@ Includes MSVC/Windows build and test portability fixes.
 
 ---
 
-[Unreleased]: https://github.com/webertob/bcsv/compare/v1.5.6...HEAD
+[Unreleased]: https://github.com/webertob/bcsv/compare/v1.5.16...HEAD
+[1.5.16]: https://github.com/webertob/bcsv/compare/v1.5.15...v1.5.16
 [1.5.6]: https://github.com/webertob/bcsv/compare/v1.5.5...v1.5.6
 [1.5.5]: https://github.com/webertob/bcsv/compare/v1.5.4...v1.5.5
 [1.5.4]: https://github.com/webertob/bcsv/compare/v1.5.3...v1.5.4

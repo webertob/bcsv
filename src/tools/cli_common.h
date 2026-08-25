@@ -247,7 +247,7 @@ inline void printLayoutSummary(const std::string& label,
 /// Result of parsing file-codec settings into FileFlags + compression level.
 struct FileCodecSettings {
     bcsv::FileFlags flags       = bcsv::FileFlags::NONE;
-    size_t          comp_level  = 1;
+    size_t          comp_level  = bcsv::DEFAULT_COMPRESSION_LEVEL;
 };
 
 /// Map (file_codec string, row_codec string, user compression_level) → FileFlags + effective comp_level.

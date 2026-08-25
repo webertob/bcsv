@@ -92,7 +92,7 @@ public static class BcsvColumns
     /// <summary>Write column arrays to a BCSV file.</summary>
     public static void WriteColumns(string filename, BcsvLayout layout,
         IDictionary<int, Array> columns, int rowCount,
-        string rowCodec = "delta", int compression = 1,
+        string rowCodec = "delta", int compression = BcsvDefaults.CompressionLevel,
         FileFlags flags = FileFlags.BatchCompress, bool overwrite = false)
     {
         int numCols = layout.ColumnCount;

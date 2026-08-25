@@ -77,7 +77,7 @@ struct Config {
     // Codec selection (standardised with bcsvGenerator / bcsvSampler)
     std::string row_codec  = bcsv_cli::DEFAULT_ROW_CODEC;   // delta | zoh | flat
     std::string file_codec = bcsv_cli::DEFAULT_FILE_CODEC;  // packet_lz4_batch | ...
-    size_t compression_level = 1;
+    size_t compression_level = bcsv::DEFAULT_COMPRESSION_LEVEL;
     size_t block_size_kb     = bcsv::DEFAULT_PACKET_SIZE_KB;
 };
 
