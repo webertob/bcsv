@@ -118,8 +118,9 @@ the streaming row-wise write path intact. Order = suggested implementation order
       Unity and pybcsv together. Requested 2026-08-25 by T13, and the right default anyway:
       `com.bcsv.unity` is what that project consumes, and a binding that lands a release late
       forces a consumer to keep the companion path and the in-format path alive simultaneously,
-      which is worse than either alone. `scripts/check_pinvoke_parity.py` guards P/Invoke parity
-      but not managed helpers, so this one is on the release checklist, not on CI.
+      which is worse than either alone. `scripts/check_csharp_parity.py` now guards both the
+      P/Invoke surface and the managed wrappers in CI, so this one is on CI, not only on
+      the release checklist.
       **Prerequisites inside the library, from auditing the header-parse path 2026-08-25:**
       * `Reader::readFileHeader()` gates the version (VERSIONING.md Rule B), which is what makes
         a new header section safe for existing readers — a 1.5.x reader refuses a 1.6.0 file
@@ -305,6 +306,16 @@ Learnings captured from the 1.5.10 release gate (2026-07-12):
   evaluate before building), bcsvMore/bcsvCat/bcsvSed (depends on E7 piping).
 - C# / Unity: NuGet packaging + CI/CD (was item 23, library+benchmarks done); SafeHandle/finalizer
   fallback; Unity UTF-8/IL2CPP readiness.
+- C# binding divergences found by `scripts/check_csharp_parity.py` when it was first run
+  (2026-08-25), currently listed in its `KNOWN_DIVERGENCE` table so the gate is green.
+  Both are the NuGet side lagging Unity, not a deliberate split — decide and close them,
+  then delete the entries:
+  * `BcsvLayout.RowDataSize` and `BcsvLayout.ColumnCountByType` are exposed by the Unity
+    binding only. `NativeMethods.cs` already declares both P/Invoke entry points
+    (`bcsv_layout_row_data_size`, `bcsv_layout_column_count_by_type`), so a NuGet consumer
+    cannot reach a native function the package already binds — a half-finished port.
+  * `BcsvWriter.Open` throws `ArgumentNullException` for a null layout on Unity; the NuGet
+    copy passes the null through to the native call.
 - 23.a Columnar read/write: move implementation from C API layer into core C++ library
   (three duplicate implementations today — clear clarity win, evaluate for 1.6.0).
 - Code cleanup (was item 19): remove ZoH codec? (evaluate once delta header suppression E1 lands —

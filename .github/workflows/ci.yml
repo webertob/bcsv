@@ -29,6 +29,11 @@ on:
       - 'scripts/check_versions.py'
       - 'unity/package.json'
       - 'csharp/src/Bcsv/Bcsv.csproj'
+      # The C# binding parity job below: the NuGet and Unity trees are the
+      # same code in two namespaces, so a change to one must run the check.
+      - 'csharp/src/Bcsv/**'
+      - 'unity/Runtime/Scripts/**'
+      - 'scripts/check_csharp_parity.py'
   pull_request:
     branches: [main, master, develop]
     paths:
@@ -50,6 +55,11 @@ on:
       - 'scripts/check_versions.py'
       - 'unity/package.json'
       - 'csharp/src/Bcsv/Bcsv.csproj'
+      # The C# binding parity job below: the NuGet and Unity trees are the
+      # same code in two namespaces, so a change to one must run the check.
+      - 'csharp/src/Bcsv/**'
+      - 'unity/Runtime/Scripts/**'
+      - 'scripts/check_csharp_parity.py'
   schedule:
     - cron: '0 3 * * 1'   # Weekly Monday 3 AM UTC — Release builds
   workflow_dispatch:
@@ -71,6 +81,19 @@ jobs:
           fetch-depth: 0
       - name: Check every version stamp against VERSION.txt
         run: python3 scripts/check_versions.py
+
+  # The NuGet and Unity C# bindings are the same code in two namespaces and
+  # cannot be merged into one source: NuGet publishes `namespace Bcsv;` and
+  # Unity's asmdef publishes `namespace BCSV`, so unifying them would break
+  # every consumer of the published package. This notices when the two copies
+  # stop agreeing — which they had, in five places, before the check existed.
+  csharp-binding-parity:
+    name: C# binding parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      - name: Compare the NuGet and Unity bindings
+        run: python3 scripts/check_csharp_parity.py --verbose
 
   # ────────────────────────────────────────────────────────────────
   # pybcsv — every push / PR

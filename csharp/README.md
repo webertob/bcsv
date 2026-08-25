@@ -178,6 +178,29 @@ csvWriter.WriteRow();
 - .NET 8.0 or .NET 10.0
 - Native library is bundled in the NuGet package — no separate installation needed
 
+## Maintaining the bindings
+
+`csharp/src/Bcsv/` and `unity/Runtime/Scripts/` are the same code twice. Fourteen files
+share a name and, modulo the namespace form, a body.
+
+They cannot be merged into one physical source. The NuGet package publishes
+`namespace Bcsv;` (file-scoped) and Unity's `BCSV.asmdef` publishes `namespace BCSV { }`
+(block-scoped), so unifying them would rename every public type in a published package.
+
+**So: a change to one side must be applied to the other.** `scripts/check_csharp_parity.py`
+enforces that in CI — it compares the P/Invoke entry points and, after normalising away
+the namespace form, indentation, comments, line wrapping, member order and the nullable
+annotations Unity does not use, the statements of every shared file:
+
+```bash
+python3 scripts/check_csharp_parity.py --verbose   # what it compared
+python3 scripts/check_csharp_parity.py --diff      # the drifting statements
+```
+
+Differences that are deliberate live in `WHOLE_FILE_EXEMPT` and `KNOWN_DIVERGENCE` in that
+script, each with its reason. Add an entry there — with the reason — rather than loosening
+the comparison.
+
 ## Documentation
 
 - [API Overview](https://github.com/webertob/bcsv/blob/master/docs/API_OVERVIEW.md)
