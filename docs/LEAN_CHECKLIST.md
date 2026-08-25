@@ -1,122 +1,62 @@
-# BCSV Lean Architecture Checklist
+# BCSV Lean Architecture Rules
 
-Use this checklist before implementation, during review, and before merge to keep BCSV focused and maintainable.
+Rules of thumb for keeping BCSV focused. Apply them while writing and reviewing;
+there is no form to fill in. A **High** item is a blocker, everything else needs a
+one-line rationale in the commit or PR note.
 
-## How to Use (Quick)
+## Scope
 
-1. **Before coding (3-5 min):** Fill sections A-C for the target item.
-2. **During implementation:** Re-check D-F when adding files/functions.
-3. **Before merge:** Validate G-H and record results in PR/commit notes.
+- Change stays inside the requested scope, or the widening is stated explicitly.
+- A new abstraction needs **2 current call sites** — not one plus a prediction.
+- Performance work needs benchmark evidence, measured per the noise-floor rules in
+  `benchmark/README.md`. An unmeasured optimisation is a guess with extra code.
 
-Decision rule:
-- **PASS:** no High items, and Medium items have explicit rationale.
-- **BLOCK:** any unresolved High item.
+## Single ownership (High)
 
----
+Every piece of metadata or state has exactly one owner. The BCSV hotspots that have
+actually bitten:
 
-## A) Scope Fit (requested item vs delivered change)
-
-- [ ] Change is limited to the requested scope (or explicitly justified).
-- [ ] New abstractions are introduced only if at least **2 current call sites** need them.
-- [ ] No speculative layers for future work unless they reduce current duplication/bugs.
-- [ ] Performance optimization is backed by benchmark/test evidence.
-
-Evidence to capture:
-- Item reference (e.g., ToDo id)
-- Files changed
-- Why each non-trivial new type/helper exists now
-
----
-
-## B) Ownership Clarity (single source of truth)
-
-- [ ] For each metadata/state concept, one owner is defined.
-- [ ] No duplicated caches unless invalidation is clearly documented and tested.
-- [ ] Data flow between producer/consumer is explicit (who computes, who consumes, who mutates).
-
-Check these common BCSV hotspots:
 - Wire metadata (`rowHeaderSize`, `wireDataSize`, `wireStrgCount`, `wireFixedSize`)
 - Column offsets / masks
-- Row serialization context (flat/ZoH/delta)
+- Row serialization context (flat / ZoH / delta)
+- Defaults duplicated across language bindings — reference one named constant
+  (`bcsv::DEFAULT_*`, `BcsvDefaults`, `pybcsv.DEFAULT_*`), never a literal. Level 1
+  vs 6 drifted this way across five entry points.
 
----
+A duplicated cache is allowed only with documented invalidation and a test.
 
-## C) Layering and Responsibility
+## Layering
 
-- [ ] `Row*` types focus on row state/access, not file/packet policy.
-- [ ] `Reader/Writer` focus on stream/packet lifecycle, not encoding internals.
-- [ ] Encoding logic lives behind a serializer boundary (or has a documented temporary location).
-- [ ] Public API remains stable unless breaking change is explicitly approved.
+- `Row*` holds row state and access, not file or packet policy.
+- `Reader`/`Writer` own stream and packet lifecycle, not encoding internals.
+- Encoding lives behind the codec boundary.
+- Public API stays stable unless a break is explicitly approved.
 
----
+## Duplication
 
-## D) Duplication Budget
+- Don't copy logic across dynamic/static/view variants without a reason. Hot-path
+  specialisation is a reason — mark it and back it with a benchmark.
+- Consolidate repeated `switch (ColumnType)` blocks when the behaviour matches.
+- If the same fix has to land in **3+ places**, extract the helper first.
 
-- [ ] New logic is not copy-pasted across dynamic/static/view variants without a reason.
-- [ ] Repeated `switch(ColumnType)` blocks are consolidated when behavior is equivalent.
-- [ ] If duplication is intentional (hot path specialization), it is marked and benchmark-justified.
+## Complexity
 
-Practical threshold:
-- If the same bug fix must be applied in **3+ places**, extract shared helper/strategy.
+- No new mega-file without a split plan. Soft warning: file > 2500 lines, or one
+  class carrying > 3 responsibilities.
+- Keep critical logic reviewable on one screen where the shape allows.
+- New template metaprogramming needs a measured benefit.
 
----
+## Safety (High)
 
-## E) Complexity Budget
+- Bounds-check every raw buffer read and write.
+- No unaligned typed access in packed wire paths.
+- Validation that runs *after* a stateful serializer has committed must poison or
+  resync the writer — see `write_poisoned_`. Throw-after-commit is a bug pattern,
+  not an error path.
 
-- [ ] No new mega-file growth without split plan.
-- [ ] Function size remains reviewable (target: one screen for critical logic where possible).
-- [ ] New template/metaprogramming is necessary for measured benefit.
+## Before merge
 
-Soft warning thresholds:
-- File > 2500 lines
-- Single class handling > 3 distinct responsibilities
-
----
-
-## F) Safety and Correctness Guardrails
-
-- [ ] Bounds checks are present at all raw buffer reads/writes.
-- [ ] No UB-prone unaligned typed access in packed wire paths.
-- [ ] Error messages remain actionable and consistent.
-- [ ] Existing tests cover changed behavior and edge cases.
-
----
-
-## G) Compatibility and Ecosystem Impact
-
-- [ ] C API symbol changes are versioned or backward-compatible aliases are provided.
-- [ ] Python/Unity/CLI implications are assessed for API or wire-format changes.
-- [ ] Docs/examples updated when behavior or defaults change.
-
----
-
-## H) Exit Criteria (merge readiness)
-
-- [ ] Build passes (`Debug` + `Release`).
-- [ ] `bcsv_gtest` passes.
-- [ ] Relevant subsystem tests pass (`C API`, Python, Unity/CLI where applicable).
-- [ ] Benchmark smoke test run for performance-sensitive changes.
-- [ ] Checklist result summarized in commit/PR notes.
-
----
-
-## Minimal Review Template (copy into PR/commit note)
-
-```
-Lean Checklist Summary
-- Scope fit: PASS/FAIL
-- Ownership clarity: PASS/FAIL
-- Layering: PASS/FAIL
-- Duplication budget: PASS/FAIL
-- Complexity budget: PASS/FAIL
-- Safety guardrails: PASS/FAIL
-- Compatibility impact: PASS/FAIL
-
-High risks:
-1) ...
-2) ...
-
-Mitigations / follow-ups:
-1) ...
-2) ...
-```
+- Debug + Release build clean; `bcsv_gtest` green.
+- Subsystem tests for what you touched (C API, Python, C#/Unity, CLI).
+- Benchmark smoke run for anything performance-sensitive.
+- C API symbol changes versioned or aliased; binding and doc impact assessed.

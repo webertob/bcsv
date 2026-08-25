@@ -123,4 +123,4 @@ re-litigating settled decisions.
 - `src/tools/CLI_TOOLS.md` — all 11 CLI tools with options and examples
 - `tests/README.md` — test infrastructure details
 - `benchmark/README.md` — benchmark orchestrator and profiles
-- `ToDo.txt` — active task list with priorities
+- `ToDo.md` — open roadmap items (shipped work lives in `CHANGELOG.md`)

@@ -179,7 +179,10 @@ Technical design, requirements, and implementation roadmap
 
 ## File Format Specification
 
-### Version 1.5.8 (Current)
+### Wire format 1.5.x (current)
+
+Unchanged across every 1.5 release — 1.5.9 through 1.5.17 were explicitly
+format-neutral, so this section is versioned by the format, not by the library.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -451,7 +454,7 @@ csharp/                 C# / Unity integration
 | 4 MB | ✅ Excellent | ✅ Good | ✅ Excellent | v1.2.0+ default |
 | 8 MB | ✅ Excellent | ✅ Excellent | ✅ Excellent | **v1.3.0+ default** |
 
-**Current implementation** (v1.3.0): 8 MB default (`FileHeader` ConstSection), configurable via `Writer::open(blockSizeKB)`.
+**Current implementation** (since v1.3.0): 8 MB default (`FileHeader` ConstSection), configurable via `Writer::open(blockSizeKB)`.
 Clamped to `MIN_PACKET_SIZE` (64 KB) – `MAX_PACKET_SIZE` (1 GB).
 
 ---
@@ -561,7 +564,7 @@ PacketHeader (16 B) | uint32_t uncompressed_size | uint32_t compressed_size
 
 ---
 
-### Phase 6: Stable Release (v2.0.0) 🎯 **Q2 2026**
+### Phase 6: Stable Release (v2.0.0) 📌 **Reserved — not scheduled**
 
 **Goal**: Production-ready with compatibility guarantees
 

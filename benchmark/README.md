@@ -333,7 +333,7 @@ Temp clone location defaults:
 - `MACRO-LARGE` should complete in < 60 minutes.
 - `MICRO` should run pinned to `CPU2` and complete in < 5 minutes.
 
-## Task 11D Profiling (Linux, non-mixing)
+## Isolated Profiling Runs (Linux, non-mixing)
 
 Use isolated runs to avoid mixing strategy families in one result set.
 
@@ -424,9 +424,7 @@ records how many were removed.
 
 3rd-party CSV benchmarks are treated as one-time documented reference measurements and are not part of the default orchestrator flow.
 
-## Item 11.B Additions
-
-### Reference Time-Series Workloads
+## Reference Workloads
 
 Open-data reference mapping and cache/download workflow:
 

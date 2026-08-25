@@ -122,7 +122,6 @@ int main() {
 ### 📊 Performance & Benchmarks
 
 - **[benchmark/README.md](benchmark/README.md)** - Benchmark quick-start and script-friendly run options
-- **[tests/PERFORMANCE_COMPARISON.md](tests/PERFORMANCE_COMPARISON.md)** - Detailed benchmarks and comparisons
 - **Typical speeds:** 3.6M rows/sec (flexible), 7.5M rows/sec (static), 127K rows/sec (1000 columns)
 - **Compression:** 15-25% of CSV size (LZ4), 3-4% with Zero-Order Hold
 

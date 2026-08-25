@@ -1,9 +1,11 @@
-# bcsvCast — Specification (DRAFT v0.2)
+# bcsvCast — Specification (v0.2, as-built)
 
-**Status:** Draft — for review (v0.2, incorporates three independent spec reviews)
-**Date:** 2026-07-09
+**Status:** Archived design record — implemented and shipped in 1.5.9. The live
+documentation for the tool is `src/tools/CLI_TOOLS.md`; read this only for the
+rationale behind a settled decision, and do not re-open the decisions in §16.
+**Date:** 2026-07-09 (archived 2026-08-25)
 **Supersedes:** `bcsvNarrowType` (removed — see §14)
-**Related:** `src/tools/bcsvNarrowType.cpp`, `src/tools/bcsvCompare.cpp`, `src/tools/cli_common.h`, `include/bcsv/definitions.h`
+**Related:** `src/tools/bcsvCast.cpp`, `src/tools/bcsvCompare.cpp`, `src/tools/cli_common.h`, `include/bcsv/definitions.h`
 
 > Design specification for review, **not** an implementation plan. All CLI/semantic
 > decisions are settled (§16), including the v0.2 review-round items (§16.2). A separate
