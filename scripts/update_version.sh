@@ -121,6 +121,16 @@ PY
     echo "    git tag v$target_version"
     echo "    git push origin master --tags"
     print_warning "Remember to add a CHANGELOG.md entry (and unity/CHANGELOG.md if the package changed)."
+
+    # An editable pybcsv rebuilds its extension on import but keeps the version
+    # string it was installed with, so it now reports the PREVIOUS release while
+    # running this one's code.  Nothing here can fix that for an arbitrary venv,
+    # so say so at the one moment the bump makes it wrong.
+    if [ -d ".venv" ]; then
+        print_warning "Editable pybcsv installs now report the old version. Refresh yours:"
+        echo "    .venv/bin/python -m pip install -e python --no-deps --force-reinstall"
+        echo "    scripts/check_versions.py --skip-manifests --python .venv/bin/python"
+    fi
 }
 
 main "$@"

@@ -5,6 +5,7 @@ import hashlib
 import json
 import random
 import socket
+import sys
 import time
 from datetime import datetime
 from pathlib import Path
@@ -42,6 +43,50 @@ def project_root() -> Path:
     if not (root / "CMakeLists.txt").exists():
         raise RuntimeError(f"Cannot resolve project root from {__file__}")
     return root
+
+
+def version_stamp(root: Path, allow_drift: bool) -> dict:
+    """Record - and by default enforce - which pybcsv these numbers describe.
+
+    The payload carried no version at all, so a results file could not be
+    attributed to a build after the fact.  And the version it would have carried
+    is not automatically the one under test: an editable install keeps its old
+    version string across scikit-build-core's auto-rebuild, and a stray editable
+    install in the user site shadows the venv outright for any interpreter
+    outside it (that one sat at 1.5.8.dev9).  Benchmarking a build that is not
+    this checkout's is a silent error - the numbers look fine and are simply
+    attributed to the wrong version - so this is a gate, not a note.
+
+    A dev tree legitimately disagrees with VERSION.txt: setuptools_scm resolves
+    it to the *next* version, 1.5.18.dev1 one commit past v1.5.17.  Hence
+    --allow-version-drift, which downgrades the gate to a recorded warning
+    rather than removing the record.
+    """
+    declared = (root / "VERSION.txt").read_text().strip()
+    installed = pybcsv.__version__
+    drift = installed != declared
+
+    if drift and not allow_drift:
+        raise SystemExit(
+            f"pybcsv {installed!r} does not match VERSION.txt {declared!r}\n"
+            f"  imported from: {pybcsv.__file__}\n"
+            f"  interpreter:   {sys.executable}\n"
+            f"These results would be labelled with a version they were not produced by.\n"
+            f"Diagnose with:\n"
+            f"    scripts/check_versions.py --skip-manifests --python {sys.executable}\n"
+            f"Pass --allow-version-drift if the mismatch is expected - a dev tree "
+            f"resolves to the next version, not VERSION.txt."
+        )
+    if drift:
+        print(f"[warn] pybcsv {installed} != VERSION.txt {declared} "
+              f"(--allow-version-drift); results recorded as version_drift=true")
+
+    return {
+        "pybcsv_version": installed,
+        "pybcsv_module": pybcsv.__file__,
+        "declared_version": declared,
+        "version_drift": drift,
+    }
 
 
 def parse_csv_arg(raw: str) -> list[str]:
@@ -353,9 +398,13 @@ def main() -> int:
     parser.add_argument("--codecs", default="delta", help="Comma-separated: flat,zoh,delta")
     parser.add_argument("--output", default="")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--allow-version-drift", action="store_true",
+                        help="record, rather than refuse, an installed pybcsv whose "
+                             "version differs from VERSION.txt (expected on a dev tree)")
     args = parser.parse_args()
 
     root = project_root()
+    toolchain = version_stamp(root, args.allow_version_drift)
     specs = workload_specs()
 
     selected_modes = parse_csv_arg(args.modes)
@@ -414,6 +463,7 @@ def main() -> int:
         "size": args.size,
         "num_rows": num_rows,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
+        **toolchain,
         "results": results,
     }
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

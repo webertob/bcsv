@@ -50,11 +50,52 @@ and asks it what version it reports:
 scripts/check_versions.py                                 # committed manifests
 scripts/check_versions.py --tag v1.5.13                   # and the tag
 scripts/check_versions.py --native build/libbcsv_c_api.so # and the artifact
+scripts/check_versions.py --python .venv/bin/python       # and the installed pybcsv
 ```
 
 Checking the binary rather than the build inputs is the point: that is the check
 which catches a toolchain that resolved a different version than intended. Every
 packaging workflow runs it against each native before uploading it.
+
+`--native` and `--python` are both opt-in, because both need an artifact that a
+bare checkout does not have. `--python` is additionally exact-match-only, so it
+is meaningful on a release commit and not on a dev tree - see below.
+
+### The installed Python package drifts differently
+
+An editable `pybcsv` install is a build artifact like any native, and it goes
+stale in two ways the manifest checks cannot see:
+
+- **A stale label.** scikit-build-core's editable install auto-rebuilds the
+  compiled extension when it is imported, but does *not* regenerate
+  `_version.py`. After a release bump the extension therefore carries the new
+  code under the *old* version string. A v1.5.17 checkout reported
+  `pybcsv.__version__ == '1.5.16'` with every committed manifest agreeing: the
+  binary was correct and only its label was wrong. Refresh it explicitly:
+
+  ```bash
+  .venv/bin/python -m pip install -e python --no-deps --force-reinstall
+  ```
+
+- **A shadowing install.** A stray `pip install -e` into the *user* site
+  (`~/.local/lib/pythonX.Y/site-packages`) leaves a `.pth` pointing at `python/`,
+  so any interpreter outside the venv imports the source tree without the built
+  extension and fails with `partially initialized module 'pybcsv' ... has no
+  attribute 'DEFAULT_COMPRESSION_LEVEL'`. Its `bcsv2parquet` / `parquet2bcsv`
+  console scripts land in `~/.local/bin` and win on `PATH` whenever the venv is
+  not active. `--python` names the install by its `.dist-info` path, which is what
+  distinguishes this from the stale-label case — `pybcsv.__file__` points into
+  `python/` for *any* editable install, the venv's included, so it cannot.
+
+On a dev tree `pybcsv.__version__` legitimately differs from `VERSION.txt`:
+setuptools_scm resolves an untagged commit to the *next* version, so one commit
+past `v1.5.17` reports `1.5.18.dev1`. A `.devN` string is normal there. A version
+*behind* `VERSION.txt` is the one that means staleness.
+
+The Python benchmark lane enforces the same equality before it measures anything
+(`python/benchmarks/run_pybcsv_benchmarks.py`), and stamps `pybcsv_version`,
+`pybcsv_module` and `version_drift` into its results so a run stays attributable
+to a build. Pass `--allow-version-drift` to benchmark a dev tree.
 
 ### Release Workflow
 
@@ -94,7 +135,7 @@ bcsv/
 ├── include/bcsv/
 │   └── version_generated.h      # Generated into the BUILD tree (gitignored)
 ├── scripts/
-│   ├── check_versions.py        # Verify every stamp (used by CI)
+│   ├── check_versions.py        # Verify every stamp (used by CI), incl. --python
 │   ├── update_version.sh        # Bump the release version
 │   └── validate_version.sh      # Wrapper around check_versions.py
 ├── unity/package.json           # Mirrors VERSION.txt
@@ -374,9 +415,12 @@ Reproduce what CI checks before pushing a tag:
 cmake -B build -DBCSV_STRICT_VERSION=ON
 cmake --build build --target bcsv_c_api
 scripts/check_versions.py --tag "v$(cat VERSION.txt)" \
-    --native build/libbcsv_c_api.so
+    --native build/libbcsv_c_api.so \
+    --python .venv/bin/python
 ```
 
-This is the same three-part check the packaging workflows run: the manifests
-agree with `VERSION.txt`, the tag agrees with `VERSION.txt`, and the artifact
-that will actually ship reports the version it claims.
+This is the same check the packaging workflows run: the manifests agree with
+`VERSION.txt`, the tag agrees with `VERSION.txt`, and the artifacts that will
+actually ship - the native, and the installed Python package - report the version
+they claim. Drop `--python` if you have no editable install in this checkout;
+keep it before benchmarking, which is where a mislabelled build does its damage.

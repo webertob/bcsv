@@ -105,6 +105,21 @@ jobs:
           print('version', pybcsv.__version__)
           print('default compression level', pybcsv.DEFAULT_COMPRESSION_LEVEL)
           "
+          # The command above prints the version; on a tag this one holds the
+          # wheel to it. A wheel that resolved a different version than the tag
+          # it is published under is the failure this job exists to catch, and
+          # PyPI is an expensive place to discover it. Tagged builds only: an
+          # untagged sdist resolves to the next version (1.5.18.dev1), which is
+          # correct and would fail an equality check.
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            EXPECTED="${GITHUB_REF#refs/tags/v}" python -c "
+          import os, sys, pybcsv
+          expected = os.environ['EXPECTED']
+          if pybcsv.__version__ != expected:
+              sys.exit(f'FAIL wheel reports {pybcsv.__version__!r}, tag says {expected!r}')
+          print('OK  wheel version matches tag', expected)
+          "
+          fi
 
       - name: Run the test suite against the sdist-built wheel
         # Run from outside the extracted tree: sitting in it puts its pybcsv/

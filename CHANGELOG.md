@@ -10,6 +10,58 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`scripts/check_versions.py --python [INTERPRETER]`** — verifies the pybcsv an
+  interpreter actually imports, the way `--native` verifies a built shared
+  library. An installed Python package is a build artifact too, and it drifts in
+  two ways no manifest check can see.
+
+  *A stale label.* scikit-build-core's editable install auto-rebuilds the
+  compiled extension on import but does not regenerate `_version.py`, so after a
+  release bump the extension carries the new code under the old version string.
+  A v1.5.17 checkout reported `pybcsv.__version__ == '1.5.16'` while
+  `check_versions.py` said "all version stamps agree" — the binary was correct
+  and only its label was wrong, which is the hardest kind of drift to notice
+  because nothing misbehaves; it just mislabels every benchmark result.
+
+  *A shadowing install.* A stray `pip install -e` into the user site leaves a
+  `.pth` pointing at `python/`, so every interpreter outside the venv imports the
+  source tree without the built extension and dies with `partially initialized
+  module 'pybcsv' ... has no attribute 'DEFAULT_COMPRESSION_LEVEL'`. Its
+  `bcsv2parquet` / `parquet2bcsv` scripts install into `~/.local/bin` and win on
+  `PATH` whenever the venv is inactive. The check names it by the distribution's
+  install path rather than `pybcsv.__file__`, because an editable install
+  resolves `__file__` into the source tree whether it is the venv's own or a
+  stray one — the `.dist-info` location is what tells them apart. It also
+  deliberately imports the way a real caller does rather than isolating the
+  interpreter, because isolation would hide the shadowing it exists to catch.
+
+  Opt-in, like `--native`, and exact-match: a dev tree resolves to the *next*
+  version (`1.5.18.dev1` one commit past `v1.5.17`), so a `.devN` string is
+  normal there and a version *behind* `VERSION.txt` is what means staleness.
+
+- **The Python benchmark lane records the build it measured.**
+  `run_pybcsv_benchmarks.py` now stamps `pybcsv_version`, `pybcsv_module`,
+  `declared_version` and `version_drift` into its results payload, which
+  previously carried no version at all and so could not be attributed to a build
+  after the fact. It refuses to run when the installed pybcsv disagrees with
+  `VERSION.txt`; `--allow-version-drift` downgrades that to a recorded warning
+  for dev trees.
+
+- **The release workflow holds the sdist-built wheel to its tag.**
+  `build-and-publish.yml` printed the wheel's version and moved on; on a tagged
+  build it now asserts equality, so a wheel that resolved a different version
+  than the tag fails in CI rather than on PyPI.
+
+- **`scripts/update_version.sh` warns that editable installs are now stale.** The
+  bump is the moment their version strings become wrong, so it prints the
+  reinstall and verify commands.
+
+---
+
 ## [1.5.17] - 2026-08-25
 
 ### Added

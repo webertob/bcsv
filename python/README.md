@@ -23,6 +23,37 @@ pip install pybcsv
 pip install pybcsv[pandas]
 ```
 
+### Developing from a checkout
+
+Install into a virtualenv, never the user site:
+
+```bash
+python -m venv .venv
+.venv/bin/python -m pip install -e python
+```
+
+Two things to know about the editable install:
+
+- After a release bump, **reinstall it**. The compiled extension auto-rebuilds on
+  import, but its version string does not, so it keeps reporting the previous
+  release while carrying the current code — which then labels benchmark results
+  with the wrong version:
+
+  ```bash
+  .venv/bin/python -m pip install -e python --no-deps --force-reinstall
+  ```
+
+- A stray editable install in `~/.local` shadows the venv for every interpreter
+  outside it and puts broken `bcsv2parquet` / `parquet2bcsv` scripts on `PATH`.
+  The symptom is an import error naming `DEFAULT_COMPRESSION_LEVEL`.
+
+Verify what is actually installed, and see [VERSIONING.md](../VERSIONING.md) for
+the details of both failure modes:
+
+```bash
+scripts/check_versions.py --skip-manifests --python .venv/bin/python
+```
+
 ## Quick Start
 
 ### Write and Read

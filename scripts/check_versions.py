@@ -22,6 +22,7 @@ Usage:
     scripts/check_versions.py                       # check committed manifests
     scripts/check_versions.py --tag v1.5.13         # also require the tag to match
     scripts/check_versions.py --native build/libbcsv_c_api.so
+    scripts/check_versions.py --python .venv/bin/python  # installed pybcsv
 """
 
 from __future__ import annotations
@@ -30,6 +31,7 @@ import argparse
 import ctypes
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -143,13 +145,135 @@ def check_native(expected: str, lib_path: str) -> list[str]:
     return []
 
 
+def check_python_package(expected: str, interpreter: str) -> list[str]:
+    """Ask the *installed* pybcsv what version INTERPRETER actually imports.
+
+    The sibling of check_native(), for the same reason: an installed Python
+    package is a build artifact too, so checking the build inputs says nothing
+    about what a benchmark - or a user - will really import.
+
+    Two failure modes, both seen in the wild, both invisible to the manifest
+    checks above:
+
+    1. Stale label.  scikit-build-core's editable install auto-rebuilds the
+       compiled extension on import but does *not* regenerate `_version.py`, so
+       after a release bump the extension carries the NEW code under the OLD
+       version string.  A v1.5.17 checkout reported `pybcsv.__version__ ==
+       '1.5.16'`: the binary was right and only its label was wrong, which is
+       the hardest kind of drift to spot and lands straight in benchmark
+       result metadata.
+
+    2. Shadowing.  A stray `pip install -e` into the *user* site (~/.local)
+       leaves a .pth pointing at `python/`, so any interpreter outside the venv
+       imports the source tree without the compiled extension and dies with
+       "partially initialized module 'pybcsv' ... has no attribute
+       'DEFAULT_COMPRESSION_LEVEL'".  Its console scripts install into
+       ~/.local/bin and win on PATH whenever the venv is not active, so the
+       parquet CLIs break in a way that looks like a library bug and survives
+       every reinstall of the venv, because that is not where it lives.
+
+    The probe imports the way a real caller would - no -I, no cleaned sys.path -
+    because isolating it would hide exactly the shadowing it is here to catch.
+    It reports the distribution's install path rather than `pybcsv.__file__`,
+    because an editable install resolves `__file__` into the source tree whether
+    it is the venv's own or a stray one: the .dist-info location is what tells
+    them apart.
+
+    Exact equality is required, which is only meaningful on a release commit:
+    setuptools_scm resolves a tagged commit to the tag itself, but a dev tree to
+    the *next* version (`1.5.18.dev1` one commit past v1.5.17), so a `.devN`
+    string is normal there rather than evidence of staleness. That is why this
+    is opt-in, like --native, instead of joining the default manifest sweep.
+    """
+    probe = r"""
+import json, site, sys
+out = {}
+try:
+    import importlib.metadata as md
+    dist = md.distribution('pybcsv')
+    out['dist_version'] = dist.version
+    out['dist_path'] = str(getattr(dist, '_path', '') or dist.locate_file(''))
+except BaseException as exc:
+    out['dist_error'] = '%s: %s' % (type(exc).__name__, exc)
+try:
+    out['user_site'] = site.getusersitepackages()
+except BaseException:
+    out['user_site'] = ''
+try:
+    import pybcsv
+    out['ok'] = True
+    out['version'] = pybcsv.__version__
+    out['origin'] = getattr(pybcsv, '__file__', '') or ''
+except BaseException as exc:
+    out['ok'] = False
+    out['error'] = '%s: %s' % (type(exc).__name__, exc)
+sys.stdout.write(json.dumps(out))
+"""
+    try:
+        proc = subprocess.run([interpreter, "-c", probe],
+                              capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return [f"could not run {interpreter!r}: {exc}"]
+    try:
+        info = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        detail = (proc.stderr or "").strip().splitlines()
+        return [f"{interpreter} could not probe pybcsv: "
+                f"{detail[-1] if detail else f'exit status {proc.returncode}'}"]
+
+    where = info.get("dist_path") or info.get("origin") or "unknown location"
+    hint = _stray_hint(info)
+
+    if not info.get("ok"):
+        return [" ".join(filter(None, [
+            f"{interpreter} cannot import pybcsv ({where}): {info.get('error')}.",
+            hint or "The package is not importable for this interpreter.",
+        ]))]
+
+    found = info.get("version", "")
+    if found != expected:
+        return [" ".join(filter(None, [
+            f"installed pybcsv reports {found!r}, expected {expected!r} ({where}).",
+            hint,
+            f"If this is the venv's own editable install, it does not regenerate "
+            f"its version on auto-rebuild, so the extension may be current and "
+            f"only mislabelled - reinstall it: {interpreter} -m pip install -e "
+            f"python --no-deps --force-reinstall",
+        ]))]
+
+    print(f"  OK   {interpreter} imports pybcsv {found} ({where})")
+    return []
+
+
+def _stray_hint(info: dict) -> str:
+    """Name the stray user-site install; it does not announce itself.
+
+    Distinguished by where the *distribution* lives, not by `__file__`: both a
+    stray editable install and the venv's own resolve `__file__` into python/.
+    """
+    dist_path, user_site = info.get("dist_path", ""), info.get("user_site", "")
+    if dist_path and user_site and Path(dist_path).is_relative_to(user_site):
+        return (f"This is a stray editable install in the user site ({user_site}), "
+                f"not the venv's - it shadows the venv for every interpreter "
+                f"outside it, and its bcsv2parquet / parquet2bcsv scripts win on "
+                f"PATH whenever the venv is inactive. Remove it with: "
+                f"pip uninstall pybcsv (from outside the venv).")
+    return ""
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tag", help="git tag this build claims to be (e.g. v1.5.13)")
     parser.add_argument("--native", action="append", default=[],
                         help="path to a built shared library to load and verify")
+    parser.add_argument("--python", nargs="?", const=sys.executable, default=None,
+                        metavar="INTERPRETER",
+                        help="verify the pybcsv installed for INTERPRETER (default: the "
+                             "interpreter running this script). Exact match, so only "
+                             "meaningful on a release commit - a dev tree resolves to the "
+                             "next version (1.5.18.dev1), not VERSION.txt")
     parser.add_argument("--skip-manifests", action="store_true",
-                        help="only run the --tag / --native checks")
+                        help="only run the --tag / --native / --python checks")
     args = parser.parse_args()
 
     expected = read_source_of_truth()
@@ -165,6 +289,8 @@ def main() -> int:
         problems += check_tag(expected, args.tag)
     for lib in args.native:
         problems += check_native(expected, lib)
+    if args.python:
+        problems += check_python_package(expected, args.python)
 
     if problems:
         print(f"\nFAIL {len(problems)} version mismatch(es):", file=sys.stderr)
