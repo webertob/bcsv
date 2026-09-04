@@ -5,6 +5,23 @@ All notable changes to the BCSV Unity package will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.18] - 2026-09-04
+
+### Added
+
+- **`IBcsvPacer`**, a marker interface for a component that paces a `BcsvRecorder`
+  on the same GameObject. Its presence turns the recorder's own `FixedUpdate`
+  pacing and its `recordOnStart` off; the pacer calls `Advance` or `Trigger` for
+  the rows and `BeginRecording` once its columns are subscribed. Detected in
+  `Awake` and again in `BeginRecording`, so a pacer added at run time is seen.
+
+### Changed
+
+- **The `pacing` dropdown is no longer drawn.** The GameObject's components are
+  the choice: a pacer beside the recorder means external pacing, none means the
+  physics step. The field itself stays, hidden, for a script that has no
+  component to offer, so nothing that set `Pacing.External` breaks.
+
 ## [1.5.17] - 2026-08-25
 
 ### Added
