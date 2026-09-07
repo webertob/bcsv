@@ -61,14 +61,17 @@ namespace BCSV
     /// can enforce that, which is why it is written down.
     /// </para>
     /// <para>
-    /// <b>Something other than Unity can pace it.</b> Set <see cref="pacing"/>
-    /// to <see cref="Pacing.External"/> and <c>FixedUpdate</c> does nothing;
-    /// the driver calls <see cref="Advance"/> with its own step, or
-    /// <see cref="Trigger"/> to place a single row itself. A test rig that owns
-    /// its own pump, a replay driven by incoming datagrams and a scene that
-    /// records only on an event are the same mechanism with different callers,
-    /// and none of them should need a global flag to stop this component
-    /// fighting them.
+    /// <b>Something other than Unity can pace it.</b> A component beside this
+    /// one that implements <see cref="IBcsvPacer"/> is the pacer: this
+    /// component's <c>FixedUpdate</c> then does nothing and <see cref="recordOnStart"/>
+    /// is ignored, and the pacer calls <see cref="Advance"/> with its own step,
+    /// or <see cref="Trigger"/> to place a single row itself, and
+    /// <see cref="BeginRecording"/> when its columns are subscribed. A test rig
+    /// that owns its own pump, a replay driven by incoming datagrams and a scene
+    /// that records only on an event are the same mechanism with different
+    /// callers, and none of them should need a flag on this component to stop
+    /// it fighting them - the GameObject's components are the configuration.
+    /// A script with no component to offer can still set <see cref="pacing"/>.
     /// </para>
     /// </remarks>
     [DefaultExecutionOrder(ExecutionOrder)]
@@ -155,13 +158,17 @@ namespace BCSV
                  "Changing this while recording takes effect immediately.")]
         public float sampleRateHz = 0.0f;
 
-        [Tooltip("What decides when a row is written. External makes FixedUpdate " +
-                 "a no-op and leaves the pacing to whoever calls Advance() or " +
-                 "Trigger().")]
+        /// <summary>
+        /// What decides when a row is written. Not shown: a pacer component beside this
+        /// one (<see cref="IBcsvPacer"/>) is what makes the choice, and the field stays
+        /// for a script that has no component to offer.
+        /// </summary>
+        [HideInInspector]
         public Pacing pacing = Pacing.UnityFixedUpdate;
 
         [Tooltip("Begin recording in Start(). Switch off for a rig that opens the " +
-                 "file itself, and call BeginRecording() when it is ready.")]
+                 "file itself, and call BeginRecording() when it is ready. Ignored " +
+                 "when a pacer sits on this GameObject: the pacer opens the file.")]
         public bool recordOnStart = true;
 
         [Tooltip("Row codec: delta, zoh, or flat. Set HERE and nowhere else — it " +
@@ -540,6 +547,10 @@ namespace BCSV
         /// <returns>True if the recording started.</returns>
         public bool BeginRecording()
         {
+            // A pacer added at run time, after Awake, is seen here: opening the
+            // file is the last moment before rows, and the one every path passes.
+            _paced = GetComponent<IBcsvPacer>() != null;
+
             if (IsRecording)
             {
                 Debug.LogWarning(name + " (BcsvRecorder): already recording to " + CurrentPath +
@@ -956,14 +967,32 @@ namespace BCSV
 
         // ── Unity hooks ─────────────────────────────────────────────────────
 
+        // Whether a pacer sits beside this component. Latched in Awake, so the
+        // per-step check is a field read and not a component lookup, and refreshed
+        // by BeginRecording for a pacer that arrived later.
+        private bool _paced;
+
+        private bool Paced => _paced || pacing != Pacing.UnityFixedUpdate;
+
+        private void Awake()
+        {
+            _paced = GetComponent<IBcsvPacer>() != null;
+        }
+
         private void Start()
         {
-            if (recordOnStart) BeginRecording();
+            // A pacer added between Awake and here - a rig built at run time adds
+            // this component first and the pacer after - is seen now. A pacer opens
+            // the file itself, once its columns are subscribed; a recorder that
+            // opened first would either have nothing subscribed or be told it is
+            // already recording.
+            if (!_paced) _paced = GetComponent<IBcsvPacer>() != null;
+            if (recordOnStart && !Paced) BeginRecording();
         }
 
         private void FixedUpdate()
         {
-            if (pacing != Pacing.UnityFixedUpdate) return;
+            if (Paced) return;
             Advance(Time.fixedDeltaTime);
         }
 

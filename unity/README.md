@@ -196,10 +196,15 @@ the objects being recorded, and a row then mixes values from two steps —
 which shows up as channels that should agree exactly instead differing by
 precisely one sample.
 
-**Pacing.** Set `pacing = BcsvRecorder.Pacing.External` and `FixedUpdate` does
-nothing; drive it yourself with `Advance(dt)` for a rate, or `Trigger()` to place
-a single row at an event. Useful for a test rig with its own pump, or for
-recording on a controller step rather than a physics step.
+**Pacing.** Put a component that implements `IBcsvPacer` on the recorder's
+GameObject and the recorder's own `FixedUpdate` does nothing and `recordOnStart`
+is ignored: the pacer drives it with `Advance(dt)` for a rate, or `Trigger()` to
+place a single row at an event, and calls `BeginRecording()` once its columns
+are subscribed. The interface has no members - it says who is in charge, and the
+inspector shows no pacing choice because the components are the choice. Useful
+for a test rig with its own pump, or for recording on a controller step rather
+than a physics step. A script with no component to offer can still set
+`pacing = BcsvRecorder.Pacing.External`; the field is just no longer drawn.
 
 ### Replaying a Recording
 
