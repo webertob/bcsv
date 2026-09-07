@@ -12,6 +12,8 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.18] - 2026-09-07
+
 ### Added
 
 - **`scripts/check_versions.py --python [INTERPRETER]`** — verifies the pybcsv an
@@ -59,6 +61,26 @@ This project uses [Semantic Versioning](https://semver.org/).
 - **`scripts/update_version.sh` warns that editable installs are now stale.** The
   bump is the moment their version strings become wrong, so it prints the
   reinstall and verify commands.
+
+- **`scripts/check_csharp_parity.py` stops the NuGet and Unity C# bindings
+  drifting apart** (with a `csharp-binding-parity` job in `ci.yml`): the two
+  trees are the same code in two namespaces — NuGet publishes `namespace Bcsv;`,
+  Unity's asmdef publishes `namespace BCSV` — and cannot be merged, so the check
+  notices when they stop agreeing; it had found five places already out of sync
+  before it ran. It compares the declared `bcsv_*` P/Invoke entry points and,
+  after normalising away namespace form, indentation and blank lines, the bodies
+  of the shared wrapper files.
+
+- **The metadata-companion docs call out a namespace collision they had been
+  hiding** — Python `parquet_utils.read_metadata_json`, C# `BcsvMetadata`, and
+  Unity `BcsvMetadata`. The companion JSON has a document level and an inner
+  `key_value_metadata` level, and the readers return only the inner one. The two
+  levels share keys with nothing to keep them apart — most damagingly
+  `source_sha256`, which at the document level is the digest of the Parquet
+  input while an upstream stage that stamped it into the footer leaves a second,
+  different digest under the same name — so a key in the returned pairs does not
+  necessarily mean what the same key one level up. Behaviour is unchanged; the
+  collision is now documented at the points it will be read.
 
 ---
 

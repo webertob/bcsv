@@ -4,7 +4,18 @@ All notable changes to the BCSV Unity package will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [Unreleased]
 
+## [1.5.18] - 2026-09-07
+
+### Changed
+
+- **`BcsvMetadata`** — the doc comments now state that `ReadCompanion` returns
+  only the inner `key_value_metadata` pairs, not the document-level fields around
+  them. The two levels share one namespace with nothing to keep them apart, so a
+  returned key such as `source_sha256` does not necessarily mean what the same
+  key means one level up. Behaviour is unchanged — the collision is now
+  documented where it will be read.
 ## [1.5.17] - 2026-08-25
 
 ### Added
