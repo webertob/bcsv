@@ -12,6 +12,30 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.19] - 2026-09-07
+
+### Added
+
+- **Unity: `IBcsvPacer`** - a marker interface for a component that paces a
+  `BcsvRecorder` on the same GameObject: it produces the rows through `Advance` or
+  `Trigger` and opens the file with `BeginRecording` once its columns are
+  subscribed. Its presence turns the recorder pacing off `FixedUpdate` and switches
+  `recordOnStart` off. Detected in `Awake` and again in `BeginRecording`, so a pacer
+  added at run time is seen.
+
+### Changed
+
+- **Unity: the recorder `pacing` dropdown is no longer drawn.** The components on
+  the GameObject are the choice: a pacer beside the recorder means external pacing,
+  none means the physics step. The field stays, hidden, so a script that set
+  `Pacing.External` keeps working.
+
+### Notes
+
+- 1.5.18 was released twice, from two machines: the parity-guard line (tagged and
+  pushed) and the pacer line (never pushed). 1.5.19 is their merge, and the Unity
+  package on the `upm` branch gains the pacer here for the first time.
+
 ## [1.5.18] - 2026-09-07
 
 ### Added

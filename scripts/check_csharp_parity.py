@@ -53,6 +53,9 @@ EXCLUDED_FUNCS = {
 #   Unity-only: BcsvNative.cs (P/Invoke pass) plus the MonoBehaviour components,
 #               which depend on UnityEngine and have no NuGet counterpart.
 UNPAIRED_OK = {
+    # Unity-only by design: the pacer is a marker interface for a MonoBehaviour that
+    # sits beside the BcsvRecorder component; NuGet has no recorder component.
+    "IBcsvPacer.cs",
     "NativeMethods.cs", "ColumnType.cs", "FileFlags.cs", "SamplerMode.cs",
     "BcsvNative.cs", "BcsvPlayer.cs", "BcsvRecorder.cs",
 }
