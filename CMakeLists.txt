@@ -236,7 +236,10 @@ target_link_libraries(bcsv_c_api
 # through interposable PLT thunks (the per-cell Range-check calls in the
 # cell-dispatch helpers). All BCSV inline functions are stateless, so no
 # other DSO's definition could change behaviour here.
-if(NOT MSVC)
+# ELF-only in practice: Mach-O two-level namespace already binds direct,
+# and AppleClang rejects the flag as unused (with -Werror it breaks the
+# macOS package builds — shipped CI 1.5.20).
+if(NOT MSVC AND NOT APPLE)
     target_compile_options(bcsv_c_api PRIVATE -fno-semantic-interposition)
 endif()
 

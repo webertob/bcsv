@@ -12,6 +12,17 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.21] - 2026-09-14
+
+### Fixed
+
+- **macOS package builds of `libbcsv_c_api` failed with AppleClang
+  `-Werror`**: the 1.5.20 `-fno-semantic-interposition` option is a
+  no-op flag on Mach-O (two-level namespaces already bind non-exported
+  inline code directly). It is now applied only on non-MSVC,
+  non-Apple toolchains, which unblocks the NuGet and Unity
+  package pipelines for macOS natives. No source or behaviour change.
+
 ## [1.5.20] - 2026-09-14
 
 ### Added

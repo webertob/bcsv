@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [1.5.21] - 2026-09-14
+
+### Fixed
+
+- **macOS native library failed to build in the release pipeline**
+  (AppleClang rejected the 1.5.20 `-fno-semantic-interposition` flag
+  under `-Werror`, so the macOS plugin never shipped). The flag is now
+  ELF-only; the package is unchanged for consumers otherwise.
+
 ## [1.5.20] - 2026-09-14
 
 ### Added
