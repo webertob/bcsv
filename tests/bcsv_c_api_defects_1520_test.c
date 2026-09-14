@@ -48,6 +48,10 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #endif
+#ifdef __APPLE__
+#include <mach-o/dyld.h>         /* _NSGetExecutablePath */
+#include <stdint.h>
+#endif
 
 static int tests_run = 0;
 static int tests_passed = 0;
@@ -552,12 +556,25 @@ static int mode_all_leaked(const char* stem) {
     return 0;
 }
 
-/* Re-exec /proc/self/exe with [mode, stem]; assert the child exits cleanly. */
+/* Re-exec the own image with [mode, stem]; assert the child exits cleanly.
+ * Own path: /proc/self/exe on Linux, _NSGetExecutablePath on macOS — the
+ * first macOS CI run of this file lost all five children to ENOENT. */
+static int self_exe_path(char* exe, size_t cap) {
+#ifdef __APPLE__
+    uint32_t n = (uint32_t)cap;
+    if (_NSGetExecutablePath(exe, &n) != 0) return 0;
+    return 1;
+#else
+    ssize_t n = readlink("/proc/self/exe", exe, cap - 1);
+    if (n <= 0) return 0;
+    exe[n] = '\0';
+    return 1;
+#endif
+}
+
 static void run_child_mode(const char* label, const char* mode, const char* stem) {
     char exe[4096];
-    ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
-    if (n <= 0) { TEST_ASSERT(0, "readlink /proc/self/exe"); return; }
-    exe[n] = '\0';
+    if (!self_exe_path(exe, sizeof(exe))) { TEST_ASSERT(0, "resolve own executable"); return; }
 
     fflush(stdout);
     fflush(stderr);
