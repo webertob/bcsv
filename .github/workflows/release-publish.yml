@@ -134,9 +134,18 @@ jobs:
         # Cross-run download: the packager archived the .tgz as the
         # `unity-package` artifact (30-day retention); the gate verified that
         # run concluded success before this job was allowed to start.
+        # -R: gh derives the repo from the git context otherwise; pass it
+        # explicitly so no job depends on a checkout being present.
         gh run download "${{ needs.gate.outputs.unity_run_id }}" \
+          -R "$GITHUB_REPOSITORY" \
           --pattern unity-package --dir release-assets
-        ls -lh release-assets/
+        # gh nests each artifact under a subdir of its name; flatten so the
+        # Create Release glob below can stay a plain one-level match.
+        find release-assets -name '*.tgz' -exec mv {} release-assets/ +
+        # Hard guard: action-gh-release silently skips globs that match
+        # nothing (that is how v1.5.20 shipped without its .tgz). Fail here
+        # instead, while a retag is cheap.
+        ls release-assets/com.bcsv.unity-*.tgz >/dev/null
     
     - name: Extract version from tag
       id: version
@@ -233,6 +242,10 @@ jobs:
         files: |
           ${{ steps.artifact.outputs.zip_path }}
           release-assets/com.bcsv.unity-*.tgz
+        # Emergency retag survivability, same logic as skip-existing on the
+        # registries: a re-ship re-attaches rather than dying on the name
+        # that a previous attempt already uploaded.
+        overwrite_files: true
         generate_release_notes: true
         body: |
           ## BCSV Release ${{ steps.version.outputs.version }}
@@ -282,6 +295,7 @@ jobs:
         run: |
           set -euo pipefail
           gh run download "${{ needs.gate.outputs.wheels_run_id }}" \
+            -R "$GITHUB_REPOSITORY" \
             --pattern "built-*" --dir dist-artifacts
           mkdir dist
           find dist-artifacts \( -name '*.whl' -o -name '*.tar.gz' \) -exec cp {} dist/ \;
@@ -310,8 +324,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # No checkout in this job: -R gives gh the repo without a git
+          # context. Flatten the gh artifact subdir so *.nupkg matches.
           gh run download "${{ needs.gate.outputs.nuget_run_id }}" \
+            -R "$GITHUB_REPOSITORY" \
             --pattern nuget-package --dir nupkg
+          find nupkg -name '*.nupkg' -exec mv -t nupkg {} +
           ls -lh nupkg/
 
       - name: Setup .NET
@@ -340,7 +358,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh run download "${{ needs.gate.outputs.nuget_run_id }}" \
+            -R "$GITHUB_REPOSITORY" \
             --pattern nuget-package --dir nupkg
+          find nupkg -name '*.nupkg' -exec mv -t nupkg {} +
           ls -lh nupkg/
 
       - name: Setup .NET
