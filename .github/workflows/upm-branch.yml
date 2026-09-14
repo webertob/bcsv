@@ -143,13 +143,21 @@ jobs:
       - name: Build Linux x64 native (fallback)
         if: steps.download.outputs.has_artifacts != 'true'
         run: |
+          # Emergency path only — normally the upm branch reuses the verified
+          # artifacts of the green unity-package run. Unlike that spoke this
+          # job has no manylinux container, so the artifact carries the
+          # runner's glibc floor: older than the spoke's, newer than nothing.
+          # The static C++ runtime keeps the packaging contract (no external
+          # libstdc++ — docs/adr/0007), which the check below now enforces:
+          # a fallback that cannot pass it is worse than no fallback.
           cmake -G Ninja -B build \
             -DCMAKE_BUILD_TYPE=Release \
             -DBCSV_WERROR=ON \
             -DBCSV_STRICT_VERSION=ON \
-            -DBUILD_TESTS=OFF
+            -DBUILD_TESTS=OFF \
+            -DCMAKE_SHARED_LINKER_FLAGS="-static-libstdc++ -static-libgcc"
           cmake --build build --target bcsv_c_api --parallel
-          python3 scripts/check_versions.py --skip-manifests --native build/libbcsv_c_api.so
+          python3 scripts/check_versions.py --skip-manifests --self-contained --native build/libbcsv_c_api.so
           mkdir -p native-artifacts/unity-native-linux-x64
           cp build/libbcsv_c_api.so native-artifacts/unity-native-linux-x64/
 

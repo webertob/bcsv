@@ -22,6 +22,7 @@ Usage:
     scripts/check_versions.py                       # check committed manifests
     scripts/check_versions.py --tag v1.5.13         # also require the tag to match
     scripts/check_versions.py --native build/libbcsv_c_api.so
+    scripts/check_versions.py --native build/libbcsv_c_api.so --self-contained
     scripts/check_versions.py --python .venv/bin/python  # installed pybcsv
 """
 
@@ -30,7 +31,9 @@ from __future__ import annotations
 import argparse
 import ctypes
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -126,7 +129,12 @@ def check_tag(expected: str, tag: str) -> list[str]:
 
 
 def check_native(expected: str, lib_path: str) -> list[str]:
-    """Load the built library and ask it for its own version string."""
+    """Load the built library and ask it for its own version string.
+
+    Loading is not decoration: the dlopen fails on any unresolved import,
+    and the layout create/destroy round-trip exercises real construction and
+    destruction into the runtime the artifact carries (the paths behind
+    docs/adr/0007). A symbol scan alone sees neither."""
     path = Path(lib_path)
     if not path.exists():
         return [f"native library not found: {lib_path}"]
@@ -141,7 +149,94 @@ def check_native(expected: str, lib_path: str) -> list[str]:
             f"{lib_path} reports version {found!r}, expected {expected!r} - "
             f"the build resolved a different version than the release intends"
         ]
-    print(f"  OK   {lib_path} reports {found}")
+    lib.bcsv_layout_create.restype = ctypes.c_void_p
+    lib.bcsv_layout_destroy.argtypes = [ctypes.c_void_p]
+    handle = lib.bcsv_layout_create()
+    if not handle:
+        return [f"{lib_path}: bcsv_layout_create returned null"]
+    lib.bcsv_layout_destroy(ctypes.c_void_p(handle))
+    print(f"  OK   {lib_path} reports {found}, loaded and round-tripped a layout")
+    return []
+
+
+def check_native_self_contained(lib_path: str) -> list[str]:
+    """Self-contained packaging artifacts must carry their own C++ runtime:
+    a consumer cannot be asked to install one, and a foreign runtime in the
+    same process is the interposition failure of docs/adr/0007. Opt-in:
+    builds that pair with a host runtime deliberately (local dev, NuGet linux)
+    omit the flag."""
+    path = Path(lib_path)
+    if not path.exists():
+        return [f"native library not found: {lib_path}"]
+    head = path.read_bytes()[:4]
+    if head == b"\x7fELF":
+        objdump = shutil.which("objdump")
+        if not objdump:
+            return [f"objdump not found to check {lib_path}"]
+        out = subprocess.run([objdump, "-p", str(path)],
+                             capture_output=True, text=True, check=True).stdout
+        needed = [ln.split()[1] for ln in out.splitlines()
+                  if ln.strip().startswith("NEEDED")]
+        bad = [n for n in needed if "libstdc++" in n or "libgcc_s" in n]
+        if bad:
+            return [f"{lib_path} needs a system C++ runtime ({', '.join(bad)}) "
+                    f"- link it with -static-libstdc++ -static-libgcc"]
+        print(f"  OK   {lib_path} needs no external C++ runtime")
+        return []
+    if head == b"MZ":
+        dumpbin = shutil.which("dumpbin")
+        if not dumpbin:
+            vc = os.environ.get("VCToolsInstallDir", "")
+            cand = Path(vc) / "bin" / "Hostx64" / "x64" / "dumpbin.exe"
+            if vc and cand.exists():
+                dumpbin = str(cand)
+        if not dumpbin:
+            return [f"dumpbin not found to check {lib_path}"]
+        out = subprocess.run([dumpbin, "/DEPENDENTS", str(path)],
+                             capture_output=True, text=True).stdout
+        imports = re.findall(r"^\s+(\S+\.dll)$", out, re.MULTILINE)
+        if not imports:
+            return [f"dumpbin found no dependencies for {lib_path} "
+                    f"- unparseable output, refusing to pass"]
+        bad = [i for i in imports
+               if re.search(r"MSVCP|VCRUNTIME|api-ms-win-crt", i, re.IGNORECASE)]
+        if bad:
+            return [f"{lib_path} needs the Visual C++ Redistributable "
+                    f"({', '.join(bad)})"]
+        print(f"  OK   {lib_path} needs no Visual C++ Redistributable")
+        return []
+    return []  # Mach-O ships the system libc++ by convention
+
+
+def check_native_exports(lib_path: str) -> list[str]:
+    """ELF artifacts named libbcsv_c_api*: the dynamic table must define
+    bcsv_* only (docs/adr/0007). A host that already loaded its own C++
+    runtime (Unity player, Mono, CPython) interposes re-exported symbols,
+    and one runtime copy then destroys what the other constructed. CTest
+    bcsv_c_api_export_surface is the unit-side tripwire; this one runs on
+    the release artifact itself, including the package builds that skip
+    the test suite.
+
+    The manylinux wheels vendor libstdc++ differently (auditwheel hides the
+    vendored symbols), so this checks the C API library, not extensions."""
+    path = Path(lib_path)
+    if not path.exists() or "bcsv_c_api" not in path.name:
+        return []
+    if path.read_bytes()[:4] != b"\x7fELF":
+        return []  # Mach-O has two-level namespaces, COFF no interposition
+    try:
+        out = subprocess.run(
+            ["nm", "--defined-only", "--extern-only", str(path.resolve())],
+            capture_output=True, text=True, check=True,
+        ).stdout
+    except (subprocess.CalledProcessError, OSError) as exc:
+        return [f"nm failed on {lib_path}: {exc}"]
+    fields = (ln.split() for ln in out.splitlines() if ln.split())
+    stray = [f[-1] for f in fields if not f[-1].startswith("bcsv_")]
+    if stray:
+        return [f"{lib_path} exports {len(stray)} symbol(s) outside the bcsv_* "
+                f"C API ({', '.join(stray[:5])}...) - docs/adr/0007"]
+    print(f"  OK   {lib_path} exports only the bcsv_* C API")
     return []
 
 
@@ -274,6 +369,9 @@ def main() -> int:
                              "next version (1.5.18.dev1), not VERSION.txt")
     parser.add_argument("--skip-manifests", action="store_true",
                         help="only run the --tag / --native / --python checks")
+    parser.add_argument("--self-contained", action="store_true",
+                        help="with --native: also require the library to carry"
+                             " its own C++ runtime (no system libstdc++/MSVCP)")
     args = parser.parse_args()
 
     expected = read_source_of_truth()
@@ -289,6 +387,9 @@ def main() -> int:
         problems += check_tag(expected, args.tag)
     for lib in args.native:
         problems += check_native(expected, lib)
+        problems += check_native_exports(lib)
+        if args.self_contained:
+            problems += check_native_self_contained(lib)
     if args.python:
         problems += check_python_package(expected, args.python)
 

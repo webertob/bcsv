@@ -160,56 +160,18 @@ jobs:
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
           cmake --build build --target bcsv_c_api --parallel
 
-      - name: Verify the library loads and needs no extra runtime
+      - name: Verify the built artifact
         shell: bash
         run: |
           set -e
-          LIB="${{ matrix.lib-dir }}/${{ matrix.lib-name }}"
-          echo "=== $LIB ==="
-
-          if [[ "${{ runner.os }}" == "Linux" ]]; then
-            objdump -p "$LIB" | awk '/NEEDED/ {print "  needs " $2}'
-            if objdump -p "$LIB" | grep -qE 'NEEDED.*(libstdc\+\+|libgcc_s)'; then
-              echo "  FAIL links the C++ runtime dynamically; the target would need a"
-              echo "       matching libstdc++, which the build container hides here"
-              exit 1
-            fi
-            # A version scan alone is not enough: it only sees versioned
-            # symbols, and an unresolved C++ ABI symbol or an unversioned libc
-            # entry point such as copy_file_range is invisible to it. Loading
-            # the library is the only check that covers those.
-            cp "$LIB" /tmp/lib.so
-            /opt/python/cp311-cp311/bin/python - <<'PY'
-          import ctypes
-          lib = ctypes.CDLL("/tmp/lib.so")
-          lib.bcsv_layout_create.restype = ctypes.c_void_p
-          lib.bcsv_layout_destroy.argtypes = [ctypes.c_void_p]
-          h = lib.bcsv_layout_create()
-          assert h, "bcsv_layout_create returned null"
-          lib.bcsv_layout_destroy(ctypes.c_void_p(h))
-          print("  PASS loaded, created and destroyed a layout")
-          PY
-            HIGH=$(objdump -T "$LIB" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -V | tail -1)
-            echo "  highest glibc symbol version: ${HIGH:-none}"
-          elif [[ "${{ runner.os }}" == "Windows" ]]; then
-            DUMPBIN="$(cygpath -u "$VCToolsInstallDir" 2>/dev/null)bin/Hostx64/x64/dumpbin.exe"
-            [ -x "$DUMPBIN" ] || DUMPBIN=$(find "/c/Program Files/Microsoft Visual Studio" -name dumpbin.exe 2>/dev/null | head -1)
-            IMPORTS=$("$DUMPBIN" //DEPENDENTS "$LIB" | grep -oE '^\s+\S+\.dll' | tr -d ' ')
-            echo "$IMPORTS" | sed 's/^/  needs /'
-            if echo "$IMPORTS" | grep -qiE 'MSVCP|VCRUNTIME|api-ms-win-crt'; then
-              echo "  FAIL still needs the Visual C++ Redistributable"; exit 1
-            fi
-            echo "  PASS no Visual C++ Redistributable needed"
-          fi
-
-      - name: Verify the stamped version
-        shell: bash
-        run: |
-          set -e
-          # Ask the built binary what version it thinks it is. Checking the
-          # artifact rather than the build inputs is the point: this is the
-          # step that fails if the toolchain resolved a version other than the
-          # one the release intends to ship.
+          # One script does every artifact check (scripts/check_versions.py):
+          # it loads the library (catching unresolved imports a scan cannot
+          # see), round-trips a layout through the runtime the artifact
+          # carries, requires the export surface to be bcsv_* only
+          # (docs/adr/0007), requires self-containment (no system libstdc++
+          # or VC++ Redistributable), and asks the binary its version - the
+          # check that fails if the toolchain resolved anything other than
+          # what this release intends to ship.
           if [[ "${{ runner.os }}" == "Linux" ]]; then
             PY=/opt/python/cp311-cp311/bin/python   # manylinux ships no system python3
           elif command -v python3 >/dev/null 2>&1; then
@@ -217,7 +179,7 @@ jobs:
           else
             PY=python                                # Windows runners expose python only
           fi
-          ARGS=(--skip-manifests --native "${{ matrix.lib-dir }}/${{ matrix.lib-name }}")
+          ARGS=(--skip-manifests --self-contained --native "${{ matrix.lib-dir }}/${{ matrix.lib-name }}")
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             ARGS+=(--tag "${GITHUB_REF#refs/tags/}")
           fi

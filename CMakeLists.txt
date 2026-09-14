@@ -241,6 +241,19 @@ target_link_libraries(bcsv_c_api
 # macOS package builds — shipped CI 1.5.20).
 if(NOT MSVC AND NOT APPLE)
     target_compile_options(bcsv_c_api PRIVATE -fno-semantic-interposition)
+
+    # The library's ABI is the bcsv_* C API and nothing else (docs/adr/0007).
+    # Re-exported C++ runtime symbols (static libstdc++, vtables, operator
+    # new/delete) are interposed by a host process's own runtime copy: one
+    # copy constructs an object the other destroys — heap abort. Binding
+    # direct calls (-fno-semantic-interposition above) leaves those exports
+    # visible; local definitions are the only defence.
+    target_link_options(bcsv_c_api PRIVATE
+        -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/cmake/bcsv_c_api_exports.lds)
+    # A linker script passed as a flag is not a tracked dependency; without
+    # this, editing the script would not relink an up-to-date library.
+    set_property(TARGET bcsv_c_api APPEND PROPERTY LINK_DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/bcsv_c_api_exports.lds)
 endif()
 
 # Platform-specific properties
@@ -316,6 +329,14 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTS)
     target_link_libraries(test_c_api_defects_1520 bcsv_c_api)
     target_include_directories(test_c_api_defects_1520 PRIVATE ${CMAKE_SOURCE_DIR})
     add_test(NAME test_c_api_defects_1520 COMMAND $<TARGET_FILE:test_c_api_defects_1520>)
+
+    # Export-surface tripwire (docs/adr/0007). Script mode; ELF hosts only.
+    if(NOT MSVC AND NOT APPLE)
+        add_test(NAME bcsv_c_api_export_surface
+                 COMMAND ${CMAKE_COMMAND}
+                         -DBCSV_LIBRARY=$<TARGET_FILE:bcsv_c_api>
+                         -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/bcsv_c_api_export_test.cmake)
+    endif()
 
     # Ensure C API test executables are co-located with the DLL
     set_target_properties(test_row_api test_c_api test_c_api_full test_c_api_defects_1520 PROPERTIES

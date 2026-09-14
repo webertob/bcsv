@@ -49,6 +49,10 @@ CMakeFiles/
 cmake_install.cmake
 Makefile
 *.cmake
+# Hand-maintained modules stay tracked by name; generated ones (CTestTestfile.cmake
+# from an in-source build) stay ignored. Add new modules by name, not by wildcard.
+!cmake/GetGitVersion.cmake
+!tests/bcsv_c_api_export_test.cmake
 
 # Ignore package manager files
 conan.lock

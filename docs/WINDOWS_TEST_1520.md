@@ -134,16 +134,17 @@ python scripts\check_csharp_parity.py
 
 ## 8. Unity package smoke (optional, if a Unity editor is available)
 
-`unity-package.yml` builds `bcsv_c_api.dll` for the package via
-`scripts/build-unity-windows.ps1`. If you have the editor:
+`unity-package.yml` builds `bcsv_c_api.dll` for the package directly with
+cmake (the former `scripts/build-unity-windows.ps1` wrapper was dropped as a
+duplicate build definition):
 
 ```powershell
-pwsh scripts\build-unity-windows.ps1   # inspects the script first; it wraps the same cmake steps
+python scripts\check_versions.py --skip-manifests --self-contained --native build\bcsv_c_api.dll
 ```
 
-If not available, skip and say so — Unity C# code is unchanged from 1.5.19
-except the P/Invoke getters/`BcsvRuntime`, whose behaviour is covered by the
-C# tests in step 7.
+If no editor is available, skip and say so — Unity C# code is unchanged from
+1.5.19 except the P/Invoke getters/`BcsvRuntime`, whose behaviour is covered by
+the C# tests in step 7.
 
 ## 9. Known-good baseline (Linux, already verified on this exact tree)
 
