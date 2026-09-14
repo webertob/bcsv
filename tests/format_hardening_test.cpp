@@ -411,6 +411,55 @@ TEST_F(FormatHardeningTest, HeaderCumulativeNameCapEnforcedOnRead) {
     }
 }
 
+// ── B1 (1.5.20): flush() must de-poison even at an empty-packet boundary ───
+// The documented recovery contract is "call flush() to resynchronize".  The
+// batch LZ4 codec used to report "no boundary crossed" when its active buffer
+// was empty — exactly the state when the first row of a fresh packet is
+// rejected (a packet-boundary poison at the most inconvenient moment).  The
+// writer then stayed write-rejected until close().  An empty active buffer is
+// always a fresh-packet start: the decoder resets its row codec at every
+// packet start, and the next row written lands at the start of a new packet,
+// so flush() must clear the poison there too.
+TEST_F(FormatHardeningTest, FlushDepoisonsAtEmptyPacketBoundary) {
+    constexpr size_t kCols = 300;
+    std::vector<std::string> names;
+    std::vector<bcsv::ColumnType> types(kCols, bcsv::ColumnType::STRING);
+    for (size_t i = 0; i < kCols; ++i) names.push_back("s" + std::to_string(i));
+    bcsv::Layout layout(names, types);
+
+    fs::path path = dir_ / "poisoned_empty_flush.bcsv";
+    bcsv::WriterZoH<bcsv::Layout> writer(layout);
+    // Batch LZ4 is the default file codec; the rejected row lands with the
+    // active packet buffer empty, before a single packet byte exists.
+    ASSERT_TRUE(writer.open(path, true)) << writer.getErrorMsg();
+
+    const std::string big(bcsv::MAX_STRING_LENGTH, 'x');
+    for (size_t c = 0; c < kCols; ++c) writer.row().set(c, big);
+    EXPECT_THROW(writer.writeRow(), std::runtime_error);
+    EXPECT_TRUE(writer.isPoisoned());
+
+    // Empty active buffer: the pre-fix path returned false here and the
+    // poison survived.
+    EXPECT_NO_THROW(writer.flush());
+    EXPECT_FALSE(writer.isPoisoned());
+
+    // Writing may resume immediately.
+    for (size_t c = 0; c < kCols; ++c) writer.row().set(c, std::string("B"));
+    EXPECT_NO_THROW(writer.writeRow());
+    EXPECT_NO_THROW(writer.writeRow());
+    writer.close();
+
+    // The file parses and holds exactly the two valid rows.
+    bcsv::Reader<bcsv::Layout> reader;
+    ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
+    size_t seen = 0;
+    while (reader.readNext()) {
+        EXPECT_EQ(reader.row().get<std::string>(0), "B");
+        ++seen;
+    }
+    EXPECT_EQ(seen, 2u);
+}
+
 // ── H2 (review): rejected oversized row must poison the writer ──────────────
 // The serializer commits the rejected row into the ZoH/Delta reference state
 // before the size check can run; continuing to write against that state

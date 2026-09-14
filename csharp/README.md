@@ -10,7 +10,7 @@ Fast, compact time-series storage with streaming row-by-row I/O, columnar bulk a
 - **Columnar Bulk I/O** — read/write entire columns at once with pinned arrays (`BcsvColumns`)
 - **Sampler** — bytecode VM for expression-based row filtering and column projection (`BcsvSampler`)
 - **CSV Interop** — read/write plain CSV files through the same row API (`BcsvCsvReader`/`BcsvCsvWriter`)
-- **Typed Accessors** — `GetInt32()`, `GetDouble()`, `GetString()`, generic `Get<T>()`, vectorized `GetDoubles()`, etc.
+- **Typed Accessors** — `GetInt32()`, `GetDouble()`, `GetString()`, generic `Get<T>()`, vectorized `GetDoubles()`, etc. Wrong-typed reads throw `BcsvException` (no silent zeros since 1.5.20); `GetDouble()` widens the exactly-representable types (ADR-0006).
 - **LZ4 Compression** — transparent compression with configurable level
 - **Zero-Order Hold Encoding** — skip unchanged rows for slowly-varying time-series
 - **xxHash64 Checksums** — data integrity verification

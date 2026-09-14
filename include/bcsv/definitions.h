@@ -40,6 +40,17 @@
     #define BCSV_ALWAYS_INLINE inline
 #endif
 
+// Cold-path counterpiece: keeps an outlined helper OUT of the caller's inline
+// budget (see e.g. row_cell_widen in the C API). Same rationale as
+// BCSV_ALWAYS_INLINE — the portable spelling compiles on MSVC, GCC and Clang.
+#if defined(_MSC_VER)
+    #define BCSV_NOINLINE __declspec(noinline)
+#elif defined(__GNUC__) || defined(__clang__)
+    #define BCSV_NOINLINE __attribute__((noinline))
+#else
+    #define BCSV_NOINLINE
+#endif
+
 namespace bcsv {
 
     // The wire format is written by memcpy of native integers and documented

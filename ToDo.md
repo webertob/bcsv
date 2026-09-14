@@ -318,6 +318,12 @@ Learnings captured from the 1.5.10 release gate (2026-07-12):
     copy passes the null through to the native call.
 - 23.a Columnar read/write: move implementation from C API layer into core C++ library
   (three duplicate implementations today — clear clarity win, evaluate for 1.6.0).
+- pybcsv cell reads still go through the core `Row::get<T>` (type-checked only when
+  `RANGE_CHECKING` is on), so the silent-zero class ADR-0006 closed for the C API is
+  still open for the Python bindings under the embedded configuration. ADR-0006's
+  premise — a binding cannot see which configuration the shipped binary used — applies
+  equally to pybind; mirror the C API's explicit type check in `python/src/` (raised
+  by the 2026-09-14 1.5.20 review).
 - Code cleanup (was item 19): remove ZoH codec? (evaluate once delta header suppression E1 lands —
   delta then strictly dominates ZoH), condense duplicated docs, API surface review.
 - Platform matrix (was item 27): confirm clean build/tests on MSVC + Apple clang; performance on

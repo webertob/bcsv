@@ -5,6 +5,7 @@ namespace Bcsv;
 public sealed class BcsvCsvWriter : IDisposable
 {
     private nint _handle;
+    private int _disposed;   // Interlocked claim flag: 0 = live
     private BcsvRow _row;
 
     public BcsvCsvWriter(BcsvLayout layout, char delimiter = ',', char decimalSep = '.')
@@ -25,10 +26,16 @@ public sealed class BcsvCsvWriter : IDisposable
 
     private void Dispose(bool disposing)
     {
-        if (_handle != 0)
+        // One-shot claim; see BcsvWriter.Dispose() for why.
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        var handle = _handle;
+        _handle = 0;
+        if (handle != 0)
         {
-            NativeMethods.bcsv_csv_writer_destroy(_handle);
-            _handle = 0;
+            // Close before destroy: a CSV writer torn down by the finalizer
+            // still flushes and closes its file deterministically.
+            NativeMethods.bcsv_csv_writer_close(handle);
+            NativeMethods.bcsv_csv_writer_destroy(handle);
         }
     }
 

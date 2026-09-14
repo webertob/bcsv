@@ -10,15 +10,21 @@ namespace Bcsv;
 public sealed class BcsvSampler : IDisposable, IEnumerable<BcsvRow>
 {
     private nint _handle;
+    private int _disposed;   // Interlocked claim flag: 0 = live
+    private readonly BcsvReader _reader;   // keep-alive: sampler borrows its reader
     private BcsvLayout? _outputLayout;
     private BcsvRow _row;
 
-    /// <param name="reader">An opened reader. Caller must keep it alive.</param>
+    /// <param name="reader">An opened reader. Kept alive while the sampler lives.</param>
     public BcsvSampler(BcsvReader reader)
     {
         _handle = NativeMethods.bcsv_sampler_create(reader.Handle);
         if (_handle == 0)
             throw new BcsvException("Failed to create sampler");
+        // The native sampler references the reader throughout its life.
+        // Holding the managed wrapper here keeps a finalizer-reclaimed reader
+        // from destroying its handle under the sampler's feet (finalizer order).
+        _reader = reader;
     }
 
     ~BcsvSampler() => Dispose(false);
@@ -31,12 +37,16 @@ public sealed class BcsvSampler : IDisposable, IEnumerable<BcsvRow>
 
     private void Dispose(bool disposing)
     {
-        if (_handle != 0)
-        {
-            NativeMethods.bcsv_sampler_destroy(_handle);
-            _handle = 0;
-        }
+        // One-shot claim; see BcsvWriter.Dispose() for why.
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        var handle = _handle;
+        _handle = 0;
+        if (handle != 0)
+            NativeMethods.bcsv_sampler_destroy(handle);
     }
+
+    /// <summary>The reader this sampler was created over.</summary>
+    public BcsvReader Reader => _reader;
 
     public void SetConditional(string expr)
     {

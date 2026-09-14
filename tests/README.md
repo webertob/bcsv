@@ -5,8 +5,8 @@
 This directory contains comprehensive tests for the BCSV (Binary CSV) library, focusing on the recently refactored Row API that replaced `std::variant` with direct memory access for improved performance.
 
 **Test Framework:** Google Test (GTest)  
-**Total Tests:** 694 across 26 .cpp files + 3 .c files  
-**Test Executable:** `bcsv_gtest` (GTest), `test_c_api`, `test_c_api_full`, `test_row_api`
+**Total Tests:** 969 GTest cases across 35 .cpp files + 4 standalone C programs  
+**Test Executable:** `bcsv_gtest` (GTest), `test_c_api`, `test_c_api_full`, `test_row_api`, `test_c_api_defects_1520`
 
 ---
 
@@ -151,6 +151,11 @@ This directory contains comprehensive tests for the BCSV (Binary CSV) library, f
 #### 11. **bcsv_c_api_full_test.c**
 **Purpose:** Full C API test coverage including reader/writer/sampler
 
+#### 12. **bcsv_c_api_defects_1520_test.c**
+**Purpose:** 1.5.20 defect contract: idempotent/double destroy, `bcsv_shutdown()`
+flush-and-teardown, and the full getter x column-type matrix of ADR-0006
+(strict rule + lossless `get_double` widening), including exit-time children
+
 ### Additional Test Files (added post-v1.2.0)
 
 | File | Covers |
@@ -221,7 +226,8 @@ tests/
 ├── C API Tests
 │   ├── bcsv_c_api_test.c              # Core C API
 │   ├── bcsv_c_api_full_test.c          # Full C API coverage
-│   └── bcsv_c_api_row_test.c           # Row-specific C API
+│   ├── bcsv_c_api_row_test.c           # Row-specific C API
+│   └── bcsv_c_api_defects_1520_test.c  # 1.5.20 defect contract (ADR-0006)
 │
 └── Configuration
     ├── CMakeLists.txt                 # Build configuration

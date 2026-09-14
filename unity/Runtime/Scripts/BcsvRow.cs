@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026 Tobias Weber. Licensed under the MIT License.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 
 namespace BCSV
@@ -18,19 +19,80 @@ namespace BCSV
         public int ColumnCount => (int)NativeMethods.bcsv_row_column_count(Handle);
 
         // ── Typed getters ──────────────────────────────────────────────
-        public bool   GetBool(int col)   => NativeMethods.bcsv_row_get_bool(Handle, col);
-        public byte   GetUInt8(int col)  => NativeMethods.bcsv_row_get_uint8(Handle, col);
-        public ushort GetUInt16(int col) => NativeMethods.bcsv_row_get_uint16(Handle, col);
-        public uint   GetUInt32(int col) => NativeMethods.bcsv_row_get_uint32(Handle, col);
-        public ulong  GetUInt64(int col) => NativeMethods.bcsv_row_get_uint64(Handle, col);
-        public sbyte  GetInt8(int col)   => NativeMethods.bcsv_row_get_int8(Handle, col);
-        public short  GetInt16(int col)  => NativeMethods.bcsv_row_get_int16(Handle, col);
-        public int    GetInt32(int col)  => NativeMethods.bcsv_row_get_int32(Handle, col);
-        public long   GetInt64(int col)  => NativeMethods.bcsv_row_get_int64(Handle, col);
-        public float  GetFloat(int col)  => NativeMethods.bcsv_row_get_float(Handle, col);
-        public double GetDouble(int col) => NativeMethods.bcsv_row_get_double(Handle, col);
-        public string GetString(int col) =>
-            NativeMethods.PtrToStringUtf8(NativeMethods.bcsv_row_get_string(Handle, col));
+        // Strict type checks at native speed (ADR-0006): a wrong-type column
+        // throws BcsvException instead of silently returning 0/false/null as
+        // versions up to 1.5.19 did. GetDouble additionally widens every type
+        // that converts losslessly (bool, all int/uint up to 32 bit, float);
+        // int64/uint64/string columns stay an error. Success path is one
+        // P/Invoke call — the error channel is consulted only when the native
+        // layer rejects the request.
+        public bool GetBool(int col)
+        {
+            if (!NativeMethods.bcsv_row_try_get_bool(Handle, col, out var v)) ThrowGetError(col);
+            return v;
+        }
+        public byte GetUInt8(int col)
+        {
+            if (!NativeMethods.bcsv_row_try_get_uint8(Handle, col, out var v)) ThrowGetError(col);
+            return v;
+        }
+        public ushort GetUInt16(int col)
+        {
+            if (!NativeMethods.bcsv_row_try_get_uint16(Handle, col, out var v)) ThrowGetError(col);
+            return v;
+        }
+        public uint GetUInt32(int col)
+        {
+            if (!NativeMethods.bcsv_row_try_get_uint32(Handle, col, out var v)) ThrowGetError(col);
+            return v;
+        }
+        public ulong GetUInt64(int col)
+        {
+            if (!NativeMethods.bcsv_row_try_get_uint64(Handle, col, out var v)) ThrowGetError(col);
+            return v;
+        }
+        public sbyte GetInt8(int col)
+        {
+            if (!NativeMethods.bcsv_row_try_get_int8(Handle, col, out var v)) ThrowGetError(col);
+            return v;
+        }
+        public short GetInt16(int col)
+        {
+            if (!NativeMethods.bcsv_row_try_get_int16(Handle, col, out var v)) ThrowGetError(col);
+            return v;
+        }
+        public int GetInt32(int col)
+        {
+            if (!NativeMethods.bcsv_row_try_get_int32(Handle, col, out var v)) ThrowGetError(col);
+            return v;
+        }
+        public long GetInt64(int col)
+        {
+            if (!NativeMethods.bcsv_row_try_get_int64(Handle, col, out var v)) ThrowGetError(col);
+            return v;
+        }
+        public float GetFloat(int col)
+        {
+            if (!NativeMethods.bcsv_row_try_get_float(Handle, col, out var v)) ThrowGetError(col);
+            return v;
+        }
+        public double GetDouble(int col)
+        {
+            if (!NativeMethods.bcsv_row_try_get_double(Handle, col, out var v)) ThrowGetError(col);
+            return v;
+        }
+        public string GetString(int col)
+        {
+            if (!NativeMethods.bcsv_row_try_get_string(Handle, col, out var p)) ThrowGetError(col);
+            return NativeMethods.PtrToStringUtf8(p);
+        }
+
+        [DoesNotReturn]
+        private static void ThrowGetError(int col)
+        {
+            var err = NativeMethods.PtrToStringUtf8(NativeMethods.bcsv_last_error());
+            throw new BcsvException($"Get at column {col} failed: {err}");
+        }
 
         // ── Typed setters ──────────────────────────────────────────────
         public void SetBool(int col, bool value)     => NativeMethods.bcsv_row_set_bool(Handle, col, value);

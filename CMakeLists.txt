@@ -232,6 +232,14 @@ target_link_libraries(bcsv_c_api
     PRIVATE xxhash ${LZ4_TARGET}
 )
 
+# Own inline header code may be inlined/direct-called instead of reached
+# through interposable PLT thunks (the per-cell Range-check calls in the
+# cell-dispatch helpers). All BCSV inline functions are stateless, so no
+# other DSO's definition could change behaviour here.
+if(NOT MSVC)
+    target_compile_options(bcsv_c_api PRIVATE -fno-semantic-interposition)
+endif()
+
 # Platform-specific properties
 if(WIN32)
     set_target_properties(bcsv_c_api PROPERTIES
@@ -301,8 +309,13 @@ if(CMAKE_PROJECT_NAME STREQUAL PROJECT_NAME AND BUILD_TESTS)
     target_include_directories(test_c_api_full PRIVATE ${CMAKE_SOURCE_DIR})
     add_test(NAME test_c_api_full COMMAND $<TARGET_FILE:test_c_api_full>)
 
+    add_executable(test_c_api_defects_1520 tests/bcsv_c_api_defects_1520_test.c)
+    target_link_libraries(test_c_api_defects_1520 bcsv_c_api)
+    target_include_directories(test_c_api_defects_1520 PRIVATE ${CMAKE_SOURCE_DIR})
+    add_test(NAME test_c_api_defects_1520 COMMAND $<TARGET_FILE:test_c_api_defects_1520>)
+
     # Ensure C API test executables are co-located with the DLL
-    set_target_properties(test_row_api test_c_api test_c_api_full PROPERTIES
+    set_target_properties(test_row_api test_c_api test_c_api_full test_c_api_defects_1520 PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
     )
 

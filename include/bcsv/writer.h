@@ -100,6 +100,14 @@ namespace bcsv {
         const FilePath&         filePath() const                { return file_path_; }
         const LayoutType&       layout() const                  { return row_.layout(); }
         bool                    isOpen() const                  { return stream_.is_open(); }
+        /// True after a row was rejected for exceeding MAX_ROW_LENGTH: the row
+        /// codec's reference state no longer matches what a reader will
+        /// reconstruct, so further writes throw until the file is closed — or,
+        /// with packet-based file codecs, flush() crosses an empty packet
+        /// boundary and resynchronises there. Current status: only the
+        /// batch-LZ4 packet codec (the default) resynchronises; the plain
+        /// packet codecs flush but leave the poison set. See writeRow().
+        bool                    isPoisoned() const              { return write_poisoned_; }
         bool                    open(const FilePath& filepath, bool overwrite = false, size_t compressionLevel = DEFAULT_COMPRESSION_LEVEL, size_t blockSizeKB = DEFAULT_PACKET_SIZE_KB, FileFlags flags = FileFlags::BATCH_COMPRESS | FileFlags::DELTA_ENCODING);
         RowType&                row()                           { return row_; }
         const RowType&          row() const                     { return row_; }

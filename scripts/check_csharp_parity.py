@@ -56,6 +56,11 @@ UNPAIRED_OK = {
     # Unity-only by design: the pacer is a marker interface for a MonoBehaviour that
     # sits beside the BcsvRecorder component; NuGet has no recorder component.
     "IBcsvPacer.cs",
+    # Unity-only by design: process-lifecycle glue (Application.quitting hook,
+    # live-recorder registry, native bcsv_shutdown on quit). NuGet consumers
+    # own their disposal discipline and have no quitting hook to attach to;
+    # the bcsv_shutdown entry point itself is declared in both P/Invoke sets.
+    "BcsvRuntime.cs",
     "NativeMethods.cs", "ColumnType.cs", "FileFlags.cs", "SamplerMode.cs",
     "BcsvNative.cs", "BcsvPlayer.cs", "BcsvRecorder.cs",
 }

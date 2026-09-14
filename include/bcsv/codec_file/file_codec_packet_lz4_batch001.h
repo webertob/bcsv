@@ -217,10 +217,16 @@ public:
 
     /// Flush: close the current packet, compress+write synchronously, open a
     /// new packet for subsequent writes. Returns true (packet boundary crossed).
+    /// An empty active buffer is always a fresh-packet start for this codec:
+    /// either no row was ever written, or the last packet was just handed off
+    /// to the BG thread. In both cases the next row written will be the first
+    /// row of a new packet for the decoder, which resets its row codec there —
+    /// so the writer may resynchronise and must be told (returns true).
     bool flushPacket(std::ostream& /*os*/, uint64_t rowCnt) {
         if (raw_active_->empty()) {
             if (os_ptr_) os_ptr_->flush();
-            return false;
+            current_packet_first_row_ = rowCnt;
+            return true;   // fresh packet start — caller may reset RowCodec
         }
 
         // Close current packet payload

@@ -92,7 +92,8 @@ bcsv_row_set_int32(row, 0, 42);
 bcsv_row_set_double(row, 1, 3.14);
 bcsv_writer_next(writer);
 
-// Cleanup
+// Cleanup — close first so the file is complete even if destroy is skipped
+bcsv_writer_close(writer);
 bcsv_writer_destroy(writer);
 bcsv_layout_destroy(layout);
 ```
@@ -112,7 +113,25 @@ bcsv_layout_destroy(layout);
 - **Extended reader**: `bcsv_reader_open_ex(reader, filename, rebuild_footer)` opens with optional footer rebuild; `bcsv_reader_read(reader, index)` provides random-access by row index.
 - **CSV reader/writer**: `bcsv_csv_reader_create(layout, delimiter, decimal_sep)` and `bcsv_csv_writer_create(layout, delimiter, decimal_sep)` for reading and writing plain CSV files through the same row API.
 - **File flags**: `bcsv_file_flags_t` enum supports `BCSV_FLAG_NONE`, `BCSV_FLAG_ZOH`, `BCSV_FLAG_NO_FILE_INDEX`, `BCSV_FLAG_STREAM_MODE`, `BCSV_FLAG_BATCH_COMPRESS`, `BCSV_FLAG_DELTA_ENCODING`.
-- **Error API**: `bcsv_last_error()` returns the thread-local last error string. `bcsv_clear_last_error()` explicitly resets error state. Error state is set on failure and persists until the next failure or explicit clear — always check function return values for success/failure, and consult `bcsv_last_error()` for detail when a function reports failure.
+- **Error API**: `bcsv_last_error()` returns the thread-local last error string.
+  `bcsv_clear_last_error()` explicitly resets error state. Row accessors give a
+  fresh error channel per call (`docs/ERROR_HANDLING.md` §5); other functions
+  set the channel on failure. Check return values first and consult
+  `bcsv_last_error()` for detail.
+- **Checked getters** (1.5.20, ADR-0006): every `bcsv_row_get_*` rejects a
+  wrong-typed column (fallback value + error) instead of reading mismatched
+  bytes as older builds could, and `bcsv_row_get_double` additionally widens
+  the exactly-representable types (ADR-0006). `bcsv_row_try_get_*` twins
+  return `true`/`false` and leave `*out` untouched on failure — one P/Invoke
+  per read for managed bindings.
+- **Idempotent destroys + `bcsv_shutdown()`** (1.5.20, ADR-0006): every
+  `*_destroy` claims its handle once; a second destroy is a reported no-op
+  instead of a double free. `bcsv_shutdown()` closes all open writers and
+  destroys all live handles at exit (call it after your last file operation,
+  from one thread).
+- **Poison check**: `bcsv_writer_is_poisoned(writer)` after a failed write —
+  with the batch-LZ4 file codec a flush at a clean packet boundary clears the
+  poison and writing continues.
 
 ### Row Visitor API
 

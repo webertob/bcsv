@@ -149,6 +149,29 @@ Structural mutations (`addColumn`, `removeColumn`, `setColumnType`,
 (via `LayoutGuard`) throw `std::logic_error`.  Close the Writer/Reader first,
 or destroy the codec, before modifying the layout.
 
+### 5. C API Error Channel ✅
+
+No exception ever escapes the `extern "C"` surface — every call is wrapped,
+and errors travel through a thread-local channel:
+`bcsv_last_error()` (string, empty when clean) / `bcsv_clear_last_error()`.
+
+- **Row accessors are a fresh channel per call** (1.5.20, ADR-0006):
+  `bcsv_row_get_*`, `bcsv_row_try_get_*` and `bcsv_row_set_*` leave the
+  channel describing THAT call (getters clear before the access, setters
+  clear after a successful write), so after any such call a non-empty
+  `bcsv_last_error()` is a fresh one. Hosts may check-after-call without
+  an explicit clear. A wrong-typed or out-of-range cell read yields the
+  documented fallback value (plain getter) or `false` (`try_get_*` twin) and
+  an error string — never a misread of the cell bytes.
+- **Lifecycle calls report refusals**: `*_destroy` on a handle it does not
+  own (double destroy, foreign pointer) is a logged no-op; `bcsv_shutdown()`
+  swallows every failure and is idempotent (ADR-0006).
+- **Writer/Reader objects keep their own `getErrorMsg()`** as in C++; the C
+  wrappers surface it into the channel where the call itself failed. The one
+  lean exception is `bcsv_reader_next`: success and empty-error EOF do not
+  clear the channel (EOF is not an error; the loop-drain path stays
+  branch-light).
+
 ---
 
 ## Test Coverage

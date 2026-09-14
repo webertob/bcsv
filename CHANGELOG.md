@@ -12,6 +12,70 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.20] - 2026-09-14
+
+### Added
+
+- **C API: `bcsv_shutdown()`** — deterministic bulk teardown: closes every
+  open writer (files land with a flushed footer), then destroys all live
+  handles in kind order, borrowers before lenders. Never throws, idempotent;
+  for hosts whose managed layer cannot guarantee disposal order.
+- **C API: checked getter twins** `bcsv_row_try_get_*` (12 functions) —
+  `true` + `*out` on success, `false` + `bcsv_last_error()` on a bad index or
+  type mismatch, `*out` untouched. One P/Invoke per read for bindings; the
+  C# and Unity layers now use them exclusively.
+- **C API: `bcsv_writer_is_poisoned()`** and `Writer::isPoisoned()` — after a
+  failed write, tells whether the stream codec gave up on the file, instead
+  of failing every later call identically.
+- **`docs/adr/0006`** — the type-safety and handle-lifecycle decisions behind
+  both fixes in this release, including the rejected options.
+- **`tests/bcsv_c_api_defects_1520_test.c`** — the 144-cell getter ×
+  column-type contract matrix plus exit-time double-destroy and shutdown
+  children, locking both defect fixes.
+
+### Fixed
+
+- **Exit-time double free in `bcsv_writer_destroy`** (consumer abort
+  `free(): invalid size`, SIGABRT, buffered rows lost). Every handle kind is
+  now registered at creation behind a process-wide lock, and every
+  `*_destroy` claims the handle exactly once: a second destroy — from a GC
+  finalizer racing a manual dispose, a foreign pointer, or a borrowed row
+  handle — is a logged no-op instead of a double `delete`. Fixes 1 and 2 of
+  the com.bcsv.unity 1.5.19 defect reports.
+- **Wrong-typed `bcsv_row_get_*` could silently return 0** (consumer saw
+  `get_double` on a FLOAT column return `0.0` with no error). The C API no
+  longer inherits the `RANGE_CHECKING` knob from the C++ core: every scalar
+  getter verifies the column type before touching the cell, in every build
+  configuration, and the mismatch path never reinterprets bytes.
+- **Batch-LZ4 writers stayed poisoned after a clean-boundary flush**: with
+  the batch file codec (the default), `flush()` landing on an empty packet
+  boundary resynced the packet window and cleared the poison, so recording
+  continues after a transient write failure, as the header documented.
+
+### Changed
+
+- **`bcsv_row_get_double` widens lossless types**: every integer or float
+  type that converts exactly to `double` is delivered (set enumerated in
+  ADR-0006); int64/uint64 (>2^53 is inexact) and string stay errors. The
+  numeric-union read a Unity consumer already performs becomes correct
+  instead of erroring — a deliberate contract relaxation (ADR-0006).
+- **Row accessors are a fresh error channel per call**:
+  `bcsv_row_get_*`/`try_get_*`/`set_*` leave the thread-local error string
+  describing THAT call — cleared on success, set on failure — so a
+  check-after-call host never mistakes a stale error for a fresh one.
+- **C#/Unity typed getters now throw** `BcsvException` on a wrong-typed
+  column (previously silent 0/false/null in some builds); `GetDouble`
+  follows the widening rule above. Disposal in both bindings is a claimed
+  one-shot on the managed side too, closing before destroying.
+
+### Notes
+
+- Both fixes and their measurements are the subject of ADR-0006; the getter
+  hot path is one enum compare plus a TLS store over the 1.5.19 baseline
+  (matched getters +~0.2 ns — the type check that caused the defect is the
+  cost), and formerly-throwing reads on widened columns went from ~600 ns to
+  ~5 ns. ASan/UBSan/TSan sweeps are clean and the full CTest suite is green.
+
 ## [1.5.19] - 2026-09-07
 
 ### Added

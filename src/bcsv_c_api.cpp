@@ -11,7 +11,9 @@
 #include <string>
 #include <sstream>
 #include <exception>
+#include <mutex>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 // Include full implementations (headers + .hpp files)
@@ -21,10 +23,21 @@
 #include "bcsv/sampler/sampler.h"
 #include "bcsv/sampler/sampler.hpp"
 
+#if defined(__GNUC__) || defined(__clang__)
+// initial-exec: the hot getters read/write g_has_error on every successful
+// call; without this, a shared library gets global-dynamic TLS and pays a
+// __tls_get_addr PLT call per getter. glibc's static-TLS surplus covers this
+// image (~96 B of TLS segment) even under dlopen. MSVC's TLS is already
+// IE-equivalent.
+#define BCSV_TLS_FAST __attribute__((tls_model("initial-exec")))
+#else
+#define BCSV_TLS_FAST
+#endif
+
 namespace {
-thread_local std::string g_last_error;
-thread_local bool g_has_error = false;     // flag-based: avoids string::clear() per call
-thread_local std::string g_fmt_buf;        // reusable buffer for to_string helpers
+BCSV_TLS_FAST thread_local std::string g_last_error;
+BCSV_TLS_FAST thread_local bool g_has_error = false;   // flag-based: avoids string::clear() per call
+BCSV_TLS_FAST thread_local std::string g_fmt_buf;      // reusable buffer for to_string helpers
 
 inline void clear_last_error() noexcept {
     g_has_error = false;
@@ -67,6 +80,7 @@ struct WriterHandle {
     void   (*flush_fn)(void*);
     void   (*delete_fn)(void*);
     bool   (*isOpen_fn)(const void*);
+    bool   (*isPoisoned_fn)(const void*);
     size_t (*rowCount_fn)(const void*);
     const bcsv::Layout* (*layout_fn)(const void*);
     const std::string*  (*errorMsg_fn)(const void*);
@@ -93,6 +107,7 @@ WriterHandle* createWriterHandle(WriterHandle::Type type, W* writer) {
     h->flush_fn    = [](void* p) { static_cast<W*>(p)->flush(); };
     h->delete_fn   = [](void* p) { delete static_cast<W*>(p); };
     h->isOpen_fn   = [](const void* p) -> bool    { return static_cast<const W*>(p)->isOpen(); };
+    h->isPoisoned_fn = [](const void* p) -> bool  { return static_cast<const W*>(p)->isPoisoned(); };
     h->rowCount_fn = [](const void* p) -> size_t  { return static_cast<const W*>(p)->rowCount(); };
     h->layout_fn   = [](const void* p) -> const bcsv::Layout*  { return &static_cast<const W*>(p)->layout(); };
     h->errorMsg_fn = [](const void* p) -> const std::string*   { return &static_cast<const W*>(p)->getErrorMsg(); };
@@ -120,7 +135,207 @@ struct ColumnarReadState {
 
 // Attach columnar state to each reader via a side map (avoids changing
 // the Reader class — we use the opaque handle address as key).
-thread_local std::unordered_map<const void*, ColumnarReadState> g_columnar_state;
+// Process-wide (registry-mutex-guarded), not thread_local: a reader can be
+// destroyed on a finalizer thread other than the one that read, and a
+// thread-local map would strand the entry for a recycled reader address to
+// inherit. Columnar calls are bulk/cold, so one shared lock per call is fine.
+struct ColumnarStateTable {
+    std::mutex mtx;
+    std::unordered_map<const void*, ColumnarReadState> by_reader;
+};
+inline ColumnarStateTable& columnar_table() {
+    static auto* t = new ColumnarStateTable();   // leaky: finalizers may touch after exit begins
+    return *t;
+}
+inline void columnar_erase(const void* reader) {
+    auto& t = columnar_table();
+    std::lock_guard<std::mutex> lk(t.mtx);
+    t.by_reader.erase(reader);
+}
+inline void columnar_clear_all() {
+    auto& t = columnar_table();
+    std::lock_guard<std::mutex> lk(t.mtx);
+    t.by_reader.clear();
+}
+// Lock only covers the lookup; dereferencing the result follows the same
+// "one handle, one thread at a time" contract as every other handle call.
+inline const ColumnarReadState* columnar_find(const void* reader) {
+    auto& t = columnar_table();
+    std::lock_guard<std::mutex> lk(t.mtx);
+    auto it = t.by_reader.find(reader);
+    return it == t.by_reader.end() ? nullptr : &it->second;
+}
+
+// ---- Handle registry (1.5.20) ----------------------------------------------
+// Process-wide table of live handles. Two goals:
+//   1. Idempotent *_destroy: a second destroy (e.g. GC finalizer racing an
+//      explicit Dispose on the main thread) claims the handle once, finds the
+//      slot empty the second time, and becomes a logged no-op instead of a
+//      double-free. The corruption a double-free causes (glibc heap metadata)
+//      otherwise aborts later inside unrelated teardown — the "free():
+//      invalid size" at player exit.
+//   2. bcsv_shutdown(): deterministic bulk teardown callable from any host
+//      exit hook, on whatever thread finalizers will probe later.
+// Deliberately NEVER destroyed: a registry whose mutex could be torn down by
+// static destructors while a finalizer thread is still calling destroy would
+// recreate the very exit-order hazard this fixes. One small leak at exit is
+// the correct trade. Create/destroy are cold lifecycle calls (rows are
+// obtained from a writer/reader without allocation), so the mutex never sits
+// on a per-row hot path.
+enum class HandleKind : uint8_t { Row, Sampler, Reader, CsvReader, CsvWriter, Writer, Layout };
+
+struct HandleRegistry {
+    std::mutex mtx;
+    std::unordered_map<void*, HandleKind> live;
+};
+
+inline HandleRegistry& registry() {
+    // Leaky singleton, thread-safe magic static.
+    static HandleRegistry* r = new HandleRegistry();
+    return *r;
+}
+
+void* reg_register(void* h, HandleKind k) {
+    auto& reg = registry();
+    std::lock_guard<std::mutex> lk(reg.mtx);
+    reg.live.emplace(h, k);
+    return h;
+}
+
+/// destroy() guard: claim-or-report in one lock. Returns true when the caller
+/// now owns @p h for destruction; false = logged no-op (double destroy,
+/// borrowed handle such as bcsv_writer_row(), or foreign pointer). A mutex
+/// failure is reported, not propagated: this runs inside extern "C".
+bool reg_take(const char* where, void* h) {
+    try {
+        auto& reg = registry();
+        std::lock_guard<std::mutex> lk(reg.mtx);
+        auto it = reg.live.find(h);
+        if (it != reg.live.end()) { reg.live.erase(it); return true; }
+    } catch (...) {
+        g_has_error = true;
+        g_last_error = std::string(where) + ": handle registry unavailable (destroy ignored)";
+        return false;
+    }
+    g_has_error = true;
+    g_last_error = std::string(where) + ": handle already destroyed or not owned by this API (destroy ignored)";
+    return false;
+}
+
+/// close/flush guard: is @p h still a live registered handle? A handle freed
+/// by bcsv_shutdown() (or an earlier destroy) must never be touched again —
+/// a GC finalizer running Dispose (close-before-destroy) after shutdown would
+/// otherwise call through freed memory, the same abort class this registry
+/// exists to prevent. Find-without-erase: the handle stays live for its owner.
+bool reg_contains(const char* where, void* h) {
+    try {
+        auto& reg = registry();
+        std::lock_guard<std::mutex> lk(reg.mtx);
+        if (reg.live.contains(h)) return true;
+    } catch (...) {
+        g_has_error = true;
+        g_last_error = std::string(where) + ": handle registry unavailable (call ignored)";
+        return false;
+    }
+    g_has_error = true;
+    g_last_error = std::string(where) + ": handle already destroyed or not owned by this API (call ignored)";
+    return false;
+}
+
+// ---- Cell-type dispatch helpers (1.5.20, docs/adr/0006) --------------------
+// The C API must never reinterpret a cell as a non-matching type. Older
+// builds routed every bcsv_row_get_* through the strict C++ Row::get<T>(),
+// which only type-checks when RANGE_CHECKING is enabled; with the constant
+// flipped off (embedded builds) a bcsv_row_get_double on a FLOAT column read
+// 4 bytes past the cell. Here the column type is checked unconditionally,
+// once per call, and the typed accessor is called only for the case that
+// matches: same observable behavior in every build configuration, and the
+// mismatch path is an error instead of a silent 0.
+//
+// Mismatch paths are [[unlikely]]-annotated throwers, so the success path
+// stays the fall-through in the hot trace: consumer loops read the same
+// (kind-stable) column layout every row and the checks predict near-perfectly.
+BCSV_ALWAYS_INLINE bool row_index_ok(const bcsv::Row* r, int col) noexcept {
+    return col >= 0 && static_cast<size_t>(col) < r->layout().columnCount();
+}
+
+[[noreturn]] inline void row_index_error(const char* fn, int col) {
+    throw std::out_of_range(std::string(fn) + ": column index " + std::to_string(col) + " out of range");
+}
+
+[[noreturn]] inline void row_type_error(const char* fn, const bcsv::Row* r, size_t col, std::string_view wanted) {
+    throw std::runtime_error(std::string(fn) + ": type mismatch at column " + std::to_string(col) +
+                             ". Requested: " + std::string(wanted) +
+                             ", Actual: " + std::string(toString(r->layout().columnType(col))));
+}
+
+/// Strict scalar cell read: value iff the column type is exactly T's.
+/// Never throws on success; out-of-range/type mismatch throw (caught by the
+/// BCSV_ROW_GET / try_get wrappers, never seen as a C type-pun by any caller).
+/// inlined into every exported getter, one fewer indirect hop per cell.
+template<typename T>
+BCSV_ALWAYS_INLINE bool row_cell_strict(
+        const bcsv::Row* r, int col, const char* fn, T* out) {
+    if (!row_index_ok(r, col)) [[unlikely]] row_index_error(fn, col);
+    const auto idx = static_cast<size_t>(col);
+    if (r->layout().columnType(idx) != bcsv::toColumnType<T>()) [[unlikely]]
+        row_type_error(fn, r, idx, toString(bcsv::toColumnType<T>()));
+    *out = r->get<T>(idx);   // type verified above; no reinterpret hazard
+    return true;
+}
+
+/// Strict scalar read returning the value (plain getters; same rule as above).
+template<typename T>
+BCSV_ALWAYS_INLINE T row_cell_value(const bcsv::Row* r, int col, const char* fn) {
+    T v{};
+    row_cell_strict(r, col, fn, &v);
+    return v;
+}
+
+/// STRING cell read: pointer into the cell, valid until the cell changes.
+/// Kept apart from row_cell_strict<std::string>: a std::string return by value
+/// through the twins would dangle at the next cell write.
+inline const char* row_cell_string(const bcsv::Row* r, int col, const char* fn) {
+    if (!row_index_ok(r, col)) [[unlikely]] row_index_error(fn, col);
+    const auto idx = static_cast<size_t>(col);
+    if (r->layout().columnType(idx) != bcsv::ColumnType::STRING) [[unlikely]]
+        row_type_error(fn, r, idx, "string");
+    return r->get<std::string>(idx).c_str();
+}
+
+/**
+ * Lossless widening read for bcsv_row_get_double (ADR-0006): BOOL, integers
+ * up to 32 bit and FLOAT convert to double exactly; INT64/UINT64 (> 2^53 is
+ * inexact) and STRING stay strict type errors, as before this change.
+ * The DOUBLE hit — the by-type majority — is an inline compare + load; the
+ * widening arms live in this noinline cold function so the exported getter
+ * stays inside its inline budget (measured 2026-09-14: a single-function
+ * form cost 4x on DOUBLE columns — GCC kept it out-of-line and the switch
+ * re-expanded core range checks as PLT calls). Widening consumers hit the
+ * same arm every iteration (layout kinds are stable), so the switch
+ * predicts.
+ */
+BCSV_NOINLINE double row_cell_widen(const bcsv::Row* r, size_t idx, const char* fn) {
+    switch (r->layout().columnType(idx)) {
+        case bcsv::ColumnType::BOOL:   return r->get<bool>(idx) ? 1.0 : 0.0;
+        case bcsv::ColumnType::INT8:   return static_cast<double>(r->get<int8_t>(idx));
+        case bcsv::ColumnType::INT16:  return static_cast<double>(r->get<int16_t>(idx));
+        case bcsv::ColumnType::INT32:  return static_cast<double>(r->get<int32_t>(idx));
+        case bcsv::ColumnType::UINT8:  return static_cast<double>(r->get<uint8_t>(idx));
+        case bcsv::ColumnType::UINT16: return static_cast<double>(r->get<uint16_t>(idx));
+        case bcsv::ColumnType::UINT32: return static_cast<double>(r->get<uint32_t>(idx));
+        case bcsv::ColumnType::FLOAT:  return static_cast<double>(r->get<float>(idx));
+        default: [[unlikely]] row_type_error(fn, r, idx, "double (lossless-widened set: bool/int8..int32/uint8..uint32/float)");
+    }
+}
+
+BCSV_ALWAYS_INLINE double row_cell_to_double(
+        const bcsv::Row* r, int col, const char* fn) {
+    if (!row_index_ok(r, col)) [[unlikely]] row_index_error(fn, col);
+    const auto idx = static_cast<size_t>(col);
+    if (r->layout().columnType(idx) == bcsv::ColumnType::DOUBLE) return r->get<double>(idx);
+    return row_cell_widen(r, idx, fn);
+}
 
 } // namespace
 
@@ -146,14 +361,15 @@ thread_local std::unordered_map<const void*, ColumnarReadState> g_columnar_state
         set_last_error_unknown(where); \
     }
 
-// Lean hot-path macros for row get/set — skip null-handle check and error
-// clearing.  Row handles are always obtained from a writer/reader that already
-// validated its own handle, so the null check is redundant.  Error state is
-// only set on exception (programming error: bad column index / type mismatch).
-// The try/catch is required to prevent exceptions propagating through extern "C".
+// Lean hot-path macros for row get/set — skip the null-handle check (row
+// handles always come from a writer/reader that validated its own handle).
+// Fresh error channel per call: docs/ERROR_HANDLING.md §5. The clear goes
+// BEFORE the read so the cell access stays a tail call. The try/catch is
+// required to prevent exceptions propagating through extern "C".
 
 #define BCSV_ROW_GET(fallback, expr) \
     try { \
+        clear_last_error(); \
         return (expr); \
     } catch (const std::exception& ex) { \
         set_last_error(__func__, ex); \
@@ -166,6 +382,7 @@ thread_local std::unordered_map<const void*, ColumnarReadState> g_columnar_state
 #define BCSV_ROW_SET(stmt) \
     try { \
         stmt; \
+        clear_last_error(); \
     } catch (const std::exception& ex) { \
         set_last_error(__func__, ex); \
     } catch (...) { \
@@ -185,19 +402,82 @@ int bcsv_version_minor(void) { return bcsv::VERSION_MINOR; }
 int bcsv_version_patch(void) { return bcsv::VERSION_PATCH; }
 
 // ============================================================================
-// Layout API
+// Lifecycle API
 // ============================================================================
+// Closes every open writer/csv-writer (footer lands while the runtime is
+// alive), then destroys all registered handles, borrowers before lenders.
+// Contract, rationale and the recycled-address caveat: docs/adr/0006.
+void bcsv_shutdown(void) {
+    std::unordered_map<void*, HandleKind> batch;
+    {
+        auto& reg = registry();
+        std::lock_guard<std::mutex> lk(reg.mtx);
+        batch.swap(reg.live);   // claim everything; later destroys see empty
+    }
+
+    // Best-effort: shutdown must never propagate — extern "C", process exit
+    // path; every stage runs even if an earlier handle's teardown threw.
+    auto swallow = [](auto&& fn) noexcept { try { fn(); } catch (...) {} };
+
+    // Phase 1: finalize files while the runtime is fully alive, so the last
+    // packet and footer land on disk deterministically.
+    for (auto& [ptr, kind] : batch) {
+        if (kind == HandleKind::Writer)
+            swallow([&]{ auto* h = static_cast<WriterHandle*>(ptr); h->close_fn(h->ptr); });
+        else if (kind == HandleKind::CsvWriter)
+            swallow([&]{ static_cast<bcsv::CsvWriter<bcsv::Layout>*>(ptr)->close(); });
+    }
+
+    // Phase 2: destroy — kind-ordered so borrowers die before lenders
+    // (writer borrows its layout's schema; sampler borrows its reader).
+    for (auto pass = 0; pass < 2; ++pass) {
+        for (auto& [ptr, kind] : batch) {
+            if (pass == 0) {   // owners & borrowers
+                switch (kind) {
+                    case HandleKind::Writer:
+                        swallow([&]{ auto* h = static_cast<WriterHandle*>(ptr); h->delete_fn(h->ptr); delete h; });
+                        break;
+                    case HandleKind::CsvWriter:
+                        swallow([&]{ delete static_cast<bcsv::CsvWriter<bcsv::Layout>*>(ptr); });
+                        break;
+                    case HandleKind::Sampler:
+                        swallow([&]{ auto* h = static_cast<SamplerHandle*>(ptr); delete h->sampler; delete h; });
+                        break;
+                    case HandleKind::Row:
+                        swallow([&]{ delete static_cast<bcsv::Row*>(ptr); });
+                        break;
+                    default: break;
+                }
+            } else {           // lenders
+                switch (kind) {
+                    case HandleKind::Reader:
+                        swallow([&]{ columnar_erase(ptr); delete static_cast<bcsv::ReaderDirectAccess<bcsv::Layout>*>(ptr); });
+                        break;
+                    case HandleKind::CsvReader:
+                        swallow([&]{ delete static_cast<bcsv::CsvReader<bcsv::Layout>*>(ptr); });
+                        break;
+                    case HandleKind::Layout:
+                        swallow([&]{ delete static_cast<bcsv::Layout*>(ptr); });
+                        break;
+                    default: break;
+                }
+            }
+        }
+    }
+    columnar_clear_all();
+}
 bcsv_layout_t bcsv_layout_create() {
-    BCSV_CAPI_TRY_RETURN("bcsv_layout_create", nullptr, new bcsv::Layout())
+    BCSV_CAPI_TRY_RETURN("bcsv_layout_create", nullptr, reg_register(new bcsv::Layout(), HandleKind::Layout))
 }
 
 bcsv_layout_t bcsv_layout_clone(const_bcsv_layout_t layout) {
     if (null_handle("bcsv_layout_clone", layout)) return nullptr;
-    BCSV_CAPI_TRY_RETURN("bcsv_layout_clone", nullptr, new bcsv::Layout(static_cast<const bcsv::Layout*>(layout)->clone()))
+    BCSV_CAPI_TRY_RETURN("bcsv_layout_clone", nullptr, reg_register(new bcsv::Layout(static_cast<const bcsv::Layout*>(layout)->clone()), HandleKind::Layout))
 }
 
 void bcsv_layout_destroy(bcsv_layout_t layout) {
     if (!layout) return;
+    if (!reg_take("bcsv_layout_destroy", layout)) [[unlikely]] return;
     BCSV_CAPI_TRY_VOID("bcsv_layout_destroy", delete static_cast<bcsv::Layout*>(layout))
 }
 
@@ -305,18 +585,20 @@ const char* bcsv_layout_to_string(const_bcsv_layout_t layout) {
 // Reader API
 // ============================================================================
 bcsv_reader_t bcsv_reader_create(void) {
-    BCSV_CAPI_TRY_RETURN("bcsv_reader_create", nullptr, new bcsv::ReaderDirectAccess<bcsv::Layout>())
+    BCSV_CAPI_TRY_RETURN("bcsv_reader_create", nullptr, reg_register(new bcsv::ReaderDirectAccess<bcsv::Layout>(), HandleKind::Reader))
 }
 
 void bcsv_reader_destroy(bcsv_reader_t reader) {
     if (!reader) return;
-    g_columnar_state.erase(reader);
+    if (!reg_take("bcsv_reader_destroy", reader)) [[unlikely]] return;
+    columnar_erase(reader);
     BCSV_CAPI_TRY_VOID("bcsv_reader_destroy", delete static_cast<bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader))
 }
 
 void bcsv_reader_close(bcsv_reader_t reader) {
     if (null_handle("bcsv_reader_close", reader)) return;
-    g_columnar_state.erase(reader);
+    if (!reg_contains("bcsv_reader_close", reader)) [[unlikely]] return;
+    columnar_erase(reader);
     BCSV_CAPI_TRY_VOID("bcsv_reader_close", static_cast<bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader)->close())
 }
 
@@ -452,7 +734,7 @@ bcsv_writer_t bcsv_writer_create(bcsv_layout_t layout) {
         bcsv::Layout empty;
         auto& l = layout ? *static_cast<bcsv::Layout*>(layout) : empty;
         return reinterpret_cast<bcsv_writer_t>(
-            createWriterHandle(WriterHandle::Type::Flat,
+            reg_register(createWriterHandle(WriterHandle::Type::Flat,
                                // WriterFlat, not Writer<Layout>: the latter takes
                                // the default template argument, which is
                                // RowCodecDelta002.  Until 1.5.17 this function
@@ -460,7 +742,7 @@ bcsv_writer_t bcsv_writer_create(bcsv_layout_t layout) {
                                // handle Type::Flat, and returned a delta writer —
                                // so "flat" was unreachable through the C API and
                                // through both C# bindings, which route it here.
-                               new bcsv::WriterFlat<bcsv::Layout>(l)));
+                               new bcsv::WriterFlat<bcsv::Layout>(l)), HandleKind::Writer));
     })())
 }
 
@@ -469,8 +751,8 @@ bcsv_writer_t bcsv_writer_create_zoh(bcsv_layout_t layout) {
         bcsv::Layout empty;
         auto& l = layout ? *static_cast<bcsv::Layout*>(layout) : empty;
         return reinterpret_cast<bcsv_writer_t>(
-            createWriterHandle(WriterHandle::Type::ZoH,
-                               new bcsv::WriterZoH<bcsv::Layout>(l)));
+            reg_register(createWriterHandle(WriterHandle::Type::ZoH,
+                               new bcsv::WriterZoH<bcsv::Layout>(l)), HandleKind::Writer));
     })())
 }
 
@@ -479,13 +761,14 @@ bcsv_writer_t bcsv_writer_create_delta(bcsv_layout_t layout) {
         bcsv::Layout empty;
         auto& l = layout ? *static_cast<bcsv::Layout*>(layout) : empty;
         return reinterpret_cast<bcsv_writer_t>(
-            createWriterHandle(WriterHandle::Type::Delta,
-                               new bcsv::WriterDelta<bcsv::Layout>(l)));
+            reg_register(createWriterHandle(WriterHandle::Type::Delta,
+                               new bcsv::WriterDelta<bcsv::Layout>(l)), HandleKind::Writer));
     })())
 }
 
 void bcsv_writer_destroy(bcsv_writer_t writer) {
     if (!writer) return;
+    if (!reg_take("bcsv_writer_destroy", writer)) [[unlikely]] return;
     BCSV_CAPI_TRY_VOID("bcsv_writer_destroy", ([&]() {
         auto* h = static_cast<WriterHandle*>(writer);
         h->delete_fn(h->ptr);
@@ -495,12 +778,14 @@ void bcsv_writer_destroy(bcsv_writer_t writer) {
 
 void bcsv_writer_close(bcsv_writer_t writer) {
     if (null_handle("bcsv_writer_close", writer)) return;
+    if (!reg_contains("bcsv_writer_close", writer)) [[unlikely]] return;
     auto* h = static_cast<WriterHandle*>(writer);
     BCSV_CAPI_TRY_VOID("bcsv_writer_close", h->close_fn(h->ptr))
 }
 
 void bcsv_writer_flush(bcsv_writer_t writer) {
     if (null_handle("bcsv_writer_flush", writer)) return;
+    if (!reg_contains("bcsv_writer_flush", writer)) [[unlikely]] return;
     auto* h = static_cast<WriterHandle*>(writer);
     BCSV_CAPI_TRY_VOID("bcsv_writer_flush", h->flush_fn(h->ptr))
 }
@@ -541,6 +826,12 @@ bool bcsv_writer_is_open(const_bcsv_writer_t writer) {
     BCSV_CAPI_TRY_RETURN("bcsv_writer_is_open", false, h->isOpen_fn(h->ptr))
 }
 
+bool bcsv_writer_is_poisoned(const_bcsv_writer_t writer) {
+    if (null_handle("bcsv_writer_is_poisoned", writer)) return false;
+    auto* h = static_cast<const WriterHandle*>(writer);
+    BCSV_CAPI_TRY_RETURN("bcsv_writer_is_poisoned", false, h->isPoisoned_fn(h->ptr))
+}
+
 #ifdef _WIN32
 const wchar_t* bcsv_writer_filename(const_bcsv_writer_t writer) {
     if (null_handle("bcsv_writer_filename", writer)) return nullptr;
@@ -567,7 +858,8 @@ bool bcsv_writer_next(bcsv_writer_t writer) {
     try {
         auto* h = static_cast<WriterHandle*>(writer);
         h->writeRow_fn(h->ptr);   // single indirect call, no switch
-        return true;              // lean: no clear_last_error (matches BCSV_ROW_SET/GET)
+        clear_last_error();       // fresh channel: a later failure is never stale
+        return true;
     } catch (const std::exception& ex) {
         set_last_error("bcsv_writer_next", ex);
         return false;
@@ -621,18 +913,21 @@ int bcsv_writer_file_flags(const_bcsv_writer_t writer) {
 // ============================================================================
 bcsv_csv_reader_t bcsv_csv_reader_create(bcsv_layout_t layout, char delimiter, char decimal_sep) {
     BCSV_CAPI_TRY_RETURN("bcsv_csv_reader_create", nullptr, ([&]() -> bcsv_csv_reader_t {
+        bcsv::CsvReader<bcsv::Layout>* r = nullptr;
         if (layout) {
-            return static_cast<bcsv_csv_reader_t>(new bcsv::CsvReader<bcsv::Layout>(
-                *static_cast<bcsv::Layout*>(layout), delimiter, decimal_sep));
+            r = new bcsv::CsvReader<bcsv::Layout>(
+                *static_cast<bcsv::Layout*>(layout), delimiter, decimal_sep);
         } else {
             bcsv::Layout empty;
-            return static_cast<bcsv_csv_reader_t>(new bcsv::CsvReader<bcsv::Layout>(empty, delimiter, decimal_sep));
+            r = new bcsv::CsvReader<bcsv::Layout>(empty, delimiter, decimal_sep);
         }
+        return static_cast<bcsv_csv_reader_t>(reg_register(r, HandleKind::CsvReader));
     })())
 }
 
 void bcsv_csv_reader_destroy(bcsv_csv_reader_t reader) {
     if (!reader) return;
+    if (!reg_take("bcsv_csv_reader_destroy", reader)) [[unlikely]] return;
     BCSV_CAPI_TRY_VOID("bcsv_csv_reader_destroy", delete static_cast<bcsv::CsvReader<bcsv::Layout>*>(reader))
 }
 
@@ -649,6 +944,7 @@ bool bcsv_csv_reader_open(bcsv_csv_reader_t reader, const char* filename, bool h
 
 void bcsv_csv_reader_close(bcsv_csv_reader_t reader) {
     if (null_handle("bcsv_csv_reader_close", reader)) return;
+    if (!reg_contains("bcsv_csv_reader_close", reader)) [[unlikely]] return;
     BCSV_CAPI_TRY_VOID("bcsv_csv_reader_close", static_cast<bcsv::CsvReader<bcsv::Layout>*>(reader)->close())
 }
 
@@ -714,18 +1010,21 @@ const char* bcsv_csv_reader_error_msg(const_bcsv_csv_reader_t reader) {
 // ============================================================================
 bcsv_csv_writer_t bcsv_csv_writer_create(bcsv_layout_t layout, char delimiter, char decimal_sep) {
     BCSV_CAPI_TRY_RETURN("bcsv_csv_writer_create", nullptr, ([&]() -> bcsv_csv_writer_t {
+        bcsv::CsvWriter<bcsv::Layout>* w = nullptr;
         if (layout) {
-            return static_cast<bcsv_csv_writer_t>(new bcsv::CsvWriter<bcsv::Layout>(
-                *static_cast<bcsv::Layout*>(layout), delimiter, decimal_sep));
+            w = new bcsv::CsvWriter<bcsv::Layout>(
+                *static_cast<bcsv::Layout*>(layout), delimiter, decimal_sep);
         } else {
             bcsv::Layout empty;
-            return static_cast<bcsv_csv_writer_t>(new bcsv::CsvWriter<bcsv::Layout>(empty, delimiter, decimal_sep));
+            w = new bcsv::CsvWriter<bcsv::Layout>(empty, delimiter, decimal_sep);
         }
+        return static_cast<bcsv_csv_writer_t>(reg_register(w, HandleKind::CsvWriter));
     })())
 }
 
 void bcsv_csv_writer_destroy(bcsv_csv_writer_t writer) {
     if (!writer) return;
+    if (!reg_take("bcsv_csv_writer_destroy", writer)) [[unlikely]] return;
     BCSV_CAPI_TRY_VOID("bcsv_csv_writer_destroy", delete static_cast<bcsv::CsvWriter<bcsv::Layout>*>(writer))
 }
 
@@ -742,6 +1041,7 @@ bool bcsv_csv_writer_open(bcsv_csv_writer_t writer, const char* filename, bool o
 
 void bcsv_csv_writer_close(bcsv_csv_writer_t writer) {
     if (null_handle("bcsv_csv_writer_close", writer)) return;
+    if (!reg_contains("bcsv_csv_writer_close", writer)) [[unlikely]] return;
     BCSV_CAPI_TRY_VOID("bcsv_csv_writer_close", static_cast<bcsv::CsvWriter<bcsv::Layout>*>(writer)->close())
 }
 
@@ -815,17 +1115,21 @@ bcsv_row_t bcsv_row_create(const_bcsv_layout_t layout) {
     if (null_handle("bcsv_row_create", layout)) return nullptr;
     BCSV_CAPI_TRY_RETURN("bcsv_row_create", static_cast<bcsv_row_t>(nullptr), ([&]() {
         const auto* l = static_cast<const bcsv::Layout*>(layout);
-        return static_cast<bcsv_row_t>(new bcsv::Row(*l));
+        return static_cast<bcsv_row_t>(reg_register(new bcsv::Row(*l), HandleKind::Row));
     })())
 }
 
 bcsv_row_t bcsv_row_clone(const_bcsv_row_t row) {
     if (null_handle("bcsv_row_clone", row)) return nullptr;
-    BCSV_CAPI_TRY_RETURN("bcsv_row_clone", static_cast<bcsv_row_t>(nullptr), static_cast<bcsv_row_t>(new bcsv::Row(*static_cast<const bcsv::Row*>(row))))
+    BCSV_CAPI_TRY_RETURN("bcsv_row_clone", static_cast<bcsv_row_t>(nullptr), static_cast<bcsv_row_t>(reg_register(new bcsv::Row(*static_cast<const bcsv::Row*>(row)), HandleKind::Row)))
 }
 
 void bcsv_row_destroy(bcsv_row_t row) {
     if (!row) return;
+    // Borrowed row handles (bcsv_writer_row / bcsv_reader_row / csv*) are not
+    // registered with the registry — a destroy attempt on one is refused here
+    // instead of deleting memory owned by the reader/writer.
+    if (!reg_take("bcsv_row_destroy", row)) [[unlikely]] return;
     BCSV_CAPI_TRY_VOID("bcsv_row_destroy", delete static_cast<bcsv::Row*>(row))
 }
 
@@ -852,45 +1156,118 @@ const_bcsv_layout_t bcsv_row_layout(const_bcsv_row_t row) {
     })())
 }
 
+// Scalar getters: dispatch on the column type once per call and only ever use
+// the matching typed accessor (strict) — except bcsv_row_get_double, which
+// widens losslessly (docs/adr/0006). Mismatch = error via the thread-local
+// error channel + fallback value, never a silent 0 with a stale error string.
 bool bcsv_row_get_bool(const_bcsv_row_t row, int col) {
-    BCSV_ROW_GET(false, static_cast<const bcsv::Row*>(row)->get<bool>(col))
+    BCSV_ROW_GET(false, row_cell_value<bool>(static_cast<const bcsv::Row*>(row), col, __func__))
 }
 uint8_t bcsv_row_get_uint8(const_bcsv_row_t row, int col) {
-    BCSV_ROW_GET(uint8_t{0}, static_cast<const bcsv::Row*>(row)->get<uint8_t>(col))
+    BCSV_ROW_GET(uint8_t{0}, row_cell_value<uint8_t>(static_cast<const bcsv::Row*>(row), col, __func__))
 }
 uint16_t bcsv_row_get_uint16(const_bcsv_row_t row, int col) {
-    BCSV_ROW_GET(uint16_t{0}, static_cast<const bcsv::Row*>(row)->get<uint16_t>(col))
+    BCSV_ROW_GET(uint16_t{0}, row_cell_value<uint16_t>(static_cast<const bcsv::Row*>(row), col, __func__))
 }
 uint32_t bcsv_row_get_uint32(const_bcsv_row_t row, int col) {
-    BCSV_ROW_GET(uint32_t{0}, static_cast<const bcsv::Row*>(row)->get<uint32_t>(col))
+    BCSV_ROW_GET(uint32_t{0}, row_cell_value<uint32_t>(static_cast<const bcsv::Row*>(row), col, __func__))
 }
 uint64_t bcsv_row_get_uint64(const_bcsv_row_t row, int col) {
-    BCSV_ROW_GET(uint64_t{0}, static_cast<const bcsv::Row*>(row)->get<uint64_t>(col))
+    BCSV_ROW_GET(uint64_t{0}, row_cell_value<uint64_t>(static_cast<const bcsv::Row*>(row), col, __func__))
 }
 int8_t bcsv_row_get_int8(const_bcsv_row_t row, int col) {
-    BCSV_ROW_GET(int8_t{0}, static_cast<const bcsv::Row*>(row)->get<int8_t>(col))
+    BCSV_ROW_GET(int8_t{0}, row_cell_value<int8_t>(static_cast<const bcsv::Row*>(row), col, __func__))
 }
 int16_t bcsv_row_get_int16(const_bcsv_row_t row, int col) {
-    BCSV_ROW_GET(int16_t{0}, static_cast<const bcsv::Row*>(row)->get<int16_t>(col))
+    BCSV_ROW_GET(int16_t{0}, row_cell_value<int16_t>(static_cast<const bcsv::Row*>(row), col, __func__))
 }
 int32_t bcsv_row_get_int32(const_bcsv_row_t row, int col) {
-    BCSV_ROW_GET(int32_t{0}, static_cast<const bcsv::Row*>(row)->get<int32_t>(col))
+    BCSV_ROW_GET(int32_t{0}, row_cell_value<int32_t>(static_cast<const bcsv::Row*>(row), col, __func__))
 }
 int64_t bcsv_row_get_int64(const_bcsv_row_t row, int col) {
-    BCSV_ROW_GET(int64_t{0}, static_cast<const bcsv::Row*>(row)->get<int64_t>(col))
+    BCSV_ROW_GET(int64_t{0}, row_cell_value<int64_t>(static_cast<const bcsv::Row*>(row), col, __func__))
 }
 float bcsv_row_get_float(const_bcsv_row_t row, int col) {
-    BCSV_ROW_GET(0.0f, static_cast<const bcsv::Row*>(row)->get<float>(col))
+    // Strict: a DOUBLE column is NOT narrowed to float (the result would
+    // depend on the value — inf for |x| > FLT_MAX). Use get_double instead;
+    // narrowing is a decision for the caller, made once in the binding.
+    BCSV_ROW_GET(0.0f, row_cell_value<float>(static_cast<const bcsv::Row*>(row), col, __func__))
 }
 double bcsv_row_get_double(const_bcsv_row_t row, int col) {
-    BCSV_ROW_GET(0.0, static_cast<const bcsv::Row*>(row)->get<double>(col))
+    BCSV_ROW_GET(0.0, row_cell_to_double(static_cast<const bcsv::Row*>(row), col, __func__))
 }
 const char* bcsv_row_get_string(const_bcsv_row_t row, int col) {
-    BCSV_ROW_GET(static_cast<const char*>(nullptr), ([&]() {
-        auto r = static_cast<const bcsv::Row*>(row);
-        const auto& s = r->get<std::string>(col);
-        return s.c_str();
-    })())
+    // Dispatch guards the STRING case explicitly: without this, a non-string
+    // column index would be used to index the string store (a byte offset,
+    // never a strg_ index) in RANGE_CHECKING=false builds.
+    BCSV_ROW_GET(static_cast<const char*>(nullptr), row_cell_string(static_cast<const bcsv::Row*>(row), col, __func__))
+}
+
+// Checked twins of the getters above: report success/failure directly (bool
+// return + out parameter) instead of a fallback value plus the thread-local
+// error channel. Each twin applies exactly the type rule of its plain getter:
+// strict for every type, except double — which accepts the same lossless
+// widening set (bool/int8..int32/uint8..uint32/float; int64/uint64/string
+// rejected as inexact or non-convertible).
+// BCSV_ROW_TRY_GET(call): call may assign *out; any exception (bad index,
+// type mismatch) is reported as false with a fresh error string; *out is then
+// untouched. A NULL out is refused rather than trusted across the FFI.
+#define BCSV_ROW_TRY_GET(call) \
+    if (!out) [[unlikely]] { \
+        g_has_error = true; \
+        g_last_error = std::string(__func__) + ": out is NULL"; \
+        return false; \
+    } \
+    clear_last_error(); \
+    try { \
+        call; \
+        return true; \
+    } catch (const std::exception& ex) { \
+        set_last_error(__func__, ex); \
+        return false; \
+    } catch (...) { \
+        set_last_error_unknown(__func__); \
+        return false; \
+    }
+
+bool bcsv_row_try_get_bool(const_bcsv_row_t row, int col, bool* out) {
+    BCSV_ROW_TRY_GET(row_cell_strict(static_cast<const bcsv::Row*>(row), col, __func__, out))
+}
+bool bcsv_row_try_get_uint8(const_bcsv_row_t row, int col, uint8_t* out) {
+    BCSV_ROW_TRY_GET(row_cell_strict(static_cast<const bcsv::Row*>(row), col, __func__, out))
+}
+bool bcsv_row_try_get_uint16(const_bcsv_row_t row, int col, uint16_t* out) {
+    BCSV_ROW_TRY_GET(row_cell_strict(static_cast<const bcsv::Row*>(row), col, __func__, out))
+}
+bool bcsv_row_try_get_uint32(const_bcsv_row_t row, int col, uint32_t* out) {
+    BCSV_ROW_TRY_GET(row_cell_strict(static_cast<const bcsv::Row*>(row), col, __func__, out))
+}
+bool bcsv_row_try_get_uint64(const_bcsv_row_t row, int col, uint64_t* out) {
+    BCSV_ROW_TRY_GET(row_cell_strict(static_cast<const bcsv::Row*>(row), col, __func__, out))
+}
+bool bcsv_row_try_get_int8(const_bcsv_row_t row, int col, int8_t* out) {
+    BCSV_ROW_TRY_GET(row_cell_strict(static_cast<const bcsv::Row*>(row), col, __func__, out))
+}
+bool bcsv_row_try_get_int16(const_bcsv_row_t row, int col, int16_t* out) {
+    BCSV_ROW_TRY_GET(row_cell_strict(static_cast<const bcsv::Row*>(row), col, __func__, out))
+}
+bool bcsv_row_try_get_int32(const_bcsv_row_t row, int col, int32_t* out) {
+    BCSV_ROW_TRY_GET(row_cell_strict(static_cast<const bcsv::Row*>(row), col, __func__, out))
+}
+bool bcsv_row_try_get_int64(const_bcsv_row_t row, int col, int64_t* out) {
+    BCSV_ROW_TRY_GET(row_cell_strict(static_cast<const bcsv::Row*>(row), col, __func__, out))
+}
+bool bcsv_row_try_get_float(const_bcsv_row_t row, int col, float* out) {
+    BCSV_ROW_TRY_GET(row_cell_strict(static_cast<const bcsv::Row*>(row), col, __func__, out))
+}
+bool bcsv_row_try_get_double(const_bcsv_row_t row, int col, double* out) {
+    // Same lossless-widening set as bcsv_row_get_double — the twins must not
+    // disagree on what a type accepts, and the managed bindings read the
+    // widened rule through this entry point in one call.
+    BCSV_ROW_TRY_GET(*out = row_cell_to_double(static_cast<const bcsv::Row*>(row), col, __func__))
+}
+bool bcsv_row_try_get_string(const_bcsv_row_t row, int col, const char** out) {
+    BCSV_ROW_TRY_GET(*out = row_cell_string(static_cast<const bcsv::Row*>(row), col, __func__))
 }
 
 void bcsv_row_set_bool(bcsv_row_t row, int col, bool value) {
@@ -1089,12 +1466,13 @@ bcsv_sampler_t bcsv_sampler_create(bcsv_reader_t reader) {
         auto* r = static_cast<bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader);
         auto* h = new SamplerHandle();
         h->sampler = new bcsv::Sampler<bcsv::Layout>(*r);
-        return static_cast<bcsv_sampler_t>(h);
+        return static_cast<bcsv_sampler_t>(reg_register(h, HandleKind::Sampler));
     })())
 }
 
 void bcsv_sampler_destroy(bcsv_sampler_t sampler) {
     if (!sampler) return;
+    if (!reg_take("bcsv_sampler_destroy", sampler)) [[unlikely]] return;
     BCSV_CAPI_TRY_VOID("bcsv_sampler_destroy", ([&]() {
         auto* h = static_cast<SamplerHandle*>(sampler);
         delete h->sampler;
@@ -1304,7 +1682,11 @@ size_t bcsv_reader_read_columns(bcsv_reader_t reader, void** bufs,
         }
 
         // Prepare columnar string storage
-        auto& state = g_columnar_state[reader];
+        auto& state = [&]() -> ColumnarReadState& {
+            auto& t = columnar_table();
+            std::lock_guard<std::mutex> lk(t.mtx);
+            return t.by_reader[reader];
+        }();
         state.resize(num_cols);
         state.clear();
         for (size_t c = 0; c < num_cols; ++c) {
@@ -1335,29 +1717,26 @@ size_t bcsv_reader_read_columns(bcsv_reader_t reader, void** bufs,
 }
 
 const char* bcsv_reader_column_string(bcsv_reader_t reader, size_t col, size_t row) {
-    auto it = g_columnar_state.find(reader);
-    if (it == g_columnar_state.end()) return "";
-    const auto& state = it->second;
-    if (col >= state.string_cols.size()) return "";
-    if (row >= state.string_cols[col].size()) return "";
-    return state.string_cols[col][row].c_str();
+    const auto* state = columnar_find(reader);
+    if (!state) return "";
+    if (col >= state->string_cols.size()) return "";
+    if (row >= state->string_cols[col].size()) return "";
+    return state->string_cols[col][row].c_str();
 }
 
 size_t bcsv_reader_column_string_count(bcsv_reader_t reader, size_t col) {
-    auto it = g_columnar_state.find(reader);
-    if (it == g_columnar_state.end()) return 0;
-    const auto& state = it->second;
-    if (col >= state.string_cols.size()) return 0;
-    return state.string_cols[col].size();
+    const auto* state = columnar_find(reader);
+    if (!state) return 0;
+    if (col >= state->string_cols.size()) return 0;
+    return state->string_cols[col].size();
 }
 
 size_t bcsv_reader_column_strings_packed(bcsv_reader_t reader, size_t col,
                                           char* out_buf, size_t buf_size) {
-    auto it = g_columnar_state.find(reader);
-    if (it == g_columnar_state.end()) return 0;
-    const auto& state = it->second;
-    if (col >= state.string_cols.size()) return 0;
-    const auto& strings = state.string_cols[col];
+    const auto* state = columnar_find(reader);
+    if (!state) return 0;
+    if (col >= state->string_cols.size()) return 0;
+    const auto& strings = state->string_cols[col];
 
     // Calculate total size needed (each string null-terminated)
     size_t total = 0;

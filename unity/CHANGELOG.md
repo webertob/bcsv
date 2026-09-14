@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [1.5.20] - 2026-09-14
+
+### Added
+
+- **`BcsvRuntime`**, a static exit hook: on `Application.quitting` it ends
+  any live `BcsvRecorder` (open files land with a flushed footer) and calls
+  the native `bcsv_shutdown()`, which closes every open writer and destroys
+  every live handle. A player that leaks handles now exits cleanly instead
+  of aborting inside the allocator.
+- **`BcsvRecorder.autoFlushRows`**: flush the writer every N rows (0 — the
+  default — keeps flushing reserved to `EndRecording`). Bounds data loss
+  after a crash mid-recording at the cost of periodic I/O.
+
+### Fixed
+
+- **Double free at process exit** (the `free(): invalid size` SIGABRT): a
+  `Dispose()` racing the GC finaliser, or a second `Dispose()`, used to
+  destroy the same native handle twice. The managed side claims disposal
+  exactly once (close before destroy), and since the native layer refuses a
+  second destroy of a handle it does not own, the abort is closed from both
+  sides.
+- **Silent wrong-type reads**: `BcsvRow.GetDouble` on a FLOAT column (and
+  any other wrong-typed getter) could return 0 without an error. The typed
+  getters now enforce the column type at the native layer and throw
+  `BcsvException` on a mismatch (ADR-0006).
+
+### Changed
+
+- **`GetDouble` widens the exactly-representable types** — every integer or
+  float type that converts losslessly to `double` is delivered (set
+  enumerated in ADR-0006); int64/uint64 and string columns stay an error.
+
 ## [1.5.19] - 2026-09-07
 
 ### Added

@@ -128,7 +128,7 @@ Dependencies are bundled (xxHash 0.8.3, LZ4 1.10.0) — no external installs.
 
 | Group | Targets |
 |---|---|
-| Tests | `bcsv_gtest`, `test_c_api`, `test_row_api`, `test_c_api_full` |
+| Tests | `bcsv_gtest`, `test_c_api`, `test_row_api`, `test_c_api_full`, `test_c_api_defects_1520` |
 | CLI tools (11) | `csv2bcsv`, `bcsv2csv`, `bcsvHead`, `bcsvTail`, `bcsvHeader`, `bcsvSampler`, `bcsvGenerator`, `bcsvValidate`, `bcsvRepair`, `bcsvCompare`, `bcsvCast` |
 | Examples (11) | `quickstart`, `example`, `example_static`, `example_zoh`, `example_zoh_static`, `example_delta`, `example_direct_access`, `example_error_handling`, `c_api_vectorized_example`, `visitor_examples`, `example_sampler` |
 | Benchmarks | `bench_macro_datasets`, `bench_micro_types`, `bench_micro_bitset`, `bench_direct_access`, `bench_c_api`, `bench_sampler`, `bench_codec_compare`, `bench_generate_csv`, `bench_external_csv` |

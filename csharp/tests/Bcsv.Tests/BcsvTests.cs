@@ -1278,4 +1278,181 @@ public class BcsvTests : IDisposable
         reader.Row.GetInt16s(0, dst);
         Assert.Equal(src.ToArray(), dst.ToArray());
     }
+
+    // ════════════════════════════════════════════════════════════════════
+    // 1.5.20 defect regressions (com.bcsv.unity reports, ADR-0006)
+    // ════════════════════════════════════════════════════════════════════
+
+    [Fact]
+    public void Defect2_GetDouble_WidensLosslessTypes()
+    {
+        // The Unity consumer's case: float poses and uint32 indices read
+        // through GetDouble used to return a silent 0.0.
+        using var layout = new BcsvLayout();
+        layout.AddColumn("pose", ColumnType.Float);
+        layout.AddColumn("idx", ColumnType.UInt32);
+        layout.AddColumn("flag", ColumnType.Bool);
+        layout.AddColumn("small", ColumnType.Int32);
+
+        using var writer = new BcsvWriter(layout, "flat");
+        writer.Open(TmpFile("widen.bcsv"), true);
+        writer.Row.SetFloat(0, 3.5f);
+        writer.Row.SetUInt32(1, 4_000_000_000);
+        writer.Row.SetBool(2, true);
+        writer.Row.SetInt32(3, -2_000_000_000);
+        writer.WriteRow();
+        writer.Close();
+
+        using var reader = new BcsvReader();
+        reader.Open(TmpFile("widen.bcsv"));
+        Assert.True(reader.ReadNext());
+        Assert.Equal(3.5, reader.Row.GetDouble(0));
+        Assert.Equal(4_000_000_000.0, reader.Row.GetDouble(1));
+        Assert.Equal(1.0, reader.Row.GetDouble(2));
+        Assert.Equal(-2_000_000_000.0, reader.Row.GetDouble(3));
+    }
+
+    [Fact]
+    public void Defect2_WrongTypeGetter_Throws()
+    {
+        // Up to 1.5.19 these returned a silent 0/false/null; now every strict
+        // mismatch is loud (ADR-0006). GetDouble additionally refuses int64,
+        // uint64 and string — no silent inexact conversion either.
+        using var layout = new BcsvLayout();
+        layout.AddColumn("dbl", ColumnType.Double);
+        layout.AddColumn("i64", ColumnType.Int64);
+        layout.AddColumn("u64", ColumnType.UInt64);
+        layout.AddColumn("txt", ColumnType.String);
+
+        using var writer = new BcsvWriter(layout, "flat");
+        writer.Open(TmpFile("strict.bcsv"), true);
+        writer.Row.SetDouble(0, 1.5);
+        writer.Row.SetInt64(1, -9_000_000_000);
+        writer.Row.SetUInt64(2, 1_000_000_000_000_000_000);
+        writer.Row.SetString(3, "hello");
+        writer.WriteRow();
+        writer.Close();
+
+        using var reader = new BcsvReader();
+        reader.Open(TmpFile("strict.bcsv"));
+        Assert.True(reader.ReadNext());
+        var row = reader.Row;
+
+        Assert.Throws<BcsvException>(() => row.GetFloat(0));    // no narrowing
+        Assert.Throws<BcsvException>(() => row.GetInt32(0));    // no reinterpreting
+        Assert.Throws<BcsvException>(() => row.GetString(0));
+        Assert.Throws<BcsvException>(() => row.GetDouble(1));   // i64 > 2^53
+        Assert.Throws<BcsvException>(() => row.GetDouble(2));   // u64 > 2^53
+        Assert.Throws<BcsvException>(() => row.GetDouble(3));   // string
+        Assert.Throws<BcsvException>(() => row.GetInt32(999));  // out of range
+        Assert.Throws<BcsvException>(() => row.GetDouble(0 - 1));
+
+        // The exact-typed getters still work.
+        Assert.Equal(1.5, row.GetDouble(0));
+        Assert.Equal(-9_000_000_000L, row.GetInt64(1));
+        Assert.Equal(1_000_000_000_000_000_000UL, row.GetUInt64(2));
+        Assert.Equal("hello", row.GetString(3));
+    }
+
+    [Fact]
+    public void Defect1_DisposeFromFinalizerPathClosesWriter()
+    {
+        // Dispose() on a still-open writer must close the file (footer!) —
+        // the ManagedCloseBeforeDestroy path the GC finalizer takes. Before
+        // 1.5.20, destroy-without-close left a header whose row count never
+        // made it to disk.
+        var path = TmpFile("finalizer_close.bcsv");
+        var layout = new BcsvLayout();
+        layout.AddColumn("x", ColumnType.Int32);
+        var writer = new BcsvWriter(layout, "delta");   // deliberately undisposed
+        writer.Open(path, true);
+        using (writer)   // no explicit Close(): Dispose must do it
+        {
+            for (int i = 0; i < 100; i++)
+            {
+                writer.Row.SetInt32(0, i);
+                writer.WriteRow();
+            }
+        }
+        GC.SuppressFinalize(writer);
+
+        using var reader = new BcsvReader();
+        reader.Open(path);
+        Assert.Equal(100, reader.RowCount);
+        Assert.True(reader.Read(99));
+        Assert.Equal(99, reader.Row.GetInt32(0));
+        layout.Dispose();
+    }
+
+    [Fact]
+    public void Defect1_ConcurrentDisposeDestroysOnce()
+    {
+        // The old check-then-act on _handle let Dispose race the finalizer
+        // (or two threads) into a native double-free. With the Interlocked
+        // claim, every handle dies exactly once, from whichever caller wins.
+        for (int rep = 0; rep < 20; rep++)
+        {
+            var layout = new BcsvLayout();
+            layout.AddColumn("x", ColumnType.Int32);
+            var writer = new BcsvWriter(layout);
+            writer.Open(TmpFile("race.bcsv"), true);
+            writer.Row.SetInt32(0, rep);
+            writer.WriteRow();
+
+            var threads = new Thread[4];
+            for (int t = 0; t < threads.Length; t++)
+                threads[t] = new Thread(writer.Dispose);
+            foreach (var th in threads) th.Start();
+            foreach (var th in threads) th.Join();
+            layout.Dispose();   // also racing the writer's borrowed layout
+        }
+        // No crash inside the process == the claim worked. Verify the file of
+        // the last repetition reopens cleanly for good measure.
+        using var reader = new BcsvReader();
+        Assert.True(reader.TryOpen(TmpFile("race.bcsv")));
+    }
+
+    [Fact]
+    public void Defect1_DoubleDisposeIsSafe()
+    {
+        var layout = new BcsvLayout();
+        layout.AddColumn("x", ColumnType.Int32);
+        var writer = new BcsvWriter(layout);
+        writer.Open(TmpFile("double.bcsv"), true);
+        writer.Row.SetInt32(0, 1);
+        writer.WriteRow();
+
+        writer.Dispose();
+        writer.Dispose();          // must be a no-op, no native call
+        layout.Dispose();
+        layout.Dispose();
+
+        using var reader = new BcsvReader();
+        reader.Open(TmpFile("double.bcsv"));
+        Assert.Equal(1, reader.RowCount);
+    }
+
+    [Fact]
+    public void Writer_IsPoisonedLifecycle()
+    {
+        // The B1 API surface: poison is observable, and flush clears it.
+        using var layout = new BcsvLayout();
+        for (int i = 0; i < 300; i++)
+            layout.AddColumn($"s{i}", ColumnType.String);
+
+        using var writer = new BcsvWriter(layout, "zoh");
+        writer.Open(TmpFile("poison.bcsv"), true);
+        Assert.False(writer.IsPoisoned);
+
+        var big = new string('x', 65535);
+        for (int i = 0; i < 300; i++) writer.Row.SetString(i, big);
+        Assert.Throws<BcsvException>(() => writer.WriteRow());   // > MAX_ROW_LENGTH
+        Assert.True(writer.IsPoisoned);
+
+        for (int i = 0; i < 300; i++) writer.Row.SetString(i, "ok");
+        Assert.Throws<BcsvException>(() => writer.WriteRow());   // still refused
+        writer.Flush();                                          // resync at boundary
+        Assert.False(writer.IsPoisoned);
+        writer.WriteRow();                                       // resumes
+    }
 }

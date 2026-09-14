@@ -10,20 +10,22 @@ namespace Bcsv;
 /// </summary>
 public sealed class BcsvLayout : IDisposable, IReadOnlyList<ColumnDefinition>
 {
-    internal nint Handle { get; private set; }
+    private nint _handle;
+    internal nint Handle => _handle;
     private readonly bool _ownsHandle;
+    private int _disposed;   // Interlocked claim flag: 0 = live
 
     public BcsvLayout()
     {
-        Handle = NativeMethods.bcsv_layout_create();
+        _handle = NativeMethods.bcsv_layout_create();
         _ownsHandle = true;
-        if (Handle == 0)
+        if (_handle == 0)
             throw new BcsvException("Failed to create layout");
     }
 
     internal BcsvLayout(nint handle, bool ownsHandle)
     {
-        Handle = handle;
+        _handle = handle;
         _ownsHandle = ownsHandle;
     }
 
@@ -37,11 +39,15 @@ public sealed class BcsvLayout : IDisposable, IReadOnlyList<ColumnDefinition>
 
     private void Dispose(bool disposing)
     {
-        if (_ownsHandle && Handle != 0)
-        {
-            NativeMethods.bcsv_layout_destroy(Handle);
-            Handle = 0;
-        }
+        // One-shot claim; see BcsvWriter.Dispose() for why. Borrowed
+        // layouts (ownsHandle false, e.g. from a Reader) never destroy, and
+        // their handle stays intact for the owning object.
+        if (!_ownsHandle) return;
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        var handle = _handle;
+        _handle = 0;
+        if (handle != 0)
+            NativeMethods.bcsv_layout_destroy(handle);
     }
 
     public int ColumnCount => (int)NativeMethods.bcsv_layout_column_count(Handle);

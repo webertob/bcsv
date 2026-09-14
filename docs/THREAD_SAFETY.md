@@ -45,6 +45,26 @@ If your application requires concurrent access:
 3. **Post-merge** — write per-thread files and merge them after all threads
    complete.
 
+## The C API Surface
+
+The `extern "C"` layer (`bcsv_c_api.h` / `src/bcsv_c_api.cpp`) follows the
+same one-handle-one-thread contract: a `bcsv_writer_t`, `bcsv_reader_t`, etc.
+is owned by one thread at a time, exactly like the C++ object behind it. Two
+process-wide structures exist, both off the per-row hot path:
+
+- **Handle registry** (ADR-0006): a mutex-guarded map from handle to kind,
+  consulted only by create/destroy calls. It makes `*_destroy` idempotent
+  across threads — a managed finalizer racing a manual dispose cannot
+  double-free — but it does NOT make the handle itself safe for concurrent
+  use. `bcsv_shutdown()` follows the same rule: call it from one thread when
+  no other thread is inside this API.
+- **Error channel**: `bcsv_last_error()` is thread-local (along with the
+  string buffers backing `bcsv_row_get_string` / `bcsv_row_to_string`), so
+  threads never observe each other's errors.
+- **Columnar read state** (`bcsv_reader_read_columns`): process-wide table
+  keyed by reader handle, mutex-guarded at lookup only; the per-batch
+  dereference still assumes the one-owner rule.
+
 ## Future Considerations
 
 If thread-safe operation becomes necessary in the future, the recommended

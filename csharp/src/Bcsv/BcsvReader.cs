@@ -11,6 +11,7 @@ namespace Bcsv;
 public sealed class BcsvReader : IDisposable, IEnumerable<BcsvRow>
 {
     private nint _handle;
+    private int _disposed;   // Interlocked claim flag: 0 = live
     private BcsvLayout? _layout;
     private BcsvRow _row;
 
@@ -31,11 +32,12 @@ public sealed class BcsvReader : IDisposable, IEnumerable<BcsvRow>
 
     private void Dispose(bool disposing)
     {
-        if (_handle != 0)
-        {
-            NativeMethods.bcsv_reader_destroy(_handle);
-            _handle = 0;
-        }
+        // One-shot claim; see BcsvWriter.Dispose() for why.
+        if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+        var handle = _handle;
+        _handle = 0;
+        if (handle != 0)
+            NativeMethods.bcsv_reader_destroy(handle);
     }
 
     public void Open(string filename)

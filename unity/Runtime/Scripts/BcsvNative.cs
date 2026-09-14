@@ -80,6 +80,14 @@ namespace BCSV
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void bcsv_clear_last_error();
 
+        // ── Lifecycle ──────────────────────────────────────────────────
+        // Bulk teardown of every live handle (close writers, free everything).
+        // Call only once per process, when the host is done with BCSV for good —
+        // typically from an atexit/AppDomain hook. Idempotent; destroys of
+        // handles taken before shutdown become logged no-ops afterwards.
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_shutdown();
+
         // ── Layout ─────────────────────────────────────────────────────
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern nint bcsv_layout_create();
@@ -231,6 +239,10 @@ namespace BCSV
         internal static extern bool bcsv_writer_is_open(nint writer);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_writer_is_poisoned(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr bcsv_writer_filename(nint writer);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
@@ -321,6 +333,56 @@ namespace BCSV
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern IntPtr bcsv_row_get_string(nint row, int col);
+
+        // Checked scalar getters: strict type match (see bcsv_c_api.h, ADR-0006).
+        // false → *out untouched, error channel set. Use ThrowIfError to surface.
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_row_try_get_bool(nint row, int col, out bool value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_row_try_get_uint8(nint row, int col, out byte value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_row_try_get_uint16(nint row, int col, out ushort value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_row_try_get_uint32(nint row, int col, out uint value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_row_try_get_uint64(nint row, int col, out ulong value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_row_try_get_int8(nint row, int col, out sbyte value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_row_try_get_int16(nint row, int col, out short value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_row_try_get_int32(nint row, int col, out int value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_row_try_get_int64(nint row, int col, out long value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_row_try_get_float(nint row, int col, out float value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_row_try_get_double(nint row, int col, out double value);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_row_try_get_string(nint row, int col, out IntPtr value);
 
         // Scalar setters
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]

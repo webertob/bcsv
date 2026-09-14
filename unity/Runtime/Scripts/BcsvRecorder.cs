@@ -183,6 +183,13 @@ namespace BCSV
         [Range(0, 9)]
         public int compressionLevel = BcsvDefaults.CompressionLevel;
 
+        [Tooltip("Push buffered rows to disk every N rows (0 = off, the default). " +
+                 "Bounds what a hard kill loses — a clean quit always writes the " +
+                 "footer, however this is set. Each flush compresses the whole " +
+                 "packet so far, so keep N generous (tens of thousands) or turn " +
+                 "it off.")]
+        public int autoFlushRows = 0;
+
         // ── Observable state ────────────────────────────────────────────────
 
         /// <summary>True between a successful <see cref="BeginRecording"/> and <see cref="EndRecording"/>.</summary>
@@ -678,6 +685,9 @@ namespace BCSV
             _reportedBadRate = false;
             _reportedGetterFailure = false;
             IsRecording = true;
+            // So a player that quits without OnDestroy still ends this file
+            // with a valid footer (see BcsvRuntime).
+            BcsvRuntime.Register(this);
 
             Debug.Log(name + " (BcsvRecorder): recording " + _channels.Count + " channels to " +
                       resolved + (_filtered.Count > 0
@@ -691,6 +701,7 @@ namespace BCSV
         {
             if (!IsRecording && _writer == null && _layout == null) return;
 
+            BcsvRuntime.Unregister(this);
             string path = CurrentPath;
             long rows = RowsWritten;
             long failed = FailedRows;
@@ -942,6 +953,13 @@ namespace BCSV
 
             _writer.WriteRow();
             RowsWritten++;
+
+            // Optional durability bound: a hard kill loses at most this many
+            // rows. Also recovers the writer automatically if a rejected
+            // oversized row ever poisoned it — flush() resynchronises at the
+            // next packet boundary.
+            if (autoFlushRows > 0 && RowsWritten % autoFlushRows == 0)
+                _writer.Flush();
 
             // Only now: every getter ran and the row reached the writer, so every
             // averaging window closed at the same instant.

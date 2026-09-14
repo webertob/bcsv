@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026 Tobias Weber. Licensed under the MIT License.
 
 using System;
+using System.Threading;
 
 namespace BCSV
 {
@@ -11,6 +12,7 @@ namespace BCSV
     public sealed class BcsvWriter : IDisposable
     {
         private nint _handle;
+        private int _disposed;   // Interlocked claim flag: 0 = live
         private BcsvLayout _layout;  // borrowed, not owned
         private BcsvRow _row;
 
@@ -50,10 +52,21 @@ namespace BCSV
 
         private void Dispose(bool disposing)
         {
-            if (_handle != 0)
+            // Interlocked claim on _disposed: Dispose racing the finalizer (or
+            // another thread) tears down exactly once. Pre-1.5.20 the check-then-
+            // act on _handle could double-destroy from the two paths — native now
+            // refuses a second destroy, but the managed side must not attempt it.
+            // (int overload: available on every runtime, unlike nint.)
+            if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
+            var handle = _handle;
+            _handle = 0;
+            if (handle != 0)
             {
-                NativeMethods.bcsv_writer_destroy(_handle);
-                _handle = 0;
+                // Close before destroy so the file footer is written even when
+                // only the finalizer runs: an open writer destroyed without close
+                // leaves a file the reader cannot fully use.
+                NativeMethods.bcsv_writer_close(handle);
+                NativeMethods.bcsv_writer_destroy(handle);
             }
         }
 
@@ -116,6 +129,15 @@ namespace BCSV
         public void Close() => NativeMethods.bcsv_writer_close(_handle);
         public void Flush() => NativeMethods.bcsv_writer_flush(_handle);
         public bool IsOpen => NativeMethods.bcsv_writer_is_open(_handle);
+
+        /// <summary>
+        /// True after <see cref="WriteRow"/> or <see cref="Write"/> rejected a row
+        /// for exceeding the maximum row size. While poisoned, every write is
+        /// refused (reported, not ignored); <see cref="Flush"/> resynchronises at
+        /// the next packet boundary and clears the poison. Pre-1.5.20, a poisoned
+        /// batch-compressed writer stayed write-refused forever.
+        /// </summary>
+        public bool IsPoisoned => NativeMethods.bcsv_writer_is_poisoned(_handle);
 
         public string Filename => FilenameHelper.GetWriterFilename(_handle);
 

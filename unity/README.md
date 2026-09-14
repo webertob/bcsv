@@ -144,6 +144,7 @@ public class MyRecording : MonoBehaviour
         rec.TrackTransform(transform);
 
         rec.sampleRateHz = 100f;   // 0 records one row per physics step
+        rec.autoFlushRows = 1000;  // 0 keeps flushing to EndRecording only
     }
 }
 ```
@@ -280,6 +281,7 @@ unity/
 │   │   ├── BcsvSampleClock.cs   # Decides when a row is written
 │   │   ├── BcsvRecorder.cs      # Recording component
 │   │   ├── BcsvPlayer.cs        # Playback component
+│   │   ├── BcsvRuntime.cs       # Exit hook: closes recorders, bcsv_shutdown()
 │   │   └── BcsvVersion.cs       # Library version query
 │   └── Plugins/
 │       ├── Windows/x86_64/      # bcsv_c_api.dll
@@ -363,8 +365,20 @@ The output is at `build/ninja-release/bin/bcsv_c_api.dll` (Windows) or `build/li
 
 BCSV uses two error patterns:
 
-- **Throwing methods** (`Open`, `WriteRow`): throw `BcsvException` on failure.
+- **Throwing methods** (`Open`, `WriteRow`, every typed `BcsvRow.Get*`):
+  throw `BcsvException` on failure. Since 1.5.20 the typed getters enforce
+  the column type at the native layer (ADR-0006): reading a column as the
+  wrong type throws instead of silently returning 0/false/null, and
+  `GetDouble` additionally widens the exactly-representable types
+  (ADR-0006).
 - **Try methods** (`TryOpen`): return `false` on failure (no exception).
+
+Disposal is one-shot on both sides: a managed `Dispose()` racing a GC
+finaliser destroys the native handle exactly once, and a second `Dispose()` —
+or a destroy after `bcsv_shutdown()` — is a safe no-op. `BcsvRuntime` hooks
+`Application.quitting`: it ends any live `BcsvRecorder` (open files land with
+a flushed footer) and calls `bcsv_shutdown()`, so a player that leaks handles
+still exits cleanly instead of aborting inside the allocator.
 
 ```csharp
 // Pattern 1 — exceptions (default)

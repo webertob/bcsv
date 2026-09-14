@@ -167,6 +167,7 @@ void log_system_metrics(void) {
         bcsv_writer_next(writer);
     }
     
+    bcsv_writer_close(writer);   // complete the file (footer) before teardown
     bcsv_writer_destroy(writer);
     bcsv_layout_destroy(layout);
 }

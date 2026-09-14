@@ -98,6 +98,24 @@ const char*         bcsv_last_error     (void);                         // threa
 void                bcsv_clear_last_error(void);                        // explicitly reset error state
 
 // ============================================================================
+// Lifecycle API
+// ============================================================================
+// Deterministic bulk teardown: closes every open writer, then destroys all
+// handles created by this API (writers, csv writers, samplers, readers, rows,
+// layouts) on the calling thread. Call once from the host's last exit hook —
+// after quit callbacks, before the runtime starts tearing down — so file
+// footers are written and natives freed while everything is alive. After the
+// call any *_destroy — and any close/flush on a handle this API created — is
+// a logged no-op, never a double free or an access through freed memory.
+// Preconditions: process quiescent w.r.t. this API; do not use it to unwind
+// partial state mid-run. See docs/ERROR_HANDLING.md and docs/adr/0006.
+// Note on late destroys alone: a refused destroy is guaranteed no-op only
+// while the handle's address stays unreclaimed; a double-destroy interleaved
+// with new handle creation can claim the recycled address. Supported pattern:
+// one owner per handle, plus bcsv_shutdown() at exit.
+void                bcsv_shutdown       (void);
+
+// ============================================================================
 // Layout API
 // ============================================================================
 // Layouts define the schema (column names and types) of BCSV files.
@@ -161,6 +179,12 @@ void                bcsv_writer_close   (bcsv_writer_t writer);
 void                bcsv_writer_flush   (bcsv_writer_t writer);
 bool                bcsv_writer_open    (bcsv_writer_t writer, const char* filename, bool overwrite, int compress, int block_size_kb, bcsv_file_flags_t flags);
 bool                bcsv_writer_is_open (const_bcsv_writer_t writer);
+// True after bcsv_writer_next/bcsv_writer_write rejected a row for exceeding
+// MAX_ROW_LENGTH: the row codec's state is desynced and further writes throw
+// (reported as errors) until the file is closed. For packet-based file codecs
+// (the batch-LZ4 default) bcsv_writer_flush() resynchronises at an empty
+// packet boundary and clears it; stream codecs stay poisoned until close.
+bool                bcsv_writer_is_poisoned(const_bcsv_writer_t writer);
 #ifdef _WIN32
 const wchar_t*      bcsv_writer_filename(const_bcsv_writer_t writer);
 #else
@@ -245,9 +269,25 @@ int8_t              bcsv_row_get_int8   (const_bcsv_row_t row, int col);
 int16_t             bcsv_row_get_int16  (const_bcsv_row_t row, int col);
 int32_t             bcsv_row_get_int32  (const_bcsv_row_t row, int col);
 int64_t             bcsv_row_get_int64  (const_bcsv_row_t row, int col);
-float               bcsv_row_get_float  (const_bcsv_row_t row, int col);
-double              bcsv_row_get_double (const_bcsv_row_t row, int col);
-const char*         bcsv_row_get_string (const_bcsv_row_t row, int col);
+float               bcsv_row_get_float  (const_bcsv_row_t row, int col);         // strict: DOUBLE columns are an error, not narrowed
+double              bcsv_row_get_double (const_bcsv_row_t row, int col);         // widens losslessly: bool/int8..int32/uint8..uint32/float/double; int64/uint64/string = error
+const char*         bcsv_row_get_string (const_bcsv_row_t row, int col);         // valid until the cell changes
+
+// Checked twins of the getters above: true + *out on success; false +
+// bcsv_last_error() on bad index or type mismatch (*out untouched). Each twin
+// applies exactly the type rule of its plain getter. See docs/adr/0006.
+bool                bcsv_row_try_get_bool   (const_bcsv_row_t row, int col, bool*        out);
+bool                bcsv_row_try_get_uint8  (const_bcsv_row_t row, int col, uint8_t*     out);
+bool                bcsv_row_try_get_uint16 (const_bcsv_row_t row, int col, uint16_t*    out);
+bool                bcsv_row_try_get_uint32 (const_bcsv_row_t row, int col, uint32_t*    out);
+bool                bcsv_row_try_get_uint64 (const_bcsv_row_t row, int col, uint64_t*    out);
+bool                bcsv_row_try_get_int8   (const_bcsv_row_t row, int col, int8_t*      out);
+bool                bcsv_row_try_get_int16  (const_bcsv_row_t row, int col, int16_t*     out);
+bool                bcsv_row_try_get_int32  (const_bcsv_row_t row, int col, int32_t*     out);
+bool                bcsv_row_try_get_int64  (const_bcsv_row_t row, int col, int64_t*     out);
+bool                bcsv_row_try_get_float  (const_bcsv_row_t row, int col, float*       out);
+bool                bcsv_row_try_get_double (const_bcsv_row_t row, int col, double*      out);
+bool                bcsv_row_try_get_string (const_bcsv_row_t row, int col, const char** out);  // *out valid until the cell changes
 void                bcsv_row_set_bool   (bcsv_row_t row, int col, bool        value);
 void                bcsv_row_set_uint8  (bcsv_row_t row, int col, uint8_t     value);
 void                bcsv_row_set_uint16 (bcsv_row_t row, int col, uint16_t    value);
