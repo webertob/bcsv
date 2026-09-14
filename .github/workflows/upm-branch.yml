@@ -2,14 +2,17 @@
 # Unity users can install via Git URL:
 #   https://github.com/webertob/bcsv.git#upm
 #
-# This workflow triggers after the Unity Package workflow succeeds,
-# or can be run manually.
+# This workflow triggers after the "Release Ship" hub succeeds, or can be
+# run manually. The hub's success now IMPLIES the whole fleet was green
+# (its gate refuses to ship any channel unless every packager's tag run
+# concluded success), so the upm branch only ever advances on a fully
+# shipped release — and never from a master push, since those runs are gone.
 
 name: Update UPM Branch
 
 on:
   workflow_run:
-    workflows: ["Unity Package"]
+    workflows: ["Release Ship"]
     types: [completed]
   workflow_dispatch:
 
@@ -20,7 +23,7 @@ jobs:
   update-upm:
     name: Update upm branch
     runs-on: ubuntu-latest
-    # Only run if triggered manually, or if the Unity Package workflow succeeded
+    # Only run if triggered manually, or if the Release Ship hub succeeded
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
@@ -34,7 +37,7 @@ jobs:
           # A workflow_run checkout defaults to the default branch, not the
           # commit that triggered it, so the upm branch was being built from
           # whatever master happened to hold rather than from the tagged
-          # release. Pin it to the commit the Unity Package workflow ran on.
+          # release. Pin it to the commit the hub (Release Ship) ran on.
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Determine version
@@ -72,10 +75,31 @@ jobs:
         run: |
           echo "Attempting to download native artifacts from Unity Package workflow..."
 
-          # If triggered by workflow_run, use that specific run ID
+          # NOTE: the triggering run is the Release Ship hub, which archives
+          # nothing itself — the natives live on the Unity Package run of the
+          # SAME commit. Resolve that run by sha; event==push selects the tag
+          # run (dispatch runs report event=workflow_dispatch, and branch
+          # pushes no longer trigger the packagers at all).
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            RUN_ID="${{ github.event.workflow_run.id }}"
-            echo "Using triggering workflow run: $RUN_ID"
+            HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+            RUN_ID=$(gh api \
+              "/repos/$GITHUB_REPOSITORY/actions/workflows/unity-package.yml/runs?head_sha=$HEAD_SHA&per_page=100" \
+              --jq '.workflow_runs[]
+                    | select(.event == "push" and .conclusion == "success")
+                    | .id' 2>/dev/null | head -1 || echo "")
+            if [ -n "$RUN_ID" ]; then
+              echo "Using Unity Package run $RUN_ID for sha $HEAD_SHA"
+            else
+              # Hub fired without a matching Unity tag run (manual dispatch
+              # of the hub, e.g.): fall back to the latest successful run.
+              RUN_ID=$(gh run list \
+                --workflow="unity-package.yml" \
+                --status=success \
+                --limit=1 \
+                --json databaseId \
+                --jq '.[0].databaseId' 2>/dev/null || echo "")
+              echo "Found latest successful run: $RUN_ID"
+            fi
           else
             # Find the latest successful Unity Package workflow run
             RUN_ID=$(gh run list \

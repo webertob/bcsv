@@ -2,14 +2,25 @@
 # Produces native bcsv_c_api binaries for:
 #   win-x64, linux-x64, linux-arm64, osx-arm64
 # Then packs unity/ into a UPM-compatible .tgz tarball.
+#
+# Spoke in the hub-and-spoke release pipeline (docs/CI_CD_REDESIGN.md):
+# build-test-archive ONLY. The .tgz is archived as the `unity-package`
+# artifact; the "Release Ship" hub (release-publish.yml) attaches it to the
+# GitHub Release, and upm-branch.yml advances the `upm` branch from the
+# hub's success — so this stage failing (the macOS -Werror break that
+# stranded v1.5.20) now halts every channel instead of shipping PyPI alone.
 
 name: Unity Package
 
 on:
   push:
-    branches: [main, master]
     tags:
-      - 'v*'
+      # vX.Y.Z release tags only. The CI-authored '*-upm' tags must not
+      # re-ignite the fleet at a synthetic commit, and `paths:` never
+      # filtered tag pushes anyway — branch pushes are gone, and with them
+      # the never-publishing master wave.
+      - 'v*.[0-9]*.[0-9]*'
+  pull_request:
     paths:
       - 'unity/**'
       - 'include/**'
@@ -21,15 +32,11 @@ on:
       - 'scripts/check-unity-package.sh'
       - 'scripts/run-unity-tests.sh'
       - '.github/workflows/unity-package.yml'
-  pull_request:
-    paths:
-      - 'unity/**'
-      - 'include/**'
-      - 'src/bcsv_c_api.cpp'
-      - 'CMakeLists.txt'
-      - 'scripts/pack-unity.sh'
-      - 'scripts/check-unity-package.sh'
   workflow_dispatch:
+
+concurrency:
+  group: unity-package-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -397,22 +404,9 @@ jobs:
           path: com.bcsv.unity-*.tgz
           retention-days: 30
 
-  # ── Attach to GitHub Release ────────────────────────────────────────
-  publish:
-    name: Attach to Release
-    needs: pack
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      contents: write
-    steps:
-      - name: Download .tgz
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: unity-package
-          path: dist
-
-      - name: Upload to GitHub Release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
-        with:
-          files: dist/com.bcsv.unity-*.tgz
+  # ── Release attachment intentionally does NOT happen here ───────────
+  # The hub ("Release Ship", release-publish.yml) downloads the
+  # `unity-package` .tgz archived by this workflow's green tag run and adds
+  # it to the GitHub Release — together with every other channel, after the
+  # whole fleet is green. Keeping the .tgz at 30-day retention here is what
+  # lets the hub fetch it across runs.

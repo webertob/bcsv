@@ -1,8 +1,15 @@
 # CI/CD Redesign — Ship-Gate & De-Duplication (handoff spec)
 
-Status: **approved design, partially implemented** on branch
-`feature/ci-ship-gate`. Motivated by the 1.5.20/1.5.21 releases (2026-09-14),
-where the fleet behaved as follows, all observed live:
+Status: **implemented** on branch `feature/ci-ship-gate` — all file edits
+below are applied, actionlint-clean (1.7.7, zero findings), and the gate's
+bash is unit-tested against a mocked `gh` (ship / refuse-failure /
+refuse-cancelled paths) via `tmp/gate_test/run_gate_test.py`. One deliberate
+divergence in `ci.yml` (see its header): master-push/PR triggers were
+removed — CI is on-demand (`workflow_dispatch`) + weekly schedule only, so
+routine commit/sync cycles never burn runners; release correctness never
+depended on ci.yml (the hub gate re-checks versions and the packagers cover
+Windows/macOS on every tag). Motivated by the 1.5.20/1.5.21 releases
+(2026-09-14), where the fleet behaved as follows, all observed live:
 
 - **Partial ships.** v1.5.20: PyPI + GitHub Release shipped while Unity
   Package and C# NuGet died (macOS `-Werror` flag break). There is no gate
@@ -36,13 +43,12 @@ cycles.
 
 ## Edits per file
 
-### `benchmark.yml` — triggers DONE on the branch; dead-job cleanup remains
+### `benchmark.yml` — DONE
 - `pull_request` trigger removed; tags narrowed to `'v*.[0-9]*.[0-9]*'`
   (excludes CI-created `*-upm` tags).
-- Remaining cleanup: delete the now-dead `benchmark-pr` job (its
-  `if: github.event_name == 'pull_request'` can never fire).
+- Dead `benchmark-pr` job (`if: github.event_name == 'pull_request'`) deleted.
 
-### `build-and-publish.yml`
+### `build-and-publish.yml` — DONE
 - `on`: remove `push.branches` entirely (kills the master wave); tags →
   `'v*.[0-9]*.[0-9]*'`. Keep `pull_request` + `workflow_dispatch`.
 - Add:
@@ -58,7 +64,7 @@ cycles.
 - Everything else (version-consistency, sdist, wheels matrix, sdist-test,
   test-wheel) unchanged.
 
-### `csharp-nuget.yml` (edits were attempted, NOT applied — re-check file)
+### `csharp-nuget.yml` — DONE
 - `on`: remove `push.branches` + the tag `paths:` block (paths never filter
   tag pushes anyway — the filter only silently gated master pushes in the
   old shape and misleads readers). Tags → `'v*.[0-9]*.[0-9]*'` (the
@@ -69,14 +75,14 @@ cycles.
   block explaining: publishing lives in the hub, artifact name is
   `nuget-package`.
 
-### `unity-package.yml`
+### `unity-package.yml` — DONE
 - Same trigger/concurrency surgery as csharp-nuget (group
   `unity-package-${{ github.ref }}`).
 - Remove tag-gated publish-style job `publish-release` (softprops attach of
   the .tgz to the GitHub Release) — moves to the hub. Keep the pack job
   (artifact `unity-package`) + EditMode tests + native matrix.
 
-### `release-publish.yml` → hub
+### `release-publish.yml` → hub — DONE
 - `on.push.tags` stays `'v*.*.*'`; keep the existing
   `!contains(github.ref_name, '-')` guard (blocks `-upm` tags).
 - New `gate` job (ubuntu, `permissions: contents: read`): inline bash, no
@@ -112,8 +118,23 @@ cycles.
   green, so the upm branch only ever advances on a fully-shipped release —
   and never from master pushes (those runs are gone).
 
-### CI matrix (`ci.yml`)
-No changes. It stays the master-push validation gate.
+### `upm-branch.yml` — DONE
+- `workflow_run.workflows: ["Unity Package"]` → `["Release Ship"]` (the new
+  hub display name). Success of the hub now *implies* the whole fleet was
+  green, so the upm branch only ever advances on a fully-shipped release —
+  and never from master pushes (those runs are gone).
+  Implementation note: the hub archives no artifacts itself, so the
+  workflow resolves the Unity Package *tag run* for the hub's head sha via
+  `gh api …?head_sha=…` (event==push selects the tag run), falling back to
+  the latest successful run on manual dispatch.
+
+### CI matrix (`ci.yml`) — CHANGED (on-demand)
+- Master-push and `pull_request` triggers removed; CI now runs only on
+  `workflow_dispatch` and the weekly schedule. This is the deliberate
+  deviation from the original "no changes" decision: the user wants CI on
+  demand, not per commit/sync. Windows/macOS coverage for a release is
+  guaranteed independently — every packager tag run builds and tests those
+  platforms, and the hub gate blocks a ship unless they are green.
 
 ## One-time user task (required before the NEXT tag is fully shipped)
 
@@ -162,10 +183,11 @@ pypi.org → account → pybcsv → publishing. NuGet moves cost nothing
 ## Branch state when this was written
 
 `feature/ci-ship-gate` (based on master `c68fbb2`, the fully-green 1.5.21
-line). Committed & pushed: benchmark.yml trigger surgery (PR trigger gone,
-tags narrowed `-upm`) + this document. Not yet done: `benchmark-pr` job
-deletion, and the full `build-and-publish.yml` / `csharp-nuget.yml` /
-`unity-package.yml` / `release-publish.yml` hub rewrite /
-`upm-branch.yml` per the sections above. Finish on the same branch,
-actionlint, push, open PR. Master must not receive direct pushes for this
-work.
+line). All spec edits are now applied on the branch: benchmark.yml trigger
+surgery + `benchmark-pr` deletion, `build-and-publish.yml` /
+`csharp-nuget.yml` / `unity-package.yml` build-test-archive conversion,
+`release-publish.yml` hub rewrite (gate + release + publish-pypi +
+publish-nuget-gh + publish-nuget-org), `upm-branch.yml` retargeted to
+"Release Ship", and `ci.yml` converted to on-demand. actionlint 1.7.7
+reports zero findings. Push, open PR, and let the first real tag (1.5.22+)
+be the end-to-end test per the verification plan.

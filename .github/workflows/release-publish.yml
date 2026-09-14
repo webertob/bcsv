@@ -5,7 +5,27 @@
 # Licensed under the MIT License. See LICENSE file in the project root 
 # for full license information.
 
-name: Release
+# THE SINGLE PUBLISHER — hub of the hub-and-spoke release pipeline
+# (docs/CI_CD_REDESIGN.md).
+#
+# The three packagers (build-and-publish.yml "wheels", csharp-nuget.yml,
+# unity-package.yml) build, test and ARCHIVE only. This hub runs a `gate`
+# job first: it polls the packagers' TAG runs for this commit until every
+# one concludes success, and refuses to ship otherwise. Only then does it
+# download their archived artifacts across runs and publish every channel
+# together — GitHub Release, PyPI, NuGet (both feeds) — and let
+# upm-branch.yml follow.
+#
+# Why a hub and not a per-packager gate: cross-workflow `needs:` does not
+# exist, and poll-gates inside each packager's publish job deadlock (each
+# waits on a sibling run that cannot finish while its own gate polls back).
+# One gate, zero cycles.
+#
+# A ship now fails atomically: one red sibling leaves every channel
+# untouched — the defect of v1.5.20 (PyPI shipped, NuGet/Unity died) cannot
+# recur, and with it the double-release dance that syncs version numbers.
+
+name: Release Ship
 
 on:
   push:
@@ -16,15 +36,107 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  # ── Ship gate: the whole fleet must be green before anything ships ──
+  gate:
     if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
     runs-on: ubuntu-latest
-    
+    timeout-minutes: 160
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      unity_run_id: ${{ steps.wait.outputs.unity_run_id }}
+      nuget_run_id: ${{ steps.wait.outputs.nuget_run_id }}
+      wheels_run_id: ${{ steps.wait.outputs.wheels_run_id }}
+    steps:
+      - name: Wait for every packager tag run to turn green
+        id: wait
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -uo pipefail
+          # Poll the SIBLINGS only — never this workflow, never this run: a
+          # gate watching its own workflow self-deadlocks. Files, not display
+          # names: file names cannot collide with a renamed workflow.
+          SIBLINGS="unity-package.yml csharp-nuget.yml build-and-publish.yml"
+          INTERVAL=120   # seconds between polls
+          DEADLINE=$(( $(date +%s) + 150 * 60 ))   # 150 min total cap
+
+          declare -A RUN_ID   # workflow file -> run id (once concluded)
+
+          poll() {
+            local file="$1"
+            # Tag-push and master-push runs of the same sha both report
+            # event: push — head_branch == tag is what disambiguates.
+            # An absent run = still queued = keep polling, not a failure.
+            gh api "/repos/$GITHUB_REPOSITORY/actions/workflows/$file/runs?head_sha=$GITHUB_SHA&per_page=100" \
+              --jq ".workflow_runs[]
+                    | select(.event == \"push\" and .head_branch == \"$TAG\")
+                    | \"\(.status)\t\(.conclusion // \"\")\t\(.databaseId // .id)\"" \
+              | sort -r | head -1
+          }
+
+          while :; do
+            all_done=true
+            for file in $SIBLINGS; do
+              # Skip siblings already concluded green (id recorded).
+              [ -n "${RUN_ID[$file]+x}" ] && continue
+
+              line=$(poll "$file" || true)
+              status=${line%%	*}
+              rest=${line#*	}; conclusion=${rest%%	*}; rid=${rest##*	}
+
+              if [ -z "$line" ]; then
+                all_done=false                       # not queued/started yet
+              elif [ "$status" != "completed" ]; then
+                all_done=false                       # still in progress
+              elif [ "$conclusion" != "success" ]; then
+                echo "::error::$file run $rid for $TAG concluded '$conclusion' — refusing to ship $TAG on any channel."
+                exit 1
+              else
+                RUN_ID[$file]="$rid"
+                echo "$file green (run $rid)"
+              fi
+            done
+
+            if $all_done; then break; fi
+            if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+              echo "::error::Packager runs did not all conclude within 150 minutes — refusing to ship."
+              exit 1
+            fi
+            sleep "$INTERVAL"
+          done
+
+          echo "unity_run_id=${RUN_ID[unity-package.yml]}"  >> "$GITHUB_OUTPUT"
+          echo "nuget_run_id=${RUN_ID[csharp-nuget.yml]}"   >> "$GITHUB_OUTPUT"
+          echo "wheels_run_id=${RUN_ID[build-and-publish.yml]}" >> "$GITHUB_OUTPUT"
+          echo "All packagers green for $TAG — shipping."
+
+  release:
+    needs: gate
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read   # gh run download of the packagers' archived artifacts
+
     steps:
     - name: Checkout repository
-      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+      uses: actions/checkout@93cb6efe18208431cddfb83d5badbf9bfd # v5
       with:
         fetch-depth: 0
+
+    - name: Fetch the Unity .tgz from its green tag run
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        # Cross-run download: the packager archived the .tgz as the
+        # `unity-package` artifact (30-day retention); the gate verified that
+        # run concluded success before this job was allowed to start.
+        gh run download "${{ needs.gate.outputs.unity_run_id }}" \
+          --pattern unity-package --dir release-assets
+        ls -lh release-assets/
     
     - name: Extract version from tag
       id: version
@@ -115,8 +227,12 @@ jobs:
       with:
         tag_name: ${{ steps.version.outputs.tag_name }}
         name: Release ${{ steps.version.outputs.tag_name }}
+        # The header zip is built here; the Unity .tgz was fetched from the
+        # green Unity Package tag run — previously unity-package.yml attached
+        # it itself, which is how v1.5.20's release went out without it.
         files: |
           ${{ steps.artifact.outputs.zip_path }}
+          release-assets/com.bcsv.unity-*.tgz
         generate_release_notes: true
         body: |
           ## BCSV Release ${{ steps.version.outputs.version }}
@@ -147,3 +263,94 @@ jobs:
         echo "📦 Release ${{ steps.version.outputs.tag_name }} created"
         echo "📝 Version metadata generated for ${{ steps.version.outputs.version }}"
         echo "✅ Header-only include artifact attached to release"
+        echo "✅ Unity .tgz attached from green run ${{ needs.gate.outputs.unity_run_id }}"
+
+  # ── Publish PyPI from the wheels spoke's green tag run ───────────────
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [gate, release]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      actions: read   # gh run download
+      id-token: write # Required for trusted publishing
+    steps:      
+      - name: Download wheels & sdist from the green tag run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run download "${{ needs.gate.outputs.wheels_run_id }}" \
+            --pattern "built-*" --dir dist-artifacts
+          mkdir dist
+          find dist-artifacts \( -name '*.whl' -o -name '*.tar.gz' \) -exec cp {} dist/ \;
+          echo "=== Distributions to publish ==="
+          ls -lh dist/
+
+      - name: Publish to PyPI
+        # skip-existing keeps an emergency retag survivable — the lesson of
+        # 1.5.20 → 1.5.21: re-running a ship must not die on the files that
+        # already landed while the failed channels catch up.
+        uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
+        with:
+          skip-existing: true
+
+  # ── Publish NuGet (both feeds) from the C# spoke's green tag run ─────
+  publish-nuget-gh:
+    name: Publish to GitHub Packages
+    needs: [gate, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read # gh run download
+      packages: write
+    steps:
+      - name: Download .nupkg from the green tag run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ needs.gate.outputs.nuget_run_id }}" \
+            --pattern nuget-package --dir nupkg
+          ls -lh nupkg/
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Push to GitHub Packages
+        run: |
+          dotnet nuget push nupkg/*.nupkg \
+            --api-key ${{ secrets.GITHUB_TOKEN }} \
+            --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
+            --skip-duplicate
+
+  publish-nuget-org:
+    name: Publish to NuGet.org
+    needs: [gate, release]
+    runs-on: ubuntu-latest
+    environment: nuget
+    permissions:
+      contents: read
+      actions: read # gh run download
+    steps:
+      - name: Download .nupkg from the green tag run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ needs.gate.outputs.nuget_run_id }}" \
+            --pattern nuget-package --dir nupkg
+          ls -lh nupkg/
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Push to NuGet.org
+        run: |
+          dotnet nuget push nupkg/*.nupkg \
+            --api-key ${{ secrets.NUGET_API_KEY }} \
+            --source https://api.nuget.org/v3/index.json \
+            --skip-duplicate

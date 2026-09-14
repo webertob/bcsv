@@ -1,20 +1,23 @@
-# Build, test, and publish Bcsv NuGet package
+# Build and test the Bcsv NuGet package
 # Produces a multi-platform .nupkg with native bcsv_c_api binaries for:
 #   win-x64, linux-x64, linux-arm64, osx-x64, osx-arm64
+#
+# Spoke in the hub-and-spoke release pipeline (docs/CI_CD_REDESIGN.md):
+# build-test-archive ONLY. Publishing moved to the "Release Ship" hub
+# (release-publish.yml), which publishes NuGet, PyPI, and GitHub Release
+# together — or not at all — so a green run here can never ship its half of
+# a release while a sibling is red (the v1.5.20 lesson).
 
 name: C# NuGet
 
 on:
   push:
-    branches: [main, master]
     tags:
-      - 'v*'
-    paths:
-      - 'csharp/**'
-      - 'include/**'
-      - 'src/bcsv_c_api.cpp'
-      - 'CMakeLists.txt'
-      - '.github/workflows/csharp-nuget.yml'
+      # vX.Y.Z release tags only. The CI-authored '*-upm' tags must not
+      # re-ignite the fleet at a synthetic commit, and `paths:` filters never
+      # applied to tag pushes anyway — they only ever gated (and misled on)
+      # branch pushes, which are gone with them.
+      - 'v*.[0-9]*.[0-9]*'
   pull_request:
     paths:
       - 'csharp/**'
@@ -22,6 +25,10 @@ on:
       - 'src/bcsv_c_api.cpp'
       - 'CMakeLists.txt'
   workflow_dispatch:
+
+concurrency:
+  group: csharp-nuget-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -262,57 +269,9 @@ jobs:
             -c Release `
             --logger "console;verbosity=detailed"
 
-  # ── Publish to GitHub Packages ──────────────────────────────────────
-  publish-github:
-    name: Publish to GitHub Packages
-    needs: test
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    permissions:
-      packages: write
-    steps:
-      - name: Download .nupkg
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: nuget-package
-          path: nupkg
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
-        with:
-          dotnet-version: '8.0.x'
-
-      - name: Push to GitHub Packages
-        run: |
-          dotnet nuget push nupkg/*.nupkg \
-            --api-key ${{ secrets.GITHUB_TOKEN }} \
-            --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" \
-            --skip-duplicate
-
-  # ── Publish to NuGet.org ────────────────────────────────────────────
-  publish-nuget:
-    name: Publish to NuGet.org
-    needs: test
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    environment: nuget
-    permissions:
-      id-token: write  # For future Trusted Publishing
-    steps:
-      - name: Download .nupkg
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
-        with:
-          name: nuget-package
-          path: nupkg
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
-        with:
-          dotnet-version: '8.0.x'
-
-      - name: Push to NuGet.org
-        run: |
-          dotnet nuget push nupkg/*.nupkg \
-            --api-key ${{ secrets.NUGET_API_KEY }} \
-            --source https://api.nuget.org/v3/index.json \
-            --skip-duplicate
+  # ── Publishing intentionally does NOT happen here ───────────────────
+  # The hub ("Release Ship", release-publish.yml) pulls the `nuget-package`
+  # artifact from this workflow's green tag run and pushes it to both GitHub
+  # Packages and NuGet.org (--skip-duplicate) — but only after EVERY
+  # packager's tag run concluded success. A red Unity or wheels run now
+  # stops the whole ship, including NuGet: the coupling that v1.5.20 lacked.

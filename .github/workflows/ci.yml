@@ -1,65 +1,21 @@
 # Multi-platform build & test workflow.
 # Ensures BCSV compiles with zero warnings and all tests pass on:
 #   Linux (GCC + Clang), Windows (MSVC), macOS (Apple Clang)
-# Also gates the Python bindings and the cross-package version stamps -- keep
-# the `paths:` filters below in step with the jobs, or a job silently
-# stops running for the changes it exists to guard.
+# Also covers the Python bindings and the cross-package version stamps.
+#
+# ON-DEMAND ONLY: this workflow runs on manual dispatch and on a weekly
+# schedule — never on push or pull_request. Routine commit/push/sync cycles
+# between machines must not burn runners. Trigger it manually whenever a
+# second opinion is wanted (e.g. confirm the Windows and macOS builds from a
+# Linux development kit: Actions → CI → Run workflow); the weekly schedule
+# keeps master honest. Release correctness does NOT depend on any trigger
+# here: the Release Ship hub (release-publish.yml) refuses to publish unless
+# every packager tag run — which builds and tests Linux, Windows and macOS
+# on its own — has concluded green first. See docs/CI_CD_REDESIGN.md.
 
 name: CI
 
 on:
-  push:
-    branches: [main, master, develop]
-    paths:
-      - 'include/**'
-      - 'src/**'
-      - 'tests/**'
-      - 'benchmark/**'
-      - 'examples/**'
-      - 'CMakeLists.txt'
-      - 'CMakePresets.json'
-      - '.github/workflows/ci.yml'
-      # The pybcsv job below gates Python changes; without these a
-      # Python-only PR skips the whole workflow and the gate never runs.
-      - 'python/**'
-      # The version-consistency job guards these manifests against drift
-      # (python/VERSION.txt once sat three releases stale while the check
-      # reported PASS). A PR touching only one of them must still run it.
-      - 'VERSION.txt'
-      - 'scripts/check_versions.py'
-      - 'unity/package.json'
-      - 'csharp/src/Bcsv/Bcsv.csproj'
-      # The C# binding parity job below: the NuGet and Unity trees are the
-      # same code in two namespaces, so a change to one must run the check.
-      - 'csharp/src/Bcsv/**'
-      - 'unity/Runtime/Scripts/**'
-      - 'scripts/check_csharp_parity.py'
-  pull_request:
-    branches: [main, master, develop]
-    paths:
-      - 'include/**'
-      - 'src/**'
-      - 'tests/**'
-      - 'benchmark/**'
-      - 'examples/**'
-      - 'CMakeLists.txt'
-      - 'CMakePresets.json'
-      - '.github/workflows/ci.yml'
-      # The pybcsv job below gates Python changes; without these a
-      # Python-only PR skips the whole workflow and the gate never runs.
-      - 'python/**'
-      # The version-consistency job guards these manifests against drift
-      # (python/VERSION.txt once sat three releases stale while the check
-      # reported PASS). A PR touching only one of them must still run it.
-      - 'VERSION.txt'
-      - 'scripts/check_versions.py'
-      - 'unity/package.json'
-      - 'csharp/src/Bcsv/Bcsv.csproj'
-      # The C# binding parity job below: the NuGet and Unity trees are the
-      # same code in two namespaces, so a change to one must run the check.
-      - 'csharp/src/Bcsv/**'
-      - 'unity/Runtime/Scripts/**'
-      - 'scripts/check_csharp_parity.py'
   schedule:
     - cron: '0 3 * * 1'   # Weekly Monday 3 AM UTC — Release builds
   workflow_dispatch:
@@ -69,9 +25,10 @@ permissions:
 
 jobs:
 
-  # Cheap guard that runs on every push: the committed manifests are patched
-  # from VERSION.txt only at pack time, so nothing else notices when they
-  # drift. unity/package.json sat at 1.5.3 for nine releases before this.
+  # Cheap guard that runs on every CI run: the committed manifests are
+  # patched from VERSION.txt only at pack time, so nothing else notices when
+  # they drift. unity/package.json sat at 1.5.3 for nine releases before this.
+  # On a tag the Release hub re-checks this before publishing anything.
   version-consistency:
     name: Version consistency
     runs-on: ubuntu-latest
@@ -96,7 +53,7 @@ jobs:
         run: python3 scripts/check_csharp_parity.py --verbose
 
   # ────────────────────────────────────────────────────────────────
-  # pybcsv — every push / PR
+  # pybcsv — every CI run
   #
   # python/tests/ is NOT registered with ctest (only tests/integration/*.py
   # is), so without this job the entire Python suite -- including the Parquet
@@ -131,7 +88,7 @@ jobs:
         run: python -m pytest python/tests/ -v --tb=short
 
   # ────────────────────────────────────────────────────────────────
-  # Debug builds — every push / PR
+  # Debug builds — every CI run (manual dispatch / weekly schedule)
   # ────────────────────────────────────────────────────────────────
   build:
     strategy:
@@ -222,11 +179,9 @@ jobs:
       - name: Install pytest
         run: python -m pip install pytest
 
+      # Every matrix entry is a single-config Ninja preset, so no -C.
       - name: Test
-        run: >-
-          ctest --test-dir ${{ matrix.build-dir }}
-          --output-on-failure
-          ${{ matrix.cmake-config && format('-C {0}', matrix.cmake-config) || '' }}
+        run: ctest --test-dir ${{ matrix.build-dir }} --output-on-failure
 
   # ────────────────────────────────────────────────────────────────
   # Release builds — weekly schedule + manual dispatch
@@ -316,8 +271,6 @@ jobs:
       - name: Install pytest
         run: python -m pip install pytest
 
+      # Every matrix entry is a single-config Ninja preset, so no -C.
       - name: Test
-        run: >-
-          ctest --test-dir ${{ matrix.build-dir }}
-          --output-on-failure
-          ${{ matrix.cmake-config && format('-C {0}', matrix.cmake-config) || '' }}
+        run: ctest --test-dir ${{ matrix.build-dir }} --output-on-failure
