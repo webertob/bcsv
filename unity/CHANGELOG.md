@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [1.5.22] - 2026-09-14
+
+### Fixed
+
+- **Linux player abort on the second reader/writer destroy** (SIGABRT, found
+  on 1.5.21): the plugin now exports only its `bcsv_*` C API and hides the
+  statically linked C++ runtime, so the player's own libstdc++ copy can no
+  longer interpose its calls. The `Application.isEditor` dispose workaround in
+  `Tabular.ReadBcsv` can be deleted against this build.
+
 ## [1.5.21] - 2026-09-14
 
 ### Fixed

@@ -12,6 +12,29 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.22] - 2026-09-14
+
+### Fixed
+
+- **Shared C library exports C++ runtime symbols (ELF).** A host with its own
+  libstdc++ copy (Unity player, Mono, an embedded Python) interposed the
+  library's `std::` calls: one runtime constructed an object the other freed —
+  a heap abort (`free(): invalid size`, SIGABRT) on the second destroy of any
+  C++ state, first seen as a Unity player-exit crash. An ELF version script
+  (`cmake/bcsv_c_api_exports.lds`) now exports exactly the `bcsv_*` C API;
+  every other symbol is local to the library. Applies to all ELF builds
+  (system install, NuGet, Unity), not just one package.
+  `docs/adr/0007` records the decision.
+
+### Added
+
+- **Export-surface guard**: the C API is now a tested contract on every ELF
+  build. CTest `bcsv_c_api_export_surface` covers the unit tree;
+  `scripts/check_versions.py --native` (run by every packaging workflow,
+  local or CI) loads the artifact, verifies the `bcsv_*`-only export surface,
+  and with `--self-contained` that it carries its own C++ runtime — the
+  checks the Unity pipeline used to carry as bespoke shell.
+
 ## [1.5.21] - 2026-09-14
 
 ### Fixed
