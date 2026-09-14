@@ -138,22 +138,51 @@ cycles.
 
 ## One-time user task (required before the NEXT tag is fully shipped)
 
-PyPI Trusted Publishing is keyed to the workflow **file name**: add
-`release-publish.yml` (repo `webertob/bcsv`, and the environment name used
-by the pypi job if one is set) as a trusted publisher on
-pypi.org → account → pybcsv → publishing. NuGet moves cost nothing
-(API-key secret + `environment: nuget` are repo-scoped, follow the job).
+PyPI Trusted Publishing is keyed to the workflow **file name**. The hub's
+`publish-pypi` job therefore needs a publisher registered on
+pypi.org: Manage project `pybcsv` → Publishing → "Add a new publisher"
+(GitHub Actions tab):
 
-## Verification plan
+- Organization/Username: `webertob`
+- Repository: `bcsv`
+- Workflow name: `release-publish.yml`
+- Environment name (optional field): **`pypi` — must be filled in.** The
+  hub job runs with `environment: pypi`, and PyPI matches the OIDC
+  environment claim exactly: a publisher configured WITHOUT the
+  environment, or with a different one, rejects the minted token and the
+  job dies before anything uploads.
+
+This is a passive allow-list entry — configuring it today is inert (it
+grants nothing until a tag fires `publish-pypi`), so it is safe to do
+immediately; what is NOT safe is tagging before it exists: the hub would
+pass its gate, ship GitHub Release + NuGet, then die at PyPI's OIDC
+exchange — a partial ship, square one again. Also confirm Settings →
+Environments → `pypi` has no required-reviewer approval, or the job waits
+for one. NuGet moves cost nothing (API-key secret + `environment: nuget`
+are repo-scoped, they follow the job). TestPyPI needs no change:
+`publish-testpypi` stayed in `build-and-publish.yml` and its TestPyPI
+publisher is keyed there. The production PyPI entry pointing at
+`build-and-publish.yml` may stay (it simply stops being exercised) — prune
+it from pypi.org only after the first hub ship succeeds.
+
+## Verification plan (solo-maintainer flow — no PR ceremony)
+
+The PR the original spec planned was review ceremony; a solo repository
+with no branch protection on `master` skips it. Direct merges to master
+are safe precisely because every workflow lost its master-push trigger —
+merging ships nothing and burns no runners. The workflow file-name gate,
+not branch policy, protects the release; no protection rules needed.
 
 1. `tmp/bin/actionlint` 1.7.7 (already downloaded; gitignored dir) → zero
    findings across `.github/workflows/`; also
    `python3 -c "import yaml,glob;[yaml.safe_load(open(f)) for f in
    glob.glob('.github/workflows/*.yml')]"`.
-2. Push branch, open PR → packager PR jobs must build/test but publish
-   nothing (publishers are hub-only; hub jobs skip on non-tag events);
-   `ci.yml` runs as before; **Benchmark must NOT run** on the PR anymore.
-3. Merge to master → expect CI only (no packager wave).
+2. Register the PyPI trusted publisher (section above) — free, inert, do
+   it first so it can never be the thing that causes a partial ship.
+3. FF-merge branch → master → push. Expect **nothing to run** — that
+   silence is the feature. Optionally smoke the packagers on master with
+   workflow_dispatch (`Build pybcsv wheels`, `C# NuGet`, `Unity Package`):
+   they build/test/archive and publish nothing. CI is likewise on demand.
 4. First real tag (1.5.22+) = the true end-to-end test: hub gate blocks
    until siblings green, then all four channels publish together; a red
    sibling must leave every channel untouched (that is the acceptance
@@ -180,14 +209,17 @@ pypi.org → account → pybcsv → publishing. NuGet moves cost nothing
   commit by design; if a future edit ever widens tag triggers, that check
   is the last line of defence.
 
-## Branch state when this was written
+## Branch state
 
 `feature/ci-ship-gate` (based on master `c68fbb2`, the fully-green 1.5.21
-line). All spec edits are now applied on the branch: benchmark.yml trigger
-surgery + `benchmark-pr` deletion, `build-and-publish.yml` /
-`csharp-nuget.yml` / `unity-package.yml` build-test-archive conversion,
-`release-publish.yml` hub rewrite (gate + release + publish-pypi +
-publish-nuget-gh + publish-nuget-org), `upm-branch.yml` retargeted to
-"Release Ship", and `ci.yml` converted to on-demand. actionlint 1.7.7
-reports zero findings. Push, open PR, and let the first real tag (1.5.22+)
-be the end-to-end test per the verification plan.
+line). All spec edits are applied: benchmark.yml trigger surgery +
+`benchmark-pr` deletion, `build-and-publish.yml` / `csharp-nuget.yml` /
+`unity-package.yml` build-test-archive conversion, `release-publish.yml`
+hub rewrite (gate + release + publish-pypi + publish-nuget-gh +
+publish-nuget-org), `upm-branch.yml` retargeted to "Release Ship", and
+`ci.yml` converted to on-demand. actionlint 1.7.7 reports zero findings and
+the gate's bash is scenario-tested against a mocked `gh`
+(`tmp/gate_test/run_gate_test.py`). Solo flow: FF-merge into master
+directly — no PR needed (master has no branch protection, and master
+pushes no longer trigger anything); the first real tag is the end-to-end
+test.
