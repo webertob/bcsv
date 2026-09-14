@@ -608,8 +608,8 @@ static void test_child_files_readable(void) {
 int main(int argc, char** argv) {
     if (argc == 3) {   /* child mode requested via re-exec */
         const char* mode = argv[1];
-        const char* stem = argv[2];
 #ifndef _WIN32
+        const char* stem = argv[2];
         if (!strcmp(mode, "c_atexit_destroy")) return mode_atexit_destroy(stem);
         if (!strcmp(mode, "c_close_finalize")) return mode_close_then_finalize(stem);
         if (!strcmp(mode, "c_shutdown_exit"))  return mode_shutdown_at_exit(stem);
