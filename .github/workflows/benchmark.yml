@@ -5,21 +5,18 @@
 # Licensed under the MIT License. See LICENSE file in the project root
 # for full license information.
 
+# Benchmarks are expensive wall time, and their number only means something
+# for a tree we are about to ship: they run on version tags (the release
+# sweep, whose success the Release workflow also gates on) and on manual
+# dispatch. A quick perf pulse during development stays local — the same
+# MACRO-SMALL sweep is `python3 benchmark/run.py wip --type=MACRO-SMALL`.
+
 name: Benchmark Suite
 
 on:
-  pull_request:
-    branches: [ main, master ]
-    paths:
-      - 'include/**'
-      - 'src/**'
-      - 'tests/**'
-      - 'benchmark/**'
-      - 'examples/**'
-      - 'CMakeLists.txt'
   push:
     tags:
-      - 'v*'
+      - 'v*.[0-9]*.[0-9]*'   # release tags only — never the UPM '*-upm' tags
   workflow_dispatch:
     inputs:
       type:
@@ -39,89 +36,6 @@ env:
   CXX_FLAGS: "-O3"
 
 jobs:
-  # ──────────────────────────────────────────────────────────────────
-  # Quick benchmark on every PR (S size, ~30 seconds)
-  # ──────────────────────────────────────────────────────────────────
-  benchmark-pr:
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-    - name: Checkout PR
-      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-      with:
-        fetch-depth: 0
-
-    - name: Install dependencies
-      run: |
-        sudo apt-get update -q
-        sudo apt-get install -y -q ninja-build python3-matplotlib python3-pytest
-
-    - name: Configure CMake (Release)
-      run: |
-        cmake -S . -B build \
-          -G Ninja \
-          -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \
-          -DCMAKE_CXX_FLAGS="${{ env.CXX_FLAGS }}" \
-          -DBCSV_BUILD_BENCHMARKS=ON \
-          -DBCSV_BUILD_MICRO_BENCHMARKS=ON
-
-    - name: Build benchmarks
-      run: cmake --build build --target bench_macro_datasets bench_micro_types bench_generate_csv -j$(nproc)
-
-    - name: Build CLI tools
-      run: cmake --build build --target csv2bcsv bcsv2csv -j$(nproc)
-
-    - name: Build core tests
-      run: cmake --build build --target bcsv_gtest test_c_api test_row_api -j$(nproc)
-
-    - name: Run core tests
-      run: ctest --test-dir build --output-on-failure -R "test_row_api|test_c_api$|BCSVTestSuite"
-
-    - name: Run benchmark sweep (MACRO-SMALL)
-      run: |
-        RUN_ROOT="${{ runner.temp }}/bench_results/pr-${{ github.event.number }}"
-        python3 benchmark/run.py wip \
-          --type=MACRO-SMALL \
-          --repetitions=1 \
-          --build-type=Release \
-          --git=pr-${{ github.event.number }} \
-          --results="$RUN_ROOT" \
-          --no-build
-
-    - name: Resolve run directory
-      id: resolve_pr
-      run: |
-        RUN_ROOT="${{ runner.temp }}/bench_results/pr-${{ github.event.number }}"
-        RUN_DIR=$(ls -1dt "$RUN_ROOT"/* | head -1)
-        echo "run_dir=$RUN_DIR" >> "$GITHUB_OUTPUT"
-
-    - name: Verify report exists
-      run: |
-        test -f "${{ steps.resolve_pr.outputs.run_dir }}/report.md"
-
-    - name: Upload benchmark results
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-      with:
-        name: benchmark-results-pr-${{ github.event.number }}
-        path: |
-          ${{ steps.resolve_pr.outputs.run_dir }}
-        retention-days: 30
-
-    - name: Post summary to PR
-      if: always()
-      run: |
-        REPORT="${{ steps.resolve_pr.outputs.run_dir }}/report.md"
-        if [ -f "$REPORT" ]; then
-          echo "## Benchmark Results (MACRO-SMALL — PR #${{ github.event.number }})" > comment.md
-          echo "" >> comment.md
-          cat "$REPORT" >> comment.md
-          cat comment.md >> "$GITHUB_STEP_SUMMARY"
-        else
-          echo "⚠️ Benchmark report not generated" >> "$GITHUB_STEP_SUMMARY"
-        fi
-
   # ──────────────────────────────────────────────────────────────────
   # Full benchmark on release tags (L size, ~2 minutes)
   # ──────────────────────────────────────────────────────────────────
