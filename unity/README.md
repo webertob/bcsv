@@ -350,7 +350,8 @@ writer.Open(filePath, overwrite: true, compression: 1);
 ## Building the Native Library
 
 The CI workflow ([`.github/workflows/unity-package.yml`](../.github/workflows/unity-package.yml))
-builds `bcsv_c_api` for all 5 platforms and packs the UPM `.tgz` automatically on every push.
+builds `bcsv_c_api` for all 5 platforms and packs the UPM `.tgz` for every release tag and
+for pull requests that touch the package.
 
 To build locally for your current platform:
 

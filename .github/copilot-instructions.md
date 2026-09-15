@@ -108,24 +108,23 @@ Use `tmp/` under project root for scratch work — it's gitignored.
 When tagging a release version, update `CHANGELOG.md` with the changes since the last tag.
 Follow [Keep a Changelog](https://keepachangelog.com/) format (Added/Changed/Fixed/Removed sections).
 
-Pipeline layout (full spec: `docs/CI_CD_REDESIGN.md`):
+Pipeline layout (rationale: header comment of `release-publish.yml`):
 
 - **Spokes** (`build-and-publish.yml`, `csharp-nuget.yml`, `unity-package.yml`) are
   build-test-archive only — they never publish. Triggers: `vX.Y.Z` tags, PRs, manual.
 - **Hub** (`release-publish.yml`, display name "Release Ship") is the *single* publisher:
   a gate job polls all three spokes' tag runs and refuses to ship unless every one is
-  green; then publishes GitHub Release, PyPI, and NuGet together — or none.
-- `upm-branch.yml` follows the hub (never a spoke alone); CI-authored `*-upm` tags must
-  never re-trigger the spokes (tag filters rely on `vX.Y.Z`-only patterns — do not broaden).
+  green; then publishes GitHub Release, PyPI, and NuGet (in parallel, after the gate).
+- `upm-branch.yml` follows the hub (never a spoke alone). Every tag trigger carries
+  `'!v*-*'` so the CI-authored `*-upm` tags never start a run — keep it.
 - `ci.yml` is **on-demand only** (manual dispatch + weekly cron): no push/PR triggers, so
   a branch with no CI runs is not a red flag. Benchmarks run on release tags + manual only.
+- **Retry a failed ship:** fix on master, then move the tag (`git tag -f -a vX.Y.Z <sha>`,
+  `git push -f origin vX.Y.Z`). Re-shipping is safe — every publish step skips files that
+  already landed. The hub runs its YAML from the tag commit; `upm-branch.yml` from master.
 
 Invariant when editing any workflow: a spoke must never gain a publish job, and no
 branch-push trigger should be re-added to the packagers.
-
-> **Status:** implemented on `feature/ci-ship-gate`; gate logic unit-tested against a
-> mocked `gh` during development, but **not yet exercised end-to-end** on a real tag —
-> first live ship is still ahead.
 
 ## Architectural Decision Records (ADRs)
 
@@ -139,7 +138,6 @@ re-litigating settled decisions.
 - `SKILLS.md` — public API classes, source-file inventory, CMake options/presets, codec-registry recipe
 - `ARCHITECTURE.md` — design philosophy, binary format spec, roadmap
 - `docs/adr/README.md` — architectural decision records (ADRs)
-- `docs/CI_CD_REDESIGN.md` — release pipeline spec: hub-and-spoke ship gate, rationale, per-file edits
 - `src/tools/CLI_TOOLS.md` — all 11 CLI tools with options and examples
 - `tests/README.md` — test infrastructure details
 - `benchmark/README.md` — benchmark orchestrator and profiles

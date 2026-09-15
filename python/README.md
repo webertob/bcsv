@@ -546,17 +546,14 @@ MIT — see [LICENSE](LICENSE) for details.
 
 ## Publishing
 
-Wheels are built automatically via GitHub Actions (cibuildwheel) and published using
-[Trusted Publisher (OIDC)](https://docs.pypi.org/trusted-publishers/) — no API tokens required.
+Releases are tag-driven and use
+[Trusted Publishing (OIDC)](https://docs.pypi.org/trusted-publishers/) — no API tokens.
+A `vX.Y.Z` tag builds and tests the sdist and all wheels (cibuildwheel,
+`build-and-publish.yml`) and uploads them to TestPyPI; the Release Ship workflow
+(`release-publish.yml`) uploads the same files to PyPI once the Python, C# and Unity
+package builds for that tag are all green.
 
-- **TestPyPI**: every push to `main`/`master` or version tags
-- **PyPI**: only on `v*` tags (e.g. `git tag v1.4.0 && git push origin v1.4.0`)
-
-3. Trigger the publish workflow:
-
-  - The workflow triggers on pushes to the `release` branch or via manual `workflow_dispatch`.
-
-4. Install from TestPyPI for verification:
+To check a TestPyPI build by hand:
 
 ```bash
 # in a fresh virtualenv
