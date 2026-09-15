@@ -3,23 +3,19 @@
 #   win-x64, linux-x64, linux-arm64, osx-arm64
 # Then packs unity/ into a UPM-compatible .tgz tarball.
 #
-# Spoke in the hub-and-spoke release pipeline (docs/CI_CD_REDESIGN.md):
-# build-test-archive ONLY. The .tgz is archived as the `unity-package`
-# artifact; the "Release Ship" hub (release-publish.yml) attaches it to the
-# GitHub Release, and upm-branch.yml advances the `upm` branch from the
-# hub's success — so this stage failing (the macOS -Werror break that
-# stranded v1.5.20) now halts every channel instead of shipping PyPI alone.
+# Spoke of the release pipeline: build-test-archive ONLY. The .tgz is
+# archived as the `unity-package` artifact; the "Release Ship" hub
+# (release-publish.yml) attaches it to the GitHub Release once every spoke's
+# tag run is green, and upm-branch.yml advances the `upm` branch after it.
 
 name: Unity Package
 
 on:
   push:
     tags:
-      # vX.Y.Z release tags only. The CI-authored '*-upm' tags must not
-      # re-ignite the fleet at a synthetic commit, and `paths:` never
-      # filtered tag pushes anyway — branch pushes are gone, and with them
-      # the never-publishing master wave.
+      # vX.Y.Z release tags only — never the CI-authored '*-upm' tags.
       - 'v*.[0-9]*.[0-9]*'
+      - '!v*-*'
   pull_request:
     paths:
       - 'unity/**'
@@ -113,7 +109,9 @@ jobs:
 
       - name: Setup MSVC
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        uses: TheMrMilchmann/setup-msvc-dev@368ef7d1ee4d1171b31d4a7f67f4d954f903f5a9 # v4
+        with:
+          arch: x64
 
       - name: Cache CMake dependencies
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
@@ -186,7 +184,7 @@ jobs:
           "$PY" scripts/check_versions.py "${ARGS[@]}"
 
       - name: Upload native library
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: unity-native-${{ matrix.rid }}
           path: ${{ matrix.lib-dir }}/${{ matrix.lib-name }}
@@ -228,7 +226,7 @@ jobs:
 
       - name: Download the linux-x64 native
         if: steps.licence.outputs.have == 'true'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: unity-native-linux-x64
           path: native-linux-x64
@@ -271,7 +269,7 @@ jobs:
 
       - name: Publish results
         if: steps.licence.outputs.have == 'true' && always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: unity-editmode-results
           path: unity-test-results
@@ -286,7 +284,7 @@ jobs:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
 
       - name: Download all native artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: native-artifacts
           pattern: unity-native-*
@@ -360,7 +358,7 @@ jobs:
           tar -tzf "${TARBALL}" | head -50
 
       - name: Upload .tgz
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: unity-package
           path: com.bcsv.unity-*.tgz

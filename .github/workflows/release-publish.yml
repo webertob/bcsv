@@ -5,32 +5,31 @@
 # Licensed under the MIT License. See LICENSE file in the project root 
 # for full license information.
 
-# THE SINGLE PUBLISHER — hub of the hub-and-spoke release pipeline
-# (docs/CI_CD_REDESIGN.md).
+# THE SINGLE PUBLISHER — hub of the hub-and-spoke release pipeline.
 #
 # The three packagers (build-and-publish.yml "wheels", csharp-nuget.yml,
 # unity-package.yml) build, test and ARCHIVE only. This hub runs a `gate`
 # job first: it polls the packagers' TAG runs for this commit until every
 # one concludes success, and refuses to ship otherwise. Only then does it
 # download their archived artifacts across runs and publish every channel
-# together — GitHub Release, PyPI, NuGet (both feeds) — and let
-# upm-branch.yml follow.
+# — GitHub Release, PyPI, NuGet (both feeds) — and let upm-branch.yml follow.
 #
 # Why a hub and not a per-packager gate: cross-workflow `needs:` does not
 # exist, and poll-gates inside each packager's publish job deadlock (each
 # waits on a sibling run that cannot finish while its own gate polls back).
 # One gate, zero cycles.
 #
-# A ship now fails atomically: one red sibling leaves every channel
-# untouched — the defect of v1.5.20 (PyPI shipped, NuGet/Unity died) cannot
-# recur, and with it the double-release dance that syncs version numbers.
+# One red packager leaves every channel untouched. After the gate the
+# channels publish in parallel; if one fails, move the tag to the fix and
+# re-push it — every publish step skips what already landed.
 
 name: Release Ship
 
 on:
   push:
     tags:
-      - 'v*.*.*'  # Triggers on version tags like v1.0.4, v2.1.0, etc.
+      - 'v*.*.*'
+      - '!v*-*'   # never the CI-authored '*-upm' tags
 
 permissions:
   contents: write
@@ -38,7 +37,6 @@ permissions:
 jobs:
   # ── Ship gate: the whole fleet must be green before anything ships ──
   gate:
-    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
     runs-on: ubuntu-latest
     timeout-minutes: 160
     permissions:
@@ -115,7 +113,6 @@ jobs:
 
   release:
     needs: gate
-    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -139,16 +136,12 @@ jobs:
         gh run download "${{ needs.gate.outputs.unity_run_id }}" \
           -R "$GITHUB_REPOSITORY" \
           --pattern unity-package --dir release-assets
-        # gh nests each artifact under a subdir of its name; flatten one
-        # level with a plain glob loop — the runner's find rejects the
-        # '-exec {…} dest +' form (observed in CI, attempt 3) and -exec has
-        # no business being in the ship path at all.
+        # gh nests each artifact under a subdir of its name; flatten one level.
         for f in release-assets/*/*.tgz; do
           if [ -e "$f" ]; then mv "$f" release-assets/; fi
         done
         # Hard guard: action-gh-release silently skips globs that match
-        # nothing (that is how v1.5.20 shipped without its .tgz). Fail here
-        # instead, while a retag is cheap.
+        # nothing — fail here, before the release exists.
         ls release-assets/com.bcsv.unity-*.tgz >/dev/null
     
     - name: Extract version from tag
@@ -236,13 +229,12 @@ jobs:
         echo "zip_path=$ZIP_PATH" >> $GITHUB_OUTPUT
 
     - name: Create Release
-      uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+      uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
       with:
         tag_name: ${{ steps.version.outputs.tag_name }}
         name: Release ${{ steps.version.outputs.tag_name }}
         # The header zip is built here; the Unity .tgz was fetched from the
-        # green Unity Package tag run — previously unity-package.yml attached
-        # it itself, which is how v1.5.20's release went out without it.
+        # green Unity Package tag run.
         files: |
           ${{ steps.artifact.outputs.zip_path }}
           release-assets/com.bcsv.unity-*.tgz
@@ -304,8 +296,7 @@ jobs:
           mkdir dist
           # Copy across the artifacts' subdirs; the -e guard skips a glob
           # that matches nothing (no *.whl in the sdist dir, no *.tar.gz
-          # in a wheel dir). Glob loops, not find -exec: the runner's find
-          # rejects '-exec {…} dest +'.
+          # in a wheel dir).
           for f in dist-artifacts/*/*.whl dist-artifacts/*/*.tar.gz; do
             if [ -e "$f" ]; then cp "$f" dist/; fi
           done
@@ -313,9 +304,8 @@ jobs:
           ls -lh dist/
 
       - name: Publish to PyPI
-        # skip-existing keeps an emergency retag survivable — the lesson of
-        # 1.5.20 → 1.5.21: re-running a ship must not die on the files that
-        # already landed while the failed channels catch up.
+        # skip-existing keeps a retag survivable: a re-ship must not die on
+        # the files that already landed while a failed channel catches up.
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           skip-existing: true
@@ -345,7 +335,7 @@ jobs:
           ls -lh nupkg/
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: '8.0.x'
 
@@ -378,7 +368,7 @@ jobs:
           ls -lh nupkg/
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6
         with:
           dotnet-version: '8.0.x'
 

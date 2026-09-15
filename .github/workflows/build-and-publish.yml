@@ -1,17 +1,14 @@
-# Spoke in the hub-and-spoke release pipeline (docs/CI_CD_REDESIGN.md):
-# this workflow builds, tests and ARCHIVES wheels — it publishes to PyPI no
-# more. v1.5.20 shipped PyPI while NuGet and Unity died, because each
-# packager published on its own success. The hub ("Release Ship",
-# release-publish.yml) now waits for every packager's green tag run and
-# ships all channels together, or none.
+# Spoke of the release pipeline: builds, tests and ARCHIVES the sdist and
+# wheels (plus a TestPyPI upload on tags). PyPI is published only by the
+# "Release Ship" hub (release-publish.yml), once every spoke's tag run is green.
 name: Build pybcsv wheels
 
 on:
   push:
     tags:
-      # vX.Y.Z release tags only — never the CI-authored '*-upm' tags, which
-      # must not re-ignite the release machinery at a synthetic commit.
+      # vX.Y.Z release tags only — never the CI-authored '*-upm' tags.
       - 'v*.[0-9]*.[0-9]*'
+      - '!v*-*'
     # Branch pushes are deliberately absent: publishers are hub-only, so a
     # master-push copy of this suite could never publish — pure runner cost.
   pull_request:
@@ -71,7 +68,7 @@ jobs:
           pip install build
           python -m build --sdist python/ --outdir dist/
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: built-sdist
           path: dist/*.tar.gz
@@ -93,7 +90,7 @@ jobs:
           python-version: '3.12'
 
       - name: Download sdist
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: built-sdist
           path: dist
@@ -174,7 +171,7 @@ jobs:
           CIBW_BUILD_FRONTEND: "build[uv]"
         run: python -m cibuildwheel python --output-dir dist
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: built-wheels-linux-${{ matrix.arch }}
           path: dist/*.whl
@@ -206,7 +203,7 @@ jobs:
           CIBW_BUILD_FRONTEND: "build[uv]"
         run: python -m cibuildwheel python --output-dir dist
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: built-wheels-windows-${{ matrix.arch }}
           path: dist/*.whl
@@ -243,7 +240,7 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: "13.3"
         run: python -m cibuildwheel python --output-dir dist
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: built-wheels-macos-${{ matrix.arch }}
           path: dist/*.whl
@@ -277,7 +274,7 @@ jobs:
           python-version: '3.12'
 
       - name: Download wheel
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: ${{ matrix.artifact }}
           path: dist
@@ -323,15 +320,13 @@ jobs:
     name: Publish to TestPyPI
     needs: [build-sdist, test-sdist, build-linux, build-windows, build-macos, test-wheel]
     runs-on: ubuntu-latest
-    # Tag runs only: branch pushes no longer trigger this workflow at all,
-    # so the old refs/heads arms here were dead code.
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     environment: testpypi
     permissions:
       id-token: write  # Required for trusted publishing
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: dist-artifacts
           pattern: built-*
@@ -351,13 +346,11 @@ jobs:
           skip-existing: true
 
   # ── PyPI publishing intentionally does NOT happen here ─────────────
-  # One red sibling must not ship its half of the release (the v1.5.20
-  # lesson). The hub ("Release Ship", release-publish.yml) downloads the
-  # `built-*` artifacts archived by this workflow's tag run — 30-day
-  # retention is plenty for its gate — and publishes them alongside every
-  # other channel only after ALL packagers went green. TestPyPI stays here:
-  # its trusted publisher is keyed to this file name and shipping to a test
-  # index carries no cross-channel atomicity risk.
+  # One red sibling must not ship its half of the release. The hub
+  # ("Release Ship", release-publish.yml) downloads the `built-*` artifacts
+  # archived by this workflow's tag run and publishes them only after ALL
+  # packagers went green. TestPyPI stays here: its trusted publisher is keyed
+  # to this file name and a test index carries no cross-channel risk.
 
   # ── Post-publish smoke test ─────────────────────────────────────────
   smoke-test:

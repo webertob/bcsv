@@ -11,7 +11,7 @@
 # keeps master honest. Release correctness does NOT depend on any trigger
 # here: the Release Ship hub (release-publish.yml) refuses to publish unless
 # every packager tag run — which builds and tests Linux, Windows and macOS
-# on its own — has concluded green first. See docs/CI_CD_REDESIGN.md.
+# on its own — has concluded green first.
 
 name: CI
 
@@ -112,7 +112,7 @@ jobs:
           # Ninja rather than the "Visual Studio 17 2022" generator presets:
           # windows-latest no longer ships VS 2022, so those presets fail at
           # configure with "could not find any instance of Visual Studio".
-          # msvc-dev-cmd (below) puts cl.exe on PATH, which is all Ninja needs,
+          # setup-msvc-dev (below) puts cl.exe on PATH, which is all Ninja needs,
           # and this stops CI depending on a specific VS major version.
           # These presets are single-config, so no cmake-config is required.
           - name: Windows MSVC
@@ -157,7 +157,9 @@ jobs:
 
       - name: Setup MSVC
         if: matrix.compiler == 'msvc'
-        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        uses: TheMrMilchmann/setup-msvc-dev@368ef7d1ee4d1171b31d4a7f67f4d954f903f5a9 # v4
+        with:
+          arch: x64
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
@@ -249,7 +251,9 @@ jobs:
 
       - name: Setup MSVC
         if: matrix.compiler == 'msvc'
-        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        uses: TheMrMilchmann/setup-msvc-dev@368ef7d1ee4d1171b31d4a7f67f4d954f903f5a9 # v4
+        with:
+          arch: x64
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
