@@ -139,9 +139,13 @@ jobs:
         gh run download "${{ needs.gate.outputs.unity_run_id }}" \
           -R "$GITHUB_REPOSITORY" \
           --pattern unity-package --dir release-assets
-        # gh nests each artifact under a subdir of its name; flatten so the
-        # Create Release glob below can stay a plain one-level match.
-        find release-assets -name '*.tgz' -exec mv {} release-assets/ +
+        # gh nests each artifact under a subdir of its name; flatten one
+        # level with a plain glob loop — the runner's find rejects the
+        # '-exec {…} dest +' form (observed in CI, attempt 3) and -exec has
+        # no business being in the ship path at all.
+        for f in release-assets/*/*.tgz; do
+          if [ -e "$f" ]; then mv "$f" release-assets/; fi
+        done
         # Hard guard: action-gh-release silently skips globs that match
         # nothing (that is how v1.5.20 shipped without its .tgz). Fail here
         # instead, while a retag is cheap.
@@ -298,7 +302,13 @@ jobs:
             -R "$GITHUB_REPOSITORY" \
             --pattern "built-*" --dir dist-artifacts
           mkdir dist
-          find dist-artifacts \( -name '*.whl' -o -name '*.tar.gz' \) -exec cp {} dist/ \;
+          # Copy across the artifacts' subdirs; the -e guard skips a glob
+          # that matches nothing (no *.whl in the sdist dir, no *.tar.gz
+          # in a wheel dir). Glob loops, not find -exec: the runner's find
+          # rejects '-exec {…} dest +'.
+          for f in dist-artifacts/*/*.whl dist-artifacts/*/*.tar.gz; do
+            if [ -e "$f" ]; then cp "$f" dist/; fi
+          done
           echo "=== Distributions to publish ==="
           ls -lh dist/
 
@@ -329,7 +339,9 @@ jobs:
           gh run download "${{ needs.gate.outputs.nuget_run_id }}" \
             -R "$GITHUB_REPOSITORY" \
             --pattern nuget-package --dir nupkg
-          find nupkg -name '*.nupkg' -exec mv -t nupkg {} +
+          for f in nupkg/*/*.nupkg; do
+            if [ -e "$f" ]; then mv "$f" nupkg/; fi
+          done
           ls -lh nupkg/
 
       - name: Setup .NET
@@ -360,7 +372,9 @@ jobs:
           gh run download "${{ needs.gate.outputs.nuget_run_id }}" \
             -R "$GITHUB_REPOSITORY" \
             --pattern nuget-package --dir nupkg
-          find nupkg -name '*.nupkg' -exec mv -t nupkg {} +
+          for f in nupkg/*/*.nupkg; do
+            if [ -e "$f" ]; then mv "$f" nupkg/; fi
+          done
           ls -lh nupkg/
 
       - name: Setup .NET
