@@ -9,7 +9,7 @@ Fast, compact time-series storage with streaming row-by-row I/O, columnar bulk a
 - **Sequential & Random Access I/O** — stream rows or jump to any row by index in O(1)
 - **Columnar Bulk I/O** — read/write entire columns at once with pinned arrays (`BcsvColumns`)
 - **Sampler** — bytecode VM for expression-based row filtering and column projection (`BcsvSampler`)
-- **CSV Interop** — read/write plain CSV files through the same row API (`BcsvCsvReader`/`BcsvCsvWriter`)
+- **CSV Interop** — read/write plain or LZ4-compressed CSV files through the same row API (`BcsvCsvReader`/`BcsvCsvWriter`)
 - **Typed Accessors** — `GetInt32()`, `GetDouble()`, `GetString()`, generic `Get<T>()`, vectorized `GetDoubles()`, etc. Wrong-typed reads throw `BcsvException` (no silent zeros since 1.5.20); `GetDouble()` widens the exactly-representable types (ADR-0006).
 - **LZ4 Compression** — transparent compression with configurable level
 - **Zero-Order Hold Encoding** — skip unchanged rows for slowly-varying time-series
@@ -149,6 +149,27 @@ row.SetString(1, "Alice");
 row.SetDouble(2, 3.14);
 csvWriter.WriteRow();
 ```
+
+### Compressed CSV (`*.csv.lz4`)
+
+Name the destination `data.csv.lz4` and the same writer emits standard LZ4
+frame files — `lz4 -d data.csv.lz4 data.csv` decodes them with the official
+CLI, and any LZ4-conformant producer's files read back. Readers auto-detect
+by the frame's magic bytes (the extension is advisory):
+
+```csharp
+using var csvWriter = new BcsvCsvWriter(layout);
+csvWriter.SetLz4(blockMaxSizeId: 5);        // 256KB blocks (4=64KB/5=256KB/6=1MB/7=4MB); level 0=fast, 2..12=HC
+csvWriter.Open("output.csv.lz4");           // before Open() — the frame header is fixed at open
+// ... write rows as usual ...
+
+using var csvReader = new BcsvCsvReader(layout);
+csvReader.Open("output.csv.lz4");           // auto-detected; also reads plain .csv
+```
+
+A truncated or corrupt `.lz4` file never reads as a clean early EOF: iteration
+stops and `csvReader.ErrorMessage` explains it (`"LZ4 decode failed..."`).
+See ADR-0008 in the bcsv repository (`docs/adr/`).
 
 ## API Reference
 

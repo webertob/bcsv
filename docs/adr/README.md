@@ -17,3 +17,5 @@ sequentially and captures the context, options considered, and rationale.
 | [005](0005-vle-pessimistic-buffer-allocation.md) | VLE pessimistic buffer allocation strategy | Accepted | 2026-04-19 |
 | [006](0006-c-api-type-safe-access-and-handle-lifecycle.md) | Type-safe C API cell access and idempotent handle lifecycle | Accepted | 2026-09-14 |
 | [007](0007-c-api-hidden-symbol-visibility.md) | Hide all non-C-API symbols in the shared C library | Accepted | 2026-09-14 |
+| [008](0008-compressed-csv-lz4-frame-format.md) | Compressed CSV uses the standard LZ4 frame format | Accepted | 2026-09-15 |
+| [009](0009-unified-format-file-open-api.md) | Unified format-flexible file open in the C API (revision: legacy `bcsv_csv_*` removed, 2.0.0 MAJOR) | Accepted | 2026-09-15 |

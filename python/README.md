@@ -12,7 +12,7 @@ High-performance Python bindings for the [BCSV](https://github.com/webertob/bcsv
 - **Streaming I/O**: Row-by-row read/write, never loads entire file into memory
 - **Direct Access**: Random-access reads by row index via `ReaderDirectAccess`
 - **Sampler**: Bytecode VM for server-side row filtering and column projection
-- **CSV Interop**: Convert between CSV and BCSV via `from_csv()` / `to_csv()`
+- **CSV Interop**: Convert between CSV and BCSV via `from_csv()` / `to_csv()`; the native `CsvReader`/`CsvWriter` also handle compressed `*.csv.lz4` (standard LZ4 frames, auto-detected on read)
 
 ## Installation
 
@@ -140,6 +140,32 @@ with pybcsv.ReaderDirectAccess() as da:
     row = da[42]         # read row 42 directly (O(1) seek)
     print(da.read(100))  # alternative syntax
 ```
+
+## pybcsv.open() — auto-detect .bcsv / .csv / .csv.lz4
+
+One entry point for all three formats (ADR-0009): readers classify by the
+file's magic bytes, writers by the extension. Accessed as `pybcsv.open`, it
+shadows nothing; note that `from pybcsv import *` does rebind the name
+`open` in your module.
+
+```python
+import pybcsv
+
+with pybcsv.open("run.bcsv", layout, mode="w") as w:   # binary — Writer
+    w.write_row([1, 2.5])
+da = pybcsv.open("run.bcsv")                            # binary — ReaderDirectAccess
+print(f"{len(da)} rows, row 0 = {da.read(0)}")
+with pybcsv.open("run.csv", layout, mode="w") as w:    # text — CsvWriter
+    w.write_row([1, 2.5])
+data = pybcsv.open("run.csv.lz4", layout)              # LZ4, sniffed — CsvReader
+data = pybcsv.open("run.csv", layout, mode="rt")       # force text even on .bcsv
+```
+
+`mode`: `r`/`w` auto-detect, `rb`/`wb` force binary, `rt`/`wt` force CSV text.
+A `Layout` is required whenever a CSV file is involved (text carries no
+schema) or a file is written. LZ4 frame tuning for text output:
+`lz4_block_max_size_id` (4=64KB/5=256KB/6=1MB/7=4MB) and `lz4_level`
+(0/1 fast, 2..12 LZ4HC) — a `.lz4` destination compresses automatically.
 
 ## Bundled Native CLI Tools
 

@@ -54,8 +54,9 @@
 #include "writer.h"
 #include "reader_concept.h"          // ReaderConcept
 #include "writer_concept.h"          // WriterConcept
-#include "csv_writer.h"              // CsvWriter
-#include "csv_reader.h"              // CsvReader
+#include "lz4_frame_stream.h"         // LZ4 frame sniff + stream adapters (.csv.lz4)
+#include "csv_writer.h"               // CsvWriter
+#include "csv_reader.h"               // CsvReader
 
 // Include implementations
 #include "bcsv.hpp"

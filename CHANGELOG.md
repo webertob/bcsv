@@ -12,6 +12,45 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Unified format-flexible file open in the C API (`_u` family, ADR-0009).**
+  One reader and one writer serve all three formats: `bcsv_probe_format`,
+  `bcsv_reader_create_u/open_u/close_u/next_u/…` and
+  `bcsv_writer_create_u/open_u/close_u/next_u/…` select the concrete member
+  at open from file *content* (`BCSV_FORMAT_AUTO`: BCSV magic → binary, LZ4
+  frame magic → compressed CSV, else plain CSV) or from a pinned format
+  (no fallback, loud mismatch errors). `bcsv_open_opts` (with `struct_size`
+  forward extension, `NULL` = defaults) carries every format knob:
+  `csv_layout`/`delimiter`/`decimal_sep`/`has_header`/`include_header`,
+  LZ4 `lz4_block_id`/`lz4_level`, and BCSV
+  `compression`/`block_size_kb`/`file_flags`. `*_format_u` reports what AUTO
+  resolved to; `*_native_u` hands out the current member for deep binary
+  APIs (sampler, random access). The legacy binary `bcsv_reader_*` /
+  `bcsv_writer_*` family is unchanged ABI.
+- **Compressed CSV — `*.csv.lz4` reads/writes on the fly.** `CsvWriter` to a
+  `.lz4` destination emits standard LZ4 *frame* files (block + content
+  checksums on — `lz4 -t`/`lz4 -d` validate and decode them; CLI-produced
+  frames read back); `CsvReader` auto-detects by frame magic. Writer-only
+  options: `setLz4(block_max_size_id = 4..7 → 64KB..4MB, level = 0..12)` in
+  C++, `opts->lz4_block_id` / `opts->lz4_level` on `bcsv_writer_open_u`,
+  `SetLz4` / `set_lz4` in Python — before `open()`. A
+  truncated or corrupt frame stops iteration with an `LZ4 decode failed`
+  error — never a silent short read. CLI tools inherit both paths. ADR-0008.
+
+### Removed
+
+- **BREAKING (2.0.0 MAJOR lane): the entire legacy `bcsv_csv_*` C export
+  family is gone** (25 exports + `bcsv_csv_reader_t`/`bcsv_csv_writer_t`),
+  superseded by the `_u` family above — full migration table in
+  `docs/adr/0009`. In particular `bcsv_csv_writer_set_lz4` is replaced by
+  `opts->lz4_block_id`/`opts->lz4_level` on `bcsv_writer_open_u` (LZ4 tuning
+  travels per open, never in the handle). Export surface 198 → 173. Wire
+  format untouched: every 1.x file reads with 2.x libraries and vice versa.
+  C#/Unity bindings are re-pointed onto the `_u` family in the same release
+  wave (managed names unchanged); pybcsv binds the C++ headers directly and
+  is unaffected by the C ABI break.
+
 ## [1.5.22] - 2026-09-14
 
 ### Fixed

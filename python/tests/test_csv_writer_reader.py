@@ -165,3 +165,53 @@ class TestCsvReader:
         reader = pybcsv.CsvReader(layout)
         with pytest.raises(RuntimeError):
             reader.open(path)
+
+# ---------------------------------------------------------------------------
+# LZ4-compressed CSV (".csv.lz4", standard LZ4 frame format — ADR-0008)
+# ---------------------------------------------------------------------------
+
+
+class TestCsvLz4:
+    """Compressed CSV round-trip + standards conformance."""
+
+    def test_lz4_round_trip_and_magic(self, tmp_path):
+        path = str(tmp_path / "data.csv.lz4")
+        layout = _make_layout(
+            ("id", pybcsv.ColumnType.INT32),
+            ("msg", pybcsv.ColumnType.STRING),
+        )
+        rows = [[i, f"row {i} text"] for i in range(2000)]
+
+        with pybcsv.CsvWriter(layout) as w:
+            w.set_lz4(block_max_size_id=5, level=0)   # 256KB blocks, before open
+            w.open(path)
+            for r in rows:
+                w.write_row(r)
+            assert w.row_count() == len(rows)
+
+        # The file must be a standard LZ4 frame: magic 0x184D2204 LE.
+        with open(path, "rb") as f:
+            assert f.read(4) == b"\x04\x22\x4d\x18"
+
+        # Reader auto-detects by magic — plain .csv and .csv.lz4 share the API.
+        reader = pybcsv.CsvReader(layout)
+        reader.open(path)
+        out = []
+        row = reader.read_row()
+        while row is not None:
+            out.append((row[0], row[1]))   # positional: id, msg
+            row = reader.read_row()
+        reader.close()
+        assert out == [(i, f"row {i} text") for i in range(2000)]
+
+    def test_lz4_rejects_invalid_params(self, tmp_path):
+        layout = _make_layout(("x", pybcsv.ColumnType.INT32))
+        w = pybcsv.CsvWriter(layout)
+        with pytest.raises(RuntimeError):
+            w.set_lz4(block_max_size_id=99)        # invalid FField code
+        with pytest.raises(RuntimeError):
+            w.set_lz4(level=13)                    # above LZ4HC max
+        w.open(str(tmp_path / "plain.csv"))        # plain .csv unaffected
+        with pytest.raises(RuntimeError):
+            w.set_lz4()                            # after open: immutable
+        w.close()

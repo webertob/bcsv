@@ -119,6 +119,61 @@ public class BcsvReadExample : MonoBehaviour
 }
 ```
 
+### CSV Files (plain and compressed)
+
+`BcsvCsvReader` / `BcsvCsvWriter` read and write CSV text through the same
+typed layout — no separate parse code, and a CSV can stream straight into a
+`.bcsv` file (or back) with the row API above. A destination named
+`*.csv.lz4` instead writes **compressed CSV**: standard LZ4 frame files,
+produced and consumed on the fly, row by row (docs/adr/0008).
+
+```csharp
+using UnityEngine;
+using BCSV;
+
+public class BcsvCsvExample : MonoBehaviour
+{
+    void Start()
+    {
+        using var layout = new BcsvLayout();
+        layout.AddColumn("t", ColumnType.Double)
+              .AddColumn("speed", ColumnType.Float);
+
+        // Write — plain or compressed: the .lz4 extension decides.
+        using (var csv = new BcsvCsvWriter(layout))
+        {
+            csv.SetLz4(blockMaxSizeId: 5);   // optional: 256KB blocks (see below)
+            csv.Open(Application.persistentDataPath + "/run.csv.lz4"); // LZ4 frame
+            for (float t = 0f; t < 60f; t += 0.02f)
+            {
+                csv.Row.SetDouble(0, t);
+                csv.Row.SetFloat(1, 40f + Mathf.Sin(t));
+                csv.WriteRow();
+            }
+        }
+        // run.csv.lz4 is a valid LZ4 file: lz4 -d run.csv.lz4 run.csv works.
+
+        // Read — plain or compressed, auto-detected from the frame magic:
+        // no extra call, and a misnamed file is still decoded correctly.
+        using var reader = new BcsvCsvReader(layout);
+        reader.Open(Application.persistentDataPath + "/run.csv.lz4");
+        foreach (var row in reader)
+        {
+            double t = row.GetDouble(0); // match the column type — wrong-typed getters throw (ADR-0006)
+        }
+
+        // A truncated/corrupt .lz4 file stops iteration and tells you via:
+        // reader.ErrorMessage == "LZ4 decode failed: ..."
+    }
+}
+```
+
+Writer side only: `SetLz4(blockMaxSizeId, level)` must run **before** `Open()`
+(the LZ4 frame header is written at open). `blockMaxSizeId`: 4=64KB (default),
+5=256KB, 6=1MB, 7=4MB; `level`: 0 or 1 = fast (default 0), 2–12 = LZ4HC (better
+ratio, trades a little CPU). Readers need no configuration — `Open()` sniffs the
+bytes. See ADR-0008 in the bcsv repository for the format decision.
+
 ### Recording a Scene
 
 `BcsvRecorder` is a supported component, not a sample: add it to a GameObject,

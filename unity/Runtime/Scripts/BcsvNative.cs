@@ -2,6 +2,7 @@
 // Full P/Invoke coverage matching csharp/src/Bcsv/NativeMethods.cs.
 
 using System;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using UnityEngine.Scripting;
 
@@ -338,7 +339,8 @@ namespace BCSV
         // false → *out untouched, error channel set. Use ThrowIfError to surface.
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.U1)]
-        internal static extern bool bcsv_row_try_get_bool(nint row, int col, out bool value);
+        internal static extern bool bcsv_row_try_get_bool(nint row, int col,
+            [MarshalAs(UnmanagedType.U1)] out bool value);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.U1)]
@@ -490,82 +492,169 @@ namespace BCSV
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void bcsv_row_set_double_array(nint row, int startCol, IntPtr src, nuint count);
 
-        // ── CSV Reader ─────────────────────────────────────────────────
+        // ── Unified File API (ADR-0009) ────────────────────────────
+        // One open path for .bcsv / .csv / .csv.lz4. The managed CSV wrappers
+        // (BcsvCsvReader/BcsvCsvWriter) bind these entry points; the legacy CSV
+        // family was retired in the 2.0.0 trim (see bcsv_c_api.h).
+
+        /// <summary>Classifies an existing file by magic; false + bcsv_last_error for unreadable paths.</summary>
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_probe_format(
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string filename, out BcsvFormat outFormat);
+
+        /// <summary>Row codec for bcsv_writer_create_u (the .bcsv member codec). Mirrors bcsv_row_codec_t.</summary>
+        [Preserve]
+        internal enum BcsvRowCodec
+        {
+            Flat = 0,
+            ZoH = 1,
+            Delta = 2,
+        }
+
+        /// <summary>File format for the unified open. Mirrors bcsv_format_t.</summary>
+        [Preserve]
+        internal enum BcsvFormat
+        {
+            Auto = 0,
+            Bcsv = 1,
+            Csv = 2,
+            CsvLz4 = 3,
+        }
+
+        /// <summary>
+        /// Mirrors bcsv_open_opts (bcsv_c_api.h) field-for-field — sequential
+        /// layout, no Pack. size_t→nint, char→byte, handle→nint; tri-state ints
+        /// keep their C -1 semantics, so they stay int (never bool).
+        /// struct_size must be set via NewDefault() at every construction site.
+        /// </summary>
+        [Preserve]
+        [StructLayout(LayoutKind.Sequential)]
+        internal struct BcsvOpenOpts
+        {
+            public nint struct_size;
+            public int rebuild_footer;
+            public nint csv_layout;
+            public byte delimiter;
+            public byte decimal_sep;
+            public int has_header;
+            public int include_header;
+            public int compression;
+            public int block_size_kb;
+            public int file_flags;
+            public int lz4_block_id;
+            public int lz4_level;
+
+            /// <summary>All-tri-state-unset opts (== C BCSV_OPEN_OPTS_INIT).</summary>
+            public static BcsvOpenOpts NewDefault()
+            {
+                var o = new BcsvOpenOpts
+                {
+                    rebuild_footer = -1,
+                    has_header = -1,
+                    include_header = -1,
+                    compression = -1,
+                    block_size_kb = -1,
+                    file_flags = -1,
+                    lz4_block_id = -1,
+                    lz4_level = -1,
+                };
+                o.struct_size = Unsafe.SizeOf<BcsvOpenOpts>();
+                return o;
+            }
+        }
+
+        // ── Unified Reader ───────────────────────────────────────
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern nint bcsv_csv_reader_create(nint layout, byte delimiter, byte decimalSep);
+        internal static extern nint bcsv_reader_create_u();
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_csv_reader_destroy(nint reader);
+        internal static extern void bcsv_reader_destroy_u(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_reader_close_u(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_reader_is_open_u(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_reader_next_u(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_reader_row_u(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nuint bcsv_reader_index_u(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nuint bcsv_reader_file_line_u(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_reader_layout_u(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern BcsvFormat bcsv_reader_format_u(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_reader_filename_u(nint reader);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_reader_error_msg_u(nint reader);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
         [return: MarshalAs(UnmanagedType.U1)]
-        internal static extern bool bcsv_csv_reader_open(nint reader,
+        internal static extern bool bcsv_reader_open_u(nint reader,
             [MarshalAs(UnmanagedType.LPUTF8Str)] string filename,
-            [MarshalAs(UnmanagedType.U1)] bool hasHeader);
+            BcsvFormat format, ref BcsvOpenOpts opts);
+
+        // ── Unified Writer ───────────────────────────────────────
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern nint bcsv_writer_create_u(nint layout, BcsvRowCodec rowCodec);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_csv_reader_close(nint reader);
+        internal static extern void bcsv_writer_destroy_u(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_writer_close_u(nint writer);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.U1)]
-        internal static extern bool bcsv_csv_reader_is_open(nint reader);
-
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern nint bcsv_csv_reader_layout(nint reader);
+        internal static extern bool bcsv_writer_is_open_u(nint writer);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         [return: MarshalAs(UnmanagedType.U1)]
-        internal static extern bool bcsv_csv_reader_next(nint reader);
+        internal static extern bool bcsv_writer_next_u(nint writer);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern nint bcsv_csv_reader_row(nint reader);
+        [return: MarshalAs(UnmanagedType.U1)]
+        internal static extern bool bcsv_writer_write_u(nint writer, nint row);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern nuint bcsv_csv_reader_index(nint reader);
+        internal static extern nint bcsv_writer_row_u(nint writer);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_csv_reader_error_msg(nint reader);
-
-        // ── CSV Writer ─────────────────────────────────────────────────
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern nint bcsv_csv_writer_create(nint layout, byte delimiter, byte decimalSep);
+        internal static extern nuint bcsv_writer_index_u(nint writer);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_csv_writer_destroy(nint writer);
+        internal static extern nint bcsv_writer_layout_u(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern BcsvFormat bcsv_writer_format_u(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_writer_filename_u(nint writer);
+
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern IntPtr bcsv_writer_error_msg_u(nint writer);
 
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
         [return: MarshalAs(UnmanagedType.U1)]
-        internal static extern bool bcsv_csv_writer_open(nint writer,
+        internal static extern bool bcsv_writer_open_u(nint writer,
             [MarshalAs(UnmanagedType.LPUTF8Str)] string filename,
             [MarshalAs(UnmanagedType.U1)] bool overwrite,
-            [MarshalAs(UnmanagedType.U1)] bool includeHeader);
-
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern void bcsv_csv_writer_close(nint writer);
-
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.U1)]
-        internal static extern bool bcsv_csv_writer_is_open(nint writer);
-
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern nint bcsv_csv_writer_layout(nint writer);
-
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.U1)]
-        internal static extern bool bcsv_csv_writer_next(nint writer);
-
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        [return: MarshalAs(UnmanagedType.U1)]
-        internal static extern bool bcsv_csv_writer_write(nint writer, nint row);
-
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern nint bcsv_csv_writer_row(nint writer);
-
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern nuint bcsv_csv_writer_index(nint writer);
-
-        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
-        internal static extern IntPtr bcsv_csv_writer_error_msg(nint writer);
+            BcsvFormat format, ref BcsvOpenOpts opts);
 
         // ── Sampler ────────────────────────────────────────────────────
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]

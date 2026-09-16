@@ -26,6 +26,7 @@
 - 🌊 **Streaming I/O** - process datasets larger than available RAM
 - 🛡️ **Crash-resilient** - recover data from incomplete writes
 - 🌍 **Multi-language** - C++, Python, C#/Unity support
+- 🗜️ **CSV interop** - plain and compressed (`*.csv.lz4`, standard LZ4 frames, CLI-interoperable) through the same row API
 - ⚡ **Real-time capable** - constant-time operations for embedded systems
 
 ### Target Users

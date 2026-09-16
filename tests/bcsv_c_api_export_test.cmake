@@ -62,4 +62,52 @@ if(stray)
         "Stray symbols (first 25):\n  ${stray_head}")
 endif()
 
-message(STATUS "export-surface guard: OK (${BCSV_LIBRARY} exports only bcsv_*)")
+# Golden export-name list (docs/adr/0009 trim discipline): the exact ABI set.
+# Any accidental addition, removal or rename changes this comparison. A
+# deliberate ABI change updates the list in the same commit as its CHANGELOG
+# entry, by regenerating it:
+#   nm -D --defined-only <lib> | awk '{print $NF}' | grep '^bcsv_' \
+#     | LC_ALL=C sort -u > tests/bcsv_c_api_exports.txt
+# (skip with -DBCSV_EXPORT_GOLDEN=OFF when checking foreign builds)
+set(GOLDEN "${CMAKE_CURRENT_LIST_DIR}/bcsv_c_api_exports.txt")
+if(EXISTS "${GOLDEN}" AND NOT BCSV_EXPORT_GOLDEN STREQUAL "OFF")
+    file(READ "${GOLDEN}" golden_raw)
+    string(REPLACE "\r" "" golden_raw "${golden_raw}")
+    string(REPLACE "\n" ";" golden_list "${golden_raw}")
+    set(exported "")
+    foreach(line IN LISTS nm_lines)
+        string(REGEX REPLACE "^[^\n]*[ \t]" "" symbol "${line}")
+        if("${symbol}" MATCHES "^bcsv_")
+            list(APPEND exported "${symbol}")
+        endif()
+    endforeach()
+    list(SORT exported)
+    set(missing "")
+    set(unexpected "")
+    foreach(sym IN LISTS golden_list)
+        if(NOT sym IN_LIST exported)
+            list(APPEND missing "${sym}")
+        endif()
+    endforeach()
+    foreach(sym IN LISTS exported)
+        if(NOT sym IN_LIST golden_list)
+            list(APPEND unexpected "${sym}")
+        endif()
+    endforeach()
+    if(missing OR unexpected)
+        list(LENGTH missing missing_n)
+        list(LENGTH unexpected unexpected_n)
+        message(FATAL_ERROR
+            "libbcsv_c_api ABI drifted from tests/bcsv_c_api_exports.txt "
+            "(${missing_n} removed, ${unexpected_n} added).\n"
+            "  removed:    ${missing}\n"
+            "  added:      ${unexpected}\n"
+            "An intentional change must land in the same commit as its\n"
+            "CHANGELOG entry and a regenerated golden list (see header of\n"
+            "this script for the one-liner) - docs/adr/0009.")
+    endif()
+    list(LENGTH exported export_n)
+    message(STATUS "export-surface guard: OK (${BCSV_LIBRARY}: ${export_n} exports, matches golden list)")
+else()
+    message(STATUS "export-surface guard: OK (${BCSV_LIBRARY} exports only bcsv_*; golden list ${GOLDEN} skipped)")
+endif()

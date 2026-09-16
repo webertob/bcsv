@@ -617,96 +617,240 @@ static void test_reader_open_ex(void) {
 
 /* ── CSV Writer/Reader Round-Trip ──────────────────────────────────── */
 static void test_csv_roundtrip(void) {
-    TEST_START("CSV Writer/Reader Round-Trip");
+    TEST_START("CSV Writer/Reader Round-Trip (_u)");
 
     int num_rows = 50;
     bcsv_layout_t layout = create_test_layout();
 
-    /* Write CSV */
-    bcsv_csv_writer_t cw = bcsv_csv_writer_create(layout, ',', '.');
-    TEST_ASSERT(cw != NULL, "csv_writer created");
+    /* Write CSV through the unified writer */
+    bcsv_writer_t cw = bcsv_writer_create_u(layout, BCSV_CODEC_FLAT);
+    TEST_ASSERT(cw != NULL, "csv writer (_u) created");
 
     char filepath[256];
     make_path(filepath, sizeof(filepath), "test_csv.csv");
 
-    bool ok = bcsv_csv_writer_open(cw, filepath, true, true);
-    TEST_ASSERT(ok, "csv_writer opened");
-    TEST_ASSERT(bcsv_csv_writer_is_open(cw), "csv_writer is_open");
+    bcsv_open_opts wo = BCSV_OPEN_OPTS_INIT;
+    bool ok = bcsv_writer_open_u(cw, filepath, true, BCSV_FORMAT_AUTO, &wo);
+    TEST_ASSERT(ok, "csv writer (_u) opened (.csv -> CSV by extension)");
+    TEST_ASSERT_EQ_INT(bcsv_writer_format_u(cw), BCSV_FORMAT_CSV, "writer AUTO resolved CSV");
+    TEST_ASSERT(bcsv_writer_is_open_u(cw), "csv writer (_u) is_open");
 
-    bcsv_row_t row = bcsv_csv_writer_row(cw);
-    TEST_ASSERT(row != NULL, "csv_writer row accessible");
+    bcsv_row_t row = bcsv_writer_row_u(cw);
+    TEST_ASSERT(row != NULL, "csv writer (_u) row accessible");
 
     for (int i = 0; i < num_rows; ++i) {
         fill_test_row(row, i);
-        ok = bcsv_csv_writer_next(cw);
+        ok = bcsv_writer_next_u(cw);
         TEST_ASSERT(ok, "csv write row");
     }
-    TEST_ASSERT_EQ_INT((int)bcsv_csv_writer_index(cw), num_rows, "csv_writer index");
-    bcsv_csv_writer_close(cw);
+    TEST_ASSERT_EQ_INT((int)bcsv_writer_index_u(cw), num_rows, "writer index");
+    bcsv_writer_close_u(cw);
 
-    /* Read CSV */
-    bcsv_csv_reader_t cr = bcsv_csv_reader_create(layout, ',', '.');
-    TEST_ASSERT(cr != NULL, "csv_reader created");
+    /* Read CSV through the unified reader (explicit CSV pin) */
+    bcsv_reader_t cr = bcsv_reader_create_u();
+    TEST_ASSERT(cr != NULL, "csv reader (_u) created");
 
-    ok = bcsv_csv_reader_open(cr, filepath, true);
-    TEST_ASSERT(ok, "csv_reader opened");
-    TEST_ASSERT(bcsv_csv_reader_is_open(cr), "csv_reader is_open");
+    bcsv_open_opts ro = BCSV_OPEN_OPTS_INIT;
+    ro.csv_layout = layout;
+    ok = bcsv_reader_open_u(cr, filepath, BCSV_FORMAT_CSV, &ro);
+    TEST_ASSERT(ok, "csv reader (_u) opened");
+    TEST_ASSERT_EQ_INT(bcsv_reader_format_u(cr), BCSV_FORMAT_CSV, "reader format CSV");
+    TEST_ASSERT(bcsv_reader_is_open_u(cr), "csv reader (_u) is_open");
 
     int count = 0;
-    while (bcsv_csv_reader_next(cr)) {
-        const_bcsv_row_t rrow = bcsv_csv_reader_row(cr);
+    while (bcsv_reader_next_u(cr)) {
+        const_bcsv_row_t rrow = bcsv_reader_row_u(cr);
         /* Verify id */
         TEST_ASSERT_EQ_INT(bcsv_row_get_int32(rrow, 0), count, "csv row id");
         count++;
     }
     TEST_ASSERT_EQ_INT(count, num_rows, "csv read all rows");
-    TEST_ASSERT(bcsv_csv_reader_file_line(cr) > 0, "csv file_line > 0");
+    TEST_ASSERT(bcsv_reader_file_line_u(cr) > 0, "csv file_line > 0");
+    TEST_ASSERT_EQ_INT((int)bcsv_reader_index_u(cr), num_rows, "csv reader index");
 
-    const char* cerr = bcsv_csv_reader_error_msg(cr);
-    TEST_ASSERT(cerr != NULL, "csv_reader error_msg not NULL");
+    const char* cerr = bcsv_reader_error_msg_u(cr);
+    TEST_ASSERT(cerr != NULL, "csv reader (_u) error_msg not NULL");
 
-    bcsv_csv_reader_close(cr);
-    bcsv_csv_reader_destroy(cr);
-    bcsv_csv_writer_destroy(cw);
+    bcsv_reader_close_u(cr);
+    bcsv_reader_destroy_u(cr);
+    bcsv_writer_destroy_u(cw);
     bcsv_layout_destroy(layout);
 }
 
-/* ── CSV with custom delimiter ─────────────────────────────────────── */
+/* ── Compressed CSV (.csv.lz4, standard LZ4 frame) — unified _u ────── */
+static void test_csv_lz4_roundtrip(void) {
+    TEST_START("CSV LZ4 (.csv.lz4) Round-Trip (_u)");
+
+    int num_rows = 2000;   /* enough to span many 64KB LZ4 blocks */
+    bcsv_layout_t layout = create_test_layout();
+
+    bcsv_writer_t cw = bcsv_writer_create_u(layout, BCSV_CODEC_FLAT);
+    TEST_ASSERT(cw != NULL, "csv lz4 writer (_u) created");
+
+    char filepath[256];
+    make_path(filepath, sizeof(filepath), "test_csv_lz4.csv.lz4");
+
+    /* LZ4 tuning travels in bcsv_open_opts (the retired set_lz4 setter is
+       gone). Invalid opts are rejected at open with a naming reason. */
+    bcsv_open_opts badopts = BCSV_OPEN_OPTS_INIT;
+    badopts.lz4_block_id = 99;
+    TEST_ASSERT(!bcsv_writer_open_u(cw, filepath, true, BCSV_FORMAT_CSV_LZ4, &badopts),
+                "open rejects invalid lz4_block_id");
+    TEST_ASSERT(strstr(bcsv_writer_error_msg_u(cw), "lz4_block_id") != NULL,
+                "rejection names the block size field");
+    badopts.lz4_block_id = -1;
+    badopts.lz4_level = 13;
+    TEST_ASSERT(!bcsv_writer_open_u(cw, filepath, true, BCSV_FORMAT_CSV_LZ4, &badopts),
+                "open rejects invalid lz4_level");
+    TEST_ASSERT(strstr(bcsv_writer_error_msg_u(cw), "lz4_level") != NULL,
+                "rejection names the level field");
+
+    bcsv_open_opts wo = BCSV_OPEN_OPTS_INIT;
+    wo.lz4_block_id = 5;   /* 256KB */
+    wo.lz4_level = 0;
+    bool ok = bcsv_writer_open_u(cw, filepath, true, BCSV_FORMAT_AUTO, &wo);
+    TEST_ASSERT(ok, "csv lz4 writer opened (.csv.lz4 -> CSV_LZ4 by extension)");
+    TEST_ASSERT_EQ_INT(bcsv_writer_format_u(cw), BCSV_FORMAT_CSV_LZ4, "writer format CSV_LZ4");
+
+    bcsv_row_t row = bcsv_writer_row_u(cw);
+    for (int i = 0; i < num_rows; ++i) {
+        fill_test_row(row, i);
+        ok = bcsv_writer_next_u(cw);
+        TEST_ASSERT(ok, "csv lz4 write row");
+    }
+    TEST_ASSERT_EQ_INT((int)bcsv_writer_index_u(cw), num_rows, "writer index");
+    bcsv_writer_close_u(cw);
+
+    /* The file must carry the LZ4 frame magic (little-endian 0x184D2204):
+       this is what makes it a valid lz4 file for the official CLI. */
+    {
+        FILE* f = fopen(filepath, "rb");
+        TEST_ASSERT(f != NULL, "lz4 file exists");
+        unsigned char magic[4] = {0, 0, 0, 0};
+        size_t got = fread(magic, 1, 4, f);
+        fclose(f);
+        TEST_ASSERT(got == 4, "read 4 magic bytes");
+        TEST_ASSERT(magic[0] == 0x04 && magic[1] == 0x22 &&
+                    magic[2] == 0x4D && magic[3] == 0x18, "LZ4 frame magic present");
+    }
+
+    /* Reader auto-detects LZ4 by magic — no reader-side option exists. */
+    bcsv_reader_t cr = bcsv_reader_create_u();
+    bcsv_open_opts ro = BCSV_OPEN_OPTS_INIT;
+    ro.csv_layout = layout;
+    ok = bcsv_reader_open_u(cr, filepath, BCSV_FORMAT_AUTO, &ro);
+    TEST_ASSERT(ok, "csv reader (_u) opened .csv.lz4 (AUTO)");
+    TEST_ASSERT_EQ_INT(bcsv_reader_format_u(cr), BCSV_FORMAT_CSV_LZ4, "AUTO resolved CSV_LZ4");
+
+    int count = 0;
+    while (bcsv_reader_next_u(cr)) {
+        const_bcsv_row_t rrow = bcsv_reader_row_u(cr);
+        TEST_ASSERT_EQ_INT(bcsv_row_get_int32(rrow, 0), count, "csv lz4 row id");
+        count++;
+    }
+    TEST_ASSERT_EQ_INT(count, num_rows, "csv lz4 read all rows");
+    bcsv_reader_destroy_u(cr);
+
+    /* M4: reopening the SAME handle for a plain .csv rebuilds the member as
+       plain CSV — LZ4 travels per-open in opts, never in the handle. */
+    {
+        char p2[256];
+        make_path(p2, sizeof(p2), "test_csv_lz4_then_plain.csv");
+        ok = bcsv_writer_open_u(cw, p2, true, BCSV_FORMAT_AUTO, &wo);
+        TEST_ASSERT(ok, "same handle reopened for plain .csv");
+        TEST_ASSERT_EQ_INT(bcsv_writer_format_u(cw), BCSV_FORMAT_CSV, "plain reopen -> CSV");
+        bcsv_row_t r2 = bcsv_writer_row_u(cw);
+        fill_test_row(r2, 0);
+        TEST_ASSERT(bcsv_writer_next_u(cw), "write row on rebuilt plain member");
+        bcsv_writer_close_u(cw);
+        FILE* f = fopen(p2, "rb");
+        TEST_ASSERT(f != NULL, "plain file exists");
+        unsigned char magic[4] = {0, 0, 0, 0};
+        size_t got2 = fread(magic, 1, 4, f);
+        fclose(f);
+        TEST_ASSERT(!(got2 == 4 && magic[0] == 0x04 && magic[1] == 0x22 &&
+                      magic[2] == 0x4D && magic[3] == 0x18),
+                    "plain file carries no LZ4 magic");
+    }
+
+    bcsv_writer_destroy_u(cw);
+    bcsv_layout_destroy(layout);
+}
+
+/* ── CSV with custom delimiter (_u: ctor-frozen params → opts) ────── */
 static void test_csv_delimiter(void) {
-    TEST_START("CSV with Semicolon Delimiter");
+    TEST_START("CSV with Semicolon Delimiter (_u)");
 
     bcsv_layout_t layout = bcsv_layout_create();
     bcsv_layout_add_column(layout, 0, "id",  BCSV_TYPE_INT32);
     bcsv_layout_add_column(layout, 1, "val", BCSV_TYPE_DOUBLE);
 
-    bcsv_csv_writer_t cw = bcsv_csv_writer_create(layout, ';', ',');
+    bcsv_writer_t cw = bcsv_writer_create_u(layout, BCSV_CODEC_FLAT);
     char filepath[256];
     make_path(filepath, sizeof(filepath), "test_csv_delim.csv");
-    bcsv_csv_writer_open(cw, filepath, true, true);
 
-    bcsv_row_t row = bcsv_csv_writer_row(cw);
+    bcsv_open_opts wo = BCSV_OPEN_OPTS_INIT;
+    wo.delimiter = ';';
+    wo.decimal_sep = ',';
+    TEST_ASSERT(bcsv_writer_open_u(cw, filepath, true, BCSV_FORMAT_AUTO, &wo),
+                "csv writer (_u) opened with ';' delimiter");
+
+    bcsv_row_t row = bcsv_writer_row_u(cw);
     bcsv_row_set_int32(row, 0, 1);
     bcsv_row_set_double(row, 1, 3.14);
-    bcsv_csv_writer_next(cw);
-    bcsv_csv_writer_close(cw);
+    TEST_ASSERT(bcsv_writer_next_u(cw), "write semicolon row");
+    bcsv_writer_close_u(cw);
 
-    /* Read back with same delimiters */
-    bcsv_csv_reader_t cr = bcsv_csv_reader_create(layout, ';', ',');
-    bool ok = bcsv_csv_reader_open(cr, filepath, true);
-    TEST_ASSERT(ok, "csv_reader opened with semicolon");
-    TEST_ASSERT(bcsv_csv_reader_next(cr), "read semicolon csv row");
-    TEST_ASSERT_EQ_INT(bcsv_row_get_int32(bcsv_csv_reader_row(cr), 0), 1, "semicolon csv id=1");
-    TEST_ASSERT_NEAR(bcsv_row_get_double(bcsv_csv_reader_row(cr), 1), 3.14, 1e-2, "semicolon csv val");
+    /* Read back with the same delimiters (opts, not ctor) */
+    bcsv_reader_t cr = bcsv_reader_create_u();
+    bcsv_open_opts ro = BCSV_OPEN_OPTS_INIT;
+    ro.csv_layout = layout;
+    ro.delimiter = ';';
+    ro.decimal_sep = ',';
+    bool ok = bcsv_reader_open_u(cr, filepath, BCSV_FORMAT_AUTO, &ro);
+    TEST_ASSERT(ok, "csv reader (_u) opened with semicolon");
+    TEST_ASSERT(bcsv_reader_next_u(cr), "read semicolon csv row");
+    TEST_ASSERT_EQ_INT(bcsv_row_get_int32(bcsv_reader_row_u(cr), 0), 1, "semicolon csv id=1");
+    TEST_ASSERT_NEAR(bcsv_row_get_double(bcsv_reader_row_u(cr), 1), 3.14, 1e-2, "semicolon csv val");
 
-    bcsv_csv_reader_close(cr);
-    bcsv_csv_reader_destroy(cr);
-    bcsv_csv_writer_destroy(cw);
+    /* M4: reuse predicate must include delimiter/decimal_sep — reopening the
+       SAME reader with ';' then ',' picks up the new parsing chars (member
+       rebuilt), and ','-delimited content reads correctly afterwards. */
+    {
+        char p2[256];
+        make_path(p2, sizeof(p2), "test_csv_delim_reuse.csv");
+        bcsv_writer_t cw2 = bcsv_writer_create_u(layout, BCSV_CODEC_FLAT);
+        TEST_ASSERT(bcsv_writer_open_u(cw2, p2, true, BCSV_FORMAT_AUTO, NULL),
+                    "comma writer opened (NULL opts = defaults)");
+        bcsv_row_t r2 = bcsv_writer_row_u(cw2);
+        bcsv_row_set_int32(r2, 0, 42);
+        bcsv_row_set_double(r2, 1, 2.5);
+        TEST_ASSERT(bcsv_writer_next_u(cw2), "write comma row");
+        bcsv_writer_close_u(cw2);
+        bcsv_writer_destroy_u(cw2);
+
+        bcsv_open_opts ro2 = BCSV_OPEN_OPTS_INIT;
+        ro2.csv_layout = layout;
+        ro2.delimiter = ';';
+        /* ';' parsing of a ','-separated file: 1 giant field per line != 2
+           columns → the open must fail loudly (not silently misparse). */
+        TEST_ASSERT(!bcsv_reader_open_u(cr, p2, BCSV_FORMAT_AUTO, &ro2),
+                    "; open on comma file fails loudly");
+        ro2.delimiter = ',';   /* changed → member must be rebuilt */
+        TEST_ASSERT(bcsv_reader_open_u(cr, p2, BCSV_FORMAT_AUTO, &ro2), "re-open with ','");
+        TEST_ASSERT(bcsv_reader_next_u(cr), "read comma row after reuse");
+        TEST_ASSERT_EQ_INT(bcsv_row_get_int32(bcsv_reader_row_u(cr), 0), 42, "comma row id=42");
+        TEST_ASSERT_NEAR(bcsv_row_get_double(bcsv_reader_row_u(cr), 1), 2.5, 1e-9, "comma row val");
+    }
+
+    bcsv_reader_destroy_u(cr);
+    bcsv_writer_destroy_u(cw);
     bcsv_layout_destroy(layout);
 }
 
-/* ── CSV Accessor functions (filename, layout, index, error_msg) ───── */
+/* ── CSV Accessor functions via the unified handle (_u) ───────────── */
 static void test_csv_accessors(void) {
-    TEST_START("CSV Accessor Functions (filename, layout, index, error_msg)");
+    TEST_START("CSV Accessor Functions via _u (filename, layout, index, error_msg)");
 
     bcsv_layout_t layout = bcsv_layout_create();
     bcsv_layout_add_column(layout, 0, "id",  BCSV_TYPE_INT32);
@@ -715,106 +859,115 @@ static void test_csv_accessors(void) {
     char filepath[256];
     make_path(filepath, sizeof(filepath), "test_csv_accessors.csv");
 
-    /* CSV Writer accessors */
-    bcsv_csv_writer_t cw = bcsv_csv_writer_create(layout, ',', '.');
-    bcsv_csv_writer_open(cw, filepath, true, true);
+    /* Unified writer opened as CSV: accessors report through the CSV member */
+    bcsv_writer_t cw = bcsv_writer_create_u(layout, BCSV_CODEC_FLAT);
+    TEST_ASSERT(bcsv_writer_open_u(cw, filepath, true, BCSV_FORMAT_AUTO, NULL),
+                "csv writer (_u) opened (NULL opts = defaults)");
 
-    /* csv_writer_filename */
+    /* writer_filename_u */
 #ifdef _WIN32
-    const wchar_t* wfn = bcsv_csv_writer_filename(cw);
-    TEST_ASSERT(wfn != NULL && wcslen(wfn) > 0, "csv_writer_filename non-empty");
-    TEST_ASSERT(wcsstr(wfn, L"test_csv_accessors.csv") != NULL, "csv_writer_filename contains expected name");
+    const wchar_t* wfn = bcsv_writer_filename_u(cw);
+    TEST_ASSERT(wfn != NULL && wcslen(wfn) > 0, "writer_filename_u non-empty");
+    TEST_ASSERT(wcsstr(wfn, L"test_csv_accessors.csv") != NULL, "writer_filename_u contains expected name");
 #else
-    const char* wfn = bcsv_csv_writer_filename(cw);
-    TEST_ASSERT(wfn != NULL && strlen(wfn) > 0, "csv_writer_filename non-empty");
-    TEST_ASSERT(strstr(wfn, "test_csv_accessors.csv") != NULL, "csv_writer_filename contains expected name");
+    const char* wfn = bcsv_writer_filename_u(cw);
+    TEST_ASSERT(wfn != NULL && strlen(wfn) > 0, "writer_filename_u non-empty");
+    TEST_ASSERT(strstr(wfn, "test_csv_accessors.csv") != NULL, "writer_filename_u contains expected name");
 #endif
 
-    /* csv_writer_layout */
-    const_bcsv_layout_t wlayout = bcsv_csv_writer_layout(cw);
-    TEST_ASSERT(wlayout != NULL, "csv_writer_layout non-NULL");
-    TEST_ASSERT_EQ_INT((int)bcsv_layout_column_count(wlayout), 2, "csv_writer_layout has 2 columns");
+    /* writer_layout_u */
+    const_bcsv_layout_t wlayout = bcsv_writer_layout_u(cw);
+    TEST_ASSERT(wlayout != NULL, "writer_layout_u non-NULL");
+    TEST_ASSERT_EQ_INT((int)bcsv_layout_column_count(wlayout), 2, "writer_layout_u has 2 columns");
 
-    /* csv_writer_error_msg (should be empty/non-NULL on no error) */
-    const char* werr = bcsv_csv_writer_error_msg(cw);
-    TEST_ASSERT(werr != NULL, "csv_writer_error_msg non-NULL");
+    /* writer_error_msg_u (non-NULL on no error) */
+    const char* werr = bcsv_writer_error_msg_u(cw);
+    TEST_ASSERT(werr != NULL, "writer_error_msg_u non-NULL");
 
     /* Write some rows */
-    bcsv_row_t row = bcsv_csv_writer_row(cw);
+    bcsv_row_t row = bcsv_writer_row_u(cw);
     for (int i = 0; i < 5; ++i) {
         bcsv_row_set_int32(row, 0, i);
         bcsv_row_set_double(row, 1, i * 1.5);
-        bcsv_csv_writer_next(cw);
+        TEST_ASSERT(bcsv_writer_next_u(cw), "writer_next_u csv row");
     }
-    bcsv_csv_writer_close(cw);
+    bcsv_writer_close_u(cw);
 
-    /* CSV Reader accessors */
-    bcsv_csv_reader_t cr = bcsv_csv_reader_create(layout, ',', '.');
-    bcsv_csv_reader_open(cr, filepath, true);
+    /* Unified reader opened as CSV: accessors report through the CSV member */
+    bcsv_reader_t cr = bcsv_reader_create_u();
+    bcsv_open_opts ro = BCSV_OPEN_OPTS_INIT;
+    ro.csv_layout = layout;
+    TEST_ASSERT(bcsv_reader_open_u(cr, filepath, BCSV_FORMAT_AUTO, &ro), "reader (_u) opened csv");
 
-    /* csv_reader_filename */
+    /* reader_filename_u */
 #ifdef _WIN32
-    const wchar_t* rfn = bcsv_csv_reader_filename(cr);
-    TEST_ASSERT(rfn != NULL && wcslen(rfn) > 0, "csv_reader_filename non-empty");
-    TEST_ASSERT(wcsstr(rfn, L"test_csv_accessors.csv") != NULL, "csv_reader_filename contains expected name");
+    const wchar_t* rfn = bcsv_reader_filename_u(cr);
+    TEST_ASSERT(rfn != NULL && wcslen(rfn) > 0, "reader_filename_u non-empty");
+    TEST_ASSERT(wcsstr(rfn, L"test_csv_accessors.csv") != NULL, "reader_filename_u contains expected name");
 #else
-    const char* rfn = bcsv_csv_reader_filename(cr);
-    TEST_ASSERT(rfn != NULL && strlen(rfn) > 0, "csv_reader_filename non-empty");
-    TEST_ASSERT(strstr(rfn, "test_csv_accessors.csv") != NULL, "csv_reader_filename contains expected name");
+    const char* rfn = bcsv_reader_filename_u(cr);
+    TEST_ASSERT(rfn != NULL && strlen(rfn) > 0, "reader_filename_u non-empty");
+    TEST_ASSERT(strstr(rfn, "test_csv_accessors.csv") != NULL, "reader_filename_u contains expected name");
 #endif
 
-    /* csv_reader_layout */
-    const_bcsv_layout_t rlayout = bcsv_csv_reader_layout(cr);
-    TEST_ASSERT(rlayout != NULL, "csv_reader_layout non-NULL");
-    TEST_ASSERT_EQ_INT((int)bcsv_layout_column_count(rlayout), 2, "csv_reader_layout has 2 columns");
+    /* reader_layout_u */
+    const_bcsv_layout_t rlayout = bcsv_reader_layout_u(cr);
+    TEST_ASSERT(rlayout != NULL, "reader_layout_u non-NULL");
+    TEST_ASSERT_EQ_INT((int)bcsv_layout_column_count(rlayout), 2, "reader_layout_u has 2 columns");
 
-    /* csv_reader_index (before read should be 0) */
-    TEST_ASSERT_EQ_INT((int)bcsv_csv_reader_index(cr), 0, "csv_reader_index starts at 0");
+    /* reader_index_u (before read should be 0) */
+    TEST_ASSERT_EQ_INT((int)bcsv_reader_index_u(cr), 0, "reader_index_u starts at 0");
 
     /* Read rows and check index progression */
-    TEST_ASSERT(bcsv_csv_reader_next(cr), "csv_reader read first row");
-    TEST_ASSERT_EQ_INT((int)bcsv_csv_reader_index(cr), 1, "csv_reader_index is 1 after first read");
+    TEST_ASSERT(bcsv_reader_next_u(cr), "reader read first row");
+    TEST_ASSERT_EQ_INT((int)bcsv_reader_index_u(cr), 1, "reader_index_u is 1 after first read");
 
-    TEST_ASSERT(bcsv_csv_reader_next(cr), "csv_reader read second row");
-    TEST_ASSERT_EQ_INT((int)bcsv_csv_reader_index(cr), 2, "csv_reader_index is 2 after second read");
+    TEST_ASSERT(bcsv_reader_next_u(cr), "reader read second row");
+    TEST_ASSERT_EQ_INT((int)bcsv_reader_index_u(cr), 2, "reader_index_u is 2 after second read");
 
     /* Read remaining rows */
-    while (bcsv_csv_reader_next(cr)) { /* consume */ }
-    TEST_ASSERT_EQ_INT((int)bcsv_csv_reader_index(cr), 5, "csv_reader_index is 5 after all reads");
+    while (bcsv_reader_next_u(cr)) { /* consume */ }
+    TEST_ASSERT_EQ_INT((int)bcsv_reader_index_u(cr), 5, "reader_index_u is 5 after all reads");
 
-    bcsv_csv_reader_close(cr);
-    bcsv_csv_reader_destroy(cr);
-    bcsv_csv_writer_destroy(cw);
+    bcsv_reader_close_u(cr);
+    bcsv_reader_destroy_u(cr);
+    bcsv_writer_destroy_u(cw);
     bcsv_layout_destroy(layout);
 }
 
-/* ── CSV write external row ────────────────────────────────────────── */
+/* ── CSV write external row (unified _u) ───────────────────────── */
 static void test_csv_write_external_row(void) {
-    TEST_START("CSV Writer write(external row)");
+    TEST_START("CSV Writer write_u(external row)");
 
     bcsv_layout_t layout = bcsv_layout_create();
     bcsv_layout_add_column(layout, 0, "id", BCSV_TYPE_INT32);
+    bcsv_layout_add_column(layout, 1, "val", BCSV_TYPE_DOUBLE);
 
-    bcsv_csv_writer_t cw = bcsv_csv_writer_create(layout, ',', '.');
+    bcsv_writer_t cw = bcsv_writer_create_u(layout, BCSV_CODEC_FLAT);
     char filepath[256];
     make_path(filepath, sizeof(filepath), "test_csv_ext.csv");
-    bcsv_csv_writer_open(cw, filepath, true, true);
+    TEST_ASSERT(bcsv_writer_open_u(cw, filepath, true, BCSV_FORMAT_AUTO, NULL),
+                "csv writer (_u) opened");
 
     bcsv_row_t ext_row = bcsv_row_create(layout);
     bcsv_row_set_int32(ext_row, 0, 99);
-    bool ok = bcsv_csv_writer_write(cw, ext_row);
-    TEST_ASSERT(ok, "csv_writer_write(external) succeeds");
-    bcsv_csv_writer_close(cw);
+    bcsv_row_set_double(ext_row, 1, 7.25);
+    bool ok = bcsv_writer_write_u(cw, ext_row);
+    TEST_ASSERT(ok, "writer_write_u(external) succeeds");
+    bcsv_writer_close_u(cw);
 
-    bcsv_csv_reader_t cr = bcsv_csv_reader_create(layout, ',', '.');
-    bcsv_csv_reader_open(cr, filepath, true);
-    TEST_ASSERT(bcsv_csv_reader_next(cr), "csv read external row");
-    TEST_ASSERT_EQ_INT(bcsv_row_get_int32(bcsv_csv_reader_row(cr), 0), 99, "csv ext id=99");
-    bcsv_csv_reader_close(cr);
+    bcsv_reader_t cr = bcsv_reader_create_u();
+    bcsv_open_opts ro = BCSV_OPEN_OPTS_INIT;
+    ro.csv_layout = layout;
+    TEST_ASSERT(bcsv_reader_open_u(cr, filepath, BCSV_FORMAT_AUTO, &ro), "reader (_u) opened");
+    TEST_ASSERT(bcsv_reader_next_u(cr), "csv read external row");
+    TEST_ASSERT_EQ_INT(bcsv_row_get_int32(bcsv_reader_row_u(cr), 0), 99, "csv ext id=99");
+    TEST_ASSERT_NEAR(bcsv_row_get_double(bcsv_reader_row_u(cr), 1), 7.25, 1e-9, "csv ext val");
+    bcsv_reader_close_u(cr);
 
-    bcsv_csv_reader_destroy(cr);
+    bcsv_reader_destroy_u(cr);
     bcsv_row_destroy(ext_row);
-    bcsv_csv_writer_destroy(cw);
+    bcsv_writer_destroy_u(cw);
     bcsv_layout_destroy(layout);
 }
 
@@ -1254,29 +1407,33 @@ static void test_cross_format(void) {
     }
     bcsv_writer_close(bw);
 
-    /* Step 2: Read BCSV → Write CSV */
+    /* Step 2: Read BCSV → Write CSV (unified writer) */
     bcsv_reader_t br = bcsv_reader_create();
     bcsv_reader_open(br, bcsv_path);
 
-    bcsv_csv_writer_t cw = bcsv_csv_writer_create(layout, ',', '.');
-    bcsv_csv_writer_open(cw, csv_path, true, true);
+    bcsv_writer_t cw = bcsv_writer_create_u(layout, BCSV_CODEC_FLAT);
+    TEST_ASSERT(bcsv_writer_open_u(cw, csv_path, true, BCSV_FORMAT_AUTO, NULL),
+                "cross: unified CSV writer opened (.csv → CSV)");
     while (bcsv_reader_next(br)) {
-        bcsv_csv_writer_write(cw, bcsv_reader_row(br));
+        TEST_ASSERT(bcsv_writer_write_u(cw, bcsv_reader_row(br)), "cross: CSV write");
     }
-    bcsv_csv_writer_close(cw);
+    bcsv_writer_close_u(cw);
     bcsv_reader_close(br);
 
     /* Step 3: Read CSV → Write BCSV (Delta) */
-    bcsv_csv_reader_t cr = bcsv_csv_reader_create(layout, ',', '.');
-    bcsv_csv_reader_open(cr, csv_path, true);
+    bcsv_reader_t cr = bcsv_reader_create_u();
+    bcsv_open_opts ro = BCSV_OPEN_OPTS_INIT;
+    ro.csv_layout = layout;
+    TEST_ASSERT(bcsv_reader_open_u(cr, csv_path, BCSV_FORMAT_AUTO, &ro),
+                "cross: unified CSV reader opened");
 
     bcsv_writer_t bw2 = bcsv_writer_create_delta(layout);
     bcsv_writer_open(bw2, bcsv2_path, true, 1, 64, BCSV_FLAG_NONE);
-    while (bcsv_csv_reader_next(cr)) {
-        bcsv_writer_write(bw2, bcsv_csv_reader_row(cr));
+    while (bcsv_reader_next_u(cr)) {
+        TEST_ASSERT(bcsv_writer_write(bw2, bcsv_reader_row_u(cr)), "cross: BCSV write");
     }
     bcsv_writer_close(bw2);
-    bcsv_csv_reader_close(cr);
+    bcsv_reader_close_u(cr);
 
     /* Step 4: Read converted BCSV and verify */
     bcsv_reader_t br2 = bcsv_reader_create();
@@ -1291,8 +1448,8 @@ static void test_cross_format(void) {
 
     bcsv_reader_destroy(br);
     bcsv_reader_destroy(br2);
-    bcsv_csv_reader_destroy(cr);
-    bcsv_csv_writer_destroy(cw);
+    bcsv_reader_destroy_u(cr);
+    bcsv_writer_destroy_u(cw);
     bcsv_writer_destroy(bw);
     bcsv_writer_destroy(bw2);
     bcsv_layout_destroy(layout);
@@ -1432,7 +1589,393 @@ static void test_file_flags(void) {
     TEST_ASSERT_EQ_INT(combined, 9, "ZOH|BATCH_COMPRESS = 9");
 }
 
+/* ── Unified File API (_u, ADR-0009) ─────────────────────────────── */
+static void test_unified_api(void) {
+    TEST_START("Unified File API (_u)");
+
+    bcsv_layout_t layout = create_test_layout();
+    char pcsv[256], plz4[256], pbcsv[256], pnop[256];
+    make_path(pcsv,  sizeof(pcsv),  "u_plain.csv");
+    make_path(plz4,  sizeof(plz4),  "u_plain.csv.lz4");
+    make_path(pbcsv, sizeof(pbcsv), "u_plain.bcsv");
+    make_path(pnop,  sizeof(pnop),  "u_does_not_exist.bcsv");
+
+    /* Plain CSV fixture written with raw stdio (no BCSV involvement) */
+    {
+        FILE* f = fopen(pcsv, "w");
+        TEST_ASSERT(f != NULL, "fixture csv created");
+        fputs("id,value,name,flag,x,y,z\n", f);
+        for (int i = 0; i < 5; ++i) {
+            fprintf(f, "%d,%.6f,row_%d,%d,%.6f,%.6f,%.6f\n",
+                    i, i * 1.5, i, (i % 2) == 0, i * 0.1, i * 0.2, i * 0.3);
+        }
+        fclose(f);
+    }
+
+    /* CSV_LZ4 + BCSV fixtures through the unified writer */
+    bcsv_writer_t w = bcsv_writer_create_u(layout, BCSV_CODEC_FLAT);
+    TEST_ASSERT(w != NULL, "writer (_u) created");
+    {
+        TEST_ASSERT(bcsv_writer_open_u(w, plz4, true, BCSV_FORMAT_AUTO, NULL),
+                    "writer open .csv.lz4 (extension rule)");
+        TEST_ASSERT_EQ_INT(bcsv_writer_format_u(w), BCSV_FORMAT_CSV_LZ4, ".lz4 extension -> CSV_LZ4");
+        bcsv_row_t row = bcsv_writer_row_u(w);
+        for (int i = 0; i < 5; ++i) { fill_test_row(row, i); TEST_ASSERT(bcsv_writer_next_u(w), "lz4 fixture row"); }
+        TEST_ASSERT_EQ_INT(bcsv_writer_index_u(w), 5, "writer index 5");
+        bcsv_writer_close_u(w);
+        TEST_ASSERT(!bcsv_writer_is_open_u(w), "writer not open after close");
+
+        TEST_ASSERT(bcsv_writer_open_u(w, pbcsv, true, BCSV_FORMAT_AUTO, NULL),
+                    "writer open .bcsv (extension rule)");
+        TEST_ASSERT_EQ_INT(bcsv_writer_format_u(w), BCSV_FORMAT_BCSV, ".bcsv extension -> BCSV");
+        row = bcsv_writer_row_u(w);   /* new member: fresh row */
+        for (int i = 0; i < 3; ++i) { fill_test_row(row, i); TEST_ASSERT(bcsv_writer_next_u(w), "bcsv fixture row"); }
+        bcsv_writer_close_u(w);
+    }
+
+    /* probe_format on all three formats + a nonexistent path */
+    {
+        bcsv_format_t f = BCSV_FORMAT_AUTO;
+        TEST_ASSERT(bcsv_probe_format(pcsv, &f), "probe plain csv");
+        TEST_ASSERT_EQ_INT(f, BCSV_FORMAT_CSV, "probe -> CSV");
+        TEST_ASSERT(bcsv_probe_format(plz4, &f), "probe csv.lz4");
+        TEST_ASSERT_EQ_INT(f, BCSV_FORMAT_CSV_LZ4, "probe -> CSV_LZ4");
+        TEST_ASSERT(bcsv_probe_format(pbcsv, &f), "probe bcsv");
+        TEST_ASSERT_EQ_INT(f, BCSV_FORMAT_BCSV, "probe -> BCSV");
+        f = BCSV_FORMAT_BCSV;
+        TEST_ASSERT(!bcsv_probe_format(pnop, &f), "probe nonexistent fails");
+        TEST_ASSERT(bcsv_last_error()[0] != '\0', "probe failure sets last_error");
+    }
+
+    /* B2 ergonomics: AUTO + NULL opts on plain CSV = loud fail, no crash */
+    {
+        bcsv_reader_t r = bcsv_reader_create_u();
+        TEST_ASSERT(!bcsv_reader_open_u(r, pcsv, BCSV_FORMAT_AUTO, NULL),
+                    "AUTO+NULL opts on plain CSV fails loudly (B2)");
+        TEST_ASSERT(strstr(bcsv_reader_error_msg_u(r), "csv_layout") != NULL,
+                    "failure names csv_layout");
+        TEST_ASSERT(!bcsv_reader_is_open_u(r), "failed open leaves handle closed");
+        TEST_ASSERT_EQ_INT(bcsv_reader_format_u(r), BCSV_FORMAT_AUTO, "failed open leaves format AUTO");
+
+        /* BCSV needs no schema: AUTO + NULL opts on .bcsv works */
+        TEST_ASSERT(bcsv_reader_open_u(r, pbcsv, BCSV_FORMAT_AUTO, NULL),
+                    "BCSV AUTO + NULL opts works (defaults)");
+        TEST_ASSERT_EQ_INT(bcsv_reader_format_u(r), BCSV_FORMAT_BCSV, "format_u AUTO -> BCSV");
+        /* M5: after close, format returns to AUTO */
+        bcsv_reader_close_u(r);
+        TEST_ASSERT_EQ_INT(bcsv_reader_format_u(r), BCSV_FORMAT_AUTO, "format_u AUTO after close");
+        /* close_u safe when already closed */
+        bcsv_reader_close_u(r);
+        /* navigation on a closed handle is inert */
+        TEST_ASSERT(!bcsv_reader_next_u(r), "next_u on closed reader false");
+        TEST_ASSERT(!bcsv_reader_is_open_u(r), "is_open_u closed false");
+        TEST_ASSERT(bcsv_reader_layout_u(r) == NULL, "layout_u NULL when closed");
+        TEST_ASSERT(bcsv_reader_native_u(r) == NULL, "native_u NULL when closed");
+        bcsv_reader_destroy_u(r);
+    }
+
+    /* Pinned mismatches are loud and specific; format enum validated */
+    {
+        bcsv_reader_t r = bcsv_reader_create_u();
+        bcsv_open_opts ro = BCSV_OPEN_OPTS_INIT;
+        ro.csv_layout = layout;
+
+        TEST_ASSERT(!bcsv_reader_open_u(r, pcsv, BCSV_FORMAT_BCSV, &ro),
+                    "pinned BCSV on CSV fails");
+        TEST_ASSERT(strstr(bcsv_reader_error_msg_u(r), "pinned format") != NULL,
+                    "pinned mismatch wording (BCSV on CSV)");
+
+        TEST_ASSERT(!bcsv_reader_open_u(r, pbcsv, BCSV_FORMAT_CSV, &ro),
+                    "pinned CSV on BCSV fails");
+        TEST_ASSERT(strstr(bcsv_reader_error_msg_u(r), "pinned format") != NULL,
+                    "pinned mismatch wording (CSV on BCSV)");
+
+        TEST_ASSERT(!bcsv_reader_open_u(r, plz4, BCSV_FORMAT_CSV, &ro),
+                    "pinned CSV on LZ4 frame fails (magic cross-refusal)");
+        TEST_ASSERT(!bcsv_reader_open_u(r, pcsv, BCSV_FORMAT_CSV_LZ4, &ro),
+                    "pinned CSV_LZ4 on plain CSV fails");
+
+        TEST_ASSERT(!bcsv_reader_open_u(r, pcsv, (bcsv_format_t)99, &ro),
+                    "unknown format enum rejected");
+        TEST_ASSERT(strstr(bcsv_reader_error_msg_u(r), "invalid format") != NULL,
+                    "unknown format reports 'invalid format'");
+
+        /* A matching pin succeeds */
+        TEST_ASSERT(bcsv_reader_open_u(r, pcsv, BCSV_FORMAT_CSV, &ro), "pinned CSV on CSV works");
+        TEST_ASSERT_EQ_INT(bcsv_reader_format_u(r), BCSV_FORMAT_CSV, "pinned format sticks");
+        bcsv_reader_destroy_u(r);
+    }
+
+    /* B3 reader kind-switch: one handle migrates BCSV -> CSV -> BCSV; the
+       REPLACED member must never serve stale rows. */
+    {
+        bcsv_reader_t r = bcsv_reader_create_u();
+        bcsv_open_opts ro = BCSV_OPEN_OPTS_INIT;
+        ro.csv_layout = layout;
+
+        TEST_ASSERT(bcsv_reader_open_u(r, pbcsv, BCSV_FORMAT_AUTO, NULL), "switch open 1 (bcsv)");
+        const_bcsv_layout_t lay_bin = bcsv_reader_layout_u(r);   /* borrowed from bin member */
+        int n = 0; while (bcsv_reader_next_u(r)) n++;
+        TEST_ASSERT_EQ_INT(n, 3, "bcsv member yields 3 rows");
+        TEST_ASSERT_EQ_INT((int)bcsv_reader_file_line_u(r), 0, "file_line_u 0 in BCSV mode");
+
+        TEST_ASSERT(bcsv_reader_open_u(r, pcsv, BCSV_FORMAT_AUTO, &ro), "switch open 2 (csv)");
+        TEST_ASSERT_EQ_INT(bcsv_reader_format_u(r), BCSV_FORMAT_CSV, "switched to CSV");
+        /* Reopen across kinds invalidates borrowed layout handles: the active
+           member (and its layout object) is a different one now. */
+        TEST_ASSERT(bcsv_reader_layout_u(r) != lay_bin, "layout handle replaced by kind-switch");
+        n = 0; while (bcsv_reader_next_u(r)) n++;
+        TEST_ASSERT_EQ_INT(n, 5, "kind-switched csv member yields 5 rows (was B3: 0)");
+        TEST_ASSERT(bcsv_reader_file_line_u(r) > 0, "file_line_u > 0 in CSV mode");
+        TEST_ASSERT(bcsv_reader_layout_u(r) != NULL, "layout_u valid after switch");
+
+        TEST_ASSERT(bcsv_reader_open_u(r, pbcsv, BCSV_FORMAT_AUTO, NULL), "switch open 3 (bcsv)");
+        TEST_ASSERT_EQ_INT(bcsv_reader_format_u(r), BCSV_FORMAT_BCSV, "switched back to BCSV");
+        n = 0; while (bcsv_reader_next_u(r)) n++;
+        TEST_ASSERT_EQ_INT(n, 3, "binary rows again after second switch");
+        TEST_ASSERT_EQ_INT((int)bcsv_reader_file_line_u(r), 0, "file_line_u back to 0");
+
+        /* native_u: BCSV member impersonates the legacy binary reader */
+        void* nat = bcsv_reader_native_u(r);
+        TEST_ASSERT(nat != NULL, "native_u non-NULL while open");
+        bcsv_reader_destroy_u(r);
+    }
+
+    /* B3 writer kind-switch + M5 row handle refresh across formats */
+    {
+        char pw1[256], pw2[256];
+        make_path(pw1, sizeof(pw1), "u_switch.bcsv");
+        make_path(pw2, sizeof(pw2), "u_switch.csv");
+
+        bcsv_writer_t w2 = bcsv_writer_create_u(layout, BCSV_CODEC_ZOH);
+        TEST_ASSERT(bcsv_writer_open_u(w2, pw1, true, BCSV_FORMAT_AUTO, NULL), "switch write 1 (bcsv)");
+        bcsv_row_t r1 = bcsv_writer_row_u(w2);
+        for (int i = 0; i < 4; ++i) { fill_test_row(r1, i); TEST_ASSERT(bcsv_writer_next_u(w2), "switch bcsv row"); }
+        bcsv_writer_close_u(w2);
+
+        TEST_ASSERT(bcsv_writer_open_u(w2, pw2, true, BCSV_FORMAT_AUTO, NULL), "switch write 2 (csv)");
+        TEST_ASSERT_EQ_INT(bcsv_writer_format_u(w2), BCSV_FORMAT_CSV, "writer switched to CSV");
+        bcsv_row_t r2 = bcsv_writer_row_u(w2);
+        TEST_ASSERT(r2 != NULL, "writer row after switch");
+        TEST_ASSERT(r2 != r1, "row handle replaced by kind-switch");
+        for (int i = 0; i < 6; ++i) { fill_test_row(r2, i); TEST_ASSERT(bcsv_writer_next_u(w2), "switch csv row"); }
+        bcsv_writer_close_u(w2);
+
+        /* Verify both outputs independently */
+        {
+            bcsv_reader_t br = bcsv_reader_create();
+            TEST_ASSERT(bcsv_reader_open(br, pw1), "legacy reader on switched bcsv file");
+            int n = 0; while (bcsv_reader_next(br)) n++;
+            TEST_ASSERT_EQ_INT(n, 4, "bcsv switch output has 4 rows");
+            bcsv_reader_destroy(br);
+
+            bcsv_reader_t cr = bcsv_reader_create_u();
+            bcsv_open_opts cro = BCSV_OPEN_OPTS_INIT;
+            cro.csv_layout = layout;
+            TEST_ASSERT(bcsv_reader_open_u(cr, pw2, BCSV_FORMAT_AUTO, &cro), "unified reader on switched csv file");
+            n = 0; while (bcsv_reader_next_u(cr)) n++;
+            TEST_ASSERT_EQ_INT(n, 6, "csv switch output has 6 rows");
+            bcsv_reader_destroy_u(cr);
+        }
+        bcsv_writer_destroy_u(w2);
+    }
+
+    /* struct_size forward-extension rule (M2): v1/current size accepted,
+       anything larger (future library) or smaller rejected naming struct_size */
+    {
+        bcsv_reader_t r = bcsv_reader_create_u();
+        bcsv_open_opts ro = BCSV_OPEN_OPTS_INIT;
+        ro.csv_layout = layout;
+
+        ro.struct_size = sizeof(bcsv_open_opts);            /* current == v1 size */
+        TEST_ASSERT(bcsv_reader_open_u(r, pcsv, BCSV_FORMAT_AUTO, &ro), "struct_size == sizeof accepted");
+        bcsv_reader_close_u(r);
+
+        ro.struct_size = sizeof(bcsv_open_opts) + 64;       /* newer caller */
+        TEST_ASSERT(!bcsv_reader_open_u(r, pcsv, BCSV_FORMAT_AUTO, &ro), "oversized struct_size rejected");
+        TEST_ASSERT(strstr(bcsv_reader_error_msg_u(r), "struct_size") != NULL,
+                    "rejection names struct_size");
+
+        ro.struct_size = offsetof(bcsv_open_opts, lz4_block_id);  /* below v1 size */
+        TEST_ASSERT(!bcsv_reader_open_u(r, pcsv, BCSV_FORMAT_AUTO, &ro), "sub-v1 struct_size rejected");
+
+        bcsv_reader_destroy_u(r);
+    }
+
+    /* Cross-family destroy is a registry kind-checked no-op: legacy destroy
+       names (still exported for the binary family) cannot free a _u handle. */
+    {
+        bcsv_reader_t r = bcsv_reader_create_u();
+        bcsv_writer_t w3 = bcsv_writer_create_u(layout, BCSV_CODEC_FLAT);
+        bcsv_clear_last_error();
+        bcsv_reader_destroy(r);          /* wrong family: must NOT free */
+        bcsv_writer_destroy(w3);         /* wrong family: must NOT free */
+        /* Handle still alive: using it must work, then destroy_u frees it */
+        TEST_ASSERT(bcsv_reader_open_u(r, pbcsv, BCSV_FORMAT_AUTO, NULL),
+                    "reader survives cross-family destroy attempt");
+        bcsv_reader_destroy_u(r);
+        TEST_ASSERT(bcsv_writer_format_u(w3) == BCSV_FORMAT_AUTO, "writer still alive after wrong destroy");
+        bcsv_writer_destroy_u(w3);
+    }
+
+    bcsv_writer_destroy_u(w);
+    bcsv_layout_destroy(layout);
+}
+
 /* ══════════════════════════════════════════════════════════════════ */
+/* native_u round-trip through the LEGACY deep APIs (round-2 N1): while the
+   container is open, its member is registered under the legacy kind, so
+   native handles pass the legacy registry guards; after the container closes
+   the borrowed entry is gone and legacy calls refuse it. Covers the writer
+   bin-member same-format reuse and the file_flags tri-state guard too. */
+static void test_unified_native_and_reuse(void) {
+    TEST_START("Unified native round-trip + reuse arms");
+    bcsv_layout_t layout = create_test_layout();
+    char pbcsv[256]; make_path(pbcsv, sizeof(pbcsv), "u_nr.bcsv");
+    {
+        bcsv_writer_t w0 = bcsv_writer_create_u(layout, BCSV_CODEC_FLAT);
+        TEST_ASSERT(bcsv_writer_open_u(w0, pbcsv, true, BCSV_FORMAT_BCSV, NULL), "nr fixture open");
+        bcsv_row_t row = bcsv_writer_row_u(w0);
+        for (int i = 0; i < 3; ++i) { fill_test_row(row, i); bcsv_writer_next_u(w0); }
+        bcsv_writer_close_u(w0);
+        bcsv_writer_destroy_u(w0);
+    }
+    {
+        bcsv_reader_t r = bcsv_reader_create_u();
+        TEST_ASSERT(bcsv_reader_open_u(r, pbcsv, BCSV_FORMAT_AUTO, NULL), "reader open for native");
+        void* nat = bcsv_reader_native_u(r);
+        TEST_ASSERT(nat != NULL, "reader native_u non-NULL");
+        bcsv_clear_last_error();
+        TEST_ASSERT(bcsv_reader_is_open((bcsv_reader_t)nat), "legacy is_open on native member");
+        bcsv_sampler_t smp = bcsv_sampler_create((bcsv_reader_t)nat);
+        TEST_ASSERT(smp != NULL, "sampler accepts unified reader native");
+        bcsv_sampler_destroy(smp);
+        bcsv_reader_close_u(r);
+        bcsv_clear_last_error();
+        /* is_open is a legacy blind-read (kept allocated, file closed) -> false;
+           the registry-GUARDED refusal after container close is sampler create,
+           whose kind check sees the borrowed entry gone. */
+        TEST_ASSERT(!bcsv_reader_is_open((bcsv_reader_t)nat), "native member reports closed");
+        TEST_ASSERT(bcsv_sampler_create((bcsv_reader_t)nat) == NULL, "sampler refuses native after close");
+        TEST_ASSERT(bcsv_last_error()[0] != '\0', "reader refusal reported");
+        bcsv_reader_destroy_u(r);
+    }
+    {
+        bcsv_writer_t wz = bcsv_writer_create_u(layout, BCSV_CODEC_FLAT);
+        char pn1[256]; make_path(pn1, sizeof(pn1), "u_nr_w.bcsv");
+        TEST_ASSERT(bcsv_writer_open_u(wz, pn1, true, BCSV_FORMAT_BCSV, NULL), "writer open for native");
+        void* wnat = bcsv_writer_native_u(wz);
+        TEST_ASSERT(wnat != NULL, "writer native_u non-NULL");
+        bcsv_clear_last_error();
+        TEST_ASSERT(bcsv_writer_is_open((bcsv_writer_t)wnat), "legacy is_open on native writer");
+        bcsv_writer_flush((bcsv_writer_t)wnat);
+        TEST_ASSERT(bcsv_last_error()[0] == '\0', "writer flush through native passes registry");
+        TEST_ASSERT(bcsv_writer_is_open((bcsv_writer_t)wnat), "writer still open after flush");
+        bcsv_writer_close_u(wz);
+        bcsv_clear_last_error();
+        TEST_ASSERT(!bcsv_writer_is_open((bcsv_writer_t)wnat), "writer native refused after close");
+        bcsv_writer_destroy_u(wz);
+    }
+    /* Writer reuses the bin member across same-format reopens (row identical).
+       The CSV member is REBUILT per open (M4) so this only holds for .bcsv. */
+    {
+        char prp[256]; make_path(prp, sizeof(prp), "u_nr_reuse.bcsv");
+        bcsv_writer_t w2 = bcsv_writer_create_u(layout, BCSV_CODEC_FLAT);
+        TEST_ASSERT(bcsv_writer_open_u(w2, prp, true, BCSV_FORMAT_AUTO, NULL), "reuse open 1");
+        bcsv_row_t rw1 = bcsv_writer_row_u(w2);
+        fill_test_row(rw1, 1); TEST_ASSERT(bcsv_writer_next_u(w2), "reuse write 1");
+        bcsv_writer_close_u(w2);
+        TEST_ASSERT(bcsv_writer_open_u(w2, prp, true, BCSV_FORMAT_AUTO, NULL), "reuse open 2");
+        bcsv_row_t rw2 = bcsv_writer_row_u(w2);
+        TEST_ASSERT(rw2 == rw1, "bin member reused for same format+codec");
+        fill_test_row(rw2, 2); TEST_ASSERT(bcsv_writer_next_u(w2), "reuse write 2");
+        TEST_ASSERT_EQ_INT(bcsv_writer_index_u(w2), 1, "overwrite reopen resets count");
+        bcsv_writer_close_u(w2);
+        bcsv_writer_destroy_u(w2);
+    }
+    /* file_flags tri-state range (round-2 N2) */
+    {
+        char pff[256]; make_path(pff, sizeof(pff), "u_nr_flags.bcsv");
+        bcsv_writer_t wf = bcsv_writer_create_u(layout, BCSV_CODEC_FLAT);
+        bcsv_open_opts fo = BCSV_OPEN_OPTS_INIT;
+        fo.file_flags = -2;                     /* neither -1 (auto) nor a pattern */
+        TEST_ASSERT(!bcsv_writer_open_u(wf, pff, true, BCSV_FORMAT_BCSV, &fo), "file_flags -2 rejected");
+        TEST_ASSERT(strstr(bcsv_writer_error_msg_u(wf), "file_flags") != NULL, "names file_flags");
+        bcsv_writer_destroy_u(wf);
+    }
+    bcsv_layout_destroy(layout);
+}
+
+/* bcsv_shutdown() with LIVE unified containers (ADR-0006/0009 exit path):
+   open writers close first (footer/LZ4 trailer land), then every handle is
+   freed; later destroys on pre-shutdown handles are logged no-ops; the
+   registry is usable again afterwards. */
+static void test_unified_shutdown(void) {
+    TEST_START("Unified shutdown (_u handles)");
+    bcsv_layout_t layout = create_test_layout();
+    char pw[256], pl[256];
+    make_path(pw, sizeof(pw), "u_shut.bcsv");
+    make_path(pl, sizeof(pl), "u_shut.csv.lz4");
+
+    bcsv_writer_t wb = bcsv_writer_create_u(layout, BCSV_CODEC_FLAT);
+    TEST_ASSERT(bcsv_writer_open_u(wb, pw, true, BCSV_FORMAT_AUTO, NULL), "shutdown: open bcsv");
+    bcsv_row_t r1 = bcsv_writer_row_u(wb);
+    fill_test_row(r1, 7); TEST_ASSERT(bcsv_writer_next_u(wb), "shutdown: bcsv row");
+
+    bcsv_writer_t wl = bcsv_writer_create_u(layout, BCSV_CODEC_FLAT);
+    TEST_ASSERT(bcsv_writer_open_u(wl, pl, true, BCSV_FORMAT_AUTO, NULL), "shutdown: open lz4");
+    bcsv_row_t r2 = bcsv_writer_row_u(wl);
+    fill_test_row(r2, 8); TEST_ASSERT(bcsv_writer_next_u(wl), "shutdown: lz4 row");
+
+    bcsv_reader_t rd = bcsv_reader_create_u();
+
+    bcsv_shutdown();   /* closes wb + wl (trailers!) and frees rd + handles */
+    TEST_ASSERT(bcsv_last_error()[0] == '\0', "shutdown clean");
+
+    /* Both files valid afterwards: binary footer, LZ4 frame trailer.
+       NOTE: shutdown also destroyed every registered layout, so the readers
+       below must work with FRESH post-shutdown layouts — `layout` is dangling. */
+    {
+        bcsv_reader_t chk = bcsv_reader_create();
+        TEST_ASSERT(bcsv_reader_open(chk, pw), "shutdown: bcsv readable after shutdown");
+        int n = 0; while (bcsv_reader_next(chk)) n++;
+        TEST_ASSERT_EQ_INT(n, 1, "shutdown: bcsv footer + 1 row survived");
+        bcsv_reader_destroy(chk);
+
+        bcsv_layout_t fresh = create_test_layout();   /* post-shutdown registry works */
+        bcsv_open_opts ro = BCSV_OPEN_OPTS_INIT; ro.csv_layout = fresh;
+        chk = bcsv_reader_create_u();
+        TEST_ASSERT(bcsv_reader_open_u(chk, pl, BCSV_FORMAT_AUTO, &ro),
+                    "shutdown: lz4 frame valid on read");
+        n = 0; while (bcsv_reader_next_u(chk)) n++;
+        TEST_ASSERT_EQ_INT(n, 1, "shutdown: lz4 1 row survived (trailer written)");
+        bcsv_reader_destroy_u(chk);
+        bcsv_layout_destroy(fresh);
+    }
+
+    /* Post-shutdown operations on dangling handles: the registry-guarded
+       entry points are logged no-ops (same class of guarantee as legacy —
+       data-path calls on dangling handles are UB in both APIs). */
+    bcsv_clear_last_error();
+    bcsv_writer_close_u(wb);   /* reg guard -> logged refusal, no double close */
+    TEST_ASSERT(bcsv_last_error()[0] != '\0', "post-shutdown writer close reported");
+    bcsv_reader_destroy_u(rd);   /* reg_take miss -> logged no-op, no double free */
+    bcsv_writer_destroy_u(wb);
+    bcsv_writer_destroy_u(wl);
+    TEST_ASSERT(1, "post-shutdown destroys are no-ops");
+
+    /* Registry works again: fresh handles usable after shutdown */
+    {
+        char pn[256]; make_path(pn, sizeof(pn), "u_shut_after.bcsv");
+        bcsv_layout_t l2 = create_test_layout();
+        bcsv_writer_t wa = bcsv_writer_create_u(l2, BCSV_CODEC_FLAT);
+        TEST_ASSERT(bcsv_writer_open_u(wa, pn, true, BCSV_FORMAT_AUTO, NULL), "post-shutdown writer works");
+        bcsv_writer_destroy_u(wa);
+        bcsv_layout_destroy(l2);
+    }
+    bcsv_layout_destroy(layout);
+}
+
 int main(void) {
     printf("BCSV C API Full Test Suite (Item 15)\n");
     printf("=====================================\n");
@@ -1479,6 +2022,13 @@ int main(void) {
     test_csv_delimiter();
     test_csv_accessors();
     test_csv_write_external_row();
+    test_csv_lz4_roundtrip();
+
+    /* Unified File API (ADR-0009) */
+    test_unified_api();
+
+    /* Unified native round-trip + reuse arms (round-2 gaps) */
+    test_unified_native_and_reuse();
 
     /* Cross-format */
     test_cross_format();
@@ -1504,6 +2054,9 @@ int main(void) {
     test_sampler_selection();
     test_sampler_combined();
     test_sampler_compile_error();
+
+    /* Bulk teardown — LAST: clears the whole handle registry */
+    test_unified_shutdown();
 
     /* Summary */
     printf("\n=====================================\n");

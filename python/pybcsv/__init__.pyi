@@ -2,6 +2,7 @@
 
 from typing import Optional, Dict
 
+from . import tools as tools
 from ._bcsv import (
     ColumnType as ColumnType,
     ColumnDefinition as ColumnDefinition,
@@ -81,3 +82,16 @@ def iter_arrow_batches(
     columns: Optional[list] = None,
     start_row: int = 0,
 ) -> object: ...  # yields pa.RecordBatch
+def open(
+    path: str,
+    layout: Optional[Layout] = None,
+    mode: str = "r",
+    delimiter: Optional[str] = None,
+    decimal_separator: Optional[str] = None,
+    has_header: bool = True,
+    include_header: bool = True,
+    lz4_block_max_size_id: int = 4,
+    lz4_level: int = 0,
+    **kw: object,
+) -> "Writer | ReaderDirectAccess | CsvWriter | CsvReader":
+    """Auto-detecting open for .bcsv/.csv/.csv.lz4 (use as pybcsv.open)."""

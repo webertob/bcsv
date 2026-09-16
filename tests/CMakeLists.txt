@@ -43,6 +43,7 @@ set(TEST_SOURCES
     writer_reader_test.cpp
     file_codec_test.cpp
     csv_reader_writer_test.cpp
+    lz4_csv_test.cpp
     bench_dataset_profiles_test.cpp
     file_header_byte_buffer_test.cpp
     direct_access_test.cpp

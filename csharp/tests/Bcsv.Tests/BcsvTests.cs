@@ -1095,6 +1095,96 @@ public class BcsvTests : IDisposable
         csvWriter.Dispose();
     }
 
+    // ════════════════════════════════════════════════════════════════
+    // Compressed CSV (.csv.lz4, standard LZ4 frame format)
+    // ════════════════════════════════════════════════════════════════
+    [Fact]
+    public void CsvLz4RoundTrip()
+    {
+        var path = TmpFile("test.csv.lz4");
+        using var layout = new BcsvLayout();
+        layout.AddColumn("id", ColumnType.Int32)
+              .AddColumn("value", ColumnType.Double)
+              .AddColumn("name", ColumnType.String);
+
+        // 5000 rows ≈ 250 KB → spans many 64KB LZ4 blocks.
+        using (var csvWriter = new BcsvCsvWriter(layout))
+        {
+            csvWriter.SetLz4(blockMaxSizeId: 5);   // 256KB blocks
+            csvWriter.Open(path, overwrite: true);
+            for (int i = 0; i < 5000; i++)
+            {
+                csvWriter.Row.SetInt32(0, i);
+                csvWriter.Row.SetDouble(1, i * 1.5);
+                csvWriter.Row.SetString(2, $"row-{i}");
+                csvWriter.WriteRow();
+            }
+            Assert.Equal(5000, csvWriter.RowCount);
+        }
+
+        // The file must start with the LZ4 frame magic: 0x04 0x22 0x4D 0x18.
+        var bytes = File.ReadAllBytes(path);
+        Assert.Equal(new byte[] { 0x04, 0x22, 0x4D, 0x18 }, bytes[..4]);
+
+        // Reader auto-detects LZ4 by magic, not by extension.
+        using var csvReader = new BcsvCsvReader(layout);
+        csvReader.Open(path);
+        int n = 0;
+        foreach (var row in csvReader)
+        {
+            Assert.Equal(n, row.GetInt32(0));
+            Assert.Equal($"row-{n}", row.GetString(2));
+            n++;
+        }
+        Assert.Equal(5000, n);
+        Assert.Equal("", csvReader.ErrorMessage);
+
+        // A truncated frame must stop iteration loudly via ErrorMessage —
+        // never look like a clean early EOF. Cut the end-of-frame marker +
+        // content checksum so the header block still opens cleanly and the
+        // error surfaces as the stream runs dry.
+        var trunc = TmpFile("trunc.csv.lz4");
+        File.WriteAllBytes(trunc, bytes[..^8]);
+        using var truncReader = new BcsvCsvReader(layout);
+        truncReader.Open(trunc);
+        foreach (var _ in truncReader) { }   // drain until the error boundary
+        Assert.Contains("LZ4", truncReader.ErrorMessage);
+    }
+
+    [Fact]
+    public void CsvLz4_SetLz4AfterOpenThrows()
+    {
+        var path = TmpFile("late.csv");
+        using var layout = new BcsvLayout();
+        layout.AddColumn("x", ColumnType.Int32);
+        using var csvWriter = new BcsvCsvWriter(layout);
+        csvWriter.Open(path, overwrite: true);
+        // The frame header is written at Open(); the option is immutable after.
+        var ex = Assert.Throws<BcsvException>(() => csvWriter.SetLz4(4, 0));
+        // The failure must name its reason (the per-handle message), not just
+        // the generic prefix — an empty reason made these exceptions useless.
+        Assert.Contains("already open", ex.Message);
+        Assert.Throws<BcsvException>(() => csvWriter.SetLz4(99, 0));       // invalid block id
+        Assert.Throws<BcsvException>(() => csvWriter.SetLz4(4, 99));       // invalid level
+    }
+
+    [Fact]
+    public void CsvLz4_PlainCsvUnaffected()
+    {
+        // A plain .csv writer never touches the LZ4 path: no magic bytes.
+        var path = TmpFile("plain.csv");
+        using var layout = new BcsvLayout();
+        layout.AddColumn("x", ColumnType.Int32);
+        using (var csvWriter = new BcsvCsvWriter(layout))
+        {
+            csvWriter.Open(path, overwrite: true);
+            csvWriter.Row.SetInt32(0, 7);
+            csvWriter.WriteRow();
+        }
+        var head = File.ReadAllBytes(path)[..4];
+        Assert.False(head.SequenceEqual(new byte[] { 0x04, 0x22, 0x4D, 0x18 }));
+    }
+
     [Fact]
     public void Layout_NonOwning_DoubleDispose_NoThrow()
     {

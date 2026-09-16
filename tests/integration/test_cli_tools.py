@@ -120,6 +120,29 @@ class TestCsv2Bcsv:
     def test_missing_input(self, tools):
         assert expect_fail(tools["csv2bcsv"])
 
+    def test_lz4_csv_input_round_trip(self, tools, canon_csv, tmp_path):
+        """`.csv.lz4` I/O through the CLI, both directions.
+
+        The delimiter auto-detect peek must see DECODED text: reading raw
+        frames would count commas in compressed noise and silently invent a
+        wrong schema. This is the exact flow CLI_TOOLS.md advertises.
+        """
+        bcsv_in = tmp_path / "lz4_in.bcsv"
+        run_tool(tools["csv2bcsv"], "-f", canon_csv["csv"], bcsv_in)
+
+        # BCSV -> compressed CSV -> BCSV: schema and data must survive.
+        z = tmp_path / "canon.csv.lz4"
+        run_tool(tools["bcsv2csv"], bcsv_in, "-o", z)
+        assert z.read_bytes()[:4] == b"\x04\x22\x4d\x18"   # LZ4 frame magic
+        back = tmp_path / "lz4_back.bcsv"
+        run_tool(tools["csv2bcsv"], "-f", z, back)
+        out = tmp_path / "lz4_back.csv"
+        run_tool(tools["bcsv2csv"], back, "-o", out)
+        assert csv_equal(canon_csv["csv"], out)
+        # Header names survived: a wrong delimiter would corrupt them into
+        # merged/garbled columns instead of 'name'.
+        assert csv_header_col1(out) == "id"
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # bcsv2csv tests

@@ -8,10 +8,14 @@
  */
 
 #include "bcsv/bcsv_c_api.h"
+#include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <sstream>
 #include <exception>
 #include <mutex>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -182,11 +186,18 @@ inline const ColumnarReadState* columnar_find(const void* reader) {
 // the correct trade. Create/destroy are cold lifecycle calls (rows are
 // obtained from a writer/reader without allocation), so the mutex never sits
 // on a per-row hot path.
-enum class HandleKind : uint8_t { Row, Sampler, Reader, CsvReader, CsvWriter, Writer, Layout };
+enum class HandleKind : uint8_t { Row, Sampler, Reader, CsvReader, CsvWriter, Writer, Layout,
+                                  UnifiedReader, UnifiedWriter };
+
+struct RegEntry {
+    HandleKind kind;
+    bool       owned;   // false = borrowed member of a unified container, exposed
+                        // via *_native_u — destroyable by nobody but its container
+};
 
 struct HandleRegistry {
     std::mutex mtx;
-    std::unordered_map<void*, HandleKind> live;
+    std::unordered_map<void*, RegEntry> live;
 };
 
 inline HandleRegistry& registry() {
@@ -198,20 +209,52 @@ inline HandleRegistry& registry() {
 void* reg_register(void* h, HandleKind k) {
     auto& reg = registry();
     std::lock_guard<std::mutex> lk(reg.mtx);
-    reg.live.emplace(h, k);
+    reg.live.emplace(h, RegEntry{k, true});
     return h;
 }
 
-/// destroy() guard: claim-or-report in one lock. Returns true when the caller
-/// now owns @p h for destruction; false = logged no-op (double destroy,
-/// borrowed handle such as bcsv_writer_row(), or foreign pointer). A mutex
-/// failure is reported, not propagated: this runs inside extern "C".
-bool reg_take(const char* where, void* h) {
+/// Track a live unified member under its legacy kind (ADR-0009 escape hatch):
+/// bcsv_sampler_create() and friends must treat the borrowed pointer as the
+/// legacy object it is, while destroy guards still refuse to delete it.
+void reg_register_borrowed(void* h, HandleKind k) {
+    auto& reg = registry();
+    std::lock_guard<std::mutex> lk(reg.mtx);
+    reg.live.insert_or_assign(h, RegEntry{k, false});
+}
+
+/// Drop a borrowed-member registration (close_u/destroy_u). No error when
+/// absent (never registered, or claimed wholesale by bcsv_shutdown()).
+void reg_forget(void* h) {
+    auto& reg = registry();
+    std::lock_guard<std::mutex> lk(reg.mtx);
+    reg.live.erase(h);
+}
+
+/// destroy() guard: claim-or-report in one lock, WITH FAMILY CHECK (ADR-0009).
+/// Returns true when the caller now owns @p h for destruction; false = logged
+/// no-op (double destroy, borrowed handle such as bcsv_writer_row() or an
+/// *_native_u member, foreign pointer, or a handle of a DIFFERENT call family
+/// — a unified _u handle through a legacy name poisons nothing and frees
+/// nothing). A mutex failure is reported, not propagated: extern "C".
+bool reg_take(const char* where, void* h, HandleKind expected) {
     try {
         auto& reg = registry();
         std::lock_guard<std::mutex> lk(reg.mtx);
         auto it = reg.live.find(h);
-        if (it != reg.live.end()) { reg.live.erase(it); return true; }
+        if (it != reg.live.end()) {
+            if (it->second.kind != expected) {
+                g_has_error = true;
+                g_last_error = std::string(where) + ": handle belongs to another call family (destroy ignored)";
+                return false;
+            }
+            if (!it->second.owned) {
+                g_has_error = true;
+                g_last_error = std::string(where) + ": borrowed member handle, owned by its unified container (destroy ignored)";
+                return false;
+            }
+            reg.live.erase(it);
+            return true;
+        }
     } catch (...) {
         g_has_error = true;
         g_last_error = std::string(where) + ": handle registry unavailable (destroy ignored)";
@@ -222,24 +265,321 @@ bool reg_take(const char* where, void* h) {
     return false;
 }
 
-/// close/flush guard: is @p h still a live registered handle? A handle freed
-/// by bcsv_shutdown() (or an earlier destroy) must never be touched again —
-/// a GC finalizer running Dispose (close-before-destroy) after shutdown would
-/// otherwise call through freed memory, the same abort class this registry
-/// exists to prevent. Find-without-erase: the handle stays live for its owner.
-bool reg_contains(const char* where, void* h) {
+/// close/flush guard: is @p h a live registered handle of the expected family?
+/// A handle freed by bcsv_shutdown() (or an earlier destroy) must never be
+/// touched again — a GC finalizer running Dispose (close-before-destroy) after
+/// shutdown would otherwise call through freed memory, the same abort class
+/// this registry exists to prevent. Borrowed members pass (both close paths
+/// are idempotent through isOpen()); wrong-family handles are refused.
+/// Find-without-erase: the handle stays live for its owner.
+bool reg_contains(const char* where, void* h, HandleKind expected) {
     try {
         auto& reg = registry();
         std::lock_guard<std::mutex> lk(reg.mtx);
-        if (reg.live.contains(h)) return true;
+        auto it = reg.live.find(h);
+        if (it != reg.live.end() && it->second.kind == expected) return true;
     } catch (...) {
         g_has_error = true;
         g_last_error = std::string(where) + ": handle registry unavailable (call ignored)";
         return false;
     }
     g_has_error = true;
-    g_last_error = std::string(where) + ": handle already destroyed or not owned by this API (call ignored)";
+    g_last_error = std::string(where) + ": handle already destroyed, from another call family, or not owned by this API (call ignored)";
     return false;
+}
+
+/// Cold-path type guard (sampler create): @p h must currently be a handle of
+/// @p expected kind — owned or borrowed. Replaces the pre-ADR-0009 blind cast
+/// that made passing any wrong pointer undefined behavior.
+bool reg_is_a(const char* where, void* h, HandleKind expected) {
+    try {
+        auto& reg = registry();
+        std::lock_guard<std::mutex> lk(reg.mtx);
+        auto it = reg.live.find(h);
+        if (it != reg.live.end() && it->second.kind == expected) return true;
+    } catch (...) {
+        g_has_error = true;
+        g_last_error = std::string(where) + ": handle registry unavailable";
+        return false;
+    }
+    g_has_error = true;
+    g_last_error = std::string(where) + ": not a live matching reader handle (for a unified reader pass bcsv_reader_native_u())";
+    return false;
+}
+
+// ---- Unified format-flexible containers (ADR-0009) --------------------------
+// One _u handle hosts a .bcsv member OR a CSV/.lz4 member, selected and
+// constructed at open time from content magic (AUTO) or the pinned format.
+// No C++ class is modified: the container just owns whichever concrete
+// object the open resolved to, plus the last error. Borrowed-member
+// registration under the member's legacy kind (reg_register_borrowed) lets
+// the *_native_u escape hatch feed the deep legacy APIs (sampler,
+// read_columns) with a correctly-kicked registry entry, while destroy
+// guards still refuse to free a member anyone but the container owns.
+
+/// Content classification by magic only — never trusts the name (ADR-0008
+/// rule, extended across all three formats by ADR-0009). ok=false means the
+/// path is not an openable regular file. Short/empty files classify as CSV
+/// (they can only parse as text; the CSV reader reports "empty header" too).
+bcsv_format_t sniff_file_format(const char* filename, bool& ok) {
+    ok = false;
+    std::error_code ec;
+    if (!filename || !std::filesystem::is_regular_file(filename, ec) || ec) return BCSV_FORMAT_AUTO;
+    std::ifstream in(filename, std::ios::in | std::ios::binary);
+    if (!in.is_open()) return BCSV_FORMAT_AUTO;
+    char head[4] = {0, 0, 0, 0};
+    in.read(head, 4);
+    const size_t got = static_cast<size_t>(in.gcount());
+    ok = true;
+    if (got >= 4 && std::memcmp(head, bcsv::MAGIC_BYTES_BCSV, 4) == 0) return BCSV_FORMAT_BCSV;
+    if (bcsv::lz4_frame_sniff(std::string_view(head, got))) return BCSV_FORMAT_CSV_LZ4;
+    return BCSV_FORMAT_CSV;
+}
+
+std::string bcsv_format_name(bcsv_format_t f) {
+    switch (f) {
+        case BCSV_FORMAT_BCSV:     return "BCSV";
+        case BCSV_FORMAT_CSV:      return "CSV";
+        case BCSV_FORMAT_CSV_LZ4:  return "CSV_LZ4";
+        default:                   return "AUTO";
+    }
+}
+
+/// Pinned-format content check (reader): the asked format must match what
+/// the bytes are, or the open fails loudly — silent reinterpretation was the
+/// hazard ADR-0009 closes (e.g. a .bcsv fed to the CSV reader with
+/// has_header=false parsed as garbage rows). Returns "" on accept, else a
+/// reader-ready error message.
+std::string pinned_format_error(bcsv_format_t pinned, bcsv_format_t found) {
+    if (pinned == found) return "";
+    // CSV and CSV_LZ4 share the text member; the CsvReader self-sniffs LZ4,
+    // so pinned-CSV onto a CSV_LZ4 file silently DECOMPRESSES — wrong for a
+    // pinned caller who meant raw text, and wrong the other way around.
+    if (pinned == BCSV_FORMAT_CSV && found == BCSV_FORMAT_CSV_LZ4)
+        return "Error: file carries an LZ4 frame magic — pinned CSV refuses it; use BCSV_FORMAT_CSV_LZ4";
+    if (pinned == BCSV_FORMAT_CSV_LZ4 && found == BCSV_FORMAT_CSV)
+        return "Error: file has no LZ4 frame magic — pinned CSV_LZ4 refuses it; use BCSV_FORMAT_CSV";
+    return "Error: pinned format " + bcsv_format_name(pinned) +
+           " does not match file content (" + bcsv_format_name(found) + ")";
+}
+
+/// Resolve a reader open format: AUTO = classify content; pinned = verify.
+/// On refusal sets g_error_out and returns false.
+bool resolve_reader_format(bcsv_format_t fmt, const std::string& path,
+                           bcsv_format_t& resolved, std::string& err) {
+    bool ok = false;
+    const bcsv_format_t found = sniff_file_format(path.c_str(), ok);
+    if (!ok) {
+        err = "Error: cannot probe file: " + path;   // let open() produce the real IO error later
+        // Still try the open — permission/missing-file messages are better there.
+        resolved = (fmt == BCSV_FORMAT_AUTO) ? found : fmt;
+        return true;
+    }
+    if (fmt == BCSV_FORMAT_AUTO) { resolved = found; return true; }
+    err = pinned_format_error(fmt, found);
+    return err.empty();
+}
+
+std::string opts_error(const char* field, const char* why) {
+    return std::string("Error: bcsv_open_opts.") + field + " " + why;
+}
+
+// Tri-state int decoding: -1 (unset) -> default; otherwise the given value.
+inline int tri(int v, int def) { return v == -1 ? def : v; }
+inline char chr(char c, char def) { return c == 0 ? def : c; }
+
+// ---- bcsv_open_opts forward-extension rule (ADR-0009) ----------------------
+// The rule, fixed at the first release that ships it — it can never change:
+//   accept   BCSV_OPEN_OPTS_V1_SIZE <= opts->struct_size <= sizeof(bcsv_open_opts)
+//   copy     the first opts->struct_size bytes onto an INIT-initialized
+//            instance → fields the caller's (older, smaller) struct does not
+//            carry stay unset (-1 / NULL) and take the documented default.
+// BCSV_OPEN_OPTS_V1_SIZE = byte offset just past the LAST field of the
+// original 1.5.x struct (lz4_level). Today it equals sizeof(bcsv_open_opts);
+// when a future version APPENDS fields, sizeof grows and old caller structs
+// keep working, while a caller from a NEWER build (struct_size > this build's
+// sizeof) is refused: this build cannot know what the extra tail bytes mean.
+constexpr size_t BCSV_OPEN_OPTS_V1_SIZE =
+    offsetof(bcsv_open_opts, lz4_level) + sizeof(((bcsv_open_opts*)0)->lz4_level);
+// Anchors the append-only rule mechanically: a renamed trailing field fails
+// the offsetof above (compile error), and appending must not silently move
+// the v1 floor off the struct end — if the second assert fires because a new
+// field was appended, V1_SIZE must be re-anchored to the NEW last field of
+// the ORIGINAL v1 field set only (never move it onto the appended field).
+static_assert(BCSV_OPEN_OPTS_V1_SIZE <= sizeof(bcsv_open_opts),
+              "v1 floor cannot exceed the struct");
+static_assert(std::is_trivially_copyable<bcsv_open_opts>::value,
+              "bcsv_open_opts crosses the C ABI via memcpy - must stay trivially copyable");
+
+/// Decode the caller's opts onto @p o (reset to INIT first). NULL opts = all
+/// defaults. Returns false + reason when struct_size is outside the range. 
+bool load_open_opts(const bcsv_open_opts* opts, bcsv_open_opts& o, std::string& err) {
+    o = BCSV_OPEN_OPTS_INIT;
+    if (!opts) return true;
+    const size_t ss = opts->struct_size;
+    if (ss < BCSV_OPEN_OPTS_V1_SIZE || ss > sizeof(bcsv_open_opts)) {
+        err = "Error: bcsv_open_opts.struct_size out of range (must be between " +
+              std::to_string(BCSV_OPEN_OPTS_V1_SIZE) + " and " +
+              std::to_string(sizeof(bcsv_open_opts)) + ")";
+        return false;
+    }
+    std::memcpy(&o, opts, ss);   // prefix copy; never reads past the caller's struct
+    return true;
+}
+
+/// Shared members of both container kinds: resolved format + borrowed-member
+/// registry bookkeeping. While a member is registered the container re-checks
+/// it under its LEGACY kind (owned=false), so an *_native_u escape-hatch
+/// handle passes the registry checks of the deep legacy APIs (sampler create)
+/// while destroy guards still refuse to free a member the container owns.
+struct UnifiedBase {
+    bcsv_format_t resolved = BCSV_FORMAT_AUTO;   // what AUTO pinned to (post-open)
+    void*         member   = nullptr;            // current member object (null before open / after release)
+
+    bool opened() const { return resolved != BCSV_FORMAT_AUTO; }
+    virtual HandleKind member_kind() const = 0;  // the member's legacy kind
+
+    void adopt(void* m) {
+        if (member) reg_forget(member);
+        member = m;
+        if (m) reg_register_borrowed(m, member_kind());
+    }
+    void release_registration() {
+        if (member) { reg_forget(member); member = nullptr; }
+    }
+    virtual ~UnifiedBase() = default;
+};
+
+struct UnifiedReaderHandle : UnifiedBase {
+    std::unique_ptr<bcsv::ReaderDirectAccess<bcsv::Layout>> bin;
+    std::unique_ptr<bcsv::CsvReader<bcsv::Layout>>          csv;
+    std::string  err;                              // container-level error (pre-member)
+
+    bool binary() const { return resolved == BCSV_FORMAT_BCSV; }
+    // The adopted member impersonates its own legacy kind while exposed via
+    // bcsv_reader_native_u: the binary member IS a ReaderDirectAccess, the
+    // CSV member IS a CsvReader — registry checks route them accordingly.
+    HandleKind member_kind() const override { return binary() ? HandleKind::Reader : HandleKind::CsvReader; }
+
+    // ── Active-member access (ADR-0009 kind-switch correctness) ──
+    // Every navigation entry point MUST go through these: they key on the
+    // RESOLVED format, never on member existence. A member kept allocated by
+    // close-for-same-format-reuse must never serve rows after a kind switch
+    // (reading the closed object returned 0 rows silently on .bcsv→.csv).
+    // Branch-cheap: one enum compare, no virtuals (ADR-0009 hot-path rule).
+    bcsv::ReaderDirectAccess<bcsv::Layout>* bin_member() {
+        return binary() ? bin.get() : nullptr;
+    }
+    bcsv::CsvReader<bcsv::Layout>* csv_member() {
+        return (opened() && !binary()) ? csv.get() : nullptr;
+    }
+    const bcsv::ReaderDirectAccess<bcsv::Layout>* bin_member() const {
+        return binary() ? bin.get() : nullptr;
+    }
+    const bcsv::CsvReader<bcsv::Layout>* csv_member() const {
+        return (opened() && !binary()) ? csv.get() : nullptr;
+    }
+
+    // Freeing an adopted member while its borrowed registry entry is alive
+    // strands a stale entry (MINOR-1): release_registration() always first.
+    void discard_bin() {
+        if (!bin) return;
+        if (member == bin.get()) release_registration();
+        columnar_erase(bin.get());
+        bin.reset();   // dtor closes the file
+    }
+    void discard_csv() {
+        if (!csv) return;
+        if (member == csv.get()) release_registration();
+        csv.reset();   // dtor closes the file / LZ4 frame
+    }
+
+    // close keeps members allocated (a reopen of the SAME format reuses them);
+    // a format switch in open_u discards the replaced member. Columnar state
+    // is erased on close, mirroring bcsv_reader_close. resolved returns to
+    // AUTO so format_u/is_open_u never claim a format that is no longer open.
+    void close_member() {
+        if (bin) { columnar_erase(bin.get()); if (bin->isOpen()) bin->close(); }
+        if (csv) { if (csv->isOpen()) csv->close(); }
+        release_registration();
+        resolved = BCSV_FORMAT_AUTO;
+    }
+
+    ~UnifiedReaderHandle() {
+        release_registration();
+        if (bin) columnar_erase(bin.get());   // member dtors close files themselves
+    }
+};
+
+struct UnifiedWriterHandle : UnifiedBase {
+    bcsv::Layout     layout;                       // snapshot from create_u (survives the caller's layout handle)
+    bcsv_row_codec_t codec = BCSV_CODEC_FLAT;      // names the .bcsv member codec
+    WriterHandle*    bin  = nullptr;               // legacy pre-bound handle; container owns BOTH it and its object
+    std::unique_ptr<bcsv::CsvWriter<bcsv::Layout>> csv;
+    std::string  err;
+
+    bool binary() const { return resolved == BCSV_FORMAT_BCSV; }
+    // As above for writers: the binary member handle IS a WriterHandle,
+    // the CSV member IS a CsvWriter — the shapes legacy code path expects.
+    HandleKind member_kind() const override { return binary() ? HandleKind::Writer : HandleKind::CsvWriter; }
+
+    // Member access keyed on the RESOLVED format — see UnifiedReaderHandle.
+    // A replaced member must never serve writes (kind-switch fix, ADR-0009).
+    WriterHandle* bin_member() { return binary() ? bin : nullptr; }
+    bcsv::CsvWriter<bcsv::Layout>* csv_member() {
+        return (opened() && !binary()) ? csv.get() : nullptr;
+    }
+    const WriterHandle* bin_member() const { return binary() ? bin : nullptr; }
+    const bcsv::CsvWriter<bcsv::Layout>* csv_member() const {
+        return (opened() && !binary()) ? csv.get() : nullptr;
+    }
+
+    // close releases the resolved claim; members stay allocated for same-format
+    // reuse (a kind switch in open_u discards them). Resolved resets to AUTO.
+    void close_members() {
+        if (bin) bin->close_fn(bin->ptr);
+        if (csv) csv->close();
+        release_registration();
+        resolved = BCSV_FORMAT_AUTO;
+    }
+
+    // WriterHandle is a plain struct, not a smart pointer: the concrete
+    // writer object must go through delete_fn (the select-once trampoline)
+    // before the handle itself is freed — exactly as bcsv_writer_destroy does.
+    // Freeing an adopted member while its borrowed registry entry is alive
+    // strands a stale entry (MINOR-1): release_registration() always first.
+    void discard_bin() {
+        if (!bin) return;
+        if (member == bin) release_registration();
+        bin->delete_fn(bin->ptr);
+        delete bin;
+        bin = nullptr;
+    }
+    void discard_csv() {
+        if (!csv) return;
+        if (member == csv.get()) release_registration();
+        csv.reset();   // dtor closes the file / LZ4 frame (exceptions swallowed inside)
+    }
+    ~UnifiedWriterHandle() {
+        release_registration();
+        if (bin) { bin->delete_fn(bin->ptr); delete bin; }   // member dtors close files
+    }                                                       // csv dtor via unique_ptr likewise
+};
+
+// Container-level error first: after a failed reopen the (closed) member may
+// still hold a stale message while h.err carries the decisive reason (M5).
+inline std::string writer_member_err(const UnifiedWriterHandle& h) {
+    if (!h.err.empty()) return h.err;
+    if (const auto* b = h.bin_member()) return *b->errorMsg_fn(b->ptr);
+    if (const auto* c = h.csv_member()) return c->getErrorMsg();
+    return std::string();
+}
+inline std::string reader_member_err(const UnifiedReaderHandle& h) {
+    if (!h.err.empty()) return h.err;
+    const std::string* member_err = nullptr;
+    if (const auto* b = h.bin_member()) member_err = &b->getErrorMsg();
+    else if (const auto* c = h.csv_member()) member_err = &c->getErrorMsg();
+    return (member_err && !member_err->empty()) ? *member_err : std::string();
 }
 
 // ---- Cell-type dispatch helpers (1.5.20, docs/adr/0006) --------------------
@@ -404,11 +744,22 @@ int bcsv_version_patch(void) { return bcsv::VERSION_PATCH; }
 // ============================================================================
 // Lifecycle API
 // ============================================================================
-// Closes every open writer/csv-writer (footer lands while the runtime is
-// alive), then destroys all registered handles, borrowers before lenders.
+// Closes every open writer (binary or unified CSV/LZ4 member — the footer
+// lands while the runtime is alive), then destroys all registered handles,
+// borrowers before lenders. Call once from the host's last exit hook, on a
+// process quiescent w.r.t. this API; after it, any *_destroy and any
+// close/flush on a handle this API created is a logged no-op — never a
+// double free or an access through freed memory. The refused-destroy
+// guarantee holds while the handle's address stays unreclaimed; a double
+// destroy interleaved with new handle creation can claim the recycled
+// address. Supported pattern: one owner per handle, plus shutdown() at exit.
 // Contract, rationale and the recycled-address caveat: docs/adr/0006.
+// Borrowed entries (owned=false: a unified container's member exposed via
+// *_native_u) are skipped — their container frees them exactly once, and
+// closing that container's writer closes through the member anyway (the
+// legacy close paths are idempotent through isOpen()).
 void bcsv_shutdown(void) {
-    std::unordered_map<void*, HandleKind> batch;
+    std::unordered_map<void*, RegEntry> batch;
     {
         auto& reg = registry();
         std::lock_guard<std::mutex> lk(reg.mtx);
@@ -420,25 +771,34 @@ void bcsv_shutdown(void) {
     auto swallow = [](auto&& fn) noexcept { try { fn(); } catch (...) {} };
 
     // Phase 1: finalize files while the runtime is fully alive, so the last
-    // packet and footer land on disk deterministically.
-    for (auto& [ptr, kind] : batch) {
-        if (kind == HandleKind::Writer)
+    // packet and footer land on disk deterministically. A unified writer's
+    // CSV member keeps its LZ4 trailer contract: close flushes the frame.
+    // Borrowed (owned=false) Writer/CsvWriter entries are exactly a unified
+    // container's exposed members — closing the container's member here is
+    // what the legacy cast would do; the container skips, closing members
+    // through its own pointers below.
+    for (auto& [ptr, e] : batch) {
+        if (e.kind == HandleKind::Writer && e.owned)
             swallow([&]{ auto* h = static_cast<WriterHandle*>(ptr); h->close_fn(h->ptr); });
-        else if (kind == HandleKind::CsvWriter)
-            swallow([&]{ static_cast<bcsv::CsvWriter<bcsv::Layout>*>(ptr)->close(); });
+        else if (e.kind == HandleKind::UnifiedWriter && e.owned)
+            swallow([&]{ auto* h = static_cast<UnifiedWriterHandle*>(ptr);
+                         if (h->bin) h->bin->close_fn(h->bin->ptr);
+                         if (h->csv) h->csv->close(); });
     }
 
     // Phase 2: destroy — kind-ordered so borrowers die before lenders
     // (writer borrows its layout's schema; sampler borrows its reader).
     for (auto pass = 0; pass < 2; ++pass) {
-        for (auto& [ptr, kind] : batch) {
+        for (auto& [ptr, e] : batch) {
+            const HandleKind kind = e.kind;
+            if (!e.owned) continue;   // borrowed member: its container owns it
             if (pass == 0) {   // owners & borrowers
                 switch (kind) {
                     case HandleKind::Writer:
                         swallow([&]{ auto* h = static_cast<WriterHandle*>(ptr); h->delete_fn(h->ptr); delete h; });
                         break;
-                    case HandleKind::CsvWriter:
-                        swallow([&]{ delete static_cast<bcsv::CsvWriter<bcsv::Layout>*>(ptr); });
+                    case HandleKind::UnifiedWriter:
+                        swallow([&]{ delete static_cast<UnifiedWriterHandle*>(ptr); });
                         break;
                     case HandleKind::Sampler:
                         swallow([&]{ auto* h = static_cast<SamplerHandle*>(ptr); delete h->sampler; delete h; });
@@ -453,8 +813,8 @@ void bcsv_shutdown(void) {
                     case HandleKind::Reader:
                         swallow([&]{ columnar_erase(ptr); delete static_cast<bcsv::ReaderDirectAccess<bcsv::Layout>*>(ptr); });
                         break;
-                    case HandleKind::CsvReader:
-                        swallow([&]{ delete static_cast<bcsv::CsvReader<bcsv::Layout>*>(ptr); });
+                    case HandleKind::UnifiedReader:
+                        swallow([&]{ delete static_cast<UnifiedReaderHandle*>(ptr); });
                         break;
                     case HandleKind::Layout:
                         swallow([&]{ delete static_cast<bcsv::Layout*>(ptr); });
@@ -477,7 +837,7 @@ bcsv_layout_t bcsv_layout_clone(const_bcsv_layout_t layout) {
 
 void bcsv_layout_destroy(bcsv_layout_t layout) {
     if (!layout) return;
-    if (!reg_take("bcsv_layout_destroy", layout)) [[unlikely]] return;
+    if (!reg_take("bcsv_layout_destroy", layout, HandleKind::Layout)) [[unlikely]] return;
     BCSV_CAPI_TRY_VOID("bcsv_layout_destroy", delete static_cast<bcsv::Layout*>(layout))
 }
 
@@ -590,14 +950,14 @@ bcsv_reader_t bcsv_reader_create(void) {
 
 void bcsv_reader_destroy(bcsv_reader_t reader) {
     if (!reader) return;
-    if (!reg_take("bcsv_reader_destroy", reader)) [[unlikely]] return;
+    if (!reg_take("bcsv_reader_destroy", reader, HandleKind::Reader)) [[unlikely]] return;
     columnar_erase(reader);
     BCSV_CAPI_TRY_VOID("bcsv_reader_destroy", delete static_cast<bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader))
 }
 
 void bcsv_reader_close(bcsv_reader_t reader) {
     if (null_handle("bcsv_reader_close", reader)) return;
-    if (!reg_contains("bcsv_reader_close", reader)) [[unlikely]] return;
+    if (!reg_contains("bcsv_reader_close", reader, HandleKind::Reader)) [[unlikely]] return;
     columnar_erase(reader);
     BCSV_CAPI_TRY_VOID("bcsv_reader_close", static_cast<bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader)->close())
 }
@@ -768,7 +1128,7 @@ bcsv_writer_t bcsv_writer_create_delta(bcsv_layout_t layout) {
 
 void bcsv_writer_destroy(bcsv_writer_t writer) {
     if (!writer) return;
-    if (!reg_take("bcsv_writer_destroy", writer)) [[unlikely]] return;
+    if (!reg_take("bcsv_writer_destroy", writer, HandleKind::Writer)) [[unlikely]] return;
     BCSV_CAPI_TRY_VOID("bcsv_writer_destroy", ([&]() {
         auto* h = static_cast<WriterHandle*>(writer);
         h->delete_fn(h->ptr);
@@ -778,14 +1138,14 @@ void bcsv_writer_destroy(bcsv_writer_t writer) {
 
 void bcsv_writer_close(bcsv_writer_t writer) {
     if (null_handle("bcsv_writer_close", writer)) return;
-    if (!reg_contains("bcsv_writer_close", writer)) [[unlikely]] return;
+    if (!reg_contains("bcsv_writer_close", writer, HandleKind::Writer)) [[unlikely]] return;
     auto* h = static_cast<WriterHandle*>(writer);
     BCSV_CAPI_TRY_VOID("bcsv_writer_close", h->close_fn(h->ptr))
 }
 
 void bcsv_writer_flush(bcsv_writer_t writer) {
     if (null_handle("bcsv_writer_flush", writer)) return;
-    if (!reg_contains("bcsv_writer_flush", writer)) [[unlikely]] return;
+    if (!reg_contains("bcsv_writer_flush", writer, HandleKind::Writer)) [[unlikely]] return;
     auto* h = static_cast<WriterHandle*>(writer);
     BCSV_CAPI_TRY_VOID("bcsv_writer_flush", h->flush_fn(h->ptr))
 }
@@ -827,6 +1187,11 @@ bool bcsv_writer_is_open(const_bcsv_writer_t writer) {
 }
 
 bool bcsv_writer_is_poisoned(const_bcsv_writer_t writer) {
+    // True after bcsv_writer_next/write rejected a row exceeding
+    // MAX_ROW_LENGTH: row-codec state is desynced. Packet-based file codecs
+    // (batch-LZ4 default) resynchronise at an empty-packet boundary via
+    // flush(); stream codecs stay poisoned until close. Until then further
+    // writes fail (reported as errors, not thrown).
     if (null_handle("bcsv_writer_is_poisoned", writer)) return false;
     auto* h = static_cast<const WriterHandle*>(writer);
     BCSV_CAPI_TRY_RETURN("bcsv_writer_is_poisoned", false, h->isPoisoned_fn(h->ptr))
@@ -903,207 +1268,13 @@ uint8_t bcsv_writer_compression_level(const_bcsv_writer_t writer) {
 }
 
 int bcsv_writer_file_flags(const_bcsv_writer_t writer) {
+    // Flags actually written to the header, not necessarily those passed to
+    // bcsv_writer_open: the row-codec bits (ZERO_ORDER_HOLD, DELTA_ENCODING)
+    // are replaced from the writer's own codec, so the header can never
+    // disagree with it. Check here rather than assuming. Since 1.5.17.
     if (null_handle("bcsv_writer_file_flags", writer)) return 0;
     auto* h = static_cast<const WriterHandle*>(writer);
     BCSV_CAPI_TRY_RETURN("bcsv_writer_file_flags", 0, h->fileFlags_fn(h->ptr))
-}
-
-// ============================================================================
-// CSV Reader API
-// ============================================================================
-bcsv_csv_reader_t bcsv_csv_reader_create(bcsv_layout_t layout, char delimiter, char decimal_sep) {
-    BCSV_CAPI_TRY_RETURN("bcsv_csv_reader_create", nullptr, ([&]() -> bcsv_csv_reader_t {
-        bcsv::CsvReader<bcsv::Layout>* r = nullptr;
-        if (layout) {
-            r = new bcsv::CsvReader<bcsv::Layout>(
-                *static_cast<bcsv::Layout*>(layout), delimiter, decimal_sep);
-        } else {
-            bcsv::Layout empty;
-            r = new bcsv::CsvReader<bcsv::Layout>(empty, delimiter, decimal_sep);
-        }
-        return static_cast<bcsv_csv_reader_t>(reg_register(r, HandleKind::CsvReader));
-    })())
-}
-
-void bcsv_csv_reader_destroy(bcsv_csv_reader_t reader) {
-    if (!reader) return;
-    if (!reg_take("bcsv_csv_reader_destroy", reader)) [[unlikely]] return;
-    BCSV_CAPI_TRY_VOID("bcsv_csv_reader_destroy", delete static_cast<bcsv::CsvReader<bcsv::Layout>*>(reader))
-}
-
-bool bcsv_csv_reader_open(bcsv_csv_reader_t reader, const char* filename, bool has_header) {
-    if (null_handle("bcsv_csv_reader_open", reader)) return false;
-    try {
-        auto* r = static_cast<bcsv::CsvReader<bcsv::Layout>*>(reader);
-        bool ok = r->open(filename, has_header);
-        if (ok) { clear_last_error(); } else { g_last_error = r->getErrorMsg(); }
-        return ok;
-    } catch (const std::exception& ex) { set_last_error("bcsv_csv_reader_open", ex); return false;
-    } catch (...) { set_last_error_unknown("bcsv_csv_reader_open"); return false; }
-}
-
-void bcsv_csv_reader_close(bcsv_csv_reader_t reader) {
-    if (null_handle("bcsv_csv_reader_close", reader)) return;
-    if (!reg_contains("bcsv_csv_reader_close", reader)) [[unlikely]] return;
-    BCSV_CAPI_TRY_VOID("bcsv_csv_reader_close", static_cast<bcsv::CsvReader<bcsv::Layout>*>(reader)->close())
-}
-
-bool bcsv_csv_reader_is_open(const_bcsv_csv_reader_t reader) {
-    if (null_handle("bcsv_csv_reader_is_open", reader)) return false;
-    BCSV_CAPI_TRY_RETURN("bcsv_csv_reader_is_open", false, static_cast<const bcsv::CsvReader<bcsv::Layout>*>(reader)->isOpen())
-}
-
-#ifdef _WIN32
-const wchar_t* bcsv_csv_reader_filename(const_bcsv_csv_reader_t reader) {
-    if (null_handle("bcsv_csv_reader_filename", reader)) return nullptr;
-    BCSV_CAPI_TRY_RETURN("bcsv_csv_reader_filename", static_cast<const wchar_t*>(nullptr),
-        static_cast<const bcsv::CsvReader<bcsv::Layout>*>(reader)->filePath().c_str())
-}
-#else
-const char* bcsv_csv_reader_filename(const_bcsv_csv_reader_t reader) {
-    if (null_handle("bcsv_csv_reader_filename", reader)) return nullptr;
-    BCSV_CAPI_TRY_RETURN("bcsv_csv_reader_filename", static_cast<const char*>(nullptr),
-        static_cast<const bcsv::CsvReader<bcsv::Layout>*>(reader)->filePath().c_str())
-}
-#endif
-
-const_bcsv_layout_t bcsv_csv_reader_layout(const_bcsv_csv_reader_t reader) {
-    if (null_handle("bcsv_csv_reader_layout", reader)) return nullptr;
-    BCSV_CAPI_TRY_RETURN("bcsv_csv_reader_layout", static_cast<const_bcsv_layout_t>(nullptr),
-        reinterpret_cast<const_bcsv_layout_t>(&static_cast<const bcsv::CsvReader<bcsv::Layout>*>(reader)->layout()))
-}
-
-bool bcsv_csv_reader_next(bcsv_csv_reader_t reader) {
-    if (null_handle("bcsv_csv_reader_next", reader)) return false;
-    try {
-        auto* r = static_cast<bcsv::CsvReader<bcsv::Layout>*>(reader);
-        bool ok = r->readNext();
-        if (!ok && !r->getErrorMsg().empty()) { g_last_error = r->getErrorMsg(); } else { clear_last_error(); }
-        return ok;
-    } catch (const std::exception& ex) { set_last_error("bcsv_csv_reader_next", ex); return false;
-    } catch (...) { set_last_error_unknown("bcsv_csv_reader_next"); return false; }
-}
-
-const_bcsv_row_t bcsv_csv_reader_row(const_bcsv_csv_reader_t reader) {
-    if (null_handle("bcsv_csv_reader_row", reader)) return nullptr;
-    BCSV_CAPI_TRY_RETURN("bcsv_csv_reader_row", static_cast<const_bcsv_row_t>(nullptr),
-        reinterpret_cast<const_bcsv_row_t>(&static_cast<const bcsv::CsvReader<bcsv::Layout>*>(reader)->row()))
-}
-
-size_t bcsv_csv_reader_index(const_bcsv_csv_reader_t reader) {
-    if (null_handle("bcsv_csv_reader_index", reader)) return 0u;
-    BCSV_CAPI_TRY_RETURN("bcsv_csv_reader_index", 0u, static_cast<const bcsv::CsvReader<bcsv::Layout>*>(reader)->rowPos())
-}
-
-size_t bcsv_csv_reader_file_line(const_bcsv_csv_reader_t reader) {
-    if (null_handle("bcsv_csv_reader_file_line", reader)) return 0u;
-    BCSV_CAPI_TRY_RETURN("bcsv_csv_reader_file_line", 0u, static_cast<const bcsv::CsvReader<bcsv::Layout>*>(reader)->fileLine())
-}
-
-const char* bcsv_csv_reader_error_msg(const_bcsv_csv_reader_t reader) {
-    if (null_handle("bcsv_csv_reader_error_msg", reader)) return "";
-    BCSV_CAPI_TRY_RETURN("bcsv_csv_reader_error_msg", "", static_cast<const bcsv::CsvReader<bcsv::Layout>*>(reader)->getErrorMsg().c_str())
-}
-
-// ============================================================================
-// CSV Writer API
-// ============================================================================
-bcsv_csv_writer_t bcsv_csv_writer_create(bcsv_layout_t layout, char delimiter, char decimal_sep) {
-    BCSV_CAPI_TRY_RETURN("bcsv_csv_writer_create", nullptr, ([&]() -> bcsv_csv_writer_t {
-        bcsv::CsvWriter<bcsv::Layout>* w = nullptr;
-        if (layout) {
-            w = new bcsv::CsvWriter<bcsv::Layout>(
-                *static_cast<bcsv::Layout*>(layout), delimiter, decimal_sep);
-        } else {
-            bcsv::Layout empty;
-            w = new bcsv::CsvWriter<bcsv::Layout>(empty, delimiter, decimal_sep);
-        }
-        return static_cast<bcsv_csv_writer_t>(reg_register(w, HandleKind::CsvWriter));
-    })())
-}
-
-void bcsv_csv_writer_destroy(bcsv_csv_writer_t writer) {
-    if (!writer) return;
-    if (!reg_take("bcsv_csv_writer_destroy", writer)) [[unlikely]] return;
-    BCSV_CAPI_TRY_VOID("bcsv_csv_writer_destroy", delete static_cast<bcsv::CsvWriter<bcsv::Layout>*>(writer))
-}
-
-bool bcsv_csv_writer_open(bcsv_csv_writer_t writer, const char* filename, bool overwrite, bool include_header) {
-    if (null_handle("bcsv_csv_writer_open", writer)) return false;
-    try {
-        auto* w = static_cast<bcsv::CsvWriter<bcsv::Layout>*>(writer);
-        bool ok = w->open(filename, overwrite, include_header);
-        if (ok) { clear_last_error(); } else { g_last_error = w->getErrorMsg(); }
-        return ok;
-    } catch (const std::exception& ex) { set_last_error("bcsv_csv_writer_open", ex); return false;
-    } catch (...) { set_last_error_unknown("bcsv_csv_writer_open"); return false; }
-}
-
-void bcsv_csv_writer_close(bcsv_csv_writer_t writer) {
-    if (null_handle("bcsv_csv_writer_close", writer)) return;
-    if (!reg_contains("bcsv_csv_writer_close", writer)) [[unlikely]] return;
-    BCSV_CAPI_TRY_VOID("bcsv_csv_writer_close", static_cast<bcsv::CsvWriter<bcsv::Layout>*>(writer)->close())
-}
-
-bool bcsv_csv_writer_is_open(const_bcsv_csv_writer_t writer) {
-    if (null_handle("bcsv_csv_writer_is_open", writer)) return false;
-    BCSV_CAPI_TRY_RETURN("bcsv_csv_writer_is_open", false, static_cast<const bcsv::CsvWriter<bcsv::Layout>*>(writer)->isOpen())
-}
-
-#ifdef _WIN32
-const wchar_t* bcsv_csv_writer_filename(const_bcsv_csv_writer_t writer) {
-    if (null_handle("bcsv_csv_writer_filename", writer)) return nullptr;
-    BCSV_CAPI_TRY_RETURN("bcsv_csv_writer_filename", static_cast<const wchar_t*>(nullptr),
-        static_cast<const bcsv::CsvWriter<bcsv::Layout>*>(writer)->filePath().c_str())
-}
-#else
-const char* bcsv_csv_writer_filename(const_bcsv_csv_writer_t writer) {
-    if (null_handle("bcsv_csv_writer_filename", writer)) return nullptr;
-    BCSV_CAPI_TRY_RETURN("bcsv_csv_writer_filename", static_cast<const char*>(nullptr),
-        static_cast<const bcsv::CsvWriter<bcsv::Layout>*>(writer)->filePath().c_str())
-}
-#endif
-
-const_bcsv_layout_t bcsv_csv_writer_layout(const_bcsv_csv_writer_t writer) {
-    if (null_handle("bcsv_csv_writer_layout", writer)) return nullptr;
-    BCSV_CAPI_TRY_RETURN("bcsv_csv_writer_layout", static_cast<const_bcsv_layout_t>(nullptr),
-        reinterpret_cast<const_bcsv_layout_t>(&static_cast<const bcsv::CsvWriter<bcsv::Layout>*>(writer)->layout()))
-}
-
-bool bcsv_csv_writer_next(bcsv_csv_writer_t writer) {
-    if (null_handle("bcsv_csv_writer_next", writer)) return false;
-    try {
-        static_cast<bcsv::CsvWriter<bcsv::Layout>*>(writer)->writeRow();
-        clear_last_error();
-        return true;
-    } catch (const std::exception& ex) { set_last_error("bcsv_csv_writer_next", ex); return false;
-    } catch (...) { set_last_error_unknown("bcsv_csv_writer_next"); return false; }
-}
-
-bool bcsv_csv_writer_write(bcsv_csv_writer_t writer, const_bcsv_row_t row) {
-    if (null_handle("bcsv_csv_writer_write", writer) || null_handle("bcsv_csv_writer_write", row)) return false;
-    try {
-        static_cast<bcsv::CsvWriter<bcsv::Layout>*>(writer)->write(*static_cast<const bcsv::Row*>(row));
-        clear_last_error();
-        return true;
-    } catch (const std::exception& ex) { set_last_error("bcsv_csv_writer_write", ex); return false;
-    } catch (...) { set_last_error_unknown("bcsv_csv_writer_write"); return false; }
-}
-
-bcsv_row_t bcsv_csv_writer_row(bcsv_csv_writer_t writer) {
-    if (null_handle("bcsv_csv_writer_row", writer)) return nullptr;
-    BCSV_CAPI_TRY_RETURN("bcsv_csv_writer_row", static_cast<bcsv_row_t>(nullptr),
-        static_cast<bcsv_row_t>(&static_cast<bcsv::CsvWriter<bcsv::Layout>*>(writer)->row()))
-}
-
-size_t bcsv_csv_writer_index(const_bcsv_csv_writer_t writer) {
-    if (null_handle("bcsv_csv_writer_index", writer)) return 0u;
-    BCSV_CAPI_TRY_RETURN("bcsv_csv_writer_index", 0u, static_cast<const bcsv::CsvWriter<bcsv::Layout>*>(writer)->rowCount())
-}
-
-const char* bcsv_csv_writer_error_msg(const_bcsv_csv_writer_t writer) {
-    if (null_handle("bcsv_csv_writer_error_msg", writer)) return "";
-    BCSV_CAPI_TRY_RETURN("bcsv_csv_writer_error_msg", "", static_cast<const bcsv::CsvWriter<bcsv::Layout>*>(writer)->getErrorMsg().c_str())
 }
 
 // ============================================================================
@@ -1129,7 +1300,7 @@ void bcsv_row_destroy(bcsv_row_t row) {
     // Borrowed row handles (bcsv_writer_row / bcsv_reader_row / csv*) are not
     // registered with the registry — a destroy attempt on one is refused here
     // instead of deleting memory owned by the reader/writer.
-    if (!reg_take("bcsv_row_destroy", row)) [[unlikely]] return;
+    if (!reg_take("bcsv_row_destroy", row, HandleKind::Row)) [[unlikely]] return;
     BCSV_CAPI_TRY_VOID("bcsv_row_destroy", delete static_cast<bcsv::Row*>(row))
 }
 
@@ -1462,6 +1633,11 @@ void bcsv_row_visit_const(const_bcsv_row_t row, size_t start_col, size_t count,
 // ============================================================================
 bcsv_sampler_t bcsv_sampler_create(bcsv_reader_t reader) {
     if (null_handle("bcsv_sampler_create", reader)) return nullptr;
+    // Sampler needs the concrete binary reader. A _u unified handle is a
+    // different object (UnifiedReaderHandle*); pass its binary member via
+    // bcsv_reader_native_u(), which is registered as a live Reader. This
+    // replaces the old blind cast that made any wrong pointer UB (ADR-0009).
+    if (!reg_is_a("bcsv_sampler_create", reader, HandleKind::Reader)) return nullptr;
     BCSV_CAPI_TRY_RETURN("bcsv_sampler_create", nullptr, ([&]() -> bcsv_sampler_t {
         auto* r = static_cast<bcsv::ReaderDirectAccess<bcsv::Layout>*>(reader);
         auto* h = new SamplerHandle();
@@ -1472,7 +1648,7 @@ bcsv_sampler_t bcsv_sampler_create(bcsv_reader_t reader) {
 
 void bcsv_sampler_destroy(bcsv_sampler_t sampler) {
     if (!sampler) return;
-    if (!reg_take("bcsv_sampler_destroy", sampler)) [[unlikely]] return;
+    if (!reg_take("bcsv_sampler_destroy", sampler, HandleKind::Sampler)) [[unlikely]] return;
     BCSV_CAPI_TRY_VOID("bcsv_sampler_destroy", ([&]() {
         auto* h = static_cast<SamplerHandle*>(sampler);
         delete h->sampler;
@@ -1834,3 +2010,533 @@ int bcsv_reader_file_flags(const_bcsv_reader_t reader) {
 }
 
 } // extern "C" (columnar)
+
+// ============================================================================
+// Unified File API (ADR-0009)
+// ============================================================================
+extern "C" {
+
+bool bcsv_probe_format(const char* filename, bcsv_format_t* out_format) {
+    if (!out_format) {
+        g_has_error = true;
+        g_last_error = "bcsv_probe_format: NULL out_format";
+        return false;
+    }
+    BCSV_CAPI_TRY_RETURN("bcsv_probe_format", false, ([&]() -> bool {
+        bool ok = false;
+        const bcsv_format_t fmt = sniff_file_format(filename, ok);
+        if (!ok) {
+            g_has_error = true;
+            g_last_error = std::string("bcsv_probe_format: cannot read ") + (filename ? filename : "(null)");
+            return false;
+        }
+        *out_format = fmt;
+        return true;
+    })())
+}
+
+// ---- Unified reader ---------------------------------------------------------
+
+bcsv_reader_t bcsv_reader_create_u(void) {
+    BCSV_CAPI_TRY_RETURN("bcsv_reader_create_u", nullptr,
+        reg_register(new UnifiedReaderHandle(), HandleKind::UnifiedReader))
+}
+
+void bcsv_reader_destroy_u(bcsv_reader_t reader) {
+    if (!reader) return;
+    if (!reg_take("bcsv_reader_destroy_u", reader, HandleKind::UnifiedReader)) [[unlikely]] return;
+    BCSV_CAPI_TRY_VOID("bcsv_reader_destroy_u", delete static_cast<UnifiedReaderHandle*>(reader))
+}
+
+bool bcsv_reader_open_u(bcsv_reader_t reader, const char* filename,
+                        bcsv_format_t format, const bcsv_open_opts* opts) {
+    if (null_handle("bcsv_reader_open_u", reader)) return false;
+    try {
+        auto* h = static_cast<UnifiedReaderHandle*>(reader);
+        // Every exit below this point leaves resolved == AUTO (close_member
+        // resets it): a failed open never leaves format_u lying (M5).
+        if (h->opened()) h->close_member();          // reopen closes the previous file
+        h->err.clear();
+        if (!filename) { g_last_error = h->err = "Error: NULL filename"; return false; }
+        if (format != BCSV_FORMAT_AUTO && format != BCSV_FORMAT_BCSV &&
+            format != BCSV_FORMAT_CSV && format != BCSV_FORMAT_CSV_LZ4) {
+            g_last_error = h->err = "Error: invalid format argument"; return false;
+        }
+
+        // opts validation (struct_size range + tri-state fields must be -1 or in range)
+        bcsv_open_opts o;
+        if (!load_open_opts(opts, o, h->err)) { g_last_error = h->err; return false; }
+        if (o.rebuild_footer < -1 || o.rebuild_footer > 1) { g_last_error = h->err = opts_error("rebuild_footer", "must be -1/0/1"); return false; }
+        if (o.has_header < -1 || o.has_header > 1)         { g_last_error = h->err = opts_error("has_header", "must be -1/0/1"); return false; }
+
+        // Format resolution (ADR-0009): AUTO = sniff content; pinned = verify,
+        // never fall back. resolve_reader_format owns the loud mismatch errors
+        // incl. the CSV/CSV_LZ4 magic cross-refusals.
+        bcsv_format_t resolved = format;
+        if (!resolve_reader_format(format, filename, resolved, h->err)) {
+            g_last_error = h->err;
+            return false;
+        }
+        // After resolution — NOT just for the pinned enum — a text member
+        // needs a schema: text files carry none (B2: the AUTO path used to
+        // deref NULL here when opts==NULL or csv_layout==NULL).
+        if ((resolved == BCSV_FORMAT_CSV || resolved == BCSV_FORMAT_CSV_LZ4) && !o.csv_layout) {
+            g_last_error = h->err = "Error: CSV reader opens require opts->csv_layout (text files carry no schema)";
+            return false;
+        }
+
+        bool ok_open = false;
+        // resolved == BCSV_FORMAT_AUTO only when format == AUTO and probing
+        // failed (missing/unreadable path): let the binary member produce
+        // the real IO error; a successful open then means BCSV after all.
+        if (resolved == BCSV_FORMAT_BCSV || resolved == BCSV_FORMAT_AUTO) {
+            h->discard_csv();                       // switching kinds: truly replace the member
+            if (!h->bin) h->bin = std::make_unique<bcsv::ReaderDirectAccess<bcsv::Layout>>();
+            ok_open = h->bin->open(filename, tri(o.rebuild_footer, 0) != 0);
+            if (ok_open && resolved == BCSV_FORMAT_AUTO) resolved = BCSV_FORMAT_BCSV;
+            if (!ok_open) h->err = h->bin->getErrorMsg();
+        } else {
+            const auto* layout = static_cast<const bcsv::Layout*>(o.csv_layout);
+            // ctor-frozen parse params: reuse only when layout AND
+            // delimiter/decimal_sep are unchanged (M4 — comparing the layout
+            // address alone silently kept the old parsing chars).
+            const char delim = chr(o.delimiter, ',');
+            const char dsep  = chr(o.decimal_sep, '.');
+            const bool same = h->csv &&
+                static_cast<const void*>(&h->csv->layout()) == static_cast<const void*>(layout) &&
+                h->csv->delimiter() == delim && h->csv->decimalSeparator() == dsep;
+            if (!same) {
+                h->discard_csv();      // release registry claim BEFORE the free (MINOR-1)
+                // (re)build only when a parse param changes: Row binds to its layout
+                h->csv = std::make_unique<bcsv::CsvReader<bcsv::Layout>>(*layout, delim, dsep);
+            }
+            ok_open = h->csv->open(filename, tri(o.has_header, 1) != 0);
+            if (!ok_open) h->err = h->csv->getErrorMsg();
+        }
+        if (!ok_open) {
+            // Failed open: resolved still AUTO (close_member reset it); drop
+            // any half-open member so nothing closed serves navigation.
+            if (h->bin) h->discard_bin();
+            if (h->csv) h->discard_csv();
+            g_last_error = h->err.empty() ? "Error: open failed" : h->err;
+            return false;
+        }
+
+        h->resolved = resolved;   // BEFORE adopt: member_kind() keys on it
+        h->adopt(resolved == BCSV_FORMAT_BCSV ? static_cast<void*>(h->bin.get())
+                                              : static_cast<void*>(h->csv.get()));
+        clear_last_error();
+        return true;
+    } catch (const std::exception& ex) {
+        set_last_error("bcsv_reader_open_u", ex);
+        auto* h = static_cast<UnifiedReaderHandle*>(reader);
+        h->err = ex.what();
+        h->resolved = BCSV_FORMAT_AUTO;
+        return false;
+    } catch (...) {
+        set_last_error_unknown("bcsv_reader_open_u");
+        static_cast<UnifiedReaderHandle*>(reader)->resolved = BCSV_FORMAT_AUTO;
+        return false;
+    }
+}
+
+void bcsv_reader_close_u(bcsv_reader_t reader) {
+    if (null_handle("bcsv_reader_close_u", reader)) return;
+    if (!reg_contains("bcsv_reader_close_u", reader, HandleKind::UnifiedReader)) [[unlikely]] return;
+    auto* h = static_cast<UnifiedReaderHandle*>(reader);
+    BCSV_CAPI_TRY_VOID("bcsv_reader_close_u", ([&]() { h->close_member(); })())
+}
+
+bool bcsv_reader_is_open_u(const_bcsv_reader_t reader) {
+    if (null_handle("bcsv_reader_is_open_u", reader)) return false;
+    auto* h = static_cast<const UnifiedReaderHandle*>(reader);
+    BCSV_CAPI_TRY_RETURN("bcsv_reader_is_open_u", false, ([&]() -> bool {
+        if (const auto* b = h->bin_member()) return b->isOpen();
+        if (const auto* c = h->csv_member()) return c->isOpen();
+        return false;
+    })())
+}
+
+bool bcsv_reader_next_u(bcsv_reader_t reader) {
+    if (null_handle("bcsv_reader_next_u", reader)) return false;
+    try {
+        auto* h = static_cast<UnifiedReaderHandle*>(reader);
+        bool ok = false;
+        if (auto* b = h->bin_member()) ok = b->readNext();
+        else if (auto* c = h->csv_member()) ok = c->readNext();
+        else [[unlikely]] { g_last_error = "bcsv_reader_next_u: reader not open"; return false; }
+        if (!ok) [[unlikely]] {
+            const auto msg = reader_member_err(*h);
+            if (!msg.empty()) { g_has_error = true; g_last_error = msg; }
+        }
+        return ok;
+    } catch (const std::exception& ex) { set_last_error("bcsv_reader_next_u", ex); return false; }
+      catch (...) { set_last_error_unknown("bcsv_reader_next_u"); return false; }
+}
+
+const_bcsv_row_t bcsv_reader_row_u(const_bcsv_reader_t reader) {
+    if (null_handle("bcsv_reader_row_u", reader)) return nullptr;
+    BCSV_CAPI_TRY_RETURN("bcsv_reader_row_u", static_cast<const_bcsv_row_t>(nullptr), ([&]() {
+        auto* h = static_cast<const UnifiedReaderHandle*>(reader);
+        if (const auto* b = h->bin_member()) return reinterpret_cast<const_bcsv_row_t>(&b->row());
+        if (const auto* c = h->csv_member()) return reinterpret_cast<const_bcsv_row_t>(&c->row());
+        return static_cast<const_bcsv_row_t>(nullptr);
+    })())
+}
+
+size_t bcsv_reader_index_u(const_bcsv_reader_t reader) {
+    if (null_handle("bcsv_reader_index_u", reader)) return 0u;
+    auto* h = static_cast<const UnifiedReaderHandle*>(reader);
+    BCSV_CAPI_TRY_RETURN("bcsv_reader_index_u", 0u, ([&]() -> size_t {
+        if (const auto* b = h->bin_member()) return b->rowPos();
+        if (const auto* c = h->csv_member()) return c->rowPos();
+        return 0u;
+    })())
+}
+
+size_t bcsv_reader_file_line_u(const_bcsv_reader_t reader) {
+    if (null_handle("bcsv_reader_file_line_u", reader)) return 0u;
+    auto* h = static_cast<const UnifiedReaderHandle*>(reader);
+    BCSV_CAPI_TRY_RETURN("bcsv_reader_file_line_u", 0u,
+        (h->csv_member() ? h->csv_member()->fileLine() : 0u))
+}
+
+const_bcsv_layout_t bcsv_reader_layout_u(const_bcsv_reader_t reader) {
+    if (null_handle("bcsv_reader_layout_u", reader)) return nullptr;
+    BCSV_CAPI_TRY_RETURN("bcsv_reader_layout_u", static_cast<const_bcsv_layout_t>(nullptr), ([&]() {
+        auto* h = static_cast<const UnifiedReaderHandle*>(reader);
+        if (const auto* b = h->bin_member()) return reinterpret_cast<const_bcsv_layout_t>(&b->layout());
+        if (const auto* c = h->csv_member()) return reinterpret_cast<const_bcsv_layout_t>(&c->layout());
+        return static_cast<const_bcsv_layout_t>(nullptr);
+    })())
+}
+
+bcsv_format_t bcsv_reader_format_u(const_bcsv_reader_t reader) {
+    if (null_handle("bcsv_reader_format_u", reader)) return BCSV_FORMAT_AUTO;
+    auto* h = static_cast<const UnifiedReaderHandle*>(reader);
+    BCSV_CAPI_TRY_RETURN("bcsv_reader_format_u", BCSV_FORMAT_AUTO, h->resolved)
+}
+
+#ifdef _WIN32
+const wchar_t* bcsv_reader_filename_u(const_bcsv_reader_t reader) {
+    if (null_handle("bcsv_reader_filename_u", reader)) return nullptr;
+    auto* h = static_cast<const UnifiedReaderHandle*>(reader);
+    BCSV_CAPI_TRY_RETURN("bcsv_reader_filename_u", static_cast<const wchar_t*>(nullptr), ([&]() -> const wchar_t* {
+        if (const auto* b = h->bin_member()) return b->filePath().c_str();
+        if (const auto* c = h->csv_member()) return c->filePath().c_str();
+        return nullptr;
+    })())
+}
+#else
+const char* bcsv_reader_filename_u(const_bcsv_reader_t reader) {
+    if (null_handle("bcsv_reader_filename_u", reader)) return nullptr;
+    auto* h = static_cast<const UnifiedReaderHandle*>(reader);
+    BCSV_CAPI_TRY_RETURN("bcsv_reader_filename_u", static_cast<const char*>(nullptr), ([&]() -> const char* {
+        if (const auto* b = h->bin_member()) return b->filePath().c_str();
+        if (const auto* c = h->csv_member()) return c->filePath().c_str();
+        return nullptr;
+    })())
+}
+#endif
+
+const char* bcsv_reader_error_msg_u(const_bcsv_reader_t reader) {
+    if (null_handle("bcsv_reader_error_msg_u", reader)) return "";
+    auto* h = static_cast<const UnifiedReaderHandle*>(reader);
+    BCSV_CAPI_TRY_RETURN("bcsv_reader_error_msg_u", "", ([&]() -> const char* {
+        g_fmt_buf = reader_member_err(*h);
+        return g_fmt_buf.c_str();
+    })())
+}
+
+void* bcsv_reader_native_u(const_bcsv_reader_t reader) {
+    // The escape hatch for functions the unified reader does not carry: the
+    // BCSV member is exposed as a bcsv_reader_t (deep binary APIs: sampler,
+    // read(index), read_columns, …), the CSV member as the bcsv::CsvReader
+    // object (C++ consumers). Borrowed: NEVER destroy the result and never
+    // keep it across close_u/reopen_u — the container frees it. NULL when not
+    // open. Registered under the member's legacy kind while open, so the
+    // legacy registry guards accept it and refuse it after the close.
+    if (null_handle("bcsv_reader_native_u", reader)) return nullptr;
+    auto* h = static_cast<const UnifiedReaderHandle*>(reader);
+    BCSV_CAPI_TRY_RETURN("bcsv_reader_native_u", static_cast<void*>(nullptr), ([&]() -> void* {
+        if (const auto* b = h->bin_member()) return const_cast<void*>(static_cast<const void*>(b));
+        if (const auto* c = h->csv_member()) return const_cast<void*>(static_cast<const void*>(c));
+        return nullptr;
+    })())
+}
+
+// ---- Unified writer ---------------------------------------------------------
+
+bcsv_writer_t bcsv_writer_create_u(bcsv_layout_t layout, bcsv_row_codec_t row_codec) {
+    BCSV_CAPI_TRY_RETURN("bcsv_writer_create_u", nullptr, ([&]() {
+        if (row_codec != BCSV_CODEC_FLAT && row_codec != BCSV_CODEC_ZOH && row_codec != BCSV_CODEC_DELTA) {
+            g_has_error = true;
+            g_last_error = "bcsv_writer_create_u: invalid row_codec";
+            return static_cast<bcsv_writer_t>(nullptr);
+        }
+        auto* h = new UnifiedWriterHandle();
+        if (layout) h->layout = *static_cast<bcsv::Layout*>(layout);   // snapshot: layout handle may die first
+        h->codec = row_codec;
+        return static_cast<bcsv_writer_t>(reg_register(h, HandleKind::UnifiedWriter));
+    })())
+}
+
+void bcsv_writer_destroy_u(bcsv_writer_t writer) {
+    if (!writer) return;
+    if (!reg_take("bcsv_writer_destroy_u", writer, HandleKind::UnifiedWriter)) [[unlikely]] return;
+    BCSV_CAPI_TRY_VOID("bcsv_writer_destroy_u", delete static_cast<UnifiedWriterHandle*>(writer))
+}
+
+// Build the .bcsv member for the requested codec (or reuse the existing one
+// when the codec is unchanged — WriterHandle caches its row pointer).
+static void ensure_bin_member(UnifiedWriterHandle& h) {
+    const auto want = (h.codec == BCSV_CODEC_ZOH)   ? WriterHandle::Type::ZoH
+                    : (h.codec == BCSV_CODEC_DELTA) ? WriterHandle::Type::Delta
+                                                    : WriterHandle::Type::Flat;
+    if (h.bin && h.bin->type == want) return;
+    h.discard_bin();
+    h.bin = [&] {
+        switch (want) {
+            case WriterHandle::Type::ZoH:
+                return createWriterHandle(want, new bcsv::WriterZoH<bcsv::Layout>(h.layout));
+            case WriterHandle::Type::Delta:
+                return createWriterHandle(want, new bcsv::WriterDelta<bcsv::Layout>(h.layout));
+            case WriterHandle::Type::Flat:
+            default:
+                return createWriterHandle(want, new bcsv::WriterFlat<bcsv::Layout>(h.layout));
+        }
+    }();
+}
+
+bool bcsv_writer_open_u(bcsv_writer_t writer, const char* filename, bool overwrite,
+                        bcsv_format_t format, const bcsv_open_opts* opts) {
+    if (null_handle("bcsv_writer_open_u", writer)) return false;
+    try {
+        auto* h = static_cast<UnifiedWriterHandle*>(writer);
+        // Every exit below leaves resolved == AUTO (close_members resets it):
+        // a failed open never leaves format_u lying (M5).
+        if (h->opened()) h->close_members();        // reopen closes the current file
+        h->err.clear();
+        if (!filename) { g_last_error = h->err = "Error: NULL filename"; return false; }
+
+        bcsv_open_opts o;
+        if (!load_open_opts(opts, o, h->err)) { g_last_error = h->err; return false; }
+        if (o.compression < -1 || o.block_size_kb < -1)   { g_last_error = h->err = opts_error("compression/block_size_kb", "must be -1 or positive"); return false; }
+        if (o.include_header < -1 || o.include_header > 1){ g_last_error = h->err = opts_error("include_header", "must be -1/0/1"); return false; }
+        // FileFlags is uint16_t-backed; any value outside -1/its range would
+        // reinterpret as a huge bit pattern through the static_cast below.
+        if (o.file_flags < -1 || o.file_flags > 0xFFFF)   { g_last_error = h->err = opts_error("file_flags", "must be -1 or a uint16 bit pattern"); return false; }
+
+        // Resolve format: AUTO = extension rule (".csv"→CSV, ".lz4"→CSV_LZ4,
+        // else BCSV) — writers have no content to consult (ADR-0009).
+        bcsv_format_t resolved = format;
+        if (format == BCSV_FORMAT_AUTO) {
+            const std::filesystem::path p(filename);
+            const std::string ext = p.extension().string();
+            resolved = (ext == ".lz4") ? BCSV_FORMAT_CSV_LZ4
+                     : (ext == ".csv") ? BCSV_FORMAT_CSV
+                                       : BCSV_FORMAT_BCSV;
+        }
+
+        bool ok_open = false;
+        if (resolved == BCSV_FORMAT_BCSV) {
+            h->discard_csv();                       // switching kinds: truly replace the member
+            ensure_bin_member(*h);
+            auto flags = (o.file_flags == -1)
+                ? static_cast<bcsv_file_flags_t>(BCSV_FLAG_BATCH_COMPRESS |
+                      (h->codec == BCSV_CODEC_ZOH ? BCSV_FLAG_ZOH :
+                       h->codec == BCSV_CODEC_DELTA ? BCSV_FLAG_DELTA_ENCODING : 0))
+                : static_cast<bcsv_file_flags_t>(o.file_flags);
+            // Reuse bcsv_writer_open's codec-flag override semantics: the
+            // handle type auto-sets its codec bit; when the caller pinned
+            // flags we still let the writer enforce header truth.
+            ok_open = h->bin->open_fn(h->bin->ptr, filename, overwrite,
+                                      static_cast<size_t>(tri(o.compression, static_cast<int>(bcsv::DEFAULT_COMPRESSION_LEVEL))),
+                                      static_cast<size_t>(tri(o.block_size_kb, static_cast<int>(bcsv::DEFAULT_PACKET_SIZE_KB))),
+                                      static_cast<bcsv::FileFlags>(flags));
+            if (!ok_open) h->err = *h->bin->errorMsg_fn(h->bin->ptr);
+        } else if (resolved == BCSV_FORMAT_CSV || resolved == BCSV_FORMAT_CSV_LZ4) {
+            if (o.lz4_block_id != -1 && (o.lz4_block_id < 4 || o.lz4_block_id > 7)) {
+                g_last_error = h->err = opts_error("lz4_block_id", "must be -1 or 4..7");
+                return false;
+            }
+            if (o.lz4_level < -1 || o.lz4_level > 12) { g_last_error = h->err = opts_error("lz4_level", "must be -1 or 0..12"); return false; }
+            // The CSV writer's delimiter/decimal_sep are ctor-frozen, so the
+            // member is REBUILT on every CSV open (M4: writing them into the
+            // opts of a reused member would be a dead knob). CSV open is a
+            // cold path; h->layout is the container's snapshot Layout.
+            h->discard_csv();
+            h->csv = std::make_unique<bcsv::CsvWriter<bcsv::Layout>>(
+                h->layout, chr(o.delimiter, ','), chr(o.decimal_sep, '.'));
+            auto* w = h->csv.get();
+            // ADR-0008: setLz4/setLz4Mode are pre-open options — the frame
+            // header is written by open().
+            w->setLz4Mode(resolved == BCSV_FORMAT_CSV_LZ4 ? bcsv::CsvWriter<bcsv::Layout>::Lz4Mode::Frame
+                                                          : bcsv::CsvWriter<bcsv::Layout>::Lz4Mode::Plain);
+            if (resolved == BCSV_FORMAT_CSV_LZ4 && !w->setLz4(tri(o.lz4_block_id, 4), tri(o.lz4_level, 0))) {
+                h->err = w->getErrorMsg();
+                g_last_error = h->err;
+                h->discard_csv();
+                return false;
+            }
+            ok_open = w->open(filename, overwrite, tri(o.include_header, 1) != 0);
+            if (!ok_open) h->err = w->getErrorMsg();
+        } else {
+            g_last_error = h->err = "Error: invalid format argument";
+            return false;
+        }
+        if (!ok_open) {
+            if (h->bin) h->discard_bin();   // drop the half-open member
+            g_last_error = !h->err.empty() ? h->err : "Error: writer open failed";
+            return false;
+        }
+
+        h->resolved = resolved;   // BEFORE adopt: member_kind() keys on it
+        // Adopt EXACTLY what bcsv_writer_native_u hands out: the WriterHandle
+        // for the binary member (legacy bcsv_writer_* take the handle, not the
+        // concrete writer object), the CsvWriter itself for the CSV member —
+        // so native-handle round-trips through the legacy deep APIs pass
+        // their borrowed-kind registry checks (round-2 N1).
+        h->adopt(resolved == BCSV_FORMAT_BCSV ? static_cast<void*>(h->bin)
+                                              : static_cast<void*>(h->csv.get()));
+        clear_last_error();
+        return true;
+    } catch (const std::exception& ex) {
+        set_last_error("bcsv_writer_open_u", ex);
+        auto* h = static_cast<UnifiedWriterHandle*>(writer);
+        h->err = ex.what();
+        h->resolved = BCSV_FORMAT_AUTO;
+        return false;
+    } catch (...) {
+        set_last_error_unknown("bcsv_writer_open_u");
+        static_cast<UnifiedWriterHandle*>(writer)->resolved = BCSV_FORMAT_AUTO;
+        return false;
+    }
+}
+
+void bcsv_writer_close_u(bcsv_writer_t writer) {
+    if (null_handle("bcsv_writer_close_u", writer)) return;
+    if (!reg_contains("bcsv_writer_close_u", writer, HandleKind::UnifiedWriter)) [[unlikely]] return;
+    auto* h = static_cast<UnifiedWriterHandle*>(writer);
+    BCSV_CAPI_TRY_VOID("bcsv_writer_close_u", ([&]() {
+        h->close_members();
+    })())
+}
+
+bool bcsv_writer_is_open_u(const_bcsv_writer_t writer) {
+    if (null_handle("bcsv_writer_is_open_u", writer)) return false;
+    auto* h = static_cast<const UnifiedWriterHandle*>(writer);
+    BCSV_CAPI_TRY_RETURN("bcsv_writer_is_open_u", false, ([&]() -> bool {
+        if (const auto* b = h->bin_member()) return b->isOpen_fn(b->ptr);
+        if (const auto* c = h->csv_member()) return c->isOpen();
+        return false;
+    })())
+}
+
+bool bcsv_writer_next_u(bcsv_writer_t writer) {
+    if (null_handle("bcsv_writer_next_u", writer)) return false;
+    try {
+        auto* h = static_cast<UnifiedWriterHandle*>(writer);
+        if (auto* b = h->bin_member()) { b->writeRow_fn(b->ptr); clear_last_error(); return true; }
+        if (auto* c = h->csv_member()) { c->writeRow();          clear_last_error(); return true; }
+        g_last_error = "bcsv_writer_next_u: writer not open"; return false;
+    } catch (const std::exception& ex) { set_last_error("bcsv_writer_next_u", ex); return false; }
+      catch (...) { set_last_error_unknown("bcsv_writer_next_u"); return false; }
+}
+
+bool bcsv_writer_write_u(bcsv_writer_t writer, const_bcsv_row_t row) {
+    if (null_handle("bcsv_writer_write_u", writer) || null_handle("bcsv_writer_write_u", row)) return false;
+    try {
+        auto* h = static_cast<UnifiedWriterHandle*>(writer);
+        const auto* r = static_cast<const bcsv::Row*>(row);
+        if (auto* b = h->bin_member()) { b->write_fn(b->ptr, *r); clear_last_error(); return true; }
+        if (auto* c = h->csv_member()) { c->write(*r);            clear_last_error(); return true; }
+        g_last_error = "bcsv_writer_write_u: writer not open"; return false;
+    } catch (const std::exception& ex) { set_last_error("bcsv_writer_write_u", ex); return false; }
+      catch (...) { set_last_error_unknown("bcsv_writer_write_u"); return false; }
+}
+
+bcsv_row_t bcsv_writer_row_u(bcsv_writer_t writer) {
+    if (null_handle("bcsv_writer_row_u", writer)) return nullptr;
+    auto* h = static_cast<UnifiedWriterHandle*>(writer);
+    BCSV_CAPI_TRY_RETURN("bcsv_writer_row_u", static_cast<bcsv_row_t>(nullptr), ([&]() -> bcsv_row_t {
+        if (auto* b = h->bin_member()) return static_cast<bcsv_row_t>(b->cached_row);
+        if (auto* c = h->csv_member()) return static_cast<bcsv_row_t>(&c->row());
+        return nullptr;
+    })())
+}
+
+size_t bcsv_writer_index_u(const_bcsv_writer_t writer) {
+    if (null_handle("bcsv_writer_index_u", writer)) return 0u;
+    auto* h = static_cast<const UnifiedWriterHandle*>(writer);
+    BCSV_CAPI_TRY_RETURN("bcsv_writer_index_u", 0u, ([&]() -> size_t {
+        if (const auto* b = h->bin_member()) return b->rowCount_fn(b->ptr);
+        if (const auto* c = h->csv_member()) return c->rowCount();
+        return 0u;
+    })())
+}
+
+const_bcsv_layout_t bcsv_writer_layout_u(const_bcsv_writer_t writer) {
+    if (null_handle("bcsv_writer_layout_u", writer)) return nullptr;
+    auto* h = static_cast<const UnifiedWriterHandle*>(writer);
+    BCSV_CAPI_TRY_RETURN("bcsv_writer_layout_u", static_cast<const_bcsv_layout_t>(nullptr),
+        ([&]() {
+            if (const auto* b = h->bin_member()) return reinterpret_cast<const_bcsv_layout_t>(b->layout_fn(b->ptr));
+            if (const auto* c = h->csv_member()) return reinterpret_cast<const_bcsv_layout_t>(&c->layout());
+            return static_cast<const_bcsv_layout_t>(&h->layout);   // container layout snapshot
+        })())
+}
+
+bcsv_format_t bcsv_writer_format_u(const_bcsv_writer_t writer) {
+    if (null_handle("bcsv_writer_format_u", writer)) return BCSV_FORMAT_AUTO;
+    auto* h = static_cast<const UnifiedWriterHandle*>(writer);
+    BCSV_CAPI_TRY_RETURN("bcsv_writer_format_u", BCSV_FORMAT_AUTO, h->resolved)
+}
+
+#ifdef _WIN32
+const wchar_t* bcsv_writer_filename_u(const_bcsv_writer_t writer) {
+    if (null_handle("bcsv_writer_filename_u", writer)) return nullptr;
+    auto* h = static_cast<const UnifiedWriterHandle*>(writer);
+    BCSV_CAPI_TRY_RETURN("bcsv_writer_filename_u", static_cast<const wchar_t*>(nullptr), ([&]() -> const wchar_t* {
+        if (const auto* b = h->bin_member()) return b->filePath_fn(b->ptr);
+        if (const auto* c = h->csv_member()) return c->filePath().c_str();
+        return nullptr;
+    })())
+}
+#else
+const char* bcsv_writer_filename_u(const_bcsv_writer_t writer) {
+    if (null_handle("bcsv_writer_filename_u", writer)) return nullptr;
+    auto* h = static_cast<const UnifiedWriterHandle*>(writer);
+    BCSV_CAPI_TRY_RETURN("bcsv_writer_filename_u", static_cast<const char*>(nullptr), ([&]() -> const char* {
+        if (const auto* b = h->bin_member()) return b->filePath_fn(b->ptr);
+        if (const auto* c = h->csv_member()) return c->filePath().c_str();
+        return nullptr;
+    })())
+}
+#endif
+
+const char* bcsv_writer_error_msg_u(const_bcsv_writer_t writer) {
+    if (null_handle("bcsv_writer_error_msg_u", writer)) return "";
+    auto* h = static_cast<const UnifiedWriterHandle*>(writer);
+    BCSV_CAPI_TRY_RETURN("bcsv_writer_error_msg_u", "", ([&]() -> const char* {
+        g_fmt_buf = writer_member_err(*h);
+        return g_fmt_buf.c_str();
+    })())
+}
+
+void* bcsv_writer_native_u(const_bcsv_writer_t writer) {
+    if (null_handle("bcsv_writer_native_u", writer)) return nullptr;
+    auto* h = static_cast<const UnifiedWriterHandle*>(writer);
+    BCSV_CAPI_TRY_RETURN("bcsv_writer_native_u", static_cast<void*>(nullptr),
+        // The binary member is exposed as its WriterHandle (the shape the
+        // legacy bcsv_writer_* functions take), the CSV member as the raw
+        // CsvWriter. Borrowed: see bcsv_reader_native_u. Dispatch on RESOLVED,
+        // like every other entry point — never on member existence.
+        ([&]() -> void* {
+            if (const auto* b = h->bin_member()) return const_cast<void*>(static_cast<const void*>(b));
+            if (const auto* c = h->csv_member()) return const_cast<void*>(static_cast<const void*>(c));
+            return nullptr;
+        })())
+}
+
+} // extern "C" (unified file API, ADR-0009)

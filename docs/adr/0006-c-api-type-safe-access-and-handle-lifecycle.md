@@ -1,4 +1,4 @@
-# ADR-006: Type-Safe C API Cell Access and Idempotent Handle Lifecycle
+# ADR-0006: Type-Safe C API Cell Access and Idempotent Handle Lifecycle
 
 **Status:** Accepted  
 **Date:** 2026-09-14  

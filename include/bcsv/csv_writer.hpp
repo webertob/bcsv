@@ -15,6 +15,7 @@
  */
 
 #include "csv_writer.h"
+#include "lz4_frame_stream.hpp"
 #include "row.hpp"
 #include "std_charconv_compat.h"
 #include <cassert>
@@ -40,12 +41,7 @@ namespace bcsv {
     CsvWriter<LayoutType>::~CsvWriter() {
         if (isOpen()) {
             try {
-                // Only close the owned stream; don't flush external ostreams in dtor
-                if (stream_.is_open()) {
-                    stream_.flush();
-                    stream_.close();
-                }
-                os_ = nullptr;
+                close();   // same teardown as explicit close(), exceptions swallowed below
             } catch (...) {
                 // Suppress exceptions during destruction
             }
@@ -59,13 +55,57 @@ namespace bcsv {
         if (os_ == nullptr) {
             return;
         }
-        os_->flush();
+        // Order matters: the LZ4 frame trailer must reach the file stream
+        // before the file closes. finish() flushes the pending block, writes
+        // the end-block marker + end-of-frame, and syncs the sink; the
+        // external-ostream open path has no owned frame and just flushes.
+        //
+        // If finish() throws (sink full, media error), os_/lz4_/stream_ are
+        // deliberately left untouched: the caller's error propagates, the
+        // destructor's retry can still deliver what it can, and swallowing a
+        // failed frame close would produce a truncated .lz4 that the reader
+        // (strictly) rejects — which must never look like a successful write.
+        if (lz4_) {
+            lz4_->finish();
+            lz4_.reset();
+        } else {
+            os_->flush();    // external stream: flush only, don't own it
+        }
         if (stream_.is_open()) {
+            stream_.flush();
             stream_.close();
         }
         os_ = nullptr;
         file_path_.clear();
         row_cnt_ = 0;
+    }
+
+    // ── LZ4 frame tuning ────────────────────────────────────────────────
+
+    // Frame parameters are fixed at open() time (the frame header is written
+    // then, and frame headers are immutable), so this must run before open().
+    // ADR-0001 keeps I/O on bool + getErrorMsg(): rejection reasons go into
+    // err_msg_ instead of an empty message.
+    template<LayoutConcept LayoutType>
+    bool CsvWriter<LayoutType>::setLz4(int block_max_size_id, int level) {
+        err_msg_.clear();
+        if (block_max_size_id < 4 || block_max_size_id > 7) {
+            err_msg_ = "Error: setLz4: invalid block size id " + std::to_string(block_max_size_id) +
+                       " (4=64KB, 5=256KB, 6=1MB, 7=4MB)";
+            return false;
+        }
+        if (level < 0 || level > 12) {
+            err_msg_ = "Error: setLz4: invalid compression level " + std::to_string(level) +
+                       " (0=fast, 2..12=LZ4HC)";
+            return false;
+        }
+        if (isOpen()) {   // frame header already written; immutable
+            err_msg_ = "Error: setLz4: writer is already open — set LZ4 options before open()";
+            return false;
+        }
+        lz4_block_id_ = block_max_size_id;
+        lz4_level_ = level;
+        return true;
     }
 
     template<LayoutConcept LayoutType>
@@ -111,14 +151,29 @@ namespace bcsv {
                 throw std::runtime_error(err_msg_);
             }
 
-            // Open text file (not binary — let OS handle line endings)
-            stream_.open(absolutePath, std::ios::out | std::ios::trunc);
+            // .lz4 frames are binary data: a text-mode newline translation
+            // would corrupt the frame bytes. Plain CSV keeps text mode so the
+            // OS handles line endings as before; compressed CSV always emits
+            // bare '\n' inside the frame (OS-independent, reader accepts \r\n).
+            // Lz4Mode (ADR-0009): Auto defers to the extension; Plain/Frame
+            // force the coder regardless of the file name.
+            const bool lz4_mode = lz4_mode_ == static_cast<int>(Lz4Mode::Frame) ||
+                                  (lz4_mode_ == static_cast<int>(Lz4Mode::Auto) &&
+                                   absolutePath.extension() == ".lz4");
+            auto mode = std::ios::out | std::ios::trunc;
+            if (lz4_mode) mode |= std::ios::binary;
+            stream_.open(absolutePath, mode);
             if (!stream_.good()) {
                 err_msg_ = "Error: Cannot open file for writing: " + absolutePath.string();
                 throw std::runtime_error(err_msg_);
             }
 
-            os_ = &stream_;
+            if (lz4_mode) {
+                lz4_ = std::make_unique<Lz4FrameOStream>(stream_.rdbuf(), lz4_block_id_, lz4_level_);
+                os_ = lz4_.get();
+            } else {
+                os_ = &stream_;
+            }
             file_path_ = absolutePath;
             row_cnt_ = 0;
             row_.clear();

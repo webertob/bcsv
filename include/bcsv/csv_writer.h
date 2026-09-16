@@ -42,6 +42,7 @@
 #include <cstdint>
 #include <fstream>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -50,6 +51,9 @@
 #include "row.h"
 
 namespace bcsv {
+
+    // LZ4 frame output stream — declared in lz4_frame_stream.h
+    class Lz4FrameOStream;
 
     /**
      * @brief Class for writing CSV text files using the BCSV data model
@@ -63,8 +67,9 @@ namespace bcsv {
     private:
         std::string             err_msg_;           // last error message description
         FilePath                file_path_;          // path to the output file
-        std::ofstream           stream_;             // text output stream (owned, for file open)
-        std::ostream*           os_ = nullptr;       // active output stream (points to stream_ or external ostream)
+        std::ofstream           stream_;             // raw file stream (plain text or binary .lz4)
+        std::unique_ptr<Lz4FrameOStream> lz4_;       // frame compressor on top of stream_ (null = plain CSV)
+        std::ostream*           os_ = nullptr;       // active output stream (stream_, lz4_, or external)
 
         RowType                 row_;                // current row (user fills, writeRow() serializes)
         uint64_t                row_cnt_ = 0;        // total rows written
@@ -72,12 +77,23 @@ namespace bcsv {
         char                    delimiter_ = ',';    // field delimiter
         char                    decimal_sep_ = '.';  // decimal separator for float/double
 
+        int                     lz4_block_id_ = 4;   // LZ4 frame block max size FField: 4=64KB..7=4MB
+        int                     lz4_level_ = 0;      // LZ4 level: 0=fast, 2..12=HC (1 is fast too)
+        int                     lz4_mode_ = -1;      // Lz4Mode: -1=auto (by extension), 0=plain, 1=frame
+
         std::vector<char>       buf_;                // reusable per-row serialization buffer
 
     public:
         CsvWriter() = delete;
         explicit CsvWriter(const LayoutType& layout, char delimiter = ',', char decimalSep = '.');
         ~CsvWriter();
+        // Owning streambuf/lz4_ members with a raw os_ alias into them: a
+        // moved-from writer would leave os_ dangling. Non-copyable anyway
+        // (ifstream/unique_ptr); moves are refused explicitly.
+        CsvWriter(const CsvWriter&) = delete;
+        CsvWriter& operator=(const CsvWriter&) = delete;
+        CsvWriter(CsvWriter&&) = delete;
+        CsvWriter& operator=(CsvWriter&&) = delete;
 
         void                    close();
         const std::string&      getErrorMsg() const             { return err_msg_; }
@@ -95,6 +111,17 @@ namespace bcsv {
         // CSV-specific accessors
         char                    delimiter() const               { return delimiter_; }
         char                    decimalSeparator() const        { return decimal_sep_; }
+
+        // LZ4 frame tuning — call BEFORE open() on ".lz4" destinations (the
+        // frame header is written at open time). Inert for plain ".csv".
+        bool                    setLz4(int block_max_size_id = 4, int level = 0);
+
+        // Container override — call BEFORE open(). Auto (default): the ".lz4"
+        // extension picks the coder. Plain/Frame force the choice so a caller
+        // that already fixed the format (C API ADR-0009) is not second-guessed
+        // by the file name.
+        enum class Lz4Mode : int { Auto = -1, Plain = 0, Frame = 1 };
+        void                    setLz4Mode(Lz4Mode mode)                { lz4_mode_ = static_cast<int>(mode); }
 
     private:
         void                    writeHeader();

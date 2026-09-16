@@ -15,6 +15,7 @@
  */
 
 #include "csv_reader.h"
+#include "lz4_frame_stream.hpp"
 #include "row.hpp"
 #include "std_charconv_compat.h"
 #include <algorithm>
@@ -42,8 +43,12 @@ namespace bcsv {
 
     template<LayoutConcept LayoutType>
     CsvReader<LayoutType>::~CsvReader() {
-        if (isOpen()) {
-            close();
+        try {
+            if (isOpen()) {
+                close();
+            }
+        } catch (...) {
+            // Suppress exceptions during destruction
         }
     }
 
@@ -54,11 +59,15 @@ namespace bcsv {
         if (!stream_.is_open()) {
             return;
         }
+        // lz4_ borrows stream_'s rdbuf — destroy it before the file closes.
+        lz4_.reset();
+        is_ = nullptr;
         stream_.close();
         file_path_.clear();
         row_pos_ = 0;
         file_line_ = 0;
         parse_error_count_ = 0;
+        lz4_error_ = false;
         row_.clear();
     }
 
@@ -94,10 +103,33 @@ namespace bcsv {
                 throw std::runtime_error("Error: No read permission for file: " + absolutePath.string());
             }
 
-            // Open text file
-            stream_.open(absolutePath, std::ios::in);
+            // Open binary: the format sniff below must see raw bytes, and the
+            // LZ4 path needs undisturbed frames. Plain CSV line handling is
+            // unaffected — fetchRecord() strips a trailing \r itself.
+            stream_.open(absolutePath, std::ios::in | std::ios::binary);
             if (!stream_.is_open()) {
                 throw std::runtime_error("Error: Cannot open file for reading: " + absolutePath.string());
+            }
+
+            // Content sniff over extension: a stream is decoded as LZ4 when
+            // its first bytes are an LZ4 frame magic — whatever the file is
+            // named. A ".lz4" file that is actually plain CSV still reads as
+            // plain CSV (with a loud frame error only if the magic shows up
+            // mid-stream). This honors the standards-first rule: we never
+            // compress or decompress by filename hope, only by magic bytes.
+            // Note: the sniff sees RAW first bytes — a text file's BOM (EF BB
+            // BF) is stripped only later, per line, so magic must be byte 0.
+            char head[4] = {0, 0, 0, 0};
+            stream_.read(head, 4);
+            const bool lz4_mode = lz4_frame_sniff(std::string_view(head, static_cast<size_t>(stream_.gcount())));
+            stream_.clear();                       // reset eofbit on files < 4 bytes
+            stream_.seekg(0, std::ios::beg);
+
+            if (lz4_mode) {
+                lz4_ = std::make_unique<Lz4FrameIStream>(stream_.rdbuf());
+                is_ = lz4_.get();
+            } else {
+                is_ = &stream_;
             }
 
             file_path_ = absolutePath;
@@ -109,6 +141,12 @@ namespace bcsv {
             // Read and validate header line
             if (hasHeader) {
                 if (!readHeader()) {
+                    // Prefer the decoder's own message: an early truncation or
+                    // corruption inside a .lz4 also fails the header check, and
+                    // "file is empty" would be the wrong story to tell.
+                    if (lz4_ && lz4_->hasError()) {
+                        throw std::runtime_error("LZ4 decode failed: " + lz4_->errorMessage());
+                    }
                     throw std::runtime_error("Failed to read CSV header: " + err_msg_);
                 }
             }
@@ -117,6 +155,8 @@ namespace bcsv {
 
         } catch (const std::exception& ex) {
             err_msg_ = ex.what();
+            lz4_.reset();
+            is_ = nullptr;
             if (stream_.is_open()) {
                 stream_.close();
             }
@@ -129,23 +169,40 @@ namespace bcsv {
 
     template<LayoutConcept LayoutType>
     bool CsvReader<LayoutType>::readNext() {
-        if (!isOpen()) {
-            return false;
+        if (!isOpen() || lz4_error_) {
+            return false;   // lz4_error_: a corrupt frame must not look like a clean EOF
         }
 
         // Iterative loop — avoids stack overflow on many empty or malformed lines
         while (true) {
             if (!fetchRecord()) {
-                return false;  // clean EOF
+                return false;  // clean EOF or latched lz4_error_
             }
 
-            // Split and parse
-            splitLine(line_buf_);
+            bool parsed = false;
+            try {
+                // Split and parse
+                splitLine(line_buf_);
+                parsed = parseCells();
+            } catch (const std::exception& ex) {
+                // A corrupt frame with checksums off could decode into text
+                // that desyncs the CSV state machine (one gigantic "cell" →
+                // Row::set throws). The default frames carry block+content
+                // checksums, so this is the rare belt-and-braces path: honor
+                // the documented contract (readNext reports, never throws).
+                if (!lz4_) throw;   // plain CSV: original behavior preserved
+                ++parse_error_count_;
+                err_msg_ = "Error: LZ4 data parsed as invalid CSV at file line " +
+                           std::to_string(file_line_) + ": " + ex.what();
+                parsed = false;
+            }
 
-            if (!parseCells()) {
+            if (!parsed) {
                 // Parse error — skip this line and try next (iterative, no recursion)
-                err_msg_ = "Warning: Failed to parse CSV line at file line " +
-                           std::to_string(file_line_) + " (data row " + std::to_string(row_pos_) + ")";
+                if (err_msg_.empty() || err_msg_.rfind("Error: LZ4", 0) != 0) {
+                    err_msg_ = "Warning: Failed to parse CSV line at file line " +
+                               std::to_string(file_line_) + " (data row " + std::to_string(row_pos_) + ")";
+                }
                 if constexpr (DEBUG_OUTPUTS) {
                     std::cerr << err_msg_ << std::endl;
                 }
@@ -194,8 +251,19 @@ namespace bcsv {
 
             while (true) {
                 std::string rawLine;
-                if (!std::getline(stream_, rawLine)) {
-                    // EOF or error
+                if (!std::getline(*is_, rawLine)) {
+                    // EOF or error. A decode error inside a .lz4 stream is NOT
+                    // a clean EOF — latch it so callers see the real story via
+                    // getErrorMsg() instead of a silently truncated row set.
+                    if (lz4_ && lz4_->hasError()) {
+                        lz4_error_ = true;
+                        err_msg_ = "Error: LZ4 decode failed in " + file_path_.string() +
+                                   ": " + lz4_->errorMessage();
+                        if constexpr (DEBUG_OUTPUTS) {
+                            std::cerr << err_msg_ << std::endl;
+                        }
+                        return false;
+                    }
                     if (line_buf_.empty()) {
                         return false;  // clean EOF
                     }
@@ -262,7 +330,7 @@ namespace bcsv {
     template<LayoutConcept LayoutType>
     bool CsvReader<LayoutType>::readHeader() {
         std::string headerLine;
-        if (!std::getline(stream_, headerLine)) {
+        if (!std::getline(*is_, headerLine)) {
             err_msg_ = "Error: CSV file is empty (no header line)";
             return false;
         }

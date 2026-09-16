@@ -28,6 +28,9 @@ Declared in `include/bcsv/`:
 | `RowCodecZoH001<LayoutType>` | codec_row/row_codec_zoh001.h | Zero-Order-Hold codec — delta-encodes unchanged columns. |
 | `RowCodecDelta002<LayoutType>` | codec_row/row_codec_delta002.h | Delta + VLE encoding — type-grouped loops, FoC/ZoH per column. |
 | `Sampler<Layout>` | sampler/sampler.h | Bytecode VM for row filtering and column projection. |
+| `CsvReader<LayoutType>` | csv_reader.h | CSV text reader (auto-detects LZ4 `.csv.lz4` by frame magic). |
+| `CsvWriter<LayoutType>` | csv_writer.h | CSV text writer (`*.csv.lz4` → standard LZ4 frame, ADR-0008). |
+| `Lz4FrameIStream` / `Lz4FrameOStream` | lz4_frame_stream.h | Standard LZ4 frame stream adapters (CLI-interoperable, ADR-0008); chunk codecs internal (`detail`). |
 
 > Change tracking is internal to the ZoH001 and Delta002 codecs. There is no public tracking API.
 
@@ -101,7 +104,11 @@ uses short names.
 | `bitset.hpp` | Full bitset implementation, SOO, shift, slice views |
 | `column_name_index.hpp` | Name parsing, sorted insert, binary search |
 | `vle.hpp` | Variable-Length Encoding — zigzag for signed ints |
-| `lz4_stream.hpp` | Streaming LZ4 compressor/decompressor with ring-buffer dictionary |
+| `lz4_stream.hpp` | Streaming LZ4 compressor/decompressor with ring-buffer dictionary (headerless blocks — inside .bcsv packets only) |
+| `lz4_frame_stream.h` | LZ4 frame format interface — sniff + stream adapters (magic 0x184D2204 — the `.csv.lz4` container, ADR-0008) |
+| `lz4_frame_stream.hpp` | LZ4 frame codec implementations (`detail` compressor/reader + streambufs) |
+| `csv_reader.hpp` | CSV line state machine, typed cell parsing, LZ4 sniff via `is_` stream |
+| `csv_writer.hpp` | RFC 4180 serialization via to_chars; `.lz4` open wraps `stream_` in `Lz4FrameOStream` |
 | `bcsv_c_api.cpp` | C API implementation wrapping the C++ classes (lives in `src/`) |
 
 ## CMake Options & Presets

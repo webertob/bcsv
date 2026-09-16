@@ -926,14 +926,29 @@ int main(int argc, char* argv[]) {
         auto start_time = std::chrono::steady_clock::now();
 
         // Auto-detect delimiter from the first physical line (even when the
-        // header row is skipped).
+        // header row is skipped). The peek must see DECODED text: a
+        // `.csv.lz4` input read raw hands compressed bytes to the
+        // delimiter count and every column type then derives from noise.
+        // Same decision as CsvReader: content sniff, never file extension.
         if (!config.collapse_whitespace && !config.force_delimiter) {
-            std::ifstream input(config.input_file);
+            std::ifstream input(config.input_file, std::ios::binary);
             if (!input.is_open())
                 throw std::runtime_error("Cannot open input file: " + config.input_file);
+            char head[4] = {0, 0, 0, 0};
+            input.read(head, 4);
+            const bool lz4_in = bcsv::lz4_frame_sniff(
+                std::string_view(head, static_cast<size_t>(input.gcount())));
+            input.clear();
+            input.seekg(0, std::ios::beg);
+
             std::string line;
-            if (!std::getline(input, line))
+            if (lz4_in) {
+                bcsv::Lz4FrameIStream decoded(input.rdbuf());
+                if (!std::getline(decoded, line))
+                    throw std::runtime_error("Input file is empty");
+            } else if (!std::getline(input, line)) {
                 throw std::runtime_error("Input file is empty");
+            }
             config.delimiter = detectDelimiter(line);
             if (config.verbose)
                 std::cerr << "Auto-detected delimiter: '" << config.delimiter << "'" << std::endl;

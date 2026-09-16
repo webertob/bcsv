@@ -7,8 +7,8 @@ All tools are built from `src/tools/` and output to `build/bin/`.
 
 | Tool | Purpose | Input | Output |
 |------|---------|-------|--------|
-| **csv2bcsv** | Convert CSV to BCSV | CSV | BCSV |
-| **bcsv2csv** | Convert BCSV to CSV | BCSV | CSV |
+| **csv2bcsv** | Convert CSV to BCSV | CSV / CSV.lz4 | BCSV |
+| **bcsv2csv** | Convert BCSV to CSV | BCSV | CSV (`.csv.lz4` output compresses) |
 | **bcsvHeader** | Display file schema | BCSV | Text |
 | **bcsvHead** | Display first N rows | BCSV | CSV |
 | **bcsvTail** | Display last N rows | BCSV | CSV |
@@ -41,6 +41,8 @@ bcsvHeader data.bcsv                    # Inspect schema
 bcsvHead data.bcsv -n 5                 # Preview first rows
 bcsvTail data.bcsv -n 5                 # Preview last rows
 bcsv2csv data.bcsv output.csv           # Convert back to CSV
+bcsv2csv data.bcsv data.csv.lz4         # …or straight to compressed CSV (LZ4 frame; lz4 -d restores it)
+csv2bcsv data.csv.lz4 data.bcsv         # compressed CSV in — sniffed from magic, not name
 bcsvSampler -c 'X[0][0] > 100' data.bcsv filtered.bcsv  # Filter rows
 bcsvGenerator -p sensor_noisy -n 100000 -o sensor.bcsv   # Generate test data
 bcsvValidate -i data.bcsv                              # Validate structure

@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+### Added
+
+- **Compressed CSV (`*.csv.lz4`)**: a `BcsvCsvWriter` destination named
+  `*.csv.lz4` writes standard LZ4 frame files on the fly — streaming,
+  row-by-row, decodable by the official `lz4` CLI; CLI-compressed CSVs read
+  back. `SetLz4(blockMaxSizeId, level)` tunes the frame before `Open()`
+  (blocks 64KB–4MB; level 0/1 = fast, 2–12 = LZ4HC). `BcsvCsvReader.Open()`
+  auto-detects compression from the frame's magic bytes and reads plain or
+  compressed CSV with no extra call. A broken or truncated `.lz4` stops
+  iteration and reports via `BcsvCsvReader.ErrorMessage` — never silently
+  short. See ADR-0008 in the bcsv repository.
+
 ## [1.5.22] - 2026-09-14
 
 ### Fixed

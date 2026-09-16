@@ -400,26 +400,28 @@ static void BM_CApi_CSV_Roundtrip(benchmark::State& state) {
     for (auto _ : state) {
         bcsv_layout_t layout = makeCLayout();
 
-        // Write CSV
-        bcsv_csv_writer_t cw = bcsv_csv_writer_create(layout, ',', '.');
-        bcsv_csv_writer_open(cw, path.c_str(), true, true);
-        bcsv_row_t row = bcsv_csv_writer_row(cw);
+        // Write CSV through the unified C API (ADR-0009)
+        bcsv_writer_t cw = bcsv_writer_create_u(layout, BCSV_CODEC_FLAT);
+        bcsv_writer_open_u(cw, path.c_str(), true, BCSV_FORMAT_AUTO, nullptr);
+        bcsv_row_t row = bcsv_writer_row_u(cw);
         for (int64_t i = 0; i < nRows; ++i) {
             fillCRow(row, static_cast<int>(i));
-            bcsv_csv_writer_next(cw);
+            bcsv_writer_next_u(cw);
         }
-        bcsv_csv_writer_close(cw);
-        bcsv_csv_writer_destroy(cw);
+        bcsv_writer_close_u(cw);
+        bcsv_writer_destroy_u(cw);
 
-        // Read CSV
-        bcsv_csv_reader_t cr = bcsv_csv_reader_create(layout, ',', '.');
-        bcsv_csv_reader_open(cr, path.c_str(), true);
-        while (bcsv_csv_reader_next(cr)) {
-            benchmark::DoNotOptimize(bcsv_row_get_int32(bcsv_csv_reader_row(cr), 0));
+        // Read CSV through the unified C API
+        bcsv_reader_t cr = bcsv_reader_create_u();
+        bcsv_open_opts ro = BCSV_OPEN_OPTS_INIT;
+        ro.csv_layout = layout;
+        bcsv_reader_open_u(cr, path.c_str(), BCSV_FORMAT_AUTO, &ro);
+        while (bcsv_reader_next_u(cr)) {
+            benchmark::DoNotOptimize(bcsv_row_get_int32(bcsv_reader_row_u(cr), 0));
         }
         benchmark::ClobberMemory();
-        bcsv_csv_reader_close(cr);
-        bcsv_csv_reader_destroy(cr);
+        bcsv_reader_close_u(cr);
+        bcsv_reader_destroy_u(cr);
         bcsv_layout_destroy(layout);
     }
     state.SetItemsProcessed(state.iterations() * nRows * 2); // write + read

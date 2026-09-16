@@ -1062,6 +1062,12 @@ NB_MODULE(_bcsv, m) {
                               .def("layout", &CsvWriterT::layout, nb::rv_policy::reference_internal)
                               .def("delimiter", &CsvWriterT::delimiter)
                               .def("decimal_separator", &CsvWriterT::decimalSeparator)
+                              .def("set_lz4", [](CsvWriterT& w, int block_max_size_id, int level) {
+            // LZ4 frame tuning for "*.csv.lz4" destinations; must precede open().
+            if (!w.setLz4(block_max_size_id, level)) {
+                throw std::runtime_error("set_lz4: " + w.getErrorMsg());
+            } }, nb::arg("block_max_size_id") = 4, nb::arg("level") = 0,
+            "Configure LZ4 frame output (block max size 4=64KB/5=256KB/6=1MB/7=4MB; level 0=fast, 2..12=HC). Call before open().")
                               .def("__enter__", [](CsvWriterT& w) -> CsvWriterT& { return w; }, nb::rv_policy::reference)
                               .def("__exit__", [](CsvWriterT& w, nb::args) { w.close(); });
     bind_writer_rows<CsvWriterT>(csv_writer_cls);

@@ -43,6 +43,7 @@
 #include <cstdint>
 #include <fstream>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -51,6 +52,9 @@
 #include "row.h"
 
 namespace bcsv {
+
+    // LZ4 frame input stream — declared in lz4_frame_stream.h
+    class Lz4FrameIStream;
 
     /**
      * @brief Class for reading CSV text files using the BCSV data model
@@ -64,12 +68,15 @@ namespace bcsv {
     private:
         std::string             err_msg_;            // last error message description
         FilePath                file_path_;           // path to the input file
-        std::ifstream           stream_;              // text input stream
+        std::ifstream           stream_;              // raw file stream (always binary)
+        std::unique_ptr<Lz4FrameIStream> lz4_;        // frame decoder over stream_ (null = plain CSV)
+        std::istream*           is_ = nullptr;        // active input stream (stream_ or lz4_)
 
         RowType                 row_;                 // current row, parsed data
         size_t                  row_pos_ = 0;         // 0-based row index (data rows, not header)
         size_t                  file_line_ = 0;       // 1-based raw line counter (including header, blanks)
         size_t                  parse_error_count_ = 0; // cells that failed typed parsing since open()
+        bool                    lz4_error_ = false;   // decode error in a .lz4 stream (blocks further reads)
 
         char                    delimiter_ = ',';     // field delimiter
         char                    decimal_sep_ = '.';   // decimal separator for float/double
@@ -85,6 +92,12 @@ namespace bcsv {
         explicit CsvReader(const LayoutType& layout, char delimiter = ',', char decimalSep = '.',
                            bool collapseWhitespace = false);
         ~CsvReader();
+        // is_ aliases either stream_ or the owned lz4_ decoder (which borrows
+        // stream_'s rdbuf): a moved-from reader would keep a dangling alias.
+        CsvReader(const CsvReader&) = delete;
+        CsvReader& operator=(const CsvReader&) = delete;
+        CsvReader(CsvReader&&) = delete;
+        CsvReader& operator=(CsvReader&&) = delete;
 
         void                    close();
         const std::string&      getErrorMsg() const             { return err_msg_; }
