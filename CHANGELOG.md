@@ -12,6 +12,38 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.23] - 2026-11-09
+
+### Added
+
+- **Non-blocking flush.** A flush closes the current packet so the rows written
+  so far survive a crash; with the batch-LZ4 codec (the default) the caller then
+  waited for that packet's compression and write — about 5 ms per flush at
+  level 6, hundreds of ms when the disk stalls (437 ms measured at 1 kHz with
+  315 columns). The new variant closes the same packet — the file is byte for
+  byte the same — and returns once the packet is handed to the codec's
+  background thread (0.01 ms). At most one packet is in flight; a failed write
+  is reported by the next call that waits for it (a blocking flush, a
+  non-blocking one with new rows, a packet boundary or close). File codecs without
+  a background thread flush synchronously. Wire format unchanged.
+  C++ `Writer::flushAsync()`, C `bcsv_writer_flush_async()`, Python
+  `Writer.flush(wait=False)`, C#/Unity `BcsvWriter.Flush(wait: false)`; the
+  existing blocking calls are unchanged.
+
+### Fixed
+
+- **Batch codec: `flush()` could race the background write.** When a row was
+  rejected for `MAX_ROW_LENGTH` right after the packet before it had been
+  handed to the background thread, the `flush()` the error message asks for
+  flushed the file stream on the caller's thread while that thread was still
+  writing to it (a data race ThreadSanitizer reports in
+  `std::streambuf::xsputn`). The flush now waits for the background thread
+  first. Bytes written are unchanged.
+- **`Row::visit<T>()` / `visitConst<T>()` read past the column-offset table**
+  for a range beyond the last column before throwing `std::out_of_range`
+  (AddressSanitizer: heap-buffer-overflow). The offset is now read after the
+  range check.
+
 ### Changed (performance; wire format and public APIs unchanged)
 
 - **Delta002 decode ~40 % faster** (dynamic `Layout`): hot-loop state kept in

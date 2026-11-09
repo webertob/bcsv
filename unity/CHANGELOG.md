@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [1.5.23] - 2026-11-09
+
+### Added
+
+- **`BcsvWriter.Flush(bool wait)`**: `Flush(wait: false)` closes the packet like
+  `Flush()` (the file is identical) but returns without waiting for its
+  compression and write, which run on the plugin's background thread. Suits
+  `BcsvRecorder`-style periodic flushes from the main thread, where a blocking
+  flush costs a frame. `Flush()` is unchanged.
+
 ## [1.5.22] - 2026-09-14
 
 ### Fixed
