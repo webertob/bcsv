@@ -950,6 +950,47 @@ TEST(CodecDelta002Test, ManyColumns_WideLayout) {
     for (int i = 0; i < 5; ++i)  EXPECT_EQ(out.get<std::string>(45 + i), "init");
 }
 
+// Header codes at every bit alignment after the bools: codes that cross a
+// byte boundary, and codes in the last header bytes of header-only (all-ZoH)
+// rows - the bool-heavy case, where all codes sit at the header's end.
+TEST(CodecDelta002Test, HeaderCodesAtEveryBitOffset) {
+    for (size_t boolCount = 120; boolCount <= 128; ++boolCount) {
+        SCOPED_TRACE("bools: " + std::to_string(boolCount));
+        std::vector<ColumnDefinition> cols;
+        for (size_t i = 0; i < boolCount; ++i) cols.push_back({"b" + std::to_string(i), ColumnType::BOOL});
+        cols.push_back({"u8", ColumnType::UINT8});    // 2-bit code
+        cols.push_back({"u32", ColumnType::UINT32});  // 3-bit code
+        cols.push_back({"i64", ColumnType::INT64});   // 4-bit code
+        cols.push_back({"f32", ColumnType::FLOAT});   // 3-bit code
+        Layout layout(cols);
+
+        RowCodecDelta002<Layout> enc, dec;
+        enc.setup(layout);
+        dec.setup(layout);
+        ByteBuffer buf;
+        Row row(layout), out(layout);
+
+        for (int r = 0; r < 24; ++r) {
+            SCOPED_TRACE("row: " + std::to_string(r));
+            if (r % 4 != 3) {  // every 4th row repeats the previous one: header only
+                for (size_t i = 0; i < boolCount; ++i) row.set<bool>(i, (i + r) % 3 == 0);
+                row.set<uint8_t>(boolCount, static_cast<uint8_t>(r * 37));
+                row.set<uint32_t>(boolCount + 1, static_cast<uint32_t>(r * r * 1000));
+                row.set<int64_t>(boolCount + 2, int64_t{-7} * r);    // linear: FoC
+                row.set<float>(boolCount + 3, 0.25f * static_cast<float>(r * r));
+            }
+            auto wire = enc.serialize(row, buf);
+            dec.deserialize(wire, out);
+
+            for (size_t i = 0; i < boolCount; ++i) EXPECT_EQ(out.get<bool>(i), row.get<bool>(i));
+            EXPECT_EQ(out.get<uint8_t>(boolCount), row.get<uint8_t>(boolCount));
+            EXPECT_EQ(out.get<uint32_t>(boolCount + 1), row.get<uint32_t>(boolCount + 1));
+            EXPECT_EQ(out.get<int64_t>(boolCount + 2), row.get<int64_t>(boolCount + 2));
+            EXPECT_EQ(out.get<float>(boolCount + 3), row.get<float>(boolCount + 3));
+        }
+    }
+}
+
 TEST(CodecDelta002Test, DeltaEncoding_UINT64_LargeDelta) {
     Layout layout({{"val", ColumnType::UINT64}});
     RowCodecDelta002<Layout> enc, dec;

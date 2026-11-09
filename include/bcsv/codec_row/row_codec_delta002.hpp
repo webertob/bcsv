@@ -424,38 +424,51 @@ void RowCodecDelta002<LayoutType>::deserialize(
 
     size_t dataOff = headBytes;
 
-    // Hot-loop state in locals. Every store below goes through std::byte*,
-    // which may alias anything, so with the containers indexed directly the
-    // compiler had to reload each vector's data pointer, the header words and
-    // buffer.size() after every store. None of these change inside the loop.
-    std::byte*       const rowData = row.data_.data();
-    std::byte*       const prevData = prev_data_.data();
-    std::byte*       const gradData = grad_data_.data();
-    const std::byte* const src     = buffer.data();
-    const size_t           srcSize = buffer.size();
-
-    // Header codes are read from a zero-padded copy of the header with one
-    // unaligned 64-bit load per column: a code is at most 4 bits at a bit
-    // offset < 8, so it always lies inside the 8 bytes loaded, and the
-    // padding keeps that load inside the allocation for the last header byte.
-    // Same bits as row_header_.decode() — header bits are little-endian
-    // within bytes (Bitset::readFrom is a memcpy; ADR 0003).
-    if (head_pad_.size() < headBytes + 8)
-        head_pad_.assign(headBytes + 8, std::byte{0});
-    if (headBytes > 0)                 // memcpy from a null src is UB even for n=0
-        std::memcpy(head_pad_.data(), src, headBytes);
-    const std::byte* const head = head_pad_.data();
-
     // ── Numeric columns (type-grouped, zero runtime dispatch) ────────────
-    forEachScalarType([&]<typename T>(const std::vector<ColMeta>& cols) {
+    // decodeGroup() runs only for the types that have columns: clang keeps it
+    // out of line, and a call per empty type and row cost bool-heavy rows (8
+    // of the 10 types empty) more than decoding their 4 numeric columns.
+    auto decodeGroup = [&]<typename T>(const std::vector<ColMeta>& cols) {
         constexpr size_t   HB   = headerBits<T>();
         constexpr uint64_t MASK = (uint64_t{1} << HB) - 1;
 
+        // Hot-loop state in locals of the lambda. Every store below goes
+        // through std::byte*, which may alias anything, so the compiler
+        // reloads after every store whatever it reads from memory: each
+        // vector's data pointer, buffer.size(), and the captured variables
+        // too where the lambda is not inlined (clang keeps it out of line).
+        // Locals whose address is never taken stay in registers. None of
+        // these change inside the loop.
+        std::byte*       const rowData  = row.data_.data();
+        std::byte*       const prevData = prev_data_.data();
+        std::byte*       const gradData = grad_data_.data();
+        const std::byte* const src      = buffer.data();
+        const size_t           srcSize  = buffer.size();
+        size_t                 dataPos  = dataOff;
+
         for (const auto& col : cols) {
             const uint32_t off = col.dataOffset;
-            uint64_t hw;
-            std::memcpy(&hw, head + (col.headOffset >> 3), sizeof(hw));
-            const uint8_t code = static_cast<uint8_t>((hw >> (col.headOffset & 7u)) & MASK);
+
+            // The header code, read in place from the row's header bytes: at
+            // most 4 bits at a bit offset < 8 (same bits as row_header_.decode();
+            // little-endian within bytes, ADR 0003). One 8-byte load where it
+            // stays inside the row, else the at most two bytes the code spans
+            // (a short row, often the header alone). Not from a copy of the
+            // header: a load that covers the end of a store just made is not
+            // forwarded from the store buffer and waits until the store
+            // reaches the cache - bool-heavy rows, whose codes all sit at the
+            // header's end, paid that on every code.
+            const size_t   headByte = col.headOffset >> 3;
+            const unsigned headBit  = col.headOffset & 7u;
+            uint64_t bits;
+            if (headByte + sizeof(uint64_t) <= srcSize) {
+                std::memcpy(&bits, src + headByte, sizeof(bits));
+            } else {
+                bits = static_cast<uint8_t>(src[headByte]);
+                if (headBit + HB > 8)
+                    bits |= uint64_t{static_cast<uint8_t>(src[headByte + 1])} << 8;
+            }
+            const uint8_t code = static_cast<uint8_t>((bits >> headBit) & MASK);
 
             // ── code 0: ZoH ──────────────────────────────────────────────
             if (code == 0) {
@@ -495,19 +508,19 @@ void RowCodecDelta002<LayoutType>::deserialize(
             const size_t deltaBytes = code - 1;
             delta002ValidateLengthCode(deltaBytes, sizeof(T));
 
-            if (dataOff + deltaBytes > srcSize)
+            if (dataPos + deltaBytes > srcSize)
                 throw std::runtime_error(
                     "RowCodecDelta002::deserialize() failed! Buffer too small for delta.");
 
             // One unaligned 8-byte load + mask where 8 bytes are in the
             // buffer (all but the row's last few bytes), else byte by byte.
             uint64_t deltaValue;
-            if (dataOff + sizeof(uint64_t) <= srcSize) [[likely]] {
-                std::memcpy(&deltaValue, src + dataOff, sizeof(uint64_t));
+            if (dataPos + sizeof(uint64_t) <= srcSize) [[likely]] {
+                std::memcpy(&deltaValue, src + dataPos, sizeof(uint64_t));
                 if (deltaBytes < sizeof(uint64_t))
                     deltaValue &= (uint64_t{1} << (deltaBytes * 8)) - 1;
             } else {
-                deltaValue = decodeDelta(src + dataOff, deltaBytes);
+                deltaValue = decodeDelta(src + dataPos, deltaBytes);
             }
 
             if constexpr (std::is_floating_point_v<T>)
@@ -522,8 +535,12 @@ void RowCodecDelta002<LayoutType>::deserialize(
                 computeIntGradient<T>(gradData + off, rowData + off, prevData + off);
 
             std::memcpy(prevData + off, rowData + off, sizeof(T));
-            dataOff += deltaBytes;
+            dataPos += deltaBytes;
         }
+        dataOff = dataPos;
+    };
+    forEachScalarType([&]<typename T>(const std::vector<ColMeta>& cols) {
+        if (!cols.empty()) decodeGroup.template operator()<T>(cols);
     });
 
     // ── String columns ───────────────────────────────────────────────────

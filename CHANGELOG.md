@@ -12,6 +12,13 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Delta002 reads bool-heavy rows at least as fast as 1.5.22 again** (1.5.23: 4–11 %
+  slower): header codes are read in place instead of from a per-row copy of the header,
+  whose 8-byte reads the CPU could not forward from its store buffer; with clang the
+  decode loop's state now stays in registers and empty type groups are skipped.
+
 ## [1.5.23] - 2026-11-09
 
 ### Added
