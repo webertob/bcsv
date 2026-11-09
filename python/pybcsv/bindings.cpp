@@ -273,6 +273,10 @@ namespace {
         }
     }
 
+#ifndef NB_LIST_GET_ITEM          // nanobind's borrowed list access (limited-API aware)
+#  define NB_LIST_GET_ITEM PyList_GetItem
+#endif
+
     /// Fill `row` from a Python list of exactly n values (length checked by
     /// the caller): fast path per value, generic set_column_value otherwise.
     template<typename RowType>
@@ -377,6 +381,33 @@ namespace {
             default: return np.attr("dtype")("object");
         }
     }
+
+    /// Allocates the per-column numpy result arrays of the read loops.
+    /// Looking up numpy.empty and building a dtype for every column, then
+    /// reading the data pointer through ndarray.ctypes, cost ~1 us per column
+    /// - per call, which dominated small read_batch() calls on wide files.
+    /// Here the dtype objects are built once per type and the pointer comes
+    /// from the buffer protocol. The arrays are the same np.empty() arrays.
+    class NumpyColumnAllocator {
+        nb::object                  empty_;
+        std::array<nb::object, 12>  dtypes_{};
+
+    public:
+        NumpyColumnAllocator() : empty_(nb::module_::import_("numpy").attr("empty")) {}
+
+        nb::object alloc(bcsv::ColumnType ct, size_t n, void*& data) {
+            nb::object& dt = dtypes_.at(static_cast<size_t>(ct));
+            if (!dt.is_valid())
+                dt = bcsv_type_to_numpy_dtype(ct);
+            nb::object arr = empty_(nb::make_tuple(static_cast<int64_t>(n)), "dtype"_a = dt);
+            Py_buffer view;
+            if (PyObject_GetBuffer(arr.ptr(), &view, PyBUF_WRITABLE | PyBUF_C_CONTIGUOUS) != 0)
+                throw nb::python_error();
+            data = view.buf;
+            PyBuffer_Release(&view);   // arr keeps the memory alive
+            return arr;
+        }
+    };
 
     // ── Type-grouped columnar fill ────────────────────────────────────
     //
@@ -1131,31 +1162,20 @@ NB_MODULE(_bcsv, m) {
                 throw std::runtime_error("Reader has no columns");
 
             // Cache column metadata
-            std::vector<bcsv::ColumnType> col_types(num_cols);
-            std::vector<std::string> col_names(num_cols);
+            const auto& col_types = layout.columnTypes();
             std::vector<bool> is_str(num_cols, false);
-            for (size_t c = 0; c < num_cols; ++c) {
-                col_types[c] = layout.columnType(c);
-                col_names[c] = layout.columnName(c);
+            for (size_t c = 0; c < num_cols; ++c)
                 is_str[c] = (col_types[c] == bcsv::ColumnType::STRING);
-            }
 
-            // Allocate numpy arrays (numeric) and C++ string vectors (strings)
-            auto np = nb::module_::import_("numpy");
+            // Allocate numpy arrays (numeric) and string collectors (strings)
+            NumpyColumnAllocator alloc;
             std::vector<nb::object> arrays(num_cols);
             std::vector<void*> bufs(num_cols, nullptr);
             std::vector<StringRuns> string_cols(num_cols);
 
             for (size_t c = 0; c < num_cols; ++c) {
-                if (is_str[c]) {
-                    // collected as runs, see StringRuns
-                } else {
-                    nb::object shape = nb::make_tuple(static_cast<int64_t>(batch_size));
-                    arrays[c] = np.attr("empty")(shape,
-                        "dtype"_a = bcsv_type_to_numpy_dtype(col_types[c]));
-                    bufs[c] = reinterpret_cast<void*>(
-                        nb::cast<intptr_t>(arrays[c].attr("ctypes").attr("data")));
-                }
+                if (!is_str[c])            // strings: collected as runs, see StringRuns
+                    arrays[c] = alloc.alloc(col_types[c], batch_size, bufs[c]);
             }
 
             // Bucket the numeric columns by type once (see ColumnFillPlan).
@@ -1184,8 +1204,9 @@ NB_MODULE(_bcsv, m) {
             // Build result dict
             nb::dict result;
             for (size_t c = 0; c < num_cols; ++c) {
+                const std::string& col_name = layout.columnName(c);
                 if (is_str[c]) {
-                    result[nb::cast(col_names[c])] = string_cols[c].to_list();
+                    result[nb::cast(col_name)] = string_cols[c].to_list();
                 } else {
                     if (rows_read < batch_size) {
                         // Slice to actual row count
@@ -1193,7 +1214,7 @@ NB_MODULE(_bcsv, m) {
                         auto sl = nb::steal(PySlice_New(Py_None, stop.ptr(), Py_None));
                         arrays[c] = arrays[c][sl];
                     }
-                    result[nb::cast(col_names[c])] = std::move(arrays[c]);
+                    result[nb::cast(col_name)] = std::move(arrays[c]);
                 }
             }
             return result; }, nb::arg("batch_size") = 10000, "Read up to batch_size rows into a dict of numpy arrays/lists. Returns None at EOF.");
@@ -1477,22 +1498,15 @@ NB_MODULE(_bcsv, m) {
             is_string[i] = (col_types[i] == bcsv::ColumnType::STRING);
         }
 
-        // Phase 2: Allocate numpy arrays (numeric) and C++ string vectors (strings)
-        auto np = nb::module_::import_("numpy");
+        // Phase 2: Allocate numpy arrays (numeric) and string collectors (strings)
+        NumpyColumnAllocator alloc;
         std::vector<nb::object> arrays(num_cols);
         std::vector<void*> bufs(num_cols, nullptr);
         std::vector<StringRuns> string_cols(num_cols);
 
         for (size_t c = 0; c < num_cols; ++c) {
-            if (is_string[c]) {
-                // collected as runs, see StringRuns
-            } else {
-                nb::object shape = nb::make_tuple(static_cast<int64_t>(num_rows));
-                arrays[c] = np.attr("empty")(shape, "dtype"_a = bcsv_type_to_numpy_dtype(col_types[c]));
-                // Get mutable data pointer via numpy array's ctypes interface
-                auto arr_obj = arrays[c];
-                bufs[c] = reinterpret_cast<void*>(nb::cast<intptr_t>(arr_obj.attr("ctypes").attr("data")));
-            }
+            if (!is_string[c])             // strings: collected as runs, see StringRuns
+                arrays[c] = alloc.alloc(col_types[c], num_rows, bufs[c]);
         }
 
         // Bucket the numeric columns by type once (see ColumnFillPlan).
