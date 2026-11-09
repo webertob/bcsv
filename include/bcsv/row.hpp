@@ -615,7 +615,6 @@ namespace bcsv {
         const ColumnType* types   = layout_.columnTypes().data();
         const uint32_t*   offsets = layout_.columnOffsets().data();
         for (size_t i = startIndex; i < endIndex; ++i) {
-            const uint32_t offset = offsets[i];
             if constexpr (RANGE_CHECKING) {
                 if (i >= layout_.columnCount()) [[unlikely]] {
                     throw std::out_of_range("Row::visit<T>: Column index out of range");
@@ -626,6 +625,7 @@ namespace bcsv {
                         ", actual " + std::string(toString(types[i])));
                 }
             }
+            const uint32_t offset = offsets[i];   // only once i is known to be in range
 
             if constexpr (std::is_same_v<T, bool>) {
                 bool val = bits_[offset];
@@ -659,7 +659,6 @@ namespace bcsv {
         const ColumnType* types   = layout_.columnTypes().data();
         const uint32_t*   offsets = layout_.columnOffsets().data();
         for (size_t i = startIndex; i < endIndex; ++i) {
-            const uint32_t offset = offsets[i];
             if constexpr (RANGE_CHECKING) {
                 if (i >= layout_.columnCount()) [[unlikely]] {
                     throw std::out_of_range("Row::visitConst<T>: Column index out of range");
@@ -670,6 +669,7 @@ namespace bcsv {
                         ", actual " + std::string(toString(types[i])));
                 }
             }
+            const uint32_t offset = offsets[i];   // only once i is known to be in range
             if constexpr (std::is_same_v<T, bool>) {
                 const bool val = bits_[offset];
                 visitor(i, val);
