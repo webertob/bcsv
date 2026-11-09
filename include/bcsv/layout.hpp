@@ -83,10 +83,21 @@ namespace bcsv {
         column_index_.build(column_names_);
     }
 
+    // The throw lives in a cold, never-inlined helper so that checkRange()
+    // itself is a compare-and-branch the compiler inlines. With the throw
+    // inline, GCC kept checkRange() out of line, which put a function call
+    // into every Row::get<T>()/set<T>() (columnType + columnOffset each
+    // check), i.e. two calls per value on wide-row read and write loops.
+    namespace detail {
+        [[noreturn]] BCSV_NOINLINE inline void layoutThrowIndexOutOfRange(const char* what) {
+            throw std::out_of_range(what);
+        }
+    }
+
     inline void Layout::Data::checkRange(size_t index) const {
         if constexpr (RANGE_CHECKING) {
-            if (index >= column_types_.size()) {
-                throw std::out_of_range("Layout::Data::Column index out of range");
+            if (index >= column_types_.size()) [[unlikely]] {
+                detail::layoutThrowIndexOutOfRange("Layout::Data::Column index out of range");
             }
         }
     }
@@ -637,8 +648,8 @@ namespace bcsv {
     template<typename... ColumnTypes>
     inline void LayoutStatic<ColumnTypes...>::checkRange(size_t index) const {
         if constexpr (RANGE_CHECKING) {
-            if (index >= sizeof...(ColumnTypes)) {
-                throw std::out_of_range("LayoutStatic::Column index out of range");
+            if (index >= sizeof...(ColumnTypes)) [[unlikely]] {
+                detail::layoutThrowIndexOutOfRange("LayoutStatic::Column index out of range");
             }
         }
     }
