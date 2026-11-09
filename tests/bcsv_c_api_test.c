@@ -398,6 +398,72 @@ void test_zoh_writer_api(void) {
     TEST_END();
 }
 
+// bcsv_writer_flush_async (1.5.23): the same packet boundaries as
+// bcsv_writer_flush, so both files read back identically; NULL is a no-op.
+static size_t write_flushed_file(const char* path, bool async) {
+    bcsv_layout_t layout = bcsv_layout_create();
+    bcsv_layout_add_column(layout, 0, "i", BCSV_TYPE_INT32);
+    bcsv_layout_add_column(layout, 1, "x", BCSV_TYPE_DOUBLE);
+    bcsv_writer_t writer = bcsv_writer_create_delta(layout);
+    bool opened = bcsv_writer_open(writer, path, true, 6, 64, BCSV_FLAG_BATCH_COMPRESS);
+    if (opened) {
+        for (int i = 0; i < 5000; i++) {
+            bcsv_row_t row = bcsv_writer_row(writer);
+            bcsv_row_set_int32(row, 0, i);
+            bcsv_row_set_double(row, 1, i * 0.25);
+            bcsv_writer_next(writer);
+            if ((i + 1) % 1000 == 0) {
+                if (async) bcsv_writer_flush_async(writer);
+                else       bcsv_writer_flush(writer);
+            }
+        }
+        if (async) bcsv_writer_flush_async(writer);   /* empty packet */
+        bcsv_writer_close(writer);
+    }
+    bcsv_writer_destroy(writer);
+    bcsv_layout_destroy(layout);
+    if (!opened) return 0;
+
+    size_t n = 0;
+    bcsv_reader_t reader = bcsv_reader_create();
+    if (bcsv_reader_open(reader, path)) {
+        while (bcsv_reader_next(reader)) {
+            if (bcsv_row_get_int32(bcsv_reader_row(reader), 0) != (int32_t)n) break;
+            n++;
+        }
+        bcsv_reader_close(reader);
+    }
+    bcsv_reader_destroy(reader);
+    return n;
+}
+
+void test_writer_flush_async(void) {
+    TEST_START("Writer flush_async Tests");
+    TEST_ASSERT(write_flushed_file("c_api_flush_sync.bcsv", false) == 5000, "flush: all rows read back in order");
+    TEST_ASSERT(write_flushed_file("c_api_flush_async.bcsv", true) == 5000, "flush_async: all rows read back in order");
+
+    FILE* a = fopen("c_api_flush_sync.bcsv", "rb");
+    FILE* b = fopen("c_api_flush_async.bcsv", "rb");
+    bool same = (a != NULL && b != NULL);
+    long pos = 0;
+    while (same) {
+        int ca = fgetc(a), cb = fgetc(b);
+        if (pos < 4 || pos >= 12) same = (ca == cb);   /* bytes 4..11: creation time */
+        if (ca == EOF || cb == EOF) { same = same && ca == cb; break; }
+        pos++;
+    }
+    if (a) fclose(a);
+    if (b) fclose(b);
+    TEST_ASSERT(same, "flush_async writes the same bytes as flush");
+
+    bcsv_writer_flush_async(NULL);                       /* reported, not a crash */
+    TEST_ASSERT(bcsv_last_error() != NULL && bcsv_last_error()[0] != '\0', "flush_async(NULL) sets an error");
+
+    remove("c_api_flush_sync.bcsv");
+    remove("c_api_flush_async.bcsv");
+    TEST_END();
+}
+
 int main(void) {
     printf("BCSV C API Comprehensive Test Suite\n");
     printf("====================================\n");
@@ -406,6 +472,7 @@ int main(void) {
     test_row_api();
     test_writer_reader_api();
     test_zoh_writer_api();
+    test_writer_flush_async();
     
     printf("\n====================================\n");
     printf("Test Results: %d/%d tests passed\n", tests_passed, tests_run);

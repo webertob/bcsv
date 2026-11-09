@@ -177,6 +177,13 @@ void                bcsv_writer_destroy (bcsv_writer_t writer);
 
 void                bcsv_writer_close   (bcsv_writer_t writer);
 void                bcsv_writer_flush   (bcsv_writer_t writer);
+// Non-blocking flush (1.5.23): the same packet boundary as bcsv_writer_flush,
+// but with the batch codec (the default) the packet is compressed and written
+// on the codec's background thread and the call returns without waiting for it.
+// A write failure is reported (bcsv_last_error) by the next call that waits for
+// that packet: bcsv_writer_flush, bcsv_writer_flush_async with new rows, a write
+// at a packet boundary, or close. Other file codecs flush synchronously here.
+void                bcsv_writer_flush_async(bcsv_writer_t writer);
 bool                bcsv_writer_open    (bcsv_writer_t writer, const char* filename, bool overwrite, int compress, int block_size_kb, bcsv_file_flags_t flags);
 bool                bcsv_writer_is_open (const_bcsv_writer_t writer);
 // True after bcsv_writer_next/bcsv_writer_write rejected a row for exceeding

@@ -220,6 +220,13 @@ public:
         return flush_packet_fn_(ctx_, os, rowCnt);
     }
 
+    /// Non-blocking flush: same packet boundary as flushPacket(), handed to the
+    /// codec's I/O thread (batch). Codecs without one do a plain flushPacket().
+    bool flushPacketAsync(std::ostream& os, uint64_t rowCnt) {
+        assert(ctx_ && flush_packet_async_fn_);
+        return flush_packet_async_fn_(ctx_, os, rowCnt);
+    }
+
     /// True if this codec supports seekToPacket() (packet-based codecs only).
     bool supportsSeek() const noexcept { return seek_to_packet_fn_ != nullptr; }
 
@@ -245,6 +252,7 @@ private:
     ResetFn                 reset_fn_{nullptr};
     SeekToPacketFn          seek_to_packet_fn_{nullptr};
     FlushPacketFn           flush_packet_fn_{nullptr};
+    FlushPacketFn           flush_packet_async_fn_{nullptr};
     DestroyFn               destroy_fn_{nullptr};
 
     void nullifyFnPtrs() noexcept {
@@ -261,6 +269,7 @@ private:
         reset_fn_ = nullptr;
         seek_to_packet_fn_ = nullptr;
         flush_packet_fn_ = nullptr;
+        flush_packet_async_fn_ = nullptr;
         destroy_fn_ = nullptr;
     }
 
@@ -280,6 +289,7 @@ private:
         reset_fn_ = other.reset_fn_;
         seek_to_packet_fn_ = other.seek_to_packet_fn_;
         flush_packet_fn_ = other.flush_packet_fn_;
+        flush_packet_async_fn_ = other.flush_packet_async_fn_;
         destroy_fn_ = other.destroy_fn_;
 
         other.ctx_ = nullptr;
@@ -359,6 +369,15 @@ private:
         flush_packet_fn_ = [](void* ctx, std::ostream& os, uint64_t r) -> bool {
             return static_cast<ConcreteCodec*>(ctx)->flushPacket(os, r);
         };
+        if constexpr (requires(ConcreteCodec& c, std::ostream& os, uint64_t r) {
+            { c.flushPacketAsync(os, r) } -> std::convertible_to<bool>;
+        }) {
+            flush_packet_async_fn_ = [](void* ctx, std::ostream& os, uint64_t r) -> bool {
+                return static_cast<ConcreteCodec*>(ctx)->flushPacketAsync(os, r);
+            };
+        } else {
+            flush_packet_async_fn_ = flush_packet_fn_;
+        }
         destroy_fn_ = [](void* ctx) {
             delete static_cast<ConcreteCodec*>(ctx);
         };

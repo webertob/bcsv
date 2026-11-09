@@ -129,6 +129,8 @@ bcsv_layout_destroy(layout);
   instead of a double free. `bcsv_shutdown()` closes all open writers and
   destroys all live handles at exit (call it after your last file operation,
   from one thread).
+- **Non-blocking flush** (1.5.23): `bcsv_writer_flush_async(writer)` — see
+  [Flushing without waiting](#flushing-without-waiting-1523).
 - **Poison check**: `bcsv_writer_is_poisoned(writer)` after a failed write —
   with the batch-LZ4 file codec a flush at a clean packet boundary clears the
   poison and writing continues.
@@ -461,6 +463,30 @@ The reader has always reported the same thing for a file it has open
 > rejected it as the wrong type, and `FileFlags(10)` raised `ValueError`. It is
 > an `IntFlag` now and combines normally. C# was never affected.
 
+### Flushing without waiting (1.5.23)
+
+A flush closes the current packet, which makes every row written so far
+readable after a crash. With the batch-LZ4 codec (the default) the caller used
+to wait for that packet's compression and write — milliseconds at level 6, and
+hundreds of milliseconds when the disk stalls. The non-blocking variant closes
+the same packet, so the file is byte-for-byte identical, and returns once the
+packet is handed to the codec's background thread:
+
+| API | blocking (unchanged) | non-blocking |
+|---|---|---|
+| C++ | `writer.flush()` | `writer.flushAsync()` |
+| C | `bcsv_writer_flush(writer)` | `bcsv_writer_flush_async(writer)` |
+| C# / Unity | `writer.Flush()` | `writer.Flush(wait: false)` |
+| Python | `writer.flush()` | `writer.flush(wait=False)` |
+
+At most one packet is in flight: if the previous one is still being written,
+the non-blocking call waits for it. A failed write is reported by the next
+call that waits for that packet: a blocking flush, a non-blocking flush with
+new rows, a write that crosses a packet boundary, or `close()`. Rows reach
+the OS when the background write completes, not when the call returns, so a
+process crash right after it can lose that packet. File codecs without a
+background thread (`BATCH_COMPRESS` off, stream mode) flush synchronously.
+
 ---
 
 ## Interoperability
@@ -491,6 +517,7 @@ See [INTEROPERABILITY.md](INTEROPERABILITY.md) for cross-language examples and b
 | CSV read/write | ✅ | ✅ | ✅ | ✅ |
 | Checksums (xxHash64) | ✅ | ✅ | ✅ | ✅ |
 | Crash recovery | ✅ | ✅ | ✅ | ✅ |
+| Non-blocking flush (1.5.23) | ✅ | ✅ | ✅ | ✅ |
 | Sampler (filter/project) | ✅ | ✅ | ✅ | ✅ |
 | Row visitor | ✅ | ✅ | ❌ | ❌ |
 | Static typing | ✅ | ❌ | ❌ | ❌ |

@@ -38,7 +38,8 @@
  *
  * Exceptions that occur on the background thread are captured via
  * std::exception_ptr (under mutex_) and re-thrown on the main thread at the
- * next synchronization point: packet boundary, flushPacket(), or finalize().
+ * next synchronization point: packet boundary, flushPacket(),
+ * flushPacketAsync(), or finalize().
  *
  * Threading contract (main thread ↔ one internal BG thread):
  *  - While a BG task is in flight, the BG thread is the only owner of the
@@ -226,9 +227,9 @@ public:
         if (raw_active_->empty()) {
             // The main thread may touch the stream only while the BG thread is
             // idle, and a packet can be in flight here with an empty active
-            // buffer: after a beginWrite() hand-off whose row was then rejected
-            // (MAX_ROW_LENGTH) — the very case where the caller is told to
-            // flush() to resynchronise.
+            // buffer: after flushPacketAsync(), or after a beginWrite() hand-off
+            // whose row was then rejected (MAX_ROW_LENGTH) — the very case where
+            // the caller is told to flush() to resynchronise.
             waitForBgIdle();
             rethrowBgException();
             if (os_ptr_) os_ptr_->flush();
@@ -257,6 +258,47 @@ public:
         if (os_ptr_) os_ptr_->flush();
 
         // Next packet starts at current rowCnt
+        current_packet_first_row_ = rowCnt;
+        return true;  // boundary crossed — caller must reset RowCodec
+    }
+
+    /// Non-blocking flush: closes the packet exactly like flushPacket() — same
+    /// bytes, same boundary — but returns once the packet is handed to the BG
+    /// thread, which compresses and writes it and then flushes the OS stream.
+    /// At most one packet is in flight: if the previous one is still being
+    /// written, this waits for it. A BG failure surfaces at the next call
+    /// that waits for the BG thread (see the file comment); with an empty
+    /// buffer this call does not wait and reports only a failure already seen.
+    bool flushPacketAsync(std::ostream& /*os*/, uint64_t rowCnt) {
+        if (raw_active_->empty()) {
+            // Nothing to hand off. An idle BG thread means the main thread owns
+            // the stream and may push out what is buffered (e.g. the header of a
+            // file with no rows yet); a task in flight flushes when it ends.
+            bool idle;
+            {
+                std::lock_guard<std::mutex> lk(mutex_);
+                idle = (bg_task_ == BgTask::IDLE);
+            }
+            rethrowBgException();
+            if (idle && os_ptr_) os_ptr_->flush();
+            current_packet_first_row_ = rowCnt;
+            return true;
+        }
+
+        vleEncode<uint64_t, true>(static_cast<uint64_t>(PCKT_TERMINATOR), *raw_active_);
+
+        waitForBgIdle();
+        rethrowBgException();
+
+        bg_first_row_ = current_packet_first_row_;
+        bg_os_flush_  = true;
+        std::swap(raw_active_, raw_bg_);
+        {
+            std::lock_guard<std::mutex> lk(mutex_);
+            bg_task_ = BgTask::COMPRESS_WRITE;
+        }
+        cv_.notify_one();
+
         current_packet_first_row_ = rowCnt;
         return true;  // boundary crossed — caller must reset RowCodec
     }
@@ -466,6 +508,16 @@ private:
 
         // 8. Clear the background buffer for reuse.
         raw_bg_->clear();
+
+        // 9. flushPacketAsync() hand-off: flush the OS stream here, on the
+        //    thread that owns it while the task runs.
+        if (bg_os_flush_) {
+            bg_os_flush_ = false;
+            os_ptr_->flush();
+            if (!os_ptr_->good()) {
+                throw std::runtime_error("FileCodecPacketLZ4Batch001: stream flush failed");
+            }
+        }
     }
 
     // ── BG: read + decompress ───────────────────────────────────────────
@@ -672,6 +724,7 @@ private:
     // store + cv_.notify under mutex) and read by BG AFTER waking
     // (cv_.wait under mutex provides the happens-before edge):
     //   bg_first_row_       — first row index for the buffer being handed off
+    //   bg_os_flush_        — flush the stream after the write (BG clears it)
     //   raw_bg_ (pointer)   — points to the buffer BG should compress
     //   read_next_ (pointer)— points to the buffer BG should decompress into
     //
@@ -729,6 +782,7 @@ private:
     PacketIndex packet_index_;            ///< BG appends entries; main reads after join().
     uint64_t current_packet_first_row_{0};///< Main-thread only.
     uint64_t bg_first_row_{0};             ///< Main→BG via sync protocol.
+    bool     bg_os_flush_{false};          ///< Main→BG via sync protocol; set by flushPacketAsync().
     bool     packet_open_{false};          ///< Main-thread only.
     bool     packet_boundary_crossed_{false}; ///< Main-thread only.
 

@@ -1019,9 +1019,12 @@ NB_MODULE(_bcsv, m) {
         .def("close", [](PyWriter& pw) {
             nb::gil_scoped_release release;
             pw.visit([](auto& w) { w.close(); }); })
-        .def("flush", [](PyWriter& pw) {
+        // wait=False (1.5.23): Writer::flushAsync() — the same packet boundary,
+        // compressed and written on the codec's background thread.
+        .def("flush", [](PyWriter& pw, bool wait) {
             nb::gil_scoped_release release;
-            pw.visit([](auto& w) { w.flush(); }); })
+            pw.visit([wait](auto& w) { if (wait) w.flush(); else w.flushAsync(); }); },
+            nb::arg("wait") = true)
         .def("is_open", [](PyWriter& pw) { return pw.visit([](auto& w) { return w.isOpen(); }); })
         .def("row_count", [](PyWriter& pw) { return pw.visit([](auto& w) { return w.rowCount(); }); })
         .def("row_codec", [](PyWriter& pw) -> const std::string& { return pw.codec_name_; })

@@ -85,6 +85,15 @@ namespace bcsv {
 
         void                    close();
         void                    flush();
+        /// Non-blocking flush (1.5.23): the same packet boundary as flush(), so
+        /// the file is byte-for-byte the same, but with the batch codec (the
+        /// default) the packet is compressed, written and flushed to the OS on
+        /// the codec's background thread and this returns without waiting. It
+        /// waits only while the previous packet is still in flight. A write
+        /// failure is thrown by the next call that waits for that packet:
+        /// flush(), flushAsync() with new rows, a packet boundary or close().
+        /// Other file codecs have no I/O thread and flush() here.
+        void                    flushAsync();
         uint8_t                 compressionLevel() const        { return file_header_.getCompressionLevel(); }
 
         /// The flags actually written to the file header, which are not

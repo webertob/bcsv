@@ -227,6 +227,9 @@ namespace BCSV
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
         internal static extern void bcsv_writer_flush(nint writer);
 
+        [DllImport(Lib, CallingConvention = CallingConvention.Cdecl)]
+        internal static extern void bcsv_writer_flush_async(nint writer);
+
         [DllImport(Lib, CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
         [return: MarshalAs(UnmanagedType.U1)]
         internal static extern bool bcsv_writer_open(nint writer,

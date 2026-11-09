@@ -130,6 +130,23 @@ namespace bcsv {
         }
     }
 
+    /// @brief Non-blocking flush: see writer.h. Same packet boundary and
+    ///        row-codec reset as flush(); only when the bytes reach the OS differs.
+    template<LayoutConcept LayoutType, typename CodecType>
+    void Writer<LayoutType, CodecType>::flushAsync() {
+        if (!stream_.is_open()) {
+            return;
+        }
+        if (file_codec_.isSetup()) {
+            if (file_codec_.flushPacketAsync(stream_, row_cnt_)) {
+                row_codec_.reset();
+                write_poisoned_ = false;
+            }
+        } else {
+            stream_.flush();
+        }
+    }
+
      /**
      * @brief Open a binary file for writing with comprehensive validation
      * @param filepath Path to the file (relative or absolute)

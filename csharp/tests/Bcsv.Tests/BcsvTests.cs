@@ -1455,4 +1455,41 @@ public class BcsvTests : IDisposable
         Assert.False(writer.IsPoisoned);
         writer.WriteRow();                                       // resumes
     }
+
+    [Fact]
+    public void Writer_FlushWithoutWaitWritesTheSameFile()
+    {
+        // Flush(wait: false) (1.5.23) closes the same packets as Flush(), so the
+        // files are identical apart from the creation time (header bytes 4..11).
+        using var layout = new BcsvLayout();
+        layout.AddColumn("i", ColumnType.Int32);
+        layout.AddColumn("x", ColumnType.Double);
+
+        void WriteFile(string path, bool wait)
+        {
+            using var writer = new BcsvWriter(layout);
+            writer.Open(path, true, 6, 64);
+            for (int i = 0; i < 5000; i++)
+            {
+                writer.Row.SetInt32(0, i);
+                writer.Row.SetDouble(1, i * 0.25);
+                writer.WriteRow();
+                if ((i + 1) % 1000 == 0) writer.Flush(wait);
+            }
+            writer.Flush(wait);                                  // empty packet
+            writer.Close();
+        }
+
+        WriteFile(TmpFile("wait.bcsv"), true);
+        WriteFile(TmpFile("nowait.bcsv"), false);
+        var a = File.ReadAllBytes(TmpFile("wait.bcsv"));
+        var b = File.ReadAllBytes(TmpFile("nowait.bcsv"));
+        Array.Clear(a, 4, 8);
+        Array.Clear(b, 4, 8);
+        Assert.Equal(a, b);
+
+        using var reader = new BcsvReader();
+        reader.Open(TmpFile("nowait.bcsv"));
+        Assert.Equal(5000, reader.RowCount);
+    }
 }

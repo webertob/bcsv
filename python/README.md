@@ -323,7 +323,7 @@ writer.open(filename: str, overwrite: bool = False,
             flags: FileFlags = FileFlags.BATCH_COMPRESS)  # raises RuntimeError on failure
 writer.write_row(values: list)
 writer.write_rows(rows: list[list])     # batch write
-writer.flush()
+writer.flush(wait: bool = True)  # wait=False (1.5.23): return without waiting for the compression
 writer.close()
 writer.is_open() -> bool
 writer.row_count() -> int

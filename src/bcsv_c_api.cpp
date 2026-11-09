@@ -78,6 +78,7 @@ struct WriterHandle {
     void   (*write_fn)(void*, const bcsv::Row&);
     void   (*close_fn)(void*);
     void   (*flush_fn)(void*);
+    void   (*flushAsync_fn)(void*);
     void   (*delete_fn)(void*);
     bool   (*isOpen_fn)(const void*);
     bool   (*isPoisoned_fn)(const void*);
@@ -105,6 +106,7 @@ WriterHandle* createWriterHandle(WriterHandle::Type type, W* writer) {
     h->write_fn    = [](void* p, const bcsv::Row& r) { static_cast<W*>(p)->write(r); };
     h->close_fn    = [](void* p) { static_cast<W*>(p)->close(); };
     h->flush_fn    = [](void* p) { static_cast<W*>(p)->flush(); };
+    h->flushAsync_fn = [](void* p) { static_cast<W*>(p)->flushAsync(); };
     h->delete_fn   = [](void* p) { delete static_cast<W*>(p); };
     h->isOpen_fn   = [](const void* p) -> bool    { return static_cast<const W*>(p)->isOpen(); };
     h->isPoisoned_fn = [](const void* p) -> bool  { return static_cast<const W*>(p)->isPoisoned(); };
@@ -788,6 +790,13 @@ void bcsv_writer_flush(bcsv_writer_t writer) {
     if (!reg_contains("bcsv_writer_flush", writer)) [[unlikely]] return;
     auto* h = static_cast<WriterHandle*>(writer);
     BCSV_CAPI_TRY_VOID("bcsv_writer_flush", h->flush_fn(h->ptr))
+}
+
+void bcsv_writer_flush_async(bcsv_writer_t writer) {
+    if (null_handle("bcsv_writer_flush_async", writer)) return;
+    if (!reg_contains("bcsv_writer_flush_async", writer)) [[unlikely]] return;
+    auto* h = static_cast<WriterHandle*>(writer);
+    BCSV_CAPI_TRY_VOID("bcsv_writer_flush_async", h->flushAsync_fn(h->ptr))
 }
 
 bool bcsv_writer_open(bcsv_writer_t writer, const char* filename, bool overwrite, int compress, int block_size_kb, bcsv_file_flags_t flags) {

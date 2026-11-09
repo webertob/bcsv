@@ -128,6 +128,20 @@ namespace BCSV
 
         public void Close() => NativeMethods.bcsv_writer_close(_handle);
         public void Flush() => NativeMethods.bcsv_writer_flush(_handle);
+
+        /// <summary>
+        /// <paramref name="wait"/> = <c>false</c> (1.5.23): the same packet boundary as
+        /// <see cref="Flush()"/>, so the file is identical, but the packet is compressed
+        /// and written on the native background thread and the call returns without
+        /// waiting. It waits only while the previous packet is still being written. A
+        /// write failure is reported by a later <see cref="WriteRow"/> or <see cref="Write"/>
+        /// at a packet boundary. <paramref name="wait"/> = <c>true</c> is <see cref="Flush()"/>.
+        /// </summary>
+        public void Flush(bool wait)
+        {
+            if (wait) NativeMethods.bcsv_writer_flush(_handle);
+            else NativeMethods.bcsv_writer_flush_async(_handle);
+        }
         public bool IsOpen => NativeMethods.bcsv_writer_is_open(_handle);
 
         /// <summary>

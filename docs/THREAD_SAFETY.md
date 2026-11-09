@@ -87,10 +87,16 @@ all stream I/O. This does **not** change the public contract — `Writer` and
   from main-thread-owned state.
 - **Error propagation**: exceptions on the background thread are captured in
   an `std::exception_ptr` guarded by the codec mutex and rethrown on the main
-  thread at the next synchronization point — packet boundary, `flush()`, or
-  `close()`. They are never checked on the per-row fast path (no locking per
+  thread at the next synchronization point — packet boundary, `flush()`,
+  `flushAsync()`, or `close()`. They are never checked on the per-row fast path (no locking per
   row). `finalize()` rethrows unconditionally before writing the footer, so a
   file with a failed packet never receives a clean footer.
+- **Non-blocking flush** (1.5.23): `Writer::flushAsync()` closes the packet
+  like `flush()` but leaves its compression, write and OS flush to the
+  background thread, so the stream belongs to that thread until the task ends.
+  At most one packet is in flight; the next `flush()`, `flushAsync()` with new
+  rows, packet boundary or `close()` waits for it. Any call that touches the stream with an empty packet
+  (`flush()` included) first waits for the background thread to go idle.
 - **EOF signalling**: end-of-data is communicated exclusively through codec
   state (`bg_has_next_packet_`), never through stream flags; the background
   thread restores a defined stream state on every task exit.
