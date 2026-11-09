@@ -224,6 +224,13 @@ public:
     /// so the writer may resynchronise and must be told (returns true).
     bool flushPacket(std::ostream& /*os*/, uint64_t rowCnt) {
         if (raw_active_->empty()) {
+            // The main thread may touch the stream only while the BG thread is
+            // idle, and a packet can be in flight here with an empty active
+            // buffer: after a beginWrite() hand-off whose row was then rejected
+            // (MAX_ROW_LENGTH) — the very case where the caller is told to
+            // flush() to resynchronise.
+            waitForBgIdle();
+            rethrowBgException();
             if (os_ptr_) os_ptr_->flush();
             current_packet_first_row_ = rowCnt;
             return true;   // fresh packet start — caller may reset RowCodec

@@ -201,6 +201,55 @@ TEST_F(BatchCodecRecoveryTest, CorruptMiddlePacketSurfacesAtBoundary) {
         << "all rows of the leading valid packet must be delivered first";
 }
 
+// A row rejected for MAX_ROW_LENGTH right after beginWrite() handed a full
+// packet to the BG thread leaves the active buffer empty with that packet's
+// write in flight. The flush() the error message asks for must wait for the
+// BG thread before flushing the stream; it did not (v1.5.22 and earlier), and
+// ThreadSanitizer reported a data race in std::streambuf::xsputn here.
+TEST_F(BatchCodecRecoveryTest, PoisonAtPacketBoundaryThenFlushIsRaceFree) {
+    std::vector<std::string> names{"i"};
+    std::vector<bcsv::ColumnType> types{bcsv::ColumnType::UINT64};
+    for (int k = 0; k < 260; ++k) {
+        names.push_back("s" + std::to_string(k));
+        types.push_back(bcsv::ColumnType::STRING);
+    }
+    const bcsv::Layout layout(names, types);
+    using W = bcsv::WriterFlat<bcsv::Layout>;   // flat rows: deterministic size
+
+    // Run 1: where is the first automatic packet boundary?
+    const fs::path probe = dir_ / "probe.bcsv";
+    {
+        W w(layout);
+        ASSERT_TRUE(w.open(probe, true, 1, 64, bcsv::FileFlags::BATCH_COMPRESS));
+        for (uint64_t i = 0; i < 2000; ++i) { w.row().set<uint64_t>(0, i); w.writeRow(); }
+        w.close();
+    }
+    const auto index = readPacketIndex(probe);
+    ASSERT_GE(index.size(), 2u);
+    const uint64_t boundary = index[1].first_row;
+
+    // Run 2: the oversized row (260 x 65000 B > 16 MiB) lands on that boundary.
+    W w(layout);
+    ASSERT_TRUE(w.open(dir_ / "poison.bcsv", true, 1, 64, bcsv::FileFlags::BATCH_COMPRESS));
+    for (uint64_t i = 0; i < boundary; ++i) { w.row().set<uint64_t>(0, i); w.writeRow(); }
+    const std::string big(65000, 'x');
+    for (int k = 1; k <= 260; ++k) w.row().set(k, big);
+    EXPECT_THROW(w.writeRow(), std::runtime_error);
+    EXPECT_TRUE(w.isPoisoned());
+    w.flush();                                    // resynchronise, as instructed
+    EXPECT_FALSE(w.isPoisoned());
+    for (int k = 1; k <= 260; ++k) w.row().set(k, std::string());
+    w.row().set<uint64_t>(0, boundary);
+    w.writeRow();
+    w.close();
+
+    bcsv::Reader<bcsv::Layout> r;
+    ASSERT_TRUE(r.open(dir_ / "poison.bcsv")) << r.getErrorMsg();
+    uint64_t n = 0;
+    while (r.readNext()) { EXPECT_EQ(r.row().get<uint64_t>(0), n); ++n; }
+    EXPECT_EQ(n, boundary + 1);
+}
+
 #ifdef __linux__
 // Background write failure (disk full) must never be silent.  The error
 // surfaces as an exception from writeRow() (next packet boundary) or from
