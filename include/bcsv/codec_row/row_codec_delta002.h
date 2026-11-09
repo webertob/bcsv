@@ -209,6 +209,10 @@ private:
 
     size_t rows_seen_{0};                    ///< 0=first row, >=2 means FoC valid
 
+    /// deserialize() scratch: the row header, zero-padded by 8 bytes so header
+    /// codes can be read with one 64-bit load. Not state; sized on first use.
+    std::vector<std::byte> head_pad_;
+
     // ── Compile-time helpers ─────────────────────────────────────────────
 
     /// Number of header bits for a column of type T.

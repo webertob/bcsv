@@ -424,20 +424,45 @@ void RowCodecDelta002<LayoutType>::deserialize(
 
     size_t dataOff = headBytes;
 
+    // Hot-loop state in locals. Every store below goes through std::byte*,
+    // which may alias anything, so with the containers indexed directly the
+    // compiler had to reload each vector's data pointer, the header words and
+    // buffer.size() after every store. None of these change inside the loop.
+    std::byte*       const rowData = row.data_.data();
+    std::byte*       const prevData = prev_data_.data();
+    std::byte*       const gradData = grad_data_.data();
+    const std::byte* const src     = buffer.data();
+    const size_t           srcSize = buffer.size();
+
+    // Header codes are read from a zero-padded copy of the header with one
+    // unaligned 64-bit load per column: a code is at most 4 bits at a bit
+    // offset < 8, so it always lies inside the 8 bytes loaded, and the
+    // padding keeps that load inside the allocation for the last header byte.
+    // Same bits as row_header_.decode() — header bits are little-endian
+    // within bytes (Bitset::readFrom is a memcpy; ADR 0003).
+    if (head_pad_.size() < headBytes + 8)
+        head_pad_.assign(headBytes + 8, std::byte{0});
+    if (headBytes > 0)                 // memcpy from a null src is UB even for n=0
+        std::memcpy(head_pad_.data(), src, headBytes);
+    const std::byte* const head = head_pad_.data();
+
     // ── Numeric columns (type-grouped, zero runtime dispatch) ────────────
     forEachScalarType([&]<typename T>(const std::vector<ColMeta>& cols) {
-        constexpr size_t HB = headerBits<T>();
+        constexpr size_t   HB   = headerBits<T>();
+        constexpr uint64_t MASK = (uint64_t{1} << HB) - 1;
 
         for (const auto& col : cols) {
             const uint32_t off = col.dataOffset;
-            const uint8_t code = row_header_.decode(col.headOffset, HB);
+            uint64_t hw;
+            std::memcpy(&hw, head + (col.headOffset >> 3), sizeof(hw));
+            const uint8_t code = static_cast<uint8_t>((hw >> (col.headOffset & 7u)) & MASK);
 
             // ── code 0: ZoH ──────────────────────────────────────────────
             if (code == 0) {
                 // Copy prev to row (necessary for first-row correctness
                 // when prev is zero-initialised and value happens to be 0).
-                std::memcpy(&row.data_[off], &prev_data_[off], sizeof(T));
-                std::memset(&grad_data_[off], 0, sizeof(T));
+                std::memcpy(rowData + off, prevData + off, sizeof(T));
+                std::memset(gradData + off, 0, sizeof(T));
                 continue;
             }
 
@@ -445,22 +470,22 @@ void RowCodecDelta002<LayoutType>::deserialize(
             if (code == 1) {
                 if constexpr (std::is_floating_point_v<T>) {
                     T p, g;
-                    std::memcpy(&p, &prev_data_[off], sizeof(T));
-                    std::memcpy(&g, &grad_data_[off], sizeof(T));
+                    std::memcpy(&p, prevData + off, sizeof(T));
+                    std::memcpy(&g, gradData + off, sizeof(T));
                     T result = p + g;
-                    std::memcpy(&row.data_[off], &result, sizeof(T));
-                    std::memcpy(&prev_data_[off], &result, sizeof(T));
+                    std::memcpy(rowData + off, &result, sizeof(T));
+                    std::memcpy(prevData + off, &result, sizeof(T));
                 } else {
                     using U = std::make_unsigned_t<T>;
                     using S = std::make_signed_t<T>;
                     T p; S g;
-                    std::memcpy(&p, &prev_data_[off], sizeof(T));
-                    std::memcpy(&g, &grad_data_[off], sizeof(T));
+                    std::memcpy(&p, prevData + off, sizeof(T));
+                    std::memcpy(&g, gradData + off, sizeof(T));
                     U g_u;
                     std::memcpy(&g_u, &g, sizeof(U));
                     T r = static_cast<T>(static_cast<U>(p) + g_u);
-                    std::memcpy(&row.data_[off], &r, sizeof(T));
-                    std::memcpy(&prev_data_[off], &r, sizeof(T));
+                    std::memcpy(rowData + off, &r, sizeof(T));
+                    std::memcpy(prevData + off, &r, sizeof(T));
                 }
                 // Gradient unchanged
                 continue;
@@ -470,24 +495,33 @@ void RowCodecDelta002<LayoutType>::deserialize(
             const size_t deltaBytes = code - 1;
             delta002ValidateLengthCode(deltaBytes, sizeof(T));
 
-            if (dataOff + deltaBytes > buffer.size())
+            if (dataOff + deltaBytes > srcSize)
                 throw std::runtime_error(
                     "RowCodecDelta002::deserialize() failed! Buffer too small for delta.");
 
-            uint64_t deltaValue = decodeDelta(&buffer[dataOff], deltaBytes);
+            // One unaligned 8-byte load + mask where 8 bytes are in the
+            // buffer (all but the row's last few bytes), else byte by byte.
+            uint64_t deltaValue;
+            if (dataOff + sizeof(uint64_t) <= srcSize) [[likely]] {
+                std::memcpy(&deltaValue, src + dataOff, sizeof(uint64_t));
+                if (deltaBytes < sizeof(uint64_t))
+                    deltaValue &= (uint64_t{1} << (deltaBytes * 8)) - 1;
+            } else {
+                deltaValue = decodeDelta(src + dataOff, deltaBytes);
+            }
 
             if constexpr (std::is_floating_point_v<T>)
-                applyFloatXorDelta<T>(&row.data_[off], &prev_data_[off], deltaValue);
+                applyFloatXorDelta<T>(rowData + off, prevData + off, deltaValue);
             else
-                applyIntDelta<T>(&row.data_[off], &prev_data_[off], deltaValue);
+                applyIntDelta<T>(rowData + off, prevData + off, deltaValue);
 
             // Update gradient
             if constexpr (std::is_floating_point_v<T>)
-                computeFloatGradient<T>(&grad_data_[off], &row.data_[off], &prev_data_[off]);
+                computeFloatGradient<T>(gradData + off, rowData + off, prevData + off);
             else
-                computeIntGradient<T>(&grad_data_[off], &row.data_[off], &prev_data_[off]);
+                computeIntGradient<T>(gradData + off, rowData + off, prevData + off);
 
-            std::memcpy(&prev_data_[off], &row.data_[off], sizeof(T));
+            std::memcpy(prevData + off, rowData + off, sizeof(T));
             dataOff += deltaBytes;
         }
     });
