@@ -107,8 +107,11 @@ namespace {
 
     // ── Python → Row helpers ───────────────────────────────────────────
 
+    // target_type is a string literal (the C++ type name, for error messages).
+    // It used to be a const std::string&, which constructed and destroyed a
+    // std::string for every value converted — measurable on a wide row.
     template<typename T>
-    T convert_numeric(const nb::object& value, const std::string& target_type) {
+    T convert_numeric(const nb::object& value, const char* target_type) {
         try {
             return nb::cast<T>(value);
         } catch (const nb::cast_error&) {
@@ -132,12 +135,111 @@ namespace {
                         return static_cast<T>(std::stod(s));
                     }
                 } catch (const std::out_of_range&) {
-                    throw std::runtime_error("Value out of range for " + target_type + ": " + s);
+                    throw std::runtime_error(std::string("Value out of range for ") + target_type + ": " + s);
                 } catch (const std::invalid_argument&) {
-                    throw std::runtime_error("Invalid numeric string for " + target_type + ": " + s);
+                    throw std::runtime_error(std::string("Invalid numeric string for ") + target_type + ": " + s);
                 }
             }
-            throw std::runtime_error("Cannot convert to " + target_type);
+            throw std::runtime_error(std::string("Cannot convert to ") + target_type);
+        }
+    }
+
+    // ── Fast path for the exact builtin types ──────────────────────────
+    //
+    // On a wide row, write_row() is dominated by per-value conversion, not by
+    // the codec: nb::cast<T>() sets up a cleanup list per value, and every
+    // value went through the generic switch above.  The four exact builtin
+    // types that real callers pass (float, int, bool, str — what
+    // ndarray.tolist() and struct.unpack produce) are converted here with
+    // the same CPython calls nanobind's casters make under convert=true, so
+    // every value accepted here is stored bit-identically to the generic
+    // path.  Anything else — subclasses, numpy scalars, out-of-range ints,
+    // strings for numeric columns, non-str for string columns, over-long
+    // strings — returns false and takes the unchanged generic path, with its
+    // conversions, truncations and error messages.
+    //
+    // None of these calls can run Python code (exact types only), so the
+    // borrowed list items stay valid for the duration of the fast path.
+
+    template<typename T>
+    BCSV_ALWAYS_INLINE bool fast_scalar(PyObject* o, T& out) noexcept {
+        if constexpr (std::is_same_v<T, bool>) {
+            // nanobind's bool caster accepts exactly True/False.
+            if (o == Py_True)  { out = true;  return true; }
+            if (o == Py_False) { out = false; return true; }
+            return false;
+        } else if constexpr (std::is_floating_point_v<T>) {
+            // load_f64/load_f32 under convert: PyFloat_AsDouble, then (T).
+            // For an exact int that is int.__float__ == PyLong_AsDouble.
+            double d;
+            if (PyFloat_CheckExact(o)) {
+#if defined(Py_LIMITED_API)
+                d = PyFloat_AsDouble(o);
+#else
+                d = PyFloat_AS_DOUBLE(o);
+#endif
+            } else if (PyLong_CheckExact(o)) {
+                d = PyLong_AsDouble(o);
+                if (d == -1.0 && PyErr_Occurred()) { PyErr_Clear(); return false; }
+            } else {
+                return false;
+            }
+            out = static_cast<T>(d);
+            return true;
+        } else {
+            // nanobind's load_int_exact: accept iff the value fits T.
+            // Values outside long long (incl. uint64 >= 2**63) fall back.
+            if (!PyLong_CheckExact(o)) return false;
+            int overflow = 0;
+            const long long v = PyLong_AsLongLongAndOverflow(o, &overflow);
+            if (overflow != 0) return false;
+            if (v == -1 && PyErr_Occurred()) { PyErr_Clear(); return false; }
+            if constexpr (std::is_unsigned_v<T>) {
+                if (v < 0) return false;
+                if constexpr (sizeof(T) < sizeof(long long))
+                    if (static_cast<unsigned long long>(v) > std::numeric_limits<T>::max()) return false;
+            } else if constexpr (sizeof(T) < sizeof(long long)) {
+                if (v < std::numeric_limits<T>::min() || v > std::numeric_limits<T>::max()) return false;
+            }
+            out = static_cast<T>(v);
+            return true;
+        }
+    }
+
+    /// Exact str into a STRING column.  Same UTF-8 bytes nanobind's
+    /// std::string caster produces (PyUnicode_AsUTF8AndSize), read in place:
+    /// no temporary std::string, and an unchanged value (a constant column)
+    /// is not even re-assigned.
+    template<typename RowType>
+    BCSV_ALWAYS_INLINE bool fast_string(RowType& row, size_t col, PyObject* o) {
+        if (!PyUnicode_CheckExact(o)) return false;
+        Py_ssize_t len = 0;
+        const char* p = PyUnicode_AsUTF8AndSize(o, &len);
+        if (!p) { PyErr_Clear(); return false; }                  // generic path raises
+        if (static_cast<size_t>(len) > bcsv::MAX_STRING_LENGTH) return false;  // ditto
+        const std::string_view sv(p, static_cast<size_t>(len));
+        if (row.template get<std::string_view>(col) != sv)
+            row.set(col, sv);
+        return true;
+    }
+
+    template<typename RowType>
+    BCSV_ALWAYS_INLINE bool try_set_fast(RowType& row, size_t col,
+                                         bcsv::ColumnType ct, PyObject* o) {
+        switch (ct) {
+#define X(T, E)                                         \
+            case E: {                                   \
+                T v;                                    \
+                if (!fast_scalar<T>(o, v)) return false;\
+                row.set(col, v);                        \
+                return true;                            \
+            }
+            BCSV_FOR_EACH_NUMERIC_TYPE(X)
+#undef X
+            case bcsv::ColumnType::STRING:
+                return fast_string(row, col, o);
+            default:
+                return false;
         }
     }
 
@@ -171,6 +273,29 @@ namespace {
         }
     }
 
+    /// Fill `row` from a Python list of exactly n values (length checked by
+    /// the caller): fast path per value, generic set_column_value otherwise.
+    template<typename RowType>
+    inline void set_row_from_list(RowType& row, const bcsv::ColumnType* types,
+                                  size_t n, const nb::list& values) {
+#if defined(NB_FREE_THREADED)
+        for (size_t i = 0; i < n; ++i)
+            set_column_value(row, i, types[i], values[i]);
+#else
+        PyObject* lst = values.ptr();
+        for (size_t i = 0; i < n; ++i) {
+            PyObject* o = NB_LIST_GET_ITEM(lst, static_cast<Py_ssize_t>(i));
+            if (try_set_fast(row, i, types[i], o)) [[likely]]
+                continue;
+            set_column_value(row, i, types[i], nb::borrow(o));
+            // The generic path may run Python code (__index__, __float__,
+            // __str__) that could resize the list under us.
+            if (static_cast<size_t>(PyList_Size(lst)) != n)
+                throw std::runtime_error("Row list was modified while it was being written");
+        }
+#endif
+    }
+
     // ── Cached layout metadata for hot loops ───────────────────────────
 
     class OptimizedRowWriter {
@@ -186,8 +311,7 @@ namespace {
         }
         template<typename RowType>
         void write_row_fast(RowType& row, const nb::list& values) const {
-            for (size_t i = 0; i < n_; ++i)
-                set_column_value(row, i, col_types_[i], values[i]);
+            set_row_from_list(row, col_types_.data(), n_, values);
         }
     };
 
@@ -397,8 +521,7 @@ namespace {
                 if (values.size() != layout.columnCount())
                     throw std::runtime_error("Row length mismatch: expected " +
                                              std::to_string(layout.columnCount()) + ", got " + std::to_string(values.size()));
-                for (size_t i = 0; i < values.size(); ++i)
-                    set_column_value(row, i, layout.columnType(i), values[i]);
+                set_row_from_list(row, layout.columnTypes().data(), values.size(), values);
                 return w.writeRow();
             })
             .def("write_rows", [](WriterT& w, const nb::list& rows) {
@@ -410,8 +533,7 @@ namespace {
                     throw std::runtime_error("Row " + std::to_string(i) + " length mismatch: expected " +
                         std::to_string(expected) + ", got " + std::to_string(vals.size()));
                 auto& row = w.row();
-                for (size_t j = 0; j < expected; ++j)
-                    set_column_value(row, j, layout.columnType(j), vals[j]);
+                set_row_from_list(row, layout.columnTypes().data(), expected, vals);
                 w.writeRow();
             } }, "Write multiple rows efficiently");
     }
