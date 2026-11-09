@@ -12,6 +12,26 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed (performance; wire format and public APIs unchanged)
+
+- **Delta002 decode ~40 % faster** (dynamic `Layout`): hot-loop state kept in
+  locals instead of re-read after every `std::byte` store, header codes read
+  with one 64-bit load, delta payloads with one load + mask. 665 -> 395 ns per
+  315-column row; macro suite (flexible delta) read +24 % median. Decoded
+  values bit-identical to 1.5.22 on 197 real files.
+- **`Layout` index checks inline** (`checkRange()` throws from a cold helper),
+  removing two calls per `Row::get<T>()`/`set<T>()`.
+- **pybcsv `Writer.write_row()` 2.5x faster on wide rows**: exact
+  `float`/`int`/`bool`/`str` values are converted on a fast path with the same
+  semantics as before (pinned by `test_write_row_conversion.py`); unchanged
+  strings are not re-assigned. A row list shrunk by a value's own conversion
+  code now raises instead of reading past the list (crashed in 1.5.22).
+- **pybcsv reads**: string columns are collected without a `std::string` per
+  cell (`read_columns`/`read_batch` share one `str` object per run of equal
+  values; Arrow buffers are built in place), and `read_batch`/`read_columns`
+  allocate their numpy arrays without per-column Python calls - small
+  `read_batch()` calls on wide files up to 3x faster.
+
 ## [1.5.22] - 2026-09-14
 
 ### Fixed
