@@ -648,6 +648,62 @@ namespace {
     constexpr auto DEFAULT_FILE_FLAGS = bcsv::FileFlags::NONE;
 #endif
 
+    // ── String columns collected under a released GIL ─────────────────
+    //
+    // The read loops run without the GIL, so string cells cannot become
+    // Python objects there. They used to be copied into one std::string per
+    // cell (a heap allocation for anything past the SSO size) and turned into
+    // one Python str per cell afterwards. A recording's constant meta columns
+    // made that the most expensive part of an all-column read.
+
+    /// For dict-of-list results (read_batch, read_columns): runs of equal
+    /// values. A constant column costs one std::string and one Python str
+    /// object, referenced from every list slot; the values are unchanged.
+    struct StringRuns {
+        std::vector<std::string> values;
+        std::vector<size_t>      counts;
+        size_t                   total = 0;
+
+        void push(std::string_view sv) {
+            if (!values.empty() && values.back() == sv) {
+                ++counts.back();
+            } else {
+                values.emplace_back(sv);
+                counts.push_back(1);
+            }
+            ++total;
+        }
+
+        [[nodiscard]] nb::list to_list() const {
+            nb::list out = nb::steal<nb::list>(PyList_New(static_cast<Py_ssize_t>(total)));
+            Py_ssize_t idx = 0;
+            for (size_t r = 0; r < values.size(); ++r) {
+                nb::object item = nb::cast(values[r]);     // same str conversion as before
+                for (size_t k = 0; k < counts[r]; ++k)
+                    PyList_SetItem(out.ptr(), idx++, Py_NewRef(item.ptr()));   // steals the new ref
+            }
+            return out;
+        }
+    };
+
+    /// For Arrow utf8 results: the offsets and data buffers themselves, built
+    /// directly while reading and later handed to Arrow without a copy.
+    struct ArrowStrings {
+        std::vector<int32_t> offsets{0};
+        std::vector<char>    data;
+        size_t               total = 0;   ///< bytes requested; may pass INT32_MAX (checked at build)
+
+        void reserve(size_t rows) { offsets.reserve(rows + 1); }
+
+        void push(std::string_view sv) {
+            total += sv.size();
+            if (total <= static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+                data.insert(data.end(), sv.begin(), sv.end());
+                offsets.push_back(static_cast<int32_t>(data.size()));
+            }
+        }
+    };
+
     // ── Shared Arrow RecordBatch builder ──────────────────────────────
     // Extracted from read_to_arrow's lambda so it can be
     // reused by read_arrow_batch and other streaming consumers.
@@ -659,7 +715,7 @@ namespace {
         const std::vector<bcsv::ColumnType>&         col_types,
         size_t                                       batch_rows,
         std::vector<std::vector<uint8_t>>&           numeric_bufs,
-        const std::vector<std::vector<std::string>>& string_bufs) {
+        std::vector<ArrowStrings>&                   string_bufs) {
         ArrowSchema schema{};
         ArrowArray  array{};
 
@@ -742,25 +798,16 @@ namespace {
                 child_array->private_data = ca_priv;
 
                 if (is_str) {
-                    const auto& strings = string_bufs[c];
-                    ca_priv->offsets_buf.resize(batch_rows + 1);
-                    ca_priv->offsets_buf[0] = 0;
-                    size_t total_bytes      = 0;
-                    for (size_t i = 0; i < batch_rows; ++i)
-                        total_bytes += strings[i].size();
-                    if (total_bytes > static_cast<size_t>(std::numeric_limits<int32_t>::max()))
+                    auto& strings = string_bufs[c];
+                    if (strings.total > static_cast<size_t>(std::numeric_limits<int32_t>::max()))
                         throw std::overflow_error(
                             "String column '" + col_names[c] + "' exceeds 2 GB "
                                                                "Arrow utf8 offset limit (" +
-                            std::to_string(total_bytes) + " bytes)");
-                    ca_priv->string_data_buf.resize(total_bytes);
-                    char*   dest   = ca_priv->string_data_buf.data();
-                    int32_t offset = 0;
-                    for (size_t i = 0; i < batch_rows; ++i) {
-                        std::memcpy(dest + offset, strings[i].data(), strings[i].size());
-                        offset += static_cast<int32_t>(strings[i].size());
-                        ca_priv->offsets_buf[i + 1] = offset;
-                    }
+                            std::to_string(strings.total) + " bytes)");
+                    if (strings.offsets.size() != batch_rows + 1)
+                        throw std::logic_error("Arrow string column row count mismatch");
+                    ca_priv->offsets_buf     = std::move(strings.offsets);
+                    ca_priv->string_data_buf = std::move(strings.data);
                     child_array->n_buffers = 3;
                     ca_priv->buffer_ptrs   = {nullptr, ca_priv->offsets_buf.data(),
                                               ca_priv->string_data_buf.data()};
@@ -1097,11 +1144,11 @@ NB_MODULE(_bcsv, m) {
             auto np = nb::module_::import_("numpy");
             std::vector<nb::object> arrays(num_cols);
             std::vector<void*> bufs(num_cols, nullptr);
-            std::vector<std::vector<std::string>> string_cols(num_cols);
+            std::vector<StringRuns> string_cols(num_cols);
 
             for (size_t c = 0; c < num_cols; ++c) {
                 if (is_str[c]) {
-                    string_cols[c].reserve(batch_size);
+                    // collected as runs, see StringRuns
                 } else {
                     nb::object shape = nb::make_tuple(static_cast<int64_t>(batch_size));
                     arrays[c] = np.attr("empty")(shape,
@@ -1127,7 +1174,7 @@ NB_MODULE(_bcsv, m) {
                     const auto& row = r.row();
                     fill_row_grouped(plan, row, rows_read);
                     for (size_t c : str_cols)
-                        string_cols[c].emplace_back(row.template get<std::string>(c));
+                        string_cols[c].push(row.template get<std::string_view>(c));
                     ++rows_read;
                 }
             }
@@ -1138,10 +1185,7 @@ NB_MODULE(_bcsv, m) {
             nb::dict result;
             for (size_t c = 0; c < num_cols; ++c) {
                 if (is_str[c]) {
-                    nb::list str_list;
-                    for (auto& s : string_cols[c])
-                        str_list.append(nb::cast(std::move(s)));
-                    result[nb::cast(col_names[c])] = std::move(str_list);
+                    result[nb::cast(col_names[c])] = string_cols[c].to_list();
                 } else {
                     if (rows_read < batch_size) {
                         // Slice to actual row count
@@ -1280,7 +1324,7 @@ NB_MODULE(_bcsv, m) {
 
                 size_t out_cols = col_names.size();
                 std::vector<std::vector<uint8_t>> numeric_bufs(out_cols);
-                std::vector<std::vector<std::string>> string_bufs(out_cols);
+                std::vector<ArrowStrings> string_bufs(out_cols);
                 for (size_t c = 0; c < out_cols; ++c) {
                     if (col_types[c] == bcsv::ColumnType::STRING)
                         string_bufs[c].reserve(batch_size);
@@ -1307,7 +1351,7 @@ NB_MODULE(_bcsv, m) {
                         const auto& row = r.row();
                         fill_row_grouped(plan, row, ri);
                         for (size_t c : str_cols)
-                            string_bufs[c].emplace_back(row.template get<std::string>(col_indices[c]));
+                            string_bufs[c].push(row.template get<std::string_view>(col_indices[c]));
                         ++actual;
                     }
                 }
@@ -1437,11 +1481,11 @@ NB_MODULE(_bcsv, m) {
         auto np = nb::module_::import_("numpy");
         std::vector<nb::object> arrays(num_cols);
         std::vector<void*> bufs(num_cols, nullptr);
-        std::vector<std::vector<std::string>> string_cols(num_cols);
+        std::vector<StringRuns> string_cols(num_cols);
 
         for (size_t c = 0; c < num_cols; ++c) {
             if (is_string[c]) {
-                string_cols[c].reserve(num_rows);
+                // collected as runs, see StringRuns
             } else {
                 nb::object shape = nb::make_tuple(static_cast<int64_t>(num_rows));
                 arrays[c] = np.attr("empty")(shape, "dtype"_a = bcsv_type_to_numpy_dtype(col_types[c]));
@@ -1467,7 +1511,7 @@ NB_MODULE(_bcsv, m) {
                 const auto& row = reader.row();
                 fill_row_grouped(plan, row, row_idx);
                 for (size_t c : str_cols)
-                    string_cols[c].emplace_back(row.template get<std::string>(c));
+                    string_cols[c].push(row.template get<std::string_view>(c));
                 ++row_idx;
             }
             reader.close();
@@ -1477,11 +1521,7 @@ NB_MODULE(_bcsv, m) {
         nb::dict result;
         for (size_t c = 0; c < num_cols; ++c) {
             if (is_string[c]) {
-                nb::list str_list;
-                for (size_t i = 0; i < string_cols[c].size(); ++i) {
-                    str_list.append(nb::cast(std::move(string_cols[c][i])));
-                }
-                result[nb::cast(col_names[c])] = std::move(str_list);
+                result[nb::cast(col_names[c])] = string_cols[c].to_list();
             } else {
                 result[nb::cast(col_names[c])] = std::move(arrays[c]);
             }
@@ -1608,7 +1648,7 @@ NB_MODULE(_bcsv, m) {
                                             total_rows - rows_read);
                 // Allocate per-chunk buffers
                 std::vector<std::vector<uint8_t>> numeric_bufs(out_cols);
-                std::vector<std::vector<std::string>> string_bufs(out_cols);
+                std::vector<ArrowStrings> string_bufs(out_cols);
                 for (size_t c = 0; c < out_cols; ++c) {
                     if (col_types[c] == bcsv::ColumnType::STRING)
                         string_bufs[c].reserve(batch_rows);
@@ -1635,7 +1675,7 @@ NB_MODULE(_bcsv, m) {
                         const auto& row = reader.row();
                         fill_row_grouped(plan, row, r);
                         for (size_t c : str_cols)
-                            string_bufs[c].emplace_back(row.template get<std::string>(col_indices[c]));
+                            string_bufs[c].push(row.template get<std::string_view>(col_indices[c]));
                         ++actual_rows;
                     }
                 }
@@ -1659,7 +1699,7 @@ NB_MODULE(_bcsv, m) {
         } else {
             // Full read: single RecordBatch
             std::vector<std::vector<uint8_t>> numeric_bufs(out_cols);
-            std::vector<std::vector<std::string>> string_bufs(out_cols);
+            std::vector<ArrowStrings> string_bufs(out_cols);
             for (size_t c = 0; c < out_cols; ++c) {
                 if (col_types[c] == bcsv::ColumnType::STRING)
                     string_bufs[c].reserve(total_rows);
@@ -1684,7 +1724,7 @@ NB_MODULE(_bcsv, m) {
                     const auto& row = reader.row();
                     fill_row_grouped(plan, row, row_idx);
                     for (size_t c : str_cols)
-                        string_bufs[c].emplace_back(row.template get<std::string>(col_indices[c]));
+                        string_bufs[c].push(row.template get<std::string_view>(col_indices[c]));
                     ++row_idx;
                 }
                 reader.close();
