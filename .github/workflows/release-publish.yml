@@ -353,7 +353,8 @@ jobs:
     environment: nuget
     permissions:
       contents: read
-      actions: read # gh run download
+      actions: read   # gh run download
+      id-token: write # trusted publishing: the OIDC token NuGet/login trades for a 1 h key
     steps:
       - name: Download .nupkg from the green tag run
         env:
@@ -372,9 +373,18 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      # Trusted publishing, no stored key: nuget.org's policy for webertob/bcsv,
+      # workflow release-publish.yml (environment empty or 'nuget') issues a
+      # key valid for one hour, so the login sits right before the push.
+      - name: NuGet login (trusted publishing)
+        id: nuget-login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: webertob # the nuget.org profile name, not the e-mail address
+
       - name: Push to NuGet.org
         run: |
           dotnet nuget push nupkg/*.nupkg \
-            --api-key ${{ secrets.NUGET_API_KEY }} \
+            --api-key ${{ steps.nuget-login.outputs.NUGET_API_KEY }} \
             --source https://api.nuget.org/v3/index.json \
             --skip-duplicate
