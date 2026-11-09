@@ -227,7 +227,10 @@ trimmed.
 
 ### Delimiter Auto-Detection
 
-When `-d` is omitted, scans the first line. Priority: comma → semicolon → tab → pipe.
+When `-d` is omitted, scans the first line and takes the delimiter found most often outside
+quotes; on a tie the priority is comma → semicolon → tab → pipe. The decimal separator is
+never detected as the delimiter, so with `--decimal-separator ,` a headerless German line
+such as `1;0,5;20,1` splits at `;`.
 
 ### Line Endings & Encoding
 

@@ -15,6 +15,10 @@ This project uses [Semantic Versioning](https://semver.org/).
 ### Fixed
 
 - **CSV reader / csv2bcsv: the last column with CR line endings.** Lines now end at LF, CRLF or a lone CR on every OS, so lone-CR and mixed files convert instead of failing, and `\r\r\n` no longer leaves a `\r` on the last field (which made the column STRING, a bool `false`, or 0 under `--types`).
+- **csv2bcsv: delimiter detection with decimal commas.** The decimal separator is no longer a
+  delimiter candidate, so `--decimal-separator ,` on a headerless `1;0,5;20,1` splits at `;`
+  instead of tying with the commas and splitting at them. A tie now follows the documented
+  priority (comma, semicolon, tab, pipe); a tab used to win a tie against a comma.
 
 ## [1.5.23] - 2026-11-09
 

@@ -28,7 +28,6 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#include <map>
 #include <filesystem>
 #include <chrono>
 #include <iomanip>
@@ -81,37 +80,33 @@ struct Config {
     size_t block_size_kb     = bcsv::DEFAULT_PACKET_SIZE_KB;
 };
 
-// Automatic delimiter detection
-static char detectDelimiter(const std::string& sample_line) {
-    const std::vector<char> delimiters = {',', ';', '\t', '|'};
-    std::map<char, int> delimiter_counts;
+// Automatic delimiter detection: the candidate found most often outside quotes on the first
+// line; a tie goes to the earlier one in the list (the priority CLI_TOOLS.md documents), and a
+// line with none of them gives the first. The decimal separator is never a candidate: the two
+// must differ (as for an explicit -d), and with decimal commas every number adds a ',' to the
+// count, so a headerless German line "1;0,5;20,1" would otherwise tie and split at the commas.
+static char detectDelimiter(const std::string& sample_line, char decimal_separator) {
+    std::vector<char> candidates = {',', ';', '\t', '|'};
+    std::erase(candidates, decimal_separator);
 
-    bool in_quotes = false;
-    char quote_char = '"';
-
-    for (char c : sample_line) {
-        if (c == quote_char) {
-            in_quotes = !in_quotes;
-        } else if (!in_quotes) {
-            for (char delim : delimiters) {
-                if (c == delim) {
-                    delimiter_counts[delim]++;
-                }
+    char best = candidates.front();
+    size_t best_count = 0;
+    for (char delim : candidates) {
+        size_t count = 0;
+        bool in_quotes = false;
+        for (char c : sample_line) {
+            if (c == '"') {
+                in_quotes = !in_quotes;
+            } else if (!in_quotes && c == delim) {
+                ++count;
             }
         }
-    }
-
-    // Return delimiter with highest count
-    char best_delimiter = ',';
-    int max_count = 0;
-    for (const auto& pair : delimiter_counts) {
-        if (pair.second > max_count) {
-            max_count = pair.second;
-            best_delimiter = pair.first;
+        if (count > best_count) {
+            best = delim;
+            best_count = count;
         }
     }
-
-    return best_delimiter;
+    return best;
 }
 
 // ── Column plan ──────────────────────────────────────────────────────
@@ -938,7 +933,7 @@ int main(int argc, char* argv[]) {
                 throw std::runtime_error("Input file is empty");
             for (char c; input.get(c) && c != '\n' && c != '\r';)
                 line.push_back(c);
-            config.delimiter = detectDelimiter(line);
+            config.delimiter = detectDelimiter(line, config.decimal_separator);
             if (config.verbose)
                 std::cerr << "Auto-detected delimiter: '" << config.delimiter << "'" << std::endl;
         }

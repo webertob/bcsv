@@ -970,6 +970,22 @@ class TestCsv2BcsvLineEndings:
             rows = list(csv.reader(f))
         assert rows == [["Zeit", "Wert"], ["0.5", "1.25"], ["1.5", "2.5"], ["2.5", "-3.75"]]
 
+    def test_headerless_decimal_comma_detects_semicolon(self, tools, tmp_dir):
+        """With --decimal-separator ',' the comma is not a delimiter candidate. A
+        headerless line "1;0,5;20,1" has as many commas as semicolons and used to
+        split at the commas."""
+        csv_path = tmp_dir / "de_noheader.csv"
+        csv_path.write_bytes(b"1;0,5;20,1\r\n2;-1,25;30,2\r\n3;2,5;-4,5\r\n")
+        bcsv_path = tmp_dir / "de_noheader.bcsv"
+        run_tool(tools["csv2bcsv"], "-f", "--no-header", "--decimal-separator", ",",
+                 csv_path, bcsv_path)
+        back = tmp_dir / "de_noheader_back.csv"
+        run_tool(tools["bcsv2csv"], bcsv_path, "-o", back)
+        with open(back, newline="", encoding="utf-8") as f:
+            rows = list(csv.reader(f))
+        assert rows == [["column_1", "column_2", "column_3"],
+                        ["1", "0.5", "20.1"], ["2", "-1.25", "30.2"], ["3", "2.5", "-4.5"]]
+
 
 class TestReviewRegressions:
     """Regressions from the 2026-07-13 critical review."""
