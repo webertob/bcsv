@@ -14,6 +14,10 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **Delta002 reads bool-heavy rows at least as fast as 1.5.22 again** (1.5.23: 4–11 %
+  slower): header codes are read in place instead of from a per-row copy of the header,
+  whose 8-byte reads the CPU could not forward from its store buffer; with clang the
+  decode loop's state now stays in registers and empty type groups are skipped.
 - **CSV reader / csv2bcsv: the last column with CR line endings.** Lines now end at LF, CRLF or a lone CR on every OS, so lone-CR and mixed files convert instead of failing, and `\r\r\n` no longer leaves a `\r` on the last field (which made the column STRING, a bool `false`, or 0 under `--types`).
 - **csv2bcsv: delimiter detection with decimal commas.** The decimal separator is no longer a
   delimiter candidate, so `--decimal-separator ,` on a headerless `1;0,5;20,1` splits at `;`
