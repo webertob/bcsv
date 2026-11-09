@@ -931,9 +931,13 @@ int main(int argc, char* argv[]) {
             std::ifstream input(config.input_file);
             if (!input.is_open())
                 throw std::runtime_error("Cannot open input file: " + config.input_file);
+            // The first line ends at '\n' or '\r' (CRLF and classic-Mac CR files alike);
+            // getline would read a whole CR-only file and count the data's commas too.
             std::string line;
-            if (!std::getline(input, line))
+            if (input.peek() == std::ifstream::traits_type::eof())
                 throw std::runtime_error("Input file is empty");
+            for (char c; input.get(c) && c != '\n' && c != '\r';)
+                line.push_back(c);
             config.delimiter = detectDelimiter(line);
             if (config.verbose)
                 std::cerr << "Auto-detected delimiter: '" << config.delimiter << "'" << std::endl;

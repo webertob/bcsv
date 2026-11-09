@@ -229,6 +229,15 @@ trimmed.
 
 When `-d` is omitted, scans the first line. Priority: comma → semicolon → tab → pipe.
 
+### Line Endings & Encoding
+
+Lines may end in LF, CRLF or a lone CR (classic Mac OS, Excel "CSV (Macintosh)"),
+also mixed within one file, and the last line needs no line end; this is the same
+on Windows, Linux and macOS. A line break inside a quoted field is part of the
+value. The input is read as UTF-8/ASCII; a UTF-8 BOM (Excel "CSV UTF-8") is
+skipped. An empty cell in a numeric or bool column is stored as 0/false (BCSV has
+no null value).
+
 ### Whitespace-Collapse Mode (`-w`)
 
 Use `-w` for files whose columns are separated by variable-width runs of spaces

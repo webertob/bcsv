@@ -3,6 +3,8 @@
 Port of tests/test_cli_tools.sh — CSV round-trip, codec variants, head/tail,
 header display, generator, pipeline, and edge cases.
 """
+import csv
+import re
 import pytest
 from pathlib import Path
 from helpers import (
@@ -884,6 +886,89 @@ class TestCsv2BcsvPartialRows:
         run_tool(tools["csv2bcsv"], "-f", "--no-header", csv_path, bcsv_path)
         header = run_tool(tools["bcsvHeader"], bcsv_path).stdout
         assert "Columns: 3" in header
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# csv2bcsv: line endings and the last column
+# ═══════════════════════════════════════════════════════════════════════
+#
+# Regression: the CSV reader split records at '\n' only and stripped one
+# trailing '\r'. A lone-CR file failed ("No valid data rows found"), a file
+# mixing lone CRs with LF/CRLF merged lines, and "\r\r\n" left a '\r' on the
+# last field, so the column became STRING ("7\r") or, with --types, 0
+# ("unparseable value(s) stored as defaults"). The files are written as bytes,
+# so Windows, Linux and macOS convert the same input.
+
+LINE_ENDINGS = {
+    "LF": [b"\n"],
+    "CRLF": [b"\r\n"],
+    "CR": [b"\r"],
+    "CRCRLF": [b"\r\r\n"],
+    "mixed": [b"\n", b"\r\n", b"\r"],   # used in turn, line by line
+}
+
+# name: (last-column cells, extra csv2bcsv args, expected type, expected values)
+LAST_COLUMN = {
+    "int": (["7", "-8", "9"], [], "int8", ["7", "-8", "9"]),
+    "double": (["1e3", "2.5e-3", "-4E+2"], [], "double", ["1000", "0.0025", "-400"]),
+    "bool": (["true", "false", "TRUE"], [], "bool", ["true", "false", "true"]),
+    "quoted": (['"a,b"', '"say ""hi"""', "c"], [], "string", ["a,b", 'say "hi"', "c"]),
+    "empty": (["5", "6", ""], [], "uint8", ["5", "6", "0"]),
+    "trailing_delim": (["7,", "8,", "9,"], [], "uint8", ["7", "8", "9"]),
+    "forced": (["7", "8", "9"], ["--types", "2=double"], "double", ["7", "8", "9"]),
+}
+
+
+def csv_bytes(lines, eols, trailing_eol, bom):
+    data = b"\xef\xbb\xbf" if bom else b""
+    for i, line in enumerate(lines):
+        data += line
+        if i + 1 < len(lines) or trailing_eol:
+            data += eols[i % len(eols)]
+    return data
+
+
+class TestCsv2BcsvLineEndings:
+    @pytest.mark.parametrize("content", LAST_COLUMN)
+    @pytest.mark.parametrize("bom,header", [(False, True), (True, True), (True, False)],
+                             ids=["header", "bom-header", "bom-noheader"])
+    @pytest.mark.parametrize("trailing_eol", [True, False], ids=["eol", "noeol"])
+    @pytest.mark.parametrize("eol", LINE_ENDINGS)
+    def test_last_column(self, tools, tmp_dir, eol, trailing_eol, bom, header, content):
+        cells, args, want_type, want = LAST_COLUMN[content]
+        lines = [b"id,val,last"] if header else []
+        lines += [f"{i + 1},{i + 0.5},{cell}".encode() for i, cell in enumerate(cells)]
+        csv_path = tmp_dir / "in.csv"
+        csv_path.write_bytes(csv_bytes(lines, LINE_ENDINGS[eol], trailing_eol, bom))
+        bcsv_path = tmp_dir / "out.bcsv"
+
+        r = run_tool(tools["csv2bcsv"], "-f", *([] if header else ["--no-header"]),
+                     *args, csv_path, bcsv_path)
+        assert "Warning" not in r.stderr, r.stderr
+        last_type = re.search(r"^\s*2 \|.*\|\s*(\w+)\s*$", r.stderr, re.M)
+        assert last_type and last_type.group(1) == want_type, r.stderr
+
+        back = tmp_dir / "back.csv"
+        run_tool(tools["bcsv2csv"], bcsv_path, "-o", back)
+        with open(back, newline="", encoding="utf-8") as f:
+            rows = list(csv.reader(f))
+        assert rows[0] == (["id", "val", "last"] if header
+                           else ["column_1", "column_2", "column_3"])
+        assert rows[1:] == [[str(i + 1), str(i + 0.5), v] for i, v in enumerate(want)]
+
+    def test_cr_only_semicolon_file_detects_delimiter(self, tools, tmp_dir):
+        """Delimiter detection reads the first line only, also in a CR-only file
+        (German Excel "CSV (Macintosh)"): it used to read the whole file as one
+        line and pick ',' from the decimal commas."""
+        csv_path = tmp_dir / "de_mac.csv"
+        csv_path.write_bytes(b"Zeit;Wert\r0,5;1,25\r1,5;2,5\r2,5;-3,75\r")
+        bcsv_path = tmp_dir / "de_mac.bcsv"
+        run_tool(tools["csv2bcsv"], "-f", "--decimal-separator", ",", csv_path, bcsv_path)
+        back = tmp_dir / "de_mac_back.csv"
+        run_tool(tools["bcsv2csv"], bcsv_path, "-o", back)
+        with open(back, newline="", encoding="utf-8") as f:
+            rows = list(csv.reader(f))
+        assert rows == [["Zeit", "Wert"], ["0.5", "1.25"], ["1.5", "2.5"], ["2.5", "-3.75"]]
 
 
 class TestReviewRegressions:

@@ -23,11 +23,13 @@
  */
 
 #include <gtest/gtest.h>
+#include <array>
 #include <charconv>
 #include <filesystem>
 #include <fstream>
 #include <cmath>
 #include <string>
+#include <vector>
 
 #include <bcsv/bcsv.h>
 
@@ -992,6 +994,166 @@ TEST_F(CsvReaderWriterTest, WindowsCRLF_LineEndings) {
         EXPECT_FALSE(reader.readNext());
         reader.close();
     }
+}
+
+// ── Test: every line ending, the last column exact ─────────────────
+//
+// Regression: the reader split records at '\n' only and stripped ONE trailing
+// '\r'. A lone-CR file (classic Mac, Excel "CSV (Macintosh)") became a single
+// record, and "\r\r\n" (CRLF text written again through a text-mode writer)
+// left a '\r' on the last field, so on Linux/macOS a numeric last column turned
+// into STRING ("7\r") or, with a forced type, into 0. Windows hid "\r\r\n" because
+// its text-mode stream turns the CRLF into LF. The files are written in binary,
+// so every OS reads the same bytes.
+
+namespace {
+struct LineEndingCase {
+    const char* name;
+    std::vector<std::string> eols;   // used in turn, line by line
+};
+
+const LineEndingCase LINE_ENDINGS[] = {
+    {"LF", {"\n"}},
+    {"CRLF", {"\r\n"}},
+    {"CR", {"\r"}},
+    {"CRCRLF", {"\r\r\n"}},
+    {"mixed", {"\n", "\r\n", "\r"}},
+};
+
+// Join `lines` with the case's line endings, optionally ending the last line too.
+std::string joinLines(const std::vector<std::string>& lines, const LineEndingCase& le,
+                      bool trailingEol, bool bom) {
+    std::string out = bom ? "\xEF\xBB\xBF" : "";
+    for (size_t i = 0; i < lines.size(); ++i) {
+        out += lines[i];
+        if (i + 1 < lines.size() || trailingEol)
+            out += le.eols[i % le.eols.size()];
+    }
+    return out;
+}
+
+void writeBytes(const fs::path& path, const std::string& bytes) {
+    std::ofstream f(path, std::ios::binary);
+    f << bytes;
+}
+} // namespace
+
+TEST_F(CsvReaderWriterTest, LineEndings_LastColumnExact) {
+    // One layout per last-column type; the cells sit at the end of every line.
+    struct LastColumn {
+        bcsv::ColumnType type;
+        std::vector<std::string> cells;
+    };
+    const LastColumn lastColumns[] = {
+        {bcsv::ColumnType::BOOL,   {"true", "false", "1"}},
+        {bcsv::ColumnType::INT32,  {"-7", "0", "42"}},
+        {bcsv::ColumnType::DOUBLE, {"1.5", "-2e-3", "1E3"}},
+        {bcsv::ColumnType::STRING, {"abc", "\"x,y\"", ""}},
+    };
+    const std::array<int32_t, 3>     ints    = {-7, 0, 42};
+    const std::array<double, 3>      doubles = {1.5, -2e-3, 1e3};
+    const std::array<std::string, 3> strings = {"abc", "x,y", ""};
+
+    for (const auto& le : LINE_ENDINGS) {
+        for (bool trailingEol : {true, false}) {
+            for (bool bom : {false, true}) {
+                for (const auto& last : lastColumns) [&] {   // ASSERTs end one case only
+                    SCOPED_TRACE(std::string(le.name) + (trailingEol ? " eol" : " no-eol") +
+                                 (bom ? " bom " : " ") + std::string(bcsv::toString(last.type)));
+                    bcsv::Layout layout;
+                    layout.addColumn({"id", bcsv::ColumnType::INT32});
+                    layout.addColumn({"last", last.type});
+
+                    std::vector<std::string> lines = {"id,last"};
+                    for (size_t r = 0; r < last.cells.size(); ++r)
+                        lines.push_back(std::to_string(r + 1) + "," + last.cells[r]);
+                    auto path = tmpFile(std::string("eol_") + le.name + ".csv");
+                    writeBytes(path, joinLines(lines, le, trailingEol, bom));
+
+                    bcsv::CsvReader<bcsv::Layout> reader(layout);
+                    ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
+                    for (size_t r = 0; r < 3; ++r) {
+                        ASSERT_TRUE(reader.readNext()) << "row " << r;
+                        const auto& row = reader.row();
+                        EXPECT_EQ(row.get<int32_t>(0), static_cast<int32_t>(r + 1));
+                        switch (last.type) {
+                            case bcsv::ColumnType::BOOL:
+                                EXPECT_EQ(row.get<bool>(1), r != 1);
+                                break;
+                            case bcsv::ColumnType::INT32:
+                                EXPECT_EQ(row.get<int32_t>(1), ints[r]);
+                                break;
+                            case bcsv::ColumnType::DOUBLE:
+                                EXPECT_EQ(row.get<double>(1), doubles[r]);
+                                break;
+                            default:
+                                EXPECT_EQ(row.get<std::string>(1), strings[r]);
+                                break;
+                        }
+                    }
+                    EXPECT_FALSE(reader.readNext());
+                    EXPECT_EQ(reader.parseErrorCount(), 0u) << reader.getErrorMsg();
+                    reader.close();
+                }();
+            }
+        }
+    }
+}
+
+TEST_F(CsvReaderWriterTest, LineEndings_RawModeAndFileLine) {
+    bcsv::Layout empty;   // raw mode with untouched tokenization, as csv2bcsv uses it
+    using Cells = std::vector<std::string_view>;
+    for (const auto& le : LINE_ENDINGS) {
+        for (bool trailingEol : {true, false}) [&] {   // ASSERTs end one case only
+            SCOPED_TRACE(std::string(le.name) + (trailingEol ? " eol" : " no-eol"));
+            auto path = tmpFile(std::string("raw_eol_") + le.name + ".csv");
+            // Line 3 is empty, line 4 ends with an empty last field.
+            writeBytes(path, joinLines({"a,b,c", "1,2,3", "", "4,5,"}, le, trailingEol, true));
+
+            bcsv::CsvReader<bcsv::Layout> reader(empty);
+            ASSERT_TRUE(reader.open(path, /*hasHeader=*/false));
+            ASSERT_TRUE(reader.readNextRaw());
+            EXPECT_EQ(reader.rawCells(), (Cells{"a", "b", "c"}));
+            ASSERT_TRUE(reader.readNextRaw());
+            EXPECT_EQ(reader.rawCells(), (Cells{"1", "2", "3"}));
+            ASSERT_TRUE(reader.readNextRaw());
+            EXPECT_EQ(reader.rawCells(), (Cells{"4", "5", ""}));
+            // "\r\r\n" is two line ends where the bytes reach the reader unchanged;
+            // a Windows text-mode stream has already made it one CRLF.
+            if (std::string(le.name) != "CRCRLF") {
+                EXPECT_EQ(reader.fileLine(), 4u);
+            }
+            EXPECT_FALSE(reader.readNextRaw());
+            reader.close();
+        }();
+    }
+}
+
+TEST_F(CsvReaderWriterTest, LineEndings_InsideQuotesKept) {
+    // A line break inside a quoted field is part of the value. LF and lone CR
+    // are kept byte for byte on every OS. (CRLF inside quotes is not pinned: a
+    // Windows text-mode stream hands it over as LF, which is what the text-mode
+    // CsvWriter wrote for an LF there.)
+    bcsv::Layout layout;
+    layout.addColumn({"id", bcsv::ColumnType::INT32});
+    layout.addColumn({"text", bcsv::ColumnType::STRING});
+    for (const auto& le : LINE_ENDINGS) [&] {   // ASSERTs end one case only
+        SCOPED_TRACE(le.name);
+        auto path = tmpFile(std::string("quoted_eol_") + le.name + ".csv");
+        writeBytes(path, joinLines({"id,text", "1,\"a\nb\"", "2,\"c\rd\"", "3,e"}, le, true, false));
+
+        bcsv::CsvReader<bcsv::Layout> reader(layout);
+        ASSERT_TRUE(reader.open(path)) << reader.getErrorMsg();
+        ASSERT_TRUE(reader.readNext());
+        EXPECT_EQ(reader.row().get<std::string>(1), "a\nb");
+        ASSERT_TRUE(reader.readNext());
+        EXPECT_EQ(reader.row().get<std::string>(1), "c\rd");
+        ASSERT_TRUE(reader.readNext());
+        EXPECT_EQ(reader.row().get<int32_t>(0), 3);
+        EXPECT_EQ(reader.row().get<std::string>(1), "e");
+        EXPECT_FALSE(reader.readNext());
+        reader.close();
+    }();
 }
 
 // ── Test: from_chars error detection ────────────────────────────────

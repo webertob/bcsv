@@ -160,8 +160,8 @@ namespace bcsv {
     /**
      * @brief Read the next logical record and split it into raw cells, without typed parsing.
      *
-     * Same record assembly as readNext() (multi-line quoted fields, empty-line skip, \r strip,
-     * BOM strip on the first physical line) but the cells are left as raw string_views
+     * Same record assembly as readNext() (multi-line quoted fields, empty-line skip, LF/CRLF/CR
+     * line ends, BOM strip at the start of the file) but the cells are left as raw string_views
      * (see rawCells()); the layout is not consulted for typing and row() is not updated.
      * Callers handle column-count mismatches and unquoting (see unquote()) themselves.
      *
@@ -183,66 +183,56 @@ namespace bcsv {
     // ── Private helpers ─────────────────────────────────────────────────
 
     /// Assemble one logical CSV record into line_buf_ (multi-line quoted fields,
-    /// empty-line skip, trailing-\r strip, UTF-8 BOM strip on the first physical line).
+    /// empty-line skip, UTF-8 BOM strip at the start of the file).
+    /// A line ends at "\n", "\r\n" or a lone "\r" (classic Mac OS) — the same on every OS,
+    /// whatever the stream's text-mode translation did. Outside quotes a line end ends the
+    /// record and is dropped; inside a quoted field it is part of the value and kept as is.
     /// Returns false on clean EOF.
     template<LayoutConcept LayoutType>
     bool CsvReader<LayoutType>::fetchRecord() {
+        using Traits = std::char_traits<char>;
+        std::streambuf& in = *stream_.rdbuf();
         while (true) {
+            const bool atFileStart = (file_line_ == 0);
             line_buf_.clear();
             bool inQuotes = false;
-            size_t rawLinesConsumed = 0;
+            bool lineOpen = false;   // characters read since the last line end
 
-            while (true) {
-                std::string rawLine;
-                if (!std::getline(stream_, rawLine)) {
-                    // EOF or error
-                    if (line_buf_.empty()) {
-                        return false;  // clean EOF
+            int c;
+            while ((c = in.sbumpc()) != Traits::eof()) {
+                // A '\r' directly before '\n' is the first half of a CRLF: stored for
+                // now (stripped below when it ends the record), the '\n' ends the line.
+                const bool lineEnd = c == '\n' || (c == '\r' && in.sgetc() != '\n');
+                if (lineEnd) {
+                    ++file_line_;
+                    lineOpen = false;
+                    if (!inQuotes) {
+                        break;
                     }
-                    // We had partial data — hand back what we have
-                    break;
+                } else {
+                    lineOpen = true;
+                    if (c == '"') {
+                        inQuotes = !inQuotes;
+                    }
                 }
-                rawLinesConsumed++;
-
-                // Strip BOM if present on the very first physical line (UTF-8 BOM: EF BB BF)
-                if (file_line_ == 0 && rawLinesConsumed == 1 && rawLine.size() >= 3 &&
-                    static_cast<unsigned char>(rawLine[0]) == 0xEF &&
-                    static_cast<unsigned char>(rawLine[1]) == 0xBB &&
-                    static_cast<unsigned char>(rawLine[2]) == 0xBF) {
-                    rawLine.erase(0, 3);
-                }
-
-                if (!line_buf_.empty()) {
-                    line_buf_.push_back('\n'); // restore the newline that was inside a quoted field
-                }
-                line_buf_ += rawLine;
-
-                // Count unescaped quotes to track whether we're inside a quoted field
-                for (char c : rawLine) {
-                    if (c == '"') inQuotes = !inQuotes;
-                }
-
-                if (!inQuotes) {
-                    break; // complete line
-                }
-                // If still in quotes, the newline was inside a quoted field — continue reading
+                line_buf_.push_back(static_cast<char>(c));
+            }
+            if (lineOpen) {
+                ++file_line_;   // last line without a line end
+            }
+            if (c == Traits::eof() && line_buf_.empty()) {
+                return false;   // clean EOF (an unterminated quote hands back what it has)
             }
 
-            file_line_ += rawLinesConsumed;
-
-            // Skip empty lines (iterative, no recursion)
+            if (atFileStart && line_buf_.starts_with("\xEF\xBB\xBF")) {
+                line_buf_.erase(0, 3);   // UTF-8 BOM (Excel "CSV UTF-8")
+            }
+            if (!line_buf_.empty() && line_buf_.back() == '\r') {
+                line_buf_.pop_back();    // the CR of the CRLF that ended the record
+            }
             if (line_buf_.empty()) {
-                continue;
+                continue;                // skip empty lines (iterative, no recursion)
             }
-
-            // Strip trailing \r for Windows line endings
-            if (line_buf_.back() == '\r') {
-                line_buf_.pop_back();
-                if (line_buf_.empty()) {
-                    continue;
-                }
-            }
-
             return true;
         }
     }
@@ -258,31 +248,17 @@ namespace bcsv {
         }
     }
 
-    /// Read the CSV header line and validate column count against layout
+    /// Read the CSV header record and validate column count against layout
     template<LayoutConcept LayoutType>
     bool CsvReader<LayoutType>::readHeader() {
-        std::string headerLine;
-        if (!std::getline(stream_, headerLine)) {
+        // Same record assembly as the data rows (line ends, BOM, quoted names).
+        if (!fetchRecord()) {
             err_msg_ = "Error: CSV file is empty (no header line)";
             return false;
         }
-        file_line_++;
-
-        // Strip BOM if present (UTF-8 BOM: EF BB BF)
-        if (headerLine.size() >= 3 &&
-            static_cast<unsigned char>(headerLine[0]) == 0xEF &&
-            static_cast<unsigned char>(headerLine[1]) == 0xBB &&
-            static_cast<unsigned char>(headerLine[2]) == 0xBF) {
-            headerLine.erase(0, 3);
-        }
-
-        // Strip trailing \r
-        if (!headerLine.empty() && headerLine.back() == '\r') {
-            headerLine.pop_back();
-        }
 
         // Split header into column names
-        splitLine(headerLine);
+        splitLine(line_buf_);
 
         if (cells_.size() != layout().columnCount()) {
             err_msg_ = "Error: CSV header column count (" + std::to_string(cells_.size()) +
