@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [1.5.24] - 2026-11-09
+
+### Fixed
+
+- **Reading bool-heavy rows** (Delta002, the default row codec) is as fast as in 1.5.22
+  again; 1.5.23 was 4–11 % slower. The native plugin's decoder reads the row header in place.
+- **CSV import** (`BcsvCsvReader`): lines end at LF, CRLF or a lone CR on every OS, so a `\r`
+  no longer stays on the last column (which read as text, `false` or 0) and lone-CR files
+  (Excel "CSV (Macintosh)") read instead of failing.
+
 ## [1.5.23] - 2026-11-09
 
 ### Added

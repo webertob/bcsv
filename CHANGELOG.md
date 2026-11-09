@@ -12,6 +12,8 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.24] - 2026-11-09
+
 ### Fixed
 
 - **Delta002 reads bool-heavy rows at least as fast as 1.5.22 again** (1.5.23: 4–11 %
@@ -23,6 +25,16 @@ This project uses [Semantic Versioning](https://semver.org/).
   delimiter candidate, so `--decimal-separator ,` on a headerless `1;0,5;20,1` splits at `;`
   instead of tying with the commas and splitting at them. A tie now follows the documented
   priority (comma, semicolon, tab, pipe); a tab used to win a tie against a comma.
+
+### Changed (performance; wire format and public APIs unchanged)
+
+- **Delta002 decode, measured side by side against 1.5.23** (macro benchmark, Zen 3 and Zen 5,
+  per CCD): with clang 5–46 % faster on every profile but one (high_cardinality_string through
+  the default writer, −10 % on Zen 3); with GCC bool-heavy rows at least as fast as 1.5.22
+  again, while numeric Delta profiles give back up to 5 % of the 1.5.23 gain (Zen 5:
+  mixed_generic −4 %, the others within 1 %), still 20–47 % faster than 1.5.22. The cost is a
+  bounds check per numeric column for reading header codes in place. The write path is
+  unchanged; measured writes move by up to ±7 % with code layout alone.
 
 ## [1.5.23] - 2026-11-09
 
