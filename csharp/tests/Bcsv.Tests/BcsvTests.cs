@@ -603,6 +603,50 @@ public class BcsvTests : IDisposable
         }
     }
 
+    // 1.5.25: ReadColumns returns the rows the packets hold, not the footer's
+    // count - a stream-mode file has no footer (it used to return 0 rows).
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    public void Columnar_StreamFileReadsEveryRow(int compression)
+    {
+        var path = TmpFile($"columnar_stream_{compression}.bcsv");
+        using var layout = new BcsvLayout();
+        layout.AddColumn("id", ColumnType.Int64).AddColumn("label", ColumnType.String);
+        int numRows = 5000;   // the probe reads past the footer's count in growing chunks
+        var ids = new long[numRows];
+        var labels = new string[numRows];
+        for (int i = 0; i < numRows; i++) { ids[i] = i; labels[i] = $"l{i / 10}"; }
+        BcsvColumns.WriteColumns(path, layout,
+            new Dictionary<int, Array> { { 0, ids }, { 1, labels } }, numRows,
+            compression: compression, flags: FileFlags.StreamMode);
+
+        using var data = BcsvColumns.ReadColumns(path);
+        Assert.Equal(numRows, data.RowCount);
+        Assert.Equal(ids, data.GetColumn<long>(0));
+        Assert.Equal(labels, data.GetStringColumn(1));
+    }
+
+    // A file cut inside a packet (writer never closed): an error, as from the
+    // sequential reader - not a silently empty or short result.
+    [Fact]
+    public void Columnar_CutFileThrows()
+    {
+        var path = TmpFile("columnar_cut.bcsv");
+        using var layout = new BcsvLayout();
+        layout.AddColumn("id", ColumnType.Int64).AddColumn("h", ColumnType.UInt64);
+        int numRows = 40000;
+        var ids = new long[numRows];
+        var hs = new ulong[numRows];
+        for (int i = 0; i < numRows; i++) { ids[i] = i; hs[i] = unchecked((ulong)i * 0x9E3779B97F4A7C15UL); }
+        BcsvColumns.WriteColumns(path, layout,
+            new Dictionary<int, Array> { { 0, ids }, { 1, hs } }, numRows, rowCodec: "flat");
+        var bytes = File.ReadAllBytes(path);
+        File.WriteAllBytes(path, bytes[..(bytes.Length * 2 / 3)]);
+
+        Assert.Throws<BcsvException>(() => BcsvColumns.ReadColumns(path));
+    }
+
     [Fact]
     public void Columnar_NumericOnly()
     {
