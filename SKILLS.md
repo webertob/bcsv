@@ -33,11 +33,11 @@ Declared in `include/bcsv/`:
 
 ```cpp
 bcsv::Layout layout;
-layout.addColumn("time", bcsv::ColumnType::DOUBLE);
-layout.addColumn("value", bcsv::ColumnType::FLOAT);
+layout.addColumn({"time", bcsv::ColumnType::DOUBLE});
+layout.addColumn({"value", bcsv::ColumnType::FLOAT});
 
-bcsv::Writer<bcsv::Layout> writer;
-writer.open("data.bcsv", layout);
+bcsv::Writer<bcsv::Layout> writer(layout);   // the layout belongs to the writer
+writer.open("data.bcsv", /*overwrite=*/true);
 writer.row().set<double>(0, 1.0);
 writer.row().set<float>(1, 42.0f);
 writer.writeRow();
@@ -79,6 +79,7 @@ uses short names.
 | `file_header.h` | `FileHeader` — fixed header + variable schema section |
 | `packet_header.h` | `PacketHeader` — per-packet header (magic, row index, checksum) |
 | `file_footer.h` | `FileFooter`, `PacketIndexEntry` — EOF index for random access |
+| `packet_scan.h` | `scanPackets()` — the complete packets of a file found by walking its framing (footer rebuild, bcsvRepair) |
 | `bitset.h` | `Bitset<N>` (fixed) / `Bitset<>` (dynamic, SOO) — change tracking + bool storage |
 | `byte_buffer.h` | `LazyAllocator<T>`, `ByteBuffer` — no-init byte vector |
 | `column_name_index.h` | `ColumnNameIndex<>` — flat-map name → index lookup |

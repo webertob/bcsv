@@ -150,7 +150,7 @@ int main(int argc, char* argv[]) {
         ->type_name("RANGES")
         ->excludes(first_opt)->excludes(last_opt)->excludes(slice_opt);
     app.add_option("--cols", config.cols_spec,
-                   "Export only these columns, by index range or name, e.g. '0:3,temp,-1'")
+                   "Export only these columns, by index range or name, e.g. '0:3,temp,-1' (written in file order)")
         ->type_name("RANGES");
     app.add_flag("-v,--verbose", config.verbose, "Enable verbose output");
     app.add_flag("--benchmark", config.benchmark,

@@ -136,7 +136,7 @@ csv2bcsv --benchmark data.csv output.bcsv             # Measure throughput
 | `--names SPEC` | Column names (map or list form, see SPEC below) | header / auto |
 | `--types SPEC` | Force column types (`auto` = infer) | infer all |
 | `--rows RANGES` | Convert only these data rows (0-based, no negatives) | all |
-| `--cols RANGES` | Convert only these columns (index ranges or names) | all |
+| `--cols RANGES` | Convert only these columns (index ranges or names), in file order | all |
 | `--sample N` | Rows sampled for inference; `0` = scan whole file first | `1000` |
 | `--tolerance X` | Absolute epsilon for float narrowing/round-trip tests | `0` |
 | `--strict` | Abort instead of clamping forced-type misfits | |
@@ -279,7 +279,7 @@ bcsv2csv -d $'\t' --no-header data.bcsv        # Tab-separated, no header
 | `-d, --delimiter CHAR` | Output field delimiter | `,` |
 | `--no-header` | Omit header row in output | |
 | `--rows RANGES` | Export only these rows (0-based inclusive ranges, negatives from end) | all |
-| `--cols RANGES` | Export only these columns (index ranges or names) | all |
+| `--cols RANGES` | Export only these columns (index ranges or names), in file order | all |
 | `--firstRow N` | Start from row N (0-based) *(legacy — prefer `--rows`)* | `0` |
 | `--lastRow N` | End at row N (0-based, inclusive) *(legacy — prefer `--rows`)* | last |
 | `--slice SLICE` | Python-style slice *(legacy; still the only way to step)* | |
@@ -293,6 +293,12 @@ bcsv2csv -d $'\t' --no-header data.bcsv        # Tab-separated, no header
 bcsvCast): comma-separated single indices or inclusive `i:j` ranges, open ends
 (`:99`, `100:`), negatives counting from the end. `--cols` entries may also be
 column names (numeric-looking names must be addressed by index).
+
+`--cols` selects a *set* of columns: the CSV keeps the file's column order,
+whatever order they are listed in, and a column listed twice appears once
+(`--cols 'b,a'` writes `a,b` when `a` comes first in the file). csv2bcsv's
+`--cols` behaves the same. To reorder columns, use `bcsvSampler -s`, which
+writes them in the order of the selection.
 
 ```bash
 bcsv2csv --rows 0:99 data.bcsv       # First 100 rows
@@ -554,7 +560,7 @@ bcsvValidate --list                                          # List profiles
 
 Recover data from BCSV files where the writer was interrupted before completing the write (crash, power loss, killed process). Supports all five file codecs and all three row codecs.
 
-**Packet-mode** files (packet, packet_lz4, packet_lz4_batch): walks packet-by-packet, rebuilds the packet index, attempts partial recovery of the last incomplete packet, writes a valid footer.
+**Packet-mode** files (packet, packet_lz4, packet_lz4_batch): walks the packet chain at the exact offsets its framing gives, keeps every complete packet, salvages the complete rows of a cut `packet`/`packet_lz4` packet, and writes a footer. It is the same walk `ReaderDirectAccess` uses to rebuild a missing footer (`open(path, rebuild_footer=True)`, Python `Reader.count_rows()`), so after a repair the footer's row count, the rows the sequential reader delivers and the `--dry-run` count are the same number. The last complete packet is always decompressed and checksummed; `--deep` does the same for every batch packet (`packet`/`packet_lz4` packets are always checksummed). A file without any complete packet gets an empty footer, as if its writer had closed with zero rows.
 
 **Stream-mode** files (stream, stream_lz4): walks row-by-row using per-row XXH32 checksums, truncates at the last valid row.
 
@@ -564,7 +570,7 @@ Recover data from BCSV files where the writer was interrupted before completing 
 bcsvRepair -i broken.bcsv --dry-run                      # Analyze — report damage without modifying
 bcsvRepair -i broken.bcsv --dry-run --json               # Machine-readable damage report
 bcsvRepair -i broken.bcsv -o repaired.bcsv               # Copy repaired data to new file
-bcsvRepair -i broken.bcsv -o repaired.bcsv --deep -v     # Deep checksum validation + progress
+bcsvRepair -i broken.bcsv -o repaired.bcsv --deep -v     # Checksum every packet + progress
 bcsvRepair -i broken.bcsv --in-place --backup            # Truncate + rewrite footer in place
 ```
 
@@ -576,8 +582,8 @@ bcsvRepair -i broken.bcsv --in-place --backup            # Truncate + rewrite fo
 | `-o, --output FILE` | Write repaired file to new location (copy mode) | |
 | `--in-place` | Modify input file directly (truncate + append footer) | |
 | `--backup` | With `--in-place`: copy original to `FILE.bak` first | |
-| `--deep` | Validate packet payload checksums (slower, more thorough) | |
-| `--dry-run` | Analyze only — no files modified (auto-enables `--deep`) | |
+| `--deep` | Also decompress and checksum every batch packet, not only the last (slower) | |
+| `--dry-run` | Analyze only — report what the same command would write, modify nothing | |
 | `--json` | Machine-readable JSON output to stdout | |
 | `-v, --verbose` | Print progress (packets scanned, rows counted) | |
 | `-h, --help` | Show help message | |
@@ -592,7 +598,9 @@ bcsvRepair -i broken.bcsv --in-place --backup            # Truncate + rewrite fo
 
 ### Notes
 
-- The `packet_lz4_batch` codec wraps entire packets in a single LZ4 frame; if the frame is truncated, zero rows can be recovered from that packet. Non-batch codecs recover individual rows.
+- The `packet_lz4_batch` codec (the default) wraps entire packets in a single LZ4 block; if the block is cut, zero rows can be recovered from that packet. `packet`/`packet_lz4` recover the complete rows of a cut packet. A packet whose checksum fails is discarded together with everything after it.
+- A writer ended by a crash or `SIGKILL` leaves no footer and a cut last packet. Without a repair, the sequential reader delivers the rows of the complete packets and then fails at the cut one, and `ReaderDirectAccess` with `rebuild_footer=True` indexes the complete packets. Repair the file to give it a footer, so that random access, the bulk readers (`read_to_arrow`, `read_columns`, `read_dataframe`) and other tools read it without an error.
+- Files repaired by bcsvRepair 1.5.24 or older can carry a footer one batch packet short; repair them again. Direct access refuses a packet that disagrees with the footer (`footer inconsistent with the packets`) instead of serving wrong rows.
 - Use `--dry-run --json` in CI pipelines to detect interrupted writes.
 - `recovery_pct` in JSON output shows the percentage of rows successfully recovered.
 

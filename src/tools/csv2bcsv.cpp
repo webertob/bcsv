@@ -809,7 +809,7 @@ int main(int argc, char* argv[]) {
                    "no negative indices)")
         ->type_name("RANGES");
     app.add_option("--cols", config.cols_spec,
-                   "Convert only these columns, by index range or name, e.g. '0:3,temp,-1'")
+                   "Convert only these columns, by index range or name, e.g. '0:3,temp,-1' (kept in file order)")
         ->type_name("RANGES");
     app.add_option("--sample", config.sample_rows,
                    "Rows sampled for type inference; 0 = scan the whole file before writing")

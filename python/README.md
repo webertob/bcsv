@@ -357,7 +357,7 @@ reader.file_flags() -> FileFlags
 reader.compression_level() -> int
 reader.version_string() -> str
 reader.creation_time() -> str
-reader.count_rows() -> int              # total row count
+reader.count_rows() -> int              # row count from the footer; without one, the rows of the complete packets
 
 # Iterator protocol
 for row in reader:
@@ -376,7 +376,7 @@ Random-access reader — reads any row by index without scanning.
 
 ```python
 da = pybcsv.ReaderDirectAccess()
-da.open(filename: str, rebuild_footer: bool = False)
+da.open(filename: str, rebuild_footer: bool = False)  # rebuild: index the complete packets of a file without a footer
 da.read(index: int) -> list             # read row at index
 da.row_count() -> int
 da.layout() -> Layout
@@ -390,6 +390,33 @@ da.creation_time() -> str
 len(da)               # row count
 da[i]                 # read row at index i
 ```
+
+### Files whose writer never reached close()
+
+A writer ended by a crash or `SIGKILL` leaves no footer, and usually a cut last
+packet. What each reader does with such a file:
+
+| Reader | Result |
+|---|---|
+| `Reader` (sequential) | every row of the complete packets, then `RuntimeError` at the cut one (`packet`/`packet_lz4` files also deliver the complete rows of the cut packet first) |
+| `ReaderDirectAccess.open(path, rebuild_footer=True)`, `Reader.count_rows()` | index the complete packets; `row_count()` is their rows. The walk is bounded by the file |
+| `read_to_arrow`, `read_columns`, `read_dataframe`, `read_polars` | the rows the packets hold — what the sequential `Reader` delivers, so a cut packet raises `RuntimeError` |
+| `iter_arrow_batches` on a `ReaderDirectAccess` opened with `rebuild_footer=True` | the rows of the complete packets |
+
+`bcsvRepair -o repaired.bcsv broken.bcsv` (or `--in-place`) keeps the complete
+packets and writes a footer; afterwards the footer, the sequential reader and
+`bcsvRepair --dry-run` report the same row count, and every reader works on the
+file. Run it with `pybcsv.tools.run("bcsvRepair", ...)`.
+
+**Footer or packets.** The bulk readers (`read_to_arrow`, `read_columns`,
+`read_dataframe`) follow the packets: the footer's row count only sizes their
+first allocation, so a footer that disagrees with the packets (or a stream-mode
+file, which has none) never decides how many rows they return or how far they
+write. `ReaderDirectAccess` and `iter_arrow_batches` address rows through the
+footer's index; a packet that holds other rows than the index assigns to it
+raises `RuntimeError` (`footer inconsistent with the packets`) rather than
+returning wrong rows. Files repaired by bcsvRepair 1.5.24 or older can carry a
+footer one batch packet short: repair them again.
 
 ### CsvWriter / CsvReader
 

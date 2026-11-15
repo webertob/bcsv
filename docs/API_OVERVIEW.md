@@ -110,7 +110,7 @@ bcsv_layout_destroy(layout);
 
 - **Version API**: `bcsv_version()` returns the library version string (unified with file format version since v1.5.0).
 - **Writer codecs**: `bcsv_writer_create(layout)` (flat), `bcsv_writer_create_zoh(layout)` (zero-order hold), `bcsv_writer_create_delta(layout)` (delta + VLE encoding).
-- **Extended reader**: `bcsv_reader_open_ex(reader, filename, rebuild_footer)` opens with optional footer rebuild; `bcsv_reader_read(reader, index)` provides random-access by row index.
+- **Extended reader**: `bcsv_reader_open_ex(reader, filename, rebuild_footer)` opens with optional footer rebuild (indexes the complete packets of a file whose writer never reached close(); see `src/tools/CLI_TOOLS.md` § bcsvRepair); `bcsv_reader_read(reader, index)` provides random-access by row index.
 - **CSV reader/writer**: `bcsv_csv_reader_create(layout, delimiter, decimal_sep)` and `bcsv_csv_writer_create(layout, delimiter, decimal_sep)` for reading and writing plain CSV files through the same row API.
 - **File flags**: `bcsv_file_flags_t` enum supports `BCSV_FLAG_NONE`, `BCSV_FLAG_ZOH`, `BCSV_FLAG_NO_FILE_INDEX`, `BCSV_FLAG_STREAM_MODE`, `BCSV_FLAG_BATCH_COMPRESS`, `BCSV_FLAG_DELTA_ENCODING`.
 - **Error API**: `bcsv_last_error()` returns the thread-local last error string.
