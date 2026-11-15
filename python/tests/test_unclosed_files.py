@@ -23,7 +23,6 @@ footer's index and raise when a packet disagrees with it.
 
 import json
 import os
-import resource
 import struct
 import subprocess
 import sys
@@ -127,13 +126,18 @@ def cut(src, dst, nbytes):
     return str(dst)
 
 
+def _cap_address_space():
+    import resource                      # POSIX only
+    resource.setrlimit(resource.RLIMIT_AS, (2 << 30, 2 << 30))
+
+
 def capped(code, timeout=60):
-    """Run code in a child process with an address-space cap: a regression to the
-    unbounded rebuild must fail the test, not exhaust the machine."""
-    def limit():
-        resource.setrlimit(resource.RLIMIT_AS, (2 << 30, 2 << 30))
+    """Run code in a child process with a time bound and, on Linux, an address-space
+    cap: a regression to the unbounded rebuild must fail the test, not exhaust the
+    machine. (Windows has no resource module; macOS does not enforce RLIMIT_AS.)"""
+    preexec = _cap_address_space if sys.platform.startswith('linux') else None
     p = subprocess.run([sys.executable, '-c', 'import pybcsv\n' + code], capture_output=True,
-                       text=True, timeout=timeout, preexec_fn=limit)
+                       text=True, timeout=timeout, preexec_fn=preexec)
     assert p.returncode == 0, p.stderr
     return p.stdout.strip()
 
@@ -152,7 +156,6 @@ def batch_file(tmp_path_factory):
 
 # ── 1. footer rebuild and count_rows terminate with the complete packets ─────
 
-@pytest.mark.skipif(sys.platform == 'win32', reason='RLIMIT_AS cap is POSIX')
 @pytest.mark.parametrize('where', ['inside_payload', 'packet_boundary', 'inside_header',
                                    'inside_footer', 'no_footer'])
 def test_rebuild_and_count_rows_terminate(batch_file, tmp_path, where):
