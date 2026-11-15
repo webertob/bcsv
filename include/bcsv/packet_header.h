@@ -240,5 +240,21 @@ namespace bcsv {
     };
     #pragma pack(pop)
     static_assert(sizeof(PacketHeader) == 16, "PacketHeader must be exactly 16 bytes");
-    
+
+    /**
+     * @brief What walking one packet's framing found (see scanPackets()).
+     *
+     * Each packet codec walks its own framing (FileCodecPacket001::scanPacket,
+     * FileCodecPacketLZ4Batch001::scanPacket); the stream is positioned just
+     * after the PacketHeader. Offsets are absolute file offsets.
+     */
+    struct PacketScan {
+        bool        complete = false;  ///< every byte present, terminator found, checksum verified (or not checked, see counted)
+        bool        truncated = false; ///< not complete because the file ends inside it (otherwise: damaged)
+        bool        counted  = false;  ///< rows holds the packet's row count (false: batch packet hopped without decompressing)
+        uint64_t    rows     = 0;      ///< complete: rows in the packet; incomplete: complete rows before the cut (row-framed codecs only)
+        uint64_t    end      = 0;      ///< complete: offset just past the packet; incomplete: offset just past the last complete row
+        const char* error    = nullptr;///< why the packet is not complete
+    };
+
 } // namespace bcsv

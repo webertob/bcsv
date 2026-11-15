@@ -21,10 +21,12 @@
 #include "reader.h"
 #include "file_header.h"
 #include "codec_file/file_codec_concept.h"
+#include "codec_file/packet_scan.h"
 #include "layout.h"
 #include "packet_header.h"
 #include "definitions.h"
 #include "vle.hpp"
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -285,7 +287,7 @@ namespace bcsv {
                     if constexpr (DEBUG_OUTPUTS) {
                         std::cerr << Base::err_msg_ << "\n";
                     }
-                    Base::stream_.seekg(originalPos);
+                    close();   // a failed open leaves nothing open (a retry with rebuild must work)
                     return false;
                 } else {
                     Base::err_msg_ = "Warning: FileFooter missing or invalid, attempting to rebuild index";
@@ -301,11 +303,14 @@ namespace bcsv {
             if constexpr (DEBUG_OUTPUTS) {
                 std::cerr << Base::err_msg_ << std::endl;
             }
-            Base::stream_.seekg(originalPos);
+            close();
             return false;
         }
 
-        // restore original position after reader::open(), as expected by the default reader(i.e. ::readNext()).
+        // restore original position after reader::open(), as expected by the
+        // default reader (i.e. ::readNext()); a failed footer read or the
+        // rebuild may have left eof/fail set.
+        Base::stream_.clear();
         Base::stream_.seekg(originalPos);
         return true;
     }
@@ -402,25 +407,35 @@ namespace bcsv {
         da_row_codec_.reset();
 
         // Determine how many rows this packet contains
-        size_t pktRowCount;
-        if (packetIdx + 1 < file_footer_.packetIndex().size()) {
-            pktRowCount = static_cast<size_t>(
-                file_footer_.packetIndex()[packetIdx + 1].first_row - pktEntry.first_row);
-        } else {
-            pktRowCount = static_cast<size_t>(file_footer_.rowCount() - pktEntry.first_row);
+        const uint64_t nextFirstRow = (packetIdx + 1 < file_footer_.packetIndex().size())
+            ? file_footer_.packetIndex()[packetIdx + 1].first_row
+            : file_footer_.rowCount();
+        if (nextFirstRow < pktEntry.first_row) {
+            Base::err_msg_ = "Error: file index out of order at packet " + std::to_string(packetIdx);
+            return false;
         }
+        const size_t pktRowCount = static_cast<size_t>(nextFirstRow - pktEntry.first_row);
 
-        // Read all rows via the file codec (handles VLE framing + checksum)
+        // Read all rows via the file codec (handles VLE framing + checksum).
+        // The packet must hold exactly the rows the index assigns to it,
+        // or serving rows by that index would return the wrong ones. After
+        // seekToPacket() the codec stops at the packet's end (EOF_SENTINEL),
+        // so fewer rows show here and more rows in finishPacketRead() below.
         cached_rows_.clear();
-        cached_rows_.reserve(pktRowCount);
+        // Every row takes at least one byte of the packet: an index claiming
+        // more must not size the allocation.
+        cached_rows_.reserve(std::min<size_t>(pktRowCount, Base::file_header_.getPacketSize()));
 
-        bool sawEof = false;
         for (size_t i = 0; i < pktRowCount; ++i) {
             auto rowRawData = Base::file_codec_.readRow(Base::stream_);
 
             if (rowRawData.data() == EOF_SENTINEL.data()) {
-                sawEof = true;
-                break;  // Unexpected EOF within packet
+                cached_rows_.clear();
+                Base::err_msg_ = "Error: packet " + std::to_string(packetIdx) + " holds " +
+                                 std::to_string(i) + " rows, the file index says " +
+                                 std::to_string(pktRowCount) +
+                                 " (footer inconsistent with the packets; repair with bcsvRepair)";
+                return false;
             }
 
             if (rowRawData.data() == ZOH_REPEAT_SENTINEL.data()) {
@@ -430,14 +445,23 @@ namespace bcsv {
             }
         }
 
-        // Validate the packet checksum.  Synchronous packet codecs verify it
-        // only when the terminator is consumed, which the row-count-bounded
-        // loop above never does.  finishPacketRead() consumes terminator +
-        // checksum and STOPS — it never touches the next packet, so
-        // corruption there cannot make this (valid) packet unreadable.
-        // Codecs that validate whole packets up front (batch) no-op here.
-        if (!sawEof) {
+        // The packet must end here. Synchronous packet codecs verify the
+        // checksum only when the terminator is consumed, which the
+        // row-count-bounded loop above never does; finishPacketRead()
+        // consumes terminator + checksum (batch: checks the terminator) and
+        // STOPS — it never touches the next packet, so corruption there
+        // cannot make this (valid) packet unreadable. Throws if the packet
+        // holds more rows than the index says, or its checksum mismatches.
+        try {
             Base::file_codec_.finishPacketRead(Base::stream_);
+        } catch (const std::exception& ex) {
+            cached_rows_.clear();
+            Base::err_msg_ = "Error: packet " + std::to_string(packetIdx) +
+                             " does not end after the " + std::to_string(pktRowCount) +
+                             " rows the file index says (" + ex.what() +
+                             "; footer inconsistent with the packets, or the packet is damaged;"
+                             " repair with bcsvRepair)";
+            return false;
         }
 
         cached_packet_idx_ = packetIdx;
@@ -535,102 +559,23 @@ namespace bcsv {
         return true;
     }
 
+    /**
+     * @brief Rebuild the file index of a file without a (valid) footer.
+     *
+     * Indexes the complete packets scanPackets() finds by walking the packet
+     * framing (see codec_file/packet_scan.h): a packet cut by a crash or
+     * damaged is not indexed, nor is anything after it, so rowCount() is the
+     * number of rows in complete packets. Bounded by the file: every step
+     * moves forward and nothing is allocated beyond what the file holds.
+     */
     template<LayoutConcept LayoutType>
     void ReaderDirectAccess<LayoutType>::buildFileFooter() {
-        assert(Base::stream_);
-        file_footer_.clear();
-
-        // Store original position
-        std::streampos originalPos = Base::stream_.tellg();
-
-        // Jump to first packet (after file header + layout)
-        Base::stream_.seekg(Base::file_header_.getBinarySize(Base::layout()), std::ios::beg);
-
-        // Decision: We build a sequential algorithms to rebuild the file footer. 
-        // ToDo: A parallel one would be perfectly possible, but put this to the future
-
-        // Goal build the FileFooter
-        // FileFooter contains
-        //  1. packet index: 
-        //      a. contains one entry per package in the file
-        //      b. each entry contaits the number/count of the first row and the position in the file stream 
-        //      c. index is ordered (position and row count follow same order)
-        //  2. totalRow count in file
-        //      a. first row of last package + row count in last package = number of total rows
-
-        // Algorithm (build packet index):
-        // 1. Start at first packet position
-        // 2. Read packet header
-        // 3. Store packet position and first row in file footer index
-        // 4. Skip packet payload (using block size form file header as estimate)
-        // 5. Repeat until end of file reached
-
-        PacketHeader header;
-        std::streampos pktPos = Base::stream_.tellg();
-        std::streamoff stepSize = static_cast<std::streamoff>(Base::file_header_.getPacketSize() + sizeof(PacketHeader));
-        while (header.readNext(Base::stream_, pktPos)) {
-            file_footer_.addPacketEntry(
-                static_cast<uint64_t>(pktPos),
-                header.first_row_index
-            );
-
-            // Skip packet payload (estimate using block size)
-            Base::stream_.seekg(pktPos + stepSize);
-        }
-
-
-        // Algorithm (count total rows):
-        // 1. Seek to last packet position (from packet index)
-        // 2. skip packet header
-        // 3. Read row sizes (skip row data) until terminator reached, count rows
-        // 4. total rows = first row of last packet + counted rows in last packet
-        if (file_footer_.packetIndex().empty()) {
-            file_footer_.rowCount() = 0;
-        } else {
-            const auto& lastPacket = file_footer_.packetIndex().back();
-
-            // Seek to last packet payload (skip header) and count rows by jumping through VLE sizes
-            Base::stream_.clear();
-            Base::stream_.seekg(static_cast<std::streamoff>(lastPacket.byte_offset) + sizeof(PacketHeader));
-
-            size_t rowCntLstPkt = 0;
-            uint64_t rowLen;
-
-            // Count rows within last packet using row lengths
-            while (Base::stream_) {
-                try {
-                    vleDecode<uint64_t, true>(Base::stream_, rowLen, nullptr);
-
-                    if (rowLen == 0) {
-                        // ZoH repeat - no payload, just count
-                        rowCntLstPkt++;
-                    } else if (rowLen == PCKT_TERMINATOR) {
-                        // Terminator - end of packet
-                        break;
-                    } else {
-                        // Regular row: rowLen = dataSize
-                        size_t dataSize = rowLen;
-
-                        // Skip over the payload data
-                        Base::stream_.seekg(static_cast<std::streamoff>(dataSize), std::ios::cur);
-
-                        if (Base::stream_) {
-                            rowCntLstPkt++;
-                        } else {
-                            // Incomplete row at end of packet (corrupted file)
-                            break;
-                        }
-                    }
-                } catch (const std::exception&) {
-                    // Error reading VLE or EOF reached (corrupted file)
-                    break;
-                }
-            }
-            file_footer_.rowCount() = lastPacket.first_row + rowCntLstPkt;
-        }
-        
-        // Restore original position
-        Base::stream_.seekg(originalPos);
+        // open() restores the read position afterwards; the failed footer
+        // read may have left eof/fail set, which scanPackets() clears.
+        PacketScanReport report = scanPackets(Base::stream_, Base::file_header_,
+                                              Base::file_header_.getBinarySize(Base::layout()),
+                                              /*verifyAll=*/false);
+        file_footer_ = FileFooter(std::move(report.index), report.rows);
     }
 
 } // namespace bcsv

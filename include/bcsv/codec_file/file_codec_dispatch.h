@@ -183,10 +183,12 @@ public:
         return read_good_fn_(ctx_, is);
     }
 
-    /// Consume + validate the current packet's terminator/checksum without
-    /// touching the next packet.  No-op for codecs that validate the whole
-    /// packet up front (batch) or have no packet framing (stream codecs).
-    /// Throws on checksum mismatch.
+    /// Direct access, after the rows the file index assigns to the current
+    /// packet: check that the packet ends there, without touching the next
+    /// packet. Synchronous packet codecs consume + validate terminator and
+    /// checksum; the batch codec (checksum validated up front) checks that the
+    /// terminator follows. No-op for stream codecs (no packet framing).
+    /// Throws if the packet holds more rows or its checksum mismatches.
     void finishPacketRead(std::istream& is) {
         if (ctx_ && finish_packet_read_fn_) {
             finish_packet_read_fn_(ctx_, is);
@@ -341,9 +343,8 @@ private:
                 return is.good();
             };
         }
-        // Synchronous packet codecs provide finishPacketRead(); codecs that
-        // validate whole packets up front (batch) or have no packet framing
-        // (stream) don't need it — the dispatch no-ops for them.
+        // Packet codecs provide finishPacketRead(); stream codecs have no
+        // packet framing and don't need it — the dispatch no-ops for them.
         if constexpr (requires(ConcreteCodec& c, std::istream& is) {
             c.finishPacketRead(is);
         }) {
