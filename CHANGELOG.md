@@ -12,6 +12,69 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.5.25] - 2026-11-15
+
+### Fixed
+
+Files whose writer never reached `close()` (crash, `SIGKILL`, power loss: no
+footer, a cut last packet), and footers that disagree with the packets.
+
+- **Footer rebuild no longer runs without bound.** `ReaderDirectAccess::open(path,
+  true)` — and with it Python `Reader.count_rows()`, `ReaderDirectAccess.open(path,
+  rebuild_footer=True)`, C `bcsv_reader_open_ex(..., true)` and C#/Unity
+  `BcsvColumns.ReadColumns` — re-found the same packet header forever on a file
+  without a footer, growing the index until memory ran out. The rebuild now walks
+  the packet chain at the exact offsets the framing gives (new
+  `bcsv::scanPackets()`, `codec_file/packet_scan.h`) and indexes the complete
+  packets: `rowCount()` is the number of rows the sequential reader delivers before
+  the cut packet.
+- **bcsvRepair: footer, sequential reader and `--dry-run` agree.** The repair wrote
+  a footer one packet short on batch-LZ4 files (the last complete packet's rows were
+  not counted), and `--dry-run` (which implied `--deep`) counted differently. The
+  repair now keeps exactly what `scanPackets()` finds, the walk the reader uses;
+  `--dry-run` reports what the same command writes and no longer implies `--deep`;
+  `--deep` additionally checksums every batch packet (the last complete one always
+  is). A packet whose checksum fails is discarded, no longer re-certified by partial
+  recovery; a file without a complete packet gets an empty footer. The codec is
+  taken from the header as the reader does (a batch flag at compression level 0 is
+  the `packet` codec).
+- **pybcsv bulk readers: memory safety no longer depends on the footer.**
+  `read_to_arrow`, `read_columns` and `read_dataframe` sized their buffers by the
+  footer's row count and wrote past them when the packets held more rows (heap
+  corruption, `munmap_chunk(): invalid pointer`, e.g. on files repaired by
+  bcsvRepair 1.5.24 or on stream-mode files, which have no footer); with fewer rows
+  `read_columns` returned uninitialised values. They now return the rows the packets
+  hold — what the sequential `Reader` delivers; the footer's count only sizes the
+  first allocation. `read_to_arrow(chunk_size=...)` (and `read_polars`) no longer
+  stop at the footer's count. C#/Unity `BcsvColumns.ReadColumns` likewise reads past
+  the footer's count (it returned 0 rows for stream-mode files) and throws when the
+  native read fails instead of returning 0 rows.
+- **Direct access refuses a packet that disagrees with the footer** instead of
+  serving rows from the wrong packet or silently dropping rows: a packet must hold
+  exactly the rows the index assigns to it (`... footer inconsistent with the
+  packets; repair with bcsvRepair`). Python `ReaderDirectAccess.read()`/`[]` and
+  `read_arrow_batch()`/`iter_arrow_batches` raise `RuntimeError` for such a row
+  instead of `IndexError` or a silent end of data. Files repaired by bcsvRepair
+  1.5.24 or older can carry a footer one batch packet short: repair them again.
+  A direct read loads one packet and stops at its end, so with the batch codec a
+  `readNext()` after `read()` ends there as with the other packet codecs, instead of
+  running into the next packet with the direct reader's row-codec state. The check
+  costs nothing per row (direct-access benchmark within 0.4 % of 1.5.24).
+- **A failed `ReaderDirectAccess::open()` leaves nothing open**, so a retry with
+  `rebuildFooter=true` works (it failed with "File is already open").
+- **Batch codec**: a packet that decompresses to fewer bytes than declared is an
+  error (its checksum was computed over the declared size).
+
+### Changed (documentation)
+
+- `src/tools/CLI_TOOLS.md` (bcsvRepair) and `python/README.md` ("Files whose writer
+  never reached close()") state what each reader does with such a file, and which
+  readers follow the footer and which the packets.
+- `bcsv2csv`/`csv2bcsv --cols` select a set of columns and keep the file's order
+  (documented; `bcsvSampler -s` reorders). `bcsvSampler --help` no longer shows a
+  call without `-c`/`-s`, which the tool refuses. The `SKILLS.md` example compiles
+  against the current API.
+
 ## [1.5.24] - 2026-11-09
 
 ### Fixed

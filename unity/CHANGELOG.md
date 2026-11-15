@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
+## [1.5.25] - 2026-11-15
+
+### Fixed
+
+- **`BcsvColumns.ReadColumns` on a file whose writer never reached close()** (crash, killed
+  process: no footer, a cut last packet) no longer runs out of memory: the native footer
+  rebuild walked the same packet forever. It indexes the complete packets now.
+- **`BcsvColumns.ReadColumns` returns every row the packets hold**: rows past the footer's
+  count were dropped, a stream-mode file returned 0 rows, and a failed native read (a cut
+  packet) came back as 0 rows instead of throwing.
+- **`BcsvReader.Read(index)`** refuses a packet that disagrees with the footer instead of
+  returning rows of another packet; `bcsvRepair` writes footers whose row count is what the
+  reader delivers (1.5.24 and older wrote batch-LZ4 footers one packet short).
+
 ## [1.5.24] - 2026-11-09
 
 ### Fixed
