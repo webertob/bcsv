@@ -121,6 +121,7 @@ public:
 
         is_ptr_ = &is;
         packet_size_limit_ = header.getPacketSize();
+        single_packet_ = false;
 
         read_a_.clear();
         read_b_.clear();
@@ -339,10 +340,14 @@ public:
 
     /// Seek to a specific packet by absolute file offset and prepare for reading.
     /// Stops the background thread, decompresses the target packet synchronously,
-    /// and sets up read_current_ for subsequent readRow() calls.
+    /// and sets up read_current_ for subsequent readRow() calls. Direct access
+    /// reads that one packet: its terminator ends the reading (EOF_SENTINEL)
+    /// instead of moving to the next packet, so a packet holding fewer rows
+    /// than the file index says shows as EOF, never as rows of the next packet.
     bool seekToPacket(std::istream& is, std::streamoff offset) {
         // Stop BG thread — direct access controls seeking explicitly
         shutdownBgThread();
+        single_packet_ = true;
 
         // Seek to the target packet
         is.clear();
@@ -359,6 +364,117 @@ public:
 
         packet_open_ = readAndDecompressPacket(is, *read_current_);
         return packet_open_;
+    }
+
+    /// Direct access, after reading the rows the file index assigns to this
+    /// packet: the packet must end there. A packet holding more rows than the
+    /// index says means the footer disagrees with the packets; serving the
+    /// indexed rows would silently drop the rest. Never touches the stream.
+    void finishPacketRead(std::istream& /*is*/) {
+        if (!packet_open_) return;
+        uint64_t rowLen = 0;
+        const size_t remaining = read_current_->size() - read_cursor_;
+        if (remaining != 0) {
+            vleDecode<uint64_t, true>(rowLen, read_current_->data() + read_cursor_, remaining);
+        }
+        if (remaining == 0 || rowLen != PCKT_TERMINATOR) {
+            throw std::runtime_error(
+                "FileCodecPacketLZ4Batch001::finishPacketRead: packet holds more rows than the file index says");
+        }
+    }
+
+    /// Walk one batch packet (see PacketScan). `is` is positioned at
+    /// `payloadStart`, just after the PacketHeader. With `verify` false the
+    /// packet is hopped over by its declared sizes (rows not counted, checksum
+    /// not checked: cheap, for packets whose row count the next header gives);
+    /// with `verify` true it is decompressed, checksummed and its rows counted.
+    /// Never throws on damaged data; nothing is allocated beyond what the file
+    /// holds.
+    static PacketScan scanPacket(std::istream& is, uint64_t payloadStart, uint64_t fileSize,
+                                 size_t packetSizeLimit, bool verify) {
+        PacketScan scan;
+        scan.end = payloadStart;
+
+        uint32_t sizes[2] = {0, 0};   // uncompressed, compressed
+        is.read(reinterpret_cast<char*>(sizes), sizeof(sizes));
+        if (is.gcount() != static_cast<std::streamsize>(sizeof(sizes))) {
+            scan.truncated = true;
+            scan.error = "packet truncated (sizes)";
+            return scan;
+        }
+        const uint64_t uncompressed = sizes[0];
+        const uint64_t compressed   = sizes[1];
+        const uint64_t max_uncompressed = static_cast<uint64_t>(packetSizeLimit) + MAX_ROW_LENGTH + 16;
+        if (uncompressed > max_uncompressed ||
+            compressed > max_uncompressed + max_uncompressed / 255 + 16) {
+            scan.error = "declared packet size exceeds header packet size limit";
+            return scan;
+        }
+        const uint64_t blockStart = payloadStart + sizeof(sizes);
+        const uint64_t packetEnd  = blockStart + compressed + sizeof(uint64_t);
+        if (packetEnd > fileSize) {
+            scan.truncated = true;
+            scan.error = "packet truncated (compressed block)";
+            return scan;
+        }
+        if (!verify) {
+            scan.complete = true;
+            scan.end      = packetEnd;
+            return scan;
+        }
+
+        ByteBuffer block(static_cast<size_t>(compressed));
+        uint64_t   expected = 0;
+        is.read(reinterpret_cast<char*>(block.data()), static_cast<std::streamsize>(compressed));
+        const bool blockRead = is.gcount() == static_cast<std::streamsize>(compressed);
+        is.read(reinterpret_cast<char*>(&expected), sizeof(expected));
+        if (!blockRead || is.gcount() != static_cast<std::streamsize>(sizeof(expected))) {
+            scan.truncated = true;
+            scan.error = "packet truncated (compressed block)";
+            return scan;
+        }
+        ByteBuffer payload(static_cast<size_t>(uncompressed));
+        const int got = LZ4_decompress_safe(reinterpret_cast<const char*>(block.data()),
+                                            reinterpret_cast<char*>(payload.data()),
+                                            static_cast<int>(compressed),
+                                            static_cast<int>(uncompressed));
+        if (got < 0 || static_cast<uint64_t>(got) != uncompressed) {
+            scan.error = "packet decompression failed";
+            return scan;
+        }
+        if (Checksum::compute(payload.data(), payload.size()) != expected) {
+            scan.error = "packet checksum mismatch";
+            return scan;
+        }
+        // Count rows up to the terminator, which must close the payload exactly.
+        size_t cursor = 0;
+        while (true) {
+            uint64_t rowLen = 0;
+            try {
+                cursor += vleDecode<uint64_t, true>(rowLen, payload.data() + cursor, payload.size() - cursor);
+            } catch (const std::exception&) {
+                scan.error = "packet payload malformed";
+                scan.rows  = 0;
+                return scan;
+            }
+            if (rowLen == PCKT_TERMINATOR) break;
+            if (rowLen > MAX_ROW_LENGTH || rowLen > payload.size() - cursor) {
+                scan.error = "packet payload malformed";
+                scan.rows  = 0;
+                return scan;
+            }
+            cursor += static_cast<size_t>(rowLen);
+            ++scan.rows;
+        }
+        if (cursor != payload.size()) {
+            scan.error = "packet payload malformed";
+            scan.rows  = 0;
+            return scan;
+        }
+        scan.complete = true;
+        scan.counted  = true;
+        scan.end      = packetEnd;
+        return scan;
     }
 
 private:
@@ -602,11 +718,16 @@ private:
                 "FileCodecPacketLZ4Batch001: failed to read packet checksum");
         }
 
-        // 5. Decompress.
-        decompressor_.decompress(
+        // 5. Decompress — to exactly the declared size: the checksum below
+        //    covers uncompressed_size bytes of dst.
+        const auto out = decompressor_.decompress(
             {compressed_read_buf_.data(), compressed_size},
             dst,
             uncompressed_size);
+        if (out.size() != uncompressed_size) {
+            throw std::runtime_error(
+                "FileCodecPacketLZ4Batch001: decompressed size differs from the declared size");
+        }
 
         // 6. Verify checksum of uncompressed data.
         Checksum::Streaming hash;
@@ -640,6 +761,10 @@ private:
 
         // Handle PCKT_TERMINATOR → transition to next packet.
         while (rowLen == PCKT_TERMINATOR) {
+            if (single_packet_) {          // direct access: this packet only
+                packet_open_ = false;
+                return EOF_SENTINEL;
+            }
             if (bg_thread_.joinable()) {
                 // BG thread running — wait for pre-read to finish.
                 waitForBgIdle();
@@ -784,6 +909,7 @@ private:
     uint64_t bg_first_row_{0};             ///< Main→BG via sync protocol.
     bool     bg_os_flush_{false};          ///< Main→BG via sync protocol; set by flushPacketAsync().
     bool     packet_open_{false};          ///< Main-thread only.
+    bool     single_packet_{false};        ///< Main-thread only; set by seekToPacket(): stop at this packet's end.
     bool     packet_boundary_crossed_{false}; ///< Main-thread only.
 
     // Threading.

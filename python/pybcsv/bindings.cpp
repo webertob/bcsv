@@ -735,6 +735,17 @@ namespace {
         }
     };
 
+    /// A failed ReaderDirectAccess::read(): past the index is an IndexError;
+    /// a row inside it that cannot be read (damaged packet, a footer that
+    /// disagrees with the packets) is a RuntimeError with the reader's reason -
+    /// never mistaken for the end of the data.
+    template<typename DaReader>
+    [[noreturn]] void raise_da_read_error(const DaReader& r, size_t index) {
+        if (index >= r.rowCount())
+            throw nb::index_error(("Row index " + std::to_string(index) + " out of range").c_str());
+        throw std::runtime_error("Row " + std::to_string(index) + ": " + r.getErrorMsg());
+    }
+
     // ── Shared Arrow RecordBatch builder ──────────────────────────────
     // Extracted from read_to_arrow's lambda so it can be
     // reused by read_arrow_batch and other streaming consumers.
@@ -1298,8 +1309,7 @@ NB_MODULE(_bcsv, m) {
         .def("read", [](DaReaderT& r, size_t index) {
             bool success;
             { nb::gil_scoped_release release; success = r.read(index); }
-            if (!success)
-                throw nb::index_error(("Row index " + std::to_string(index) + " out of range").c_str());
+            if (!success) raise_da_read_error(r, index);
             return row_to_list(r.row(), r.layout()); }, nb::arg("index"))
         .def("row_count", &DaReaderT::rowCount)
         .def("layout", &DaReaderT::layout, nb::rv_policy::reference_internal)
@@ -1315,8 +1325,7 @@ NB_MODULE(_bcsv, m) {
         .def("__getitem__", [](DaReaderT& r, size_t index) {
             bool success;
             { nb::gil_scoped_release release; success = r.read(index); }
-            if (!success)
-                throw nb::index_error(("Row index " + std::to_string(index) + " out of range").c_str());
+            if (!success) raise_da_read_error(r, index);
             return row_to_list(r.row(), r.layout()); })
         .def("read_arrow_batch", [](DaReaderT& r, size_t start_row, size_t batch_size, const std::optional<nb::list>& columns) -> nb::object {
                 if (!r.isOpen())
@@ -1379,6 +1388,10 @@ NB_MODULE(_bcsv, m) {
                         ++actual;
                     }
                 }
+                // Stopped short inside the index: a row could not be read
+                // (damaged packet, footer inconsistent with the packets).
+                if (actual < batch_size && start_row + actual < r.rowCount())
+                    raise_da_read_error(r, start_row + actual);
                 if (actual == 0) return nb::none();
 
                 if (actual < batch_size) {
@@ -1501,15 +1514,21 @@ NB_MODULE(_bcsv, m) {
             is_string[i] = (col_types[i] == bcsv::ColumnType::STRING);
         }
 
-        // Phase 2: Allocate numpy arrays (numeric) and string collectors (strings)
+        // Phase 2: Allocate numpy arrays (numeric) and string collectors (strings).
+        // The rows are what the packets hold - what the sequential Reader
+        // delivers. The footer's row count only sizes the first allocation:
+        // a footer that disagrees with the packets, or a stream-mode file
+        // that has none, must not decide how far the loop below writes.
         NumpyColumnAllocator alloc;
         std::vector<nb::object> arrays(num_cols);
         std::vector<void*> bufs(num_cols, nullptr);
         std::vector<StringRuns> string_cols(num_cols);
+        size_t capacity = num_rows;
+        bool   grown    = false;
 
         for (size_t c = 0; c < num_cols; ++c) {
             if (!is_string[c])             // strings: collected as runs, see StringRuns
-                arrays[c] = alloc.alloc(col_types[c], num_rows, bufs[c]);
+                arrays[c] = alloc.alloc(col_types[c], capacity, bufs[c]);
         }
 
         // Bucket the numeric columns by type once (see ColumnFillPlan).
@@ -1520,11 +1539,30 @@ NB_MODULE(_bcsv, m) {
             else              plan.add(col_types[c], c, bufs[c]);
         }
 
+        // More rows than the footer said: move to arrays twice the size.
+        // Called with the GIL released; takes it to allocate.
+        auto grow = [&](size_t rows_held) {
+            nb::gil_scoped_acquire acquire;
+            capacity = std::max<size_t>(2 * capacity, 1024);
+            plan = ColumnFillPlan{};
+            for (size_t c = 0; c < num_cols; ++c) {
+                if (is_string[c]) continue;
+                void* buf = nullptr;
+                nb::object arr = alloc.alloc(col_types[c], capacity, buf);
+                std::memcpy(buf, bufs[c], rows_held * bcsv_type_byte_width(col_types[c]));
+                arrays[c] = std::move(arr);
+                bufs[c]   = buf;
+                plan.add(col_types[c], c, buf);
+            }
+            grown = true;
+        };
+
         // Phase 3: Entire read loop under GIL release — strings stay in C++
+        size_t row_idx = 0;
         {
             nb::gil_scoped_release release;
-            size_t row_idx = 0;
             while (reader.readNext()) {
+                if (row_idx == capacity) [[unlikely]] grow(row_idx);
                 const auto& row = reader.row();
                 fill_row_grouped(plan, row, row_idx);
                 for (size_t c : str_cols)
@@ -1534,12 +1572,20 @@ NB_MODULE(_bcsv, m) {
             reader.close();
         }
 
-        // Phase 4: Build result dict — convert C++ strings to Python lists
+        // Phase 4: Build result dict — convert C++ strings to Python lists.
+        // Fewer rows than allocated: trim (a copy after growing, so the
+        // spare half is not kept alive by a view).
         nb::dict result;
         for (size_t c = 0; c < num_cols; ++c) {
             if (is_string[c]) {
                 result[nb::cast(col_names[c])] = string_cols[c].to_list();
             } else {
+                if (row_idx < capacity) {
+                    auto stop = nb::int_(static_cast<int64_t>(row_idx));
+                    auto sl = nb::steal(PySlice_New(Py_None, stop.ptr(), Py_None));
+                    arrays[c] = arrays[c][sl];
+                    if (grown) arrays[c] = arrays[c].attr("copy")();
+                }
                 result[nb::cast(col_names[c])] = std::move(arrays[c]);
             }
         }
@@ -1654,15 +1700,28 @@ NB_MODULE(_bcsv, m) {
         }
         const size_t out_cols = col_indices.size();
 
-        // Read data — either chunked or full
+        // Read data — either chunked or full. The rows are what the packets
+        // hold, i.e. what the sequential Reader delivers; the footer's row
+        // count (total_rows) only sizes buffers. A footer that disagrees with
+        // the packets, or a stream-mode file without one, must not decide how
+        // far a loop writes.
         if (chunk_size > 0) {
-            // Chunked reading: return a list of RecordBatches
+            // Chunked reading: return a list of RecordBatches. A chunk is
+            // allocated only once readNext() has a row for it, sized by the
+            // rows the footer still announces (a full chunk past them).
             nb::list batches;
             size_t rows_read = 0;
 
-            while (rows_read < total_rows) {
-                size_t batch_rows = std::min(static_cast<size_t>(chunk_size),
-                                            total_rows - rows_read);
+            while (true) {
+                bool have_row;
+                {
+                    nb::gil_scoped_release release;
+                    have_row = reader.readNext();
+                }
+                if (!have_row) break;
+                const size_t batch_rows = rows_read < total_rows
+                    ? std::min(static_cast<size_t>(chunk_size), total_rows - rows_read)
+                    : static_cast<size_t>(chunk_size);
                 // Allocate per-chunk buffers
                 std::vector<std::vector<uint8_t>> numeric_bufs(out_cols);
                 std::vector<ArrowStrings> string_bufs(out_cols);
@@ -1684,19 +1743,18 @@ NB_MODULE(_bcsv, m) {
                         plan.add(col_types[c], col_indices[c], numeric_bufs[c].data());
                 }
 
-                // Read chunk under GIL release
+                // Read chunk under GIL release; the first row is already read.
                 size_t actual_rows = 0;
                 {
                     nb::gil_scoped_release release;
-                    for (size_t r = 0; r < batch_rows && reader.readNext(); ++r) {
+                    do {
                         const auto& row = reader.row();
-                        fill_row_grouped(plan, row, r);
+                        fill_row_grouped(plan, row, actual_rows);
                         for (size_t c : str_cols)
                             string_bufs[c].push(row.template get<std::string_view>(col_indices[c]));
                         ++actual_rows;
-                    }
+                    } while (actual_rows < batch_rows && reader.readNext());
                 }
-                if (actual_rows == 0) break;
 
                 // Trim buffers to actual rows if needed
                 if (actual_rows < batch_rows) {
@@ -1715,29 +1773,48 @@ NB_MODULE(_bcsv, m) {
             return pa.attr("Table").attr("from_batches")(batches);
         } else {
             // Full read: single RecordBatch
+            size_t capacity = total_rows;
             std::vector<std::vector<uint8_t>> numeric_bufs(out_cols);
             std::vector<ArrowStrings> string_bufs(out_cols);
             for (size_t c = 0; c < out_cols; ++c) {
                 if (col_types[c] == bcsv::ColumnType::STRING)
-                    string_bufs[c].reserve(total_rows);
+                    string_bufs[c].reserve(capacity);
                 else
-                    numeric_bufs[c].resize(total_rows * bcsv_type_byte_width(col_types[c]));
+                    numeric_bufs[c].resize(capacity * bcsv_type_byte_width(col_types[c]));
             }
 
             // Bucket the numeric columns by type once (see ColumnFillPlan).
+            // Rebuilt when the buffers grow, since that moves them.
             ColumnFillPlan plan;
             std::vector<size_t> str_cols;
+            auto build_plan = [&]() {
+                plan = ColumnFillPlan{};
+                for (size_t c = 0; c < out_cols; ++c) {
+                    if (col_types[c] != bcsv::ColumnType::STRING)
+                        plan.add(col_types[c], col_indices[c], numeric_bufs[c].data());
+                }
+            };
             for (size_t c = 0; c < out_cols; ++c) {
                 if (col_types[c] == bcsv::ColumnType::STRING)
                     str_cols.push_back(c);
-                else
-                    plan.add(col_types[c], col_indices[c], numeric_bufs[c].data());
             }
+            build_plan();
+
+            // More rows than the footer said: buffers twice the size.
+            auto grow = [&]() {
+                capacity = std::max<size_t>(2 * capacity, 1024);
+                for (size_t c = 0; c < out_cols; ++c) {
+                    if (col_types[c] != bcsv::ColumnType::STRING)
+                        numeric_bufs[c].resize(capacity * bcsv_type_byte_width(col_types[c]));
+                }
+                build_plan();
+            };
 
             size_t row_idx = 0;
             {
                 nb::gil_scoped_release release;
                 while (reader.readNext()) {
+                    if (row_idx == capacity) [[unlikely]] grow();
                     const auto& row = reader.row();
                     fill_row_grouped(plan, row, row_idx);
                     for (size_t c : str_cols)
@@ -1747,8 +1824,8 @@ NB_MODULE(_bcsv, m) {
                 reader.close();
             }
 
-            // Use actual rows read, not total_rows (handles truncated/stream files)
-            if (row_idx < total_rows) {
+            // Use the rows actually read, not the footer's count
+            if (row_idx < capacity) {
                 for (size_t c = 0; c < out_cols; ++c) {
                     if (col_types[c] != bcsv::ColumnType::STRING)
                         numeric_bufs[c].resize(row_idx * bcsv_type_byte_width(col_types[c]));

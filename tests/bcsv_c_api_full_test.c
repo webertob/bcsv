@@ -23,6 +23,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#ifndef _WIN32
+#include <unistd.h>  /* alarm */
+#endif
 #ifdef _WIN32
 #include <wchar.h>
 #include <direct.h>  /* _mkdir */
@@ -608,6 +611,79 @@ static void test_reader_open_ex(void) {
     /* With rebuild */
     ok = bcsv_reader_open_ex(reader, filepath, true);
     TEST_ASSERT(ok, "open_ex with rebuild_footer=true");
+    bcsv_reader_close(reader);
+
+    bcsv_reader_destroy(reader);
+    bcsv_writer_destroy(writer);
+    bcsv_layout_destroy(layout);
+}
+
+/* ── Reader open_ex on a file whose writer never reached close() ─────
+ * 1.5.24: the footer rebuild never returned (and grew without bound) on a
+ * file without a footer. Now it indexes the complete packets, which are
+ * exactly the rows the sequential reader delivers before the cut packet. */
+static void test_reader_open_ex_unclosed(void) {
+    TEST_START("Reader open_ex on an unclosed (cut) file");
+
+    bcsv_layout_t layout = create_test_layout();
+    bcsv_writer_t writer = bcsv_writer_create_delta(layout);
+    char filepath[256];
+    make_path(filepath, sizeof(filepath), "test_open_ex_unclosed.bcsv");
+    const int num_rows = 20000;
+    bool ok = bcsv_writer_open(writer, filepath, true, 1, 64, BCSV_FLAG_BATCH_COMPRESS);
+    TEST_ASSERT(ok, "writer opened");
+    for (int i = 0; i < num_rows; ++i) {
+        fill_test_row(bcsv_writer_row(writer), i);
+        bcsv_writer_next(writer);
+    }
+    bcsv_writer_close(writer);
+
+    /* Keep the first two thirds: no footer, a cut last packet. */
+    FILE* f = fopen(filepath, "rb");
+    TEST_ASSERT(f != NULL, "reopen written file");
+    if (!f) { bcsv_writer_destroy(writer); bcsv_layout_destroy(layout); return; }
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    long keep = size * 2 / 3;
+    char* buf = (char*)malloc((size_t)keep);
+    size_t got = fread(buf, 1, (size_t)keep, f);
+    fclose(f);
+    f = fopen(filepath, "wb");
+    fwrite(buf, 1, got, f);
+    fclose(f);
+    free(buf);
+
+    bcsv_reader_t reader = bcsv_reader_create();
+    ok = bcsv_reader_open_ex(reader, filepath, false);
+    TEST_ASSERT(!ok, "open_ex without rebuild refuses a file without footer");
+
+#ifndef _WIN32
+    alarm(60);   /* a regression must end the test, not hang it */
+#endif
+    ok = bcsv_reader_open_ex(reader, filepath, true);
+#ifndef _WIN32
+    alarm(0);
+#endif
+    TEST_ASSERT(ok, "open_ex with rebuild_footer=true returns");
+    size_t indexed = bcsv_reader_count_rows(reader);
+    TEST_ASSERT(indexed > 0 && indexed < (size_t)num_rows, "rebuilt index holds the complete packets");
+    TEST_ASSERT(bcsv_reader_read(reader, indexed - 1), "last indexed row readable");
+    TEST_ASSERT_EQ_INT(bcsv_row_get_int32(bcsv_reader_row(reader), 0), (int)indexed - 1, "last indexed row is right");
+    TEST_ASSERT(!bcsv_reader_read(reader, indexed), "row past the index refused");
+    bcsv_reader_close(reader);
+
+    /* Read sequentially, the same file delivers exactly those rows, then
+     * stops at the cut packet. (The C reader needs a footer to open, so the
+     * rebuild is asked for here too.) */
+    ok = bcsv_reader_open_ex(reader, filepath, true);
+    TEST_ASSERT(ok, "sequential open");
+    size_t seq = 0;
+    while (bcsv_reader_next(reader)) {
+        if (bcsv_row_get_int32(bcsv_reader_row(reader), 0) != (int)seq) break;
+        ++seq;
+    }
+    TEST_ASSERT_EQ_INT((int)seq, (int)indexed, "sequential rows == rebuilt row count");
     bcsv_reader_close(reader);
 
     bcsv_reader_destroy(reader);
@@ -1473,6 +1549,7 @@ int main(void) {
 
     /* Reader open_ex */
     test_reader_open_ex();
+    test_reader_open_ex_unclosed();
 
     /* CSV */
     test_csv_roundtrip();

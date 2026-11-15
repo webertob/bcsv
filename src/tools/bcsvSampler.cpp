@@ -101,8 +101,8 @@ int main(int argc, char* argv[]) {
     app.add_flag("-v,--verbose", cfg.verbose, "Verbose progress output");
 
     app.footer(
+        "At least one of -c or -s is required.\n\n"
         "Examples:\n"
-        "  bcsvSampler data.bcsv\n"
         "  bcsvSampler -c 'X[0][0] > 100' data.bcsv filtered.bcsv\n"
         "  bcsvSampler -s 'X[0][0], X[0][2]' data.bcsv projected.bcsv\n"
         "  bcsvSampler -c 'X[0][1] != X[-1][1]' -s 'X[0][0], X[0][1]' -m expand in.bcsv out.bcsv\n"

@@ -172,6 +172,7 @@ flush-and-teardown, and the full getter x column-type matrix of ADR-0006
 | `sampler_test.cpp` | Sampler bytecode VM filter/project |
 | `stream_operator_test.cpp` | Stream operator overloads |
 | `review_fixes_test.cpp` | Regression tests for review-found bugs |
+| `unclosed_file_test.cpp` | Files whose writer never closed: footer rebuild, bcsvRepair and direct access across a truncation matrix (packet codecs x row codecs) |
 | `file_header_byte_buffer_test.cpp` | FileHeader + ByteBuffer edge cases |
 | `bench_dataset_profiles_test.cpp` | Benchmark dataset profile validation |
 | `vle_test.cpp` | Variable-Length Encoding |

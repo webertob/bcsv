@@ -62,6 +62,7 @@ public:
 
     void setupRead(std::istream& is, const FileHeader& header) {
         packet_size_limit_ = header.getPacketSize();
+        single_packet_ = false;
         // Open first packet for reading (absorbed from former openFirstPacketForRead).
         // May be false if the file is empty (footer immediately after file header).
         packet_open_ = openPacketRead(is);
@@ -149,6 +150,10 @@ public:
         // Handle packet terminator → try to open next packet
         while (rowLen == PCKT_TERMINATOR) {
             closePacketRead(is);
+            if (single_packet_) {          // direct access: this packet only
+                packet_open_ = false;
+                return EOF_SENTINEL;
+            }
             packet_open_ = openPacketRead(is);
             if (!packet_open_) {
                 return EOF_SENTINEL;
@@ -218,10 +223,14 @@ public:
 
     /// Seek to a specific packet by absolute file offset and prepare for reading.
     /// Resets all per-packet state and opens the packet at the given offset.
-    /// Returns true if the packet was successfully opened.
+    /// Direct access reads that one packet: its terminator ends the reading
+    /// (EOF_SENTINEL) instead of opening the next packet, so a packet holding
+    /// fewer rows than the file index says shows as EOF, never as rows of
+    /// the next packet. Returns true if the packet was successfully opened.
     bool seekToPacket(std::istream& is, std::streamoff offset) {
         // Force-close any currently open packet (skip remaining checksum validation)
         packet_open_ = false;
+        single_packet_ = true;
         packet_boundary_crossed_ = true;
         packet_hash_.reset();
         packet_size_ = 0;
@@ -236,6 +245,65 @@ public:
         // Open the packet (reads + validates PacketHeader)
         packet_open_ = openPacketRead(is);
         return packet_open_;
+    }
+
+    /// Walk one packet of this framing (shared with FileCodecPacketLZ4001,
+    /// which compresses each row inside it) without decoding rows: count the
+    /// rows, verify the payload checksum, find where the packet ends. `is` is
+    /// positioned at `payloadStart`, just after the PacketHeader. Never throws
+    /// on damaged data: a truncated or corrupt packet is reported, with the
+    /// complete rows before the damage (what the sequential reader delivers
+    /// from it before it fails).
+    static PacketScan scanPacket(std::istream& is, uint64_t payloadStart) {
+        PacketScan          scan;
+        Checksum::Streaming hash;
+        ByteBuffer          row;
+        uint64_t            pos = payloadStart;
+        scan.end = pos;
+        while (true) {
+            uint64_t rowLen = 0;
+            try {
+                pos += vleDecode<uint64_t, true>(is, rowLen, &hash);
+            } catch (const std::exception&) {
+                scan.truncated = true;
+                scan.error = "packet truncated (row length)";
+                return scan;
+            }
+            if (rowLen == PCKT_TERMINATOR) {
+                uint64_t expected = 0;
+                is.read(reinterpret_cast<char*>(&expected), sizeof(expected));
+                if (is.gcount() != static_cast<std::streamsize>(sizeof(expected))) {
+                    scan.truncated = true;
+                    scan.error = "packet truncated (checksum)";
+                    return scan;
+                }
+                if (hash.finalize() != expected) {
+                    scan.error = "packet checksum mismatch";
+                    return scan;
+                }
+                scan.complete = true;
+                scan.counted  = true;
+                scan.end      = pos + sizeof(expected);
+                return scan;
+            }
+            if (rowLen > MAX_ROW_LENGTH) {
+                scan.error = "row length exceeds MAX_ROW_LENGTH";
+                return scan;
+            }
+            if (rowLen > 0) {
+                row.resize(static_cast<size_t>(rowLen));
+                is.read(reinterpret_cast<char*>(row.data()), static_cast<std::streamsize>(rowLen));
+                if (is.gcount() != static_cast<std::streamsize>(rowLen)) {
+                    scan.truncated = true;
+                    scan.error = "packet truncated (row data)";
+                    return scan;
+                }
+                hash.update(row);
+                pos += rowLen;
+            }
+            ++scan.rows;
+            scan.end = pos;
+        }
     }
 
 protected:
@@ -326,6 +394,7 @@ protected:
     Checksum::Streaming     packet_hash_;
     bool                    packet_open_{false};
     bool                    packet_boundary_crossed_{false};
+    bool                    single_packet_{false};   // set by seekToPacket(): stop at this packet's end
     size_t                  packet_size_{0};
     size_t                  packet_size_limit_{MIN_PACKET_SIZE};
     bool                    build_index_{true};

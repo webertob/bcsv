@@ -9,14 +9,27 @@ namespace Bcsv;
 /// </summary>
 public static class BcsvColumns
 {
-    /// <summary>Read an entire BCSV file into column arrays.</summary>
+    /// <summary>
+    /// Read an entire BCSV file into column arrays: every row the packets hold,
+    /// as the sequential reader delivers them. The footer's row count only sizes
+    /// the first read; a footer that disagrees with the packets, or a
+    /// stream-mode file without one, does not limit the result.
+    /// </summary>
     public static ColumnData ReadColumns(string filename)
     {
         using var reader = new BcsvReader();
         reader.Open(filename, rebuildFooter: true);
-        long totalRows = reader.RowCount;
-        if (totalRows < 0) totalRows = 1_000_000; // fallback if footer missing
-        return ReadColumnsFromHandle(reader.Handle, reader.Layout, (int)totalRows);
+        int expected = (int)Math.Min(reader.RowCount, int.MaxValue);
+        var parts = new List<ColumnData> { ReadColumnsFromHandle(reader.Handle, reader.Layout, expected) };
+        // Probe past the footer's count; keep reading while rows come.
+        for (int chunk = 1024; ; chunk = (int)Math.Min(2L * chunk, 1 << 24))
+        {
+            var more = ReadColumnsFromHandle(reader.Handle, reader.Layout, chunk);
+            if (more.RowCount == 0) { more.Dispose(); break; }
+            parts.Add(more);
+            if (more.RowCount < chunk) break;
+        }
+        return parts.Count == 1 ? parts[0] : ColumnData.Concat(parts);
     }
 
     /// <summary>Shared columnar-read: pin numeric arrays, single P/Invoke read, packed string retrieval.</summary>
@@ -54,6 +67,9 @@ public static class BcsvColumns
 
             nuint rowsRead = NativeMethods.bcsv_reader_read_columns(
                 handle, bufPtrs, (nuint)numCols, (nuint)maxRows);
+            // 0 rows with the error channel set: the read failed (e.g. a cut
+            // packet) - an error, not an empty result.
+            if (rowsRead == 0) NativeMethods.ThrowIfError("ReadColumns");
 
             var stringColumns = new string[numCols][];
             for (int c = 0; c < numCols; c++)
@@ -256,6 +272,41 @@ public sealed class ColumnData : IDisposable
         if (_types[index] != ColumnType.String)
             throw new BcsvException("Use GetColumn<T> for numeric columns");
         return _stringArrays[index];
+    }
+
+    /// <summary>Join consecutive reads into one; takes ownership of the parts.</summary>
+    internal static ColumnData Concat(List<ColumnData> parts)
+    {
+        var first = parts[0];
+        int numCols = first._types.Length;
+        int total = 0;
+        foreach (var p in parts) total += p.RowCount;
+        var numeric = new Array[numCols];
+        var strings = new string[numCols][];
+        for (int c = 0; c < numCols; c++)
+        {
+            int at = 0;
+            if (first._types[c] == ColumnType.String)
+            {
+                strings[c] = new string[total];
+                foreach (var p in parts)
+                {
+                    Array.Copy(p._stringArrays[c], 0, strings[c], at, p.RowCount);
+                    at += p.RowCount;
+                }
+            }
+            else
+            {
+                numeric[c] = Array.CreateInstance(first._numericArrays[c].GetType().GetElementType()!, total);
+                foreach (var p in parts)
+                {
+                    Array.Copy(p._numericArrays[c], 0, numeric[c], at, p.RowCount);
+                    at += p.RowCount;
+                }
+            }
+        }
+        for (int i = 1; i < parts.Count; i++) parts[i].Dispose();
+        return new ColumnData(first._layout, first._types, first._names, numeric, strings, total);
     }
 
     /// <summary>Get a numeric column as a ReadOnlySpan.</summary>

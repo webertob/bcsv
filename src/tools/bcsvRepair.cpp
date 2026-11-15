@@ -15,8 +15,10 @@
  * completing the write. Supports all five file codecs:
  *
  *   Packet-based (packet, packet_lz4, packet_lz4_batch):
- *     Walks packet-by-packet, rebuilds the packet index, attempts partial
- *     recovery of the last incomplete packet, and writes a valid footer.
+ *     Keeps the complete packets bcsv::scanPackets() finds (the walk
+ *     ReaderDirectAccess uses to rebuild a footer), salvages the complete
+ *     rows of a row-framed packet cut by the end of the file, and writes a
+ *     footer whose row count is what the sequential reader then delivers.
  *
  *   Stream-based (stream, stream_lz4):
  *     Walks row-by-row using per-row XXH32 checksums, truncates at the
@@ -64,7 +66,7 @@ struct Config {
 
     bool in_place   = false;
     bool backup     = false;
-    bool deep       = false;                  // validate payload checksums
+    bool deep       = false;                  // also checksum batch packets that have a successor
     bool dry_run    = false;
     bool json       = false;
     bool verbose    = false;
@@ -77,7 +79,7 @@ struct RepairResult {
     size_t   packets_discarded  = 0;          // packets with bad payload checksums or truncated
     uint64_t rows_recovered     = 0;          // total rows in valid packets (or valid stream rows)
     uint64_t rows_recovered_partial = 0;      // rows recovered from broken last packet
-    uint64_t rows_discarded     = 0;          // rows lost (stream: from cut point; packet: in discarded packets)
+    uint64_t rows_discarded     = 0;          // rows known to be lost (not counted for a discarded packet: its rows cannot be read)
     uint64_t file_size_original = 0;
     uint64_t bytes_trimmed      = 0;          // bytes removed (broken tail)
     uint64_t footer_size        = 0;          // bytes of new footer written
@@ -110,255 +112,6 @@ static std::string jsonStr(const std::string& s) {
     }
     out += '"';
     return out;
-}
-
-// ── Packet payload validation ───────────────────────────────────────
-
-/// Information about a validated packet
-struct PacketInfo {
-    uint64_t byte_offset;       // file offset of packet header
-    uint64_t first_row;         // first row index
-    uint64_t end_offset;        // file offset just past the payload checksum (end of packet)
-    uint64_t row_count;         // rows in this packet (only set for last packet or deep mode)
-    bool     is_valid;          // payload checksum validated OK
-    bool     is_last_scanned;   // was this the last packet we could fully scan?
-    std::string error_detail;   // error info if invalid
-};
-
-/**
- * @brief Count rows in a packet by walking VLE-encoded row lengths.
- *
- * Reads the entire payload into memory in one bulk read, then walks
- * VLE-encoded row lengths in-memory until the PCKT_TERMINATOR is found
- * or the buffer is exhausted (truncated packet).
- *
- * @param is         Input stream positioned after the PacketHeader
- * @param isBatch    true if this is a batch-LZ4 packet (different payload structure)
- * @param[out] rowCount  Number of complete rows found
- * @param[out] endOffset File offset just past the packet's trailing checksum
- * @param[out] payloadValid true if the terminator was found (packet is complete)
- * @return true if at least the terminator was found (complete packet)
- */
-static bool walkPacketPayload(std::ifstream& is, bool isBatch,
-                               size_t& rowCount, uint64_t& endOffset,
-                               bool& payloadValid) {
-    rowCount = 0;
-    payloadValid = false;
-
-    if (isBatch) {
-        // Batch LZ4: [uint32 uncompressed_size][uint32 compressed_size][compressed_data][uint64 checksum]
-        uint32_t uncompressed_size = 0;
-        uint32_t compressed_size = 0;
-        is.read(reinterpret_cast<char*>(&uncompressed_size), sizeof(uncompressed_size));
-        if (!is || is.gcount() != sizeof(uncompressed_size)) return false;
-        is.read(reinterpret_cast<char*>(&compressed_size), sizeof(compressed_size));
-        if (!is || is.gcount() != sizeof(compressed_size)) return false;
-
-        if (uncompressed_size > bcsv::MAX_PACKET_SIZE || compressed_size > bcsv::MAX_PACKET_SIZE) {
-            return false;
-        }
-
-        // Skip compressed data + checksum
-        is.seekg(static_cast<std::streamoff>(compressed_size), std::ios::cur);
-        if (!is) return false;
-        uint64_t checksum = 0;
-        is.read(reinterpret_cast<char*>(&checksum), sizeof(checksum));
-        if (!is || is.gcount() != sizeof(checksum)) return false;
-
-        endOffset = static_cast<uint64_t>(is.tellg());
-        payloadValid = true;
-        return true;
-    }
-
-    // Non-batch packet: bulk-read payload, walk VLE in memory.
-    // Read up to MAX_PACKET_SIZE (1 GB) — actual allocation bounded by remaining file data.
-    uint64_t start_pos = static_cast<uint64_t>(is.tellg());
-    constexpr size_t MAX_READ = bcsv::MAX_PACKET_SIZE;
-
-    // Determine how much data is left in the file
-    is.seekg(0, std::ios::end);
-    uint64_t file_end = static_cast<uint64_t>(is.tellg());
-    is.seekg(static_cast<std::streamoff>(start_pos));
-
-    size_t to_read = static_cast<size_t>(std::min(static_cast<uint64_t>(MAX_READ), file_end - start_pos));
-    std::vector<char> buf(to_read);
-    is.read(buf.data(), static_cast<std::streamsize>(to_read));
-    size_t got = static_cast<size_t>(is.gcount());
-    if (got == 0) return false;
-
-    // Walk VLE rows in the buffer
-    size_t pos = 0;
-    while (pos < got) {
-        uint64_t rowLen = 0;
-        size_t vle_bytes = 0;
-        try {
-            vle_bytes = bcsv::vleDecode<uint64_t, true>(
-                rowLen, reinterpret_cast<const std::byte*>(buf.data() + pos), got - pos);
-        } catch (...) {
-            return false;  // truncated VLE
-        }
-
-        if (rowLen == bcsv::PCKT_TERMINATOR) {
-            pos += vle_bytes;
-            // Trailing checksum (xxHash64)
-            if (pos + sizeof(uint64_t) > got) return false;
-            pos += sizeof(uint64_t);
-            endOffset = start_pos + pos;
-            payloadValid = true;
-            return true;
-        }
-
-        if (rowLen == 0) {
-            pos += vle_bytes;
-            rowCount++;
-        } else {
-            if (rowLen > bcsv::MAX_ROW_LENGTH) return false;
-            pos += vle_bytes + static_cast<size_t>(rowLen);
-            if (pos > got) return false;  // truncated row data
-            rowCount++;
-        }
-    }
-    return false;  // EOF before terminator
-}
-
-/**
- * @brief Deep-validate a packet's payload checksum (xxHash64).
- *
- * For non-batch packets: reads all VLE lengths and row data, feeds them
- * to a streaming xxHash64, then compares against the stored checksum.
- *
- * For batch packets: reads the compressed block, decompresses it, and
- * validates the stored checksum against xxHash64 of the uncompressed data.
- * Also counts rows by walking the decompressed payload.
- *
- * @param is        Input stream positioned just after the PacketHeader
- * @param isBatch   true if batch-LZ4 codec
- * @param[out] rowCount  Number of rows found (set on success)
- * @param[out] endOffset File offset after the packet's trailing checksum
- * @return true if checksum matches
- */
-static bool deepValidatePacket(std::ifstream& is, bool isBatch,
-                                size_t& rowCount, uint64_t& endOffset) {
-    rowCount = 0;
-
-    if (isBatch) {
-        // Read sizes
-        uint32_t uncompressed_size = 0;
-        uint32_t compressed_size = 0;
-        is.read(reinterpret_cast<char*>(&uncompressed_size), sizeof(uncompressed_size));
-        if (!is || is.gcount() != sizeof(uncompressed_size)) return false;
-        is.read(reinterpret_cast<char*>(&compressed_size), sizeof(compressed_size));
-        if (!is || is.gcount() != sizeof(compressed_size)) return false;
-
-        if (uncompressed_size > bcsv::MAX_PACKET_SIZE || compressed_size > bcsv::MAX_PACKET_SIZE) {
-            return false;
-        }
-
-        // Read compressed block
-        std::vector<char> compressed(compressed_size);
-        is.read(compressed.data(), compressed_size);
-        if (!is || is.gcount() != static_cast<std::streamsize>(compressed_size)) return false;
-
-        // Read expected checksum
-        uint64_t expected_checksum = 0;
-        is.read(reinterpret_cast<char*>(&expected_checksum), sizeof(expected_checksum));
-        if (!is || is.gcount() != sizeof(expected_checksum)) return false;
-        endOffset = static_cast<uint64_t>(is.tellg());
-
-        // Decompress
-        std::vector<char> decompressed(uncompressed_size);
-        int decompBytes = LZ4_decompress_safe(compressed.data(), decompressed.data(),
-                                               static_cast<int>(compressed_size),
-                                               static_cast<int>(uncompressed_size));
-        if (decompBytes < 0 || static_cast<uint32_t>(decompBytes) != uncompressed_size) {
-            return false;  // LZ4 decompression failed
-        }
-
-        // Validate checksum on uncompressed data
-        uint64_t actual_checksum = XXH64(decompressed.data(), uncompressed_size, 0);
-        if (actual_checksum != expected_checksum) return false;
-
-        // Count rows in decompressed payload by walking VLE
-        std::span<std::byte> buf(reinterpret_cast<std::byte*>(decompressed.data()), uncompressed_size);
-        while (!buf.empty()) {
-            uint64_t rowLen = 0;
-            try {
-                size_t consumed = bcsv::vleDecode<uint64_t, true>(rowLen, buf.data(), buf.size());
-                buf = buf.subspan(consumed);
-            } catch (...) {
-                break;
-            }
-
-            if (rowLen == bcsv::PCKT_TERMINATOR) break;
-            if (rowLen == 0) {
-                rowCount++;
-            } else {
-                if (rowLen > buf.size()) break;
-                buf = buf.subspan(static_cast<size_t>(rowLen));
-                rowCount++;
-            }
-        }
-        return true;
-    }
-
-    // Non-batch: bulk-read payload into memory, walk VLE rows and compute hash
-    uint64_t start_pos = static_cast<uint64_t>(is.tellg());
-
-    // Determine remaining file data
-    is.seekg(0, std::ios::end);
-    uint64_t file_end = static_cast<uint64_t>(is.tellg());
-    is.seekg(static_cast<std::streamoff>(start_pos));
-
-    size_t to_read = static_cast<size_t>(
-        std::min(static_cast<uint64_t>(bcsv::MAX_PACKET_SIZE), file_end - start_pos));
-    std::vector<char> buf(to_read);
-    is.read(buf.data(), static_cast<std::streamsize>(to_read));
-    size_t got = static_cast<size_t>(is.gcount());
-    if (got == 0) return false;
-
-    // Walk VLE rows in buffer, computing streaming xxHash64
-    bcsv::Checksum::Streaming hash;
-    size_t pos = 0;
-    while (pos < got) {
-        const auto* ptr = reinterpret_cast<const std::byte*>(buf.data() + pos);
-        size_t avail = got - pos;
-
-        uint64_t rowLen = 0;
-        size_t vle_bytes = 0;
-        try {
-            vle_bytes = bcsv::vleDecode<uint64_t, true>(rowLen, ptr, avail);
-        } catch (...) {
-            return false;
-        }
-
-        // Feed VLE bytes to hash
-        hash.update(buf.data() + pos, vle_bytes);
-
-        if (rowLen == bcsv::PCKT_TERMINATOR) {
-            pos += vle_bytes;
-            // Trailing checksum (xxHash64)
-            if (pos + sizeof(uint64_t) > got) return false;
-            uint64_t expected_checksum = 0;
-            std::memcpy(&expected_checksum, buf.data() + pos, sizeof(expected_checksum));
-            pos += sizeof(uint64_t);
-            endOffset = start_pos + pos;
-            return hash.finalize() == expected_checksum;
-        }
-
-        if (rowLen == 0) {
-            pos += vle_bytes;
-            rowCount++;
-        } else {
-            if (rowLen > bcsv::MAX_ROW_LENGTH) return false;
-            size_t row_end = pos + vle_bytes + static_cast<size_t>(rowLen);
-            if (row_end > got) return false;  // truncated
-            // Feed row data to hash
-            hash.update(buf.data() + pos + vle_bytes, static_cast<size_t>(rowLen));
-            pos = row_end;
-            rowCount++;
-        }
-    }
-    return false;
 }
 
 // ── Stream row walking ──────────────────────────────────────────────
@@ -510,81 +263,6 @@ static bool walkStreamRows(std::ifstream& is, uint64_t& validRows,
 // ── Partial packet recovery ─────────────────────────────────────────
 
 /**
- * @brief Attempt to recover valid rows from a broken (last) packet.
- *
- * For non-batch packets only. Reads the remaining file into memory and
- * walks VLE-encoded rows in-buffer, checking plausibility and data
- * boundaries. Stops at the first incomplete row.
- *
- * @param is           Input stream positioned just after the PacketHeader
- * @param[out] rowCount    Number of complete rows recovered
- * @param[out] endOffset   File offset just past the last valid row
- * @return true if at least one row was recovered
- */
-static bool recoverPartialPacket(std::ifstream& is, size_t& rowCount,
-                                  uint64_t& endOffset) {
-    rowCount = 0;
-    uint64_t start_pos = static_cast<uint64_t>(is.tellg());
-    endOffset = start_pos;
-
-    // Read remaining file data (capped at MAX_PACKET_SIZE)
-    is.seekg(0, std::ios::end);
-    uint64_t file_end = static_cast<uint64_t>(is.tellg());
-    is.seekg(static_cast<std::streamoff>(start_pos));
-
-    constexpr size_t MAX_READ = bcsv::MAX_PACKET_SIZE;
-    size_t to_read = static_cast<size_t>(std::min(static_cast<uint64_t>(MAX_READ), file_end - start_pos));
-    if (to_read == 0) return false;
-
-    std::vector<char> buf(to_read);
-    is.read(buf.data(), static_cast<std::streamsize>(to_read));
-    size_t got = static_cast<size_t>(is.gcount());
-    if (got == 0) return false;
-
-    // Walk VLE rows in the buffer
-    size_t pos = 0;
-    while (pos < got) {
-        uint64_t rowLen = 0;
-        size_t vle_bytes = 0;
-        try {
-            vle_bytes = bcsv::vleDecode<uint64_t, true>(
-                rowLen, reinterpret_cast<const std::byte*>(buf.data() + pos), got - pos);
-        } catch (...) {
-            break;  // Truncated VLE
-        }
-
-        if (rowLen == bcsv::PCKT_TERMINATOR) {
-            // Packet was actually complete — read trailing checksum
-            pos += vle_bytes;
-            if (pos + sizeof(uint64_t) <= got) {
-                pos += sizeof(uint64_t);
-                endOffset = start_pos + pos;
-            }
-            return rowCount > 0;
-        }
-
-        if (rowLen == 0) {
-            pos += vle_bytes;
-            endOffset = start_pos + pos;
-            rowCount++;
-            continue;
-        }
-
-        if (rowLen > bcsv::MAX_ROW_LENGTH) break;
-
-        // Check if row data fits
-        size_t row_end = pos + vle_bytes + static_cast<size_t>(rowLen);
-        if (row_end > got) break;  // Truncated row data
-
-        pos = row_end;
-        endOffset = start_pos + pos;
-        rowCount++;
-    }
-
-    return rowCount > 0;
-}
-
-/**
  * @brief Compute the packet xxHash64 for the given byte range.
  *
  * Reads from startOffset to endOffset, feeding all bytes into a
@@ -694,19 +372,6 @@ static std::string backupAndTruncate(const std::string& path, uint64_t offset,
 // ── Core repair analysis ────────────────────────────────────────────
 
 /**
- * @brief Try to read a PacketHeader at the current stream position.
- *
- * Reads exactly at the given offset and validates magic + checksum.
- * Preferred over PacketHeader::readNext() for repair because sequential
- * walking is more predictable than heuristic scanning.
- */
-static bool readPacketHeaderAt(std::ifstream& is, uint64_t offset, bcsv::PacketHeader& hdr) {
-    is.clear();
-    is.seekg(static_cast<std::streamoff>(offset));
-    return is.good() && hdr.read(is);
-}
-
-/**
  * @brief Analyze a BCSV file and optionally repair it.
  *
  * Walks the file packet-by-packet from the start, validates packet
@@ -752,7 +417,6 @@ static RepairResult analyzeAndRepair(const Config& cfg) {
     // Detect codec type from header flags
     const bool isStreamMode = file_header.hasFlag(bcsv::FileFlags::STREAM_MODE);
     const bool isCompressed = file_header.getCompressionLevel() > 0;
-    const bool isBatch = file_header.hasFlag(bcsv::FileFlags::BATCH_COMPRESS);
     const size_t header_size = bcsv::FileHeader::getBinarySize(layout);
 
     result.is_stream_mode = isStreamMode;
@@ -815,156 +479,58 @@ static RepairResult analyzeAndRepair(const Config& cfg) {
     } else {
 
     // ─── Packet-mode repair path ────────────────────────────────────
+    //
+    // The complete packets are what scanPackets() finds — the same walk
+    // ReaderDirectAccess uses to rebuild a footer, so the footer written here
+    // holds exactly the rows the sequential reader delivers from the result.
+    // --deep only adds decompressing + checksumming batch packets that have a
+    // successor (the last complete packet is always verified; packet and
+    // packet_lz4 packets are always checksummed).
 
-    // --- Phase 1: Scan for packets ---
-    std::vector<PacketInfo> packet_infos;
-
-    uint64_t next_offset = header_size;
-
-    while (true) {
-        bcsv::PacketHeader pkt_header;
-        if (!readPacketHeaderAt(is, next_offset, pkt_header)) {
-            break;
-        }
-
-        PacketInfo info;
-        info.byte_offset = next_offset;
-        info.first_row   = pkt_header.first_row_index;
-        info.is_valid    = true;
-        info.row_count   = 0;
-        info.end_offset  = 0;
-        info.is_last_scanned = false;
-
-        if (cfg.verbose) {
-            std::cerr << "  Packet " << packet_infos.size()
-                      << " @ offset " << info.byte_offset
-                      << ", first_row=" << info.first_row << "\n";
-        }
-
-        // Position stream after packet header for payload inspection
-        is.clear();
-        is.seekg(static_cast<std::streamoff>(info.byte_offset) + sizeof(bcsv::PacketHeader));
-
-        if (cfg.deep) {
-            size_t rows = 0;
-            uint64_t end = 0;
-            bool ok = deepValidatePacket(is, isBatch, rows, end);
-            info.row_count = rows;
-            info.end_offset = end;
-            if (!ok) {
-                info.is_valid = false;
-                info.error_detail = isBatch
-                    ? "LZ4 batch decompression/checksum failed — entire packet discarded (0 rows recoverable)"
-                    : "Packet payload checksum mismatch or truncated";
-                if (cfg.verbose) {
-                    std::cerr << "    INVALID: " << info.error_detail << "\n";
-                }
-                result.warnings.push_back(
-                    "Packet " + std::to_string(packet_infos.size()) + ": " + info.error_detail);
-                result.had_damage = true;
-                result.packets_discarded++;
-                packet_infos.push_back(info);
-                break;
-            }
-        } else {
-            // Shallow: just walk the payload to find end_offset
-            size_t rows = 0;
-            uint64_t end = 0;
-            bool complete = false;
-            bool ok = walkPacketPayload(is, isBatch, rows, end, complete);
-            info.row_count = rows;
-            info.end_offset = end;
-            if (!ok || !complete) {
-                info.is_valid = false;
-                info.error_detail = "Incomplete packet (truncated before terminator/checksum)";
-                if (cfg.verbose) {
-                    std::cerr << "    INCOMPLETE: " << info.error_detail << "\n";
-                }
-                result.warnings.push_back(
-                    "Packet " + std::to_string(packet_infos.size()) + ": " + info.error_detail);
-                result.had_damage = true;
-                result.packets_discarded++;
-                packet_infos.push_back(info);
-                break;
-            }
-        }
-
-        packet_infos.push_back(info);
-
-        // Next packet starts right after this one's payload checksum
-        if (info.end_offset > 0) {
-            next_offset = info.end_offset;
-        } else {
-            // Should not happen for valid packets, but fallback
-            break;
-        }
-    }
+    const bcsv::PacketScanReport scan =
+        bcsv::scanPackets(is, file_header, header_size, cfg.deep);
     is.close();
 
-    // --- Phase 2: Build new footer from valid packets ---
-    uint64_t total_rows = 0;
-
-    for (size_t i = 0; i < packet_infos.size(); ++i) {
-        const auto& pi = packet_infos[i];
-        if (!pi.is_valid) {
-            // Partial packet recovery (non-batch only)
-            if (!isBatch) {
-                std::ifstream recover_is(cfg.input_file, std::ios::binary);
-                uint64_t payload_start = pi.byte_offset + sizeof(bcsv::PacketHeader);
-                recover_is.seekg(static_cast<std::streamoff>(payload_start));
-
-                size_t recovered_rows = 0;
-                uint64_t recovered_end = 0;
-
-                if (recoverPartialPacket(recover_is, recovered_rows, recovered_end)) {
-                    if (cfg.verbose) {
-                        std::cerr << "  Partial recovery: " << recovered_rows
-                                  << " rows salvaged from broken packet " << i << "\n";
-                    }
-                    result.warnings.push_back(
-                        "Packet " + std::to_string(i) + ": " + std::to_string(recovered_rows)
-                        + " rows recovered from broken packet (partial recovery)");
-                    result.rows_recovered_partial = recovered_rows;
-
-                    // Rows lost = rows in broken packet that couldn't be recovered
-                    if (pi.row_count > recovered_rows) {
-                        result.rows_discarded += pi.row_count - recovered_rows;
-                    }
-
-                    need_partial_write = true;
-                    new_footer.addPacketEntry(pi.byte_offset, pi.first_row);
-                    partial_data_start = payload_start;
-                    partial_cut = recovered_end;
-                    total_rows += recovered_rows;
-                } else {
-                    // No rows recovered from partial packet
-                    result.rows_discarded += pi.row_count;
-                }
-            } else {
-                // Batch codec: entire packet lost, no partial recovery possible
-                result.rows_discarded += pi.row_count;
-            }
-            break;
+    if (cfg.verbose) {
+        for (size_t i = 0; i < scan.index.size(); ++i) {
+            std::cerr << "  Packet " << i << " @ offset " << scan.index[i].byte_offset
+                      << ", first_row=" << scan.index[i].first_row << "\n";
         }
+    }
 
-        new_footer.addPacketEntry(pi.byte_offset, pi.first_row);
-        if (pi.end_offset > 0) cut_offset = pi.end_offset;
+    uint64_t total_rows = scan.rows;
+    new_footer = bcsv::FileFooter(scan.index, 0);
+    cut_offset = scan.end;
 
-        // Track row count
-        if (i + 1 < packet_infos.size() && packet_infos[i + 1].is_valid) {
-            total_rows = packet_infos[i + 1].first_row;
+    if (scan.has_tail) {
+        const size_t tail_idx = scan.index.size();
+        const bcsv::PacketScan& tail = scan.tail;
+        result.had_damage = true;
+        if (tail.truncated && tail.rows > 0) {
+            // Row-framed packet cut by the end of the file: keep its complete
+            // rows and close it with a terminator and a checksum over them.
+            // (A batch packet is one LZ4 block — nothing of it is recoverable.
+            //  A packet whose checksum fails is damaged, not cut: discarded.)
+            need_partial_write = true;
+            partial_data_start = scan.tail_offset + sizeof(bcsv::PacketHeader);
+            partial_cut = tail.end;
+            new_footer.addPacketEntry(scan.tail_offset, scan.rows);
+            total_rows += tail.rows;
+            result.rows_recovered_partial = tail.rows;
+            result.warnings.push_back(
+                "Packet " + std::to_string(tail_idx) + " (" + tail.error + "): "
+                + std::to_string(tail.rows) + " rows recovered (partial recovery)");
+            if (cfg.verbose) {
+                std::cerr << "  Partial recovery: " << tail.rows
+                          << " rows salvaged from packet " << tail_idx << "\n";
+            }
         } else {
-            if (pi.row_count > 0) {
-                total_rows = pi.first_row + pi.row_count;
-            } else {
-                std::ifstream count_is(cfg.input_file, std::ios::binary);
-                count_is.seekg(static_cast<std::streamoff>(pi.byte_offset) + sizeof(bcsv::PacketHeader));
-                size_t rows = 0;
-                uint64_t end = 0;
-                bool complete = false;
-                walkPacketPayload(count_is, isBatch, rows, end, complete);
-                total_rows = pi.first_row + rows;
-                if (end > 0) cut_offset = end;
+            result.packets_discarded = 1;
+            result.warnings.push_back(
+                "Packet " + std::to_string(tail_idx) + " @ offset " + std::to_string(scan.tail_offset)
+                + ": " + tail.error + " - discarded with everything after it");
+            if (cfg.verbose) {
+                std::cerr << "  Packet " << tail_idx << " discarded: " << tail.error << "\n";
             }
         }
     }
@@ -973,7 +539,7 @@ static RepairResult analyzeAndRepair(const Config& cfg) {
     result.packets_found = new_footer.packetIndex().size();
     result.rows_recovered = total_rows;
 
-    if (!result.had_footer && result.packets_found > 0) {
+    if (!result.had_footer) {
         result.had_damage = true;
     }
 
@@ -1005,7 +571,9 @@ static RepairResult analyzeAndRepair(const Config& cfg) {
     };
 
     uint64_t trunc_point = need_partial_write ? partial_cut : cut_offset;
-    bool has_footer = !isStreamMode && new_footer.packetIndex().size() > 0;
+    // Packet mode always gets a footer - with no complete packet an empty one,
+    // so the result is what a writer that closed with zero rows leaves.
+    bool has_footer = !isStreamMode;
 
     if (!cfg.output_file.empty()) {
         // Copy mode
@@ -1163,8 +731,8 @@ int main(int argc, char* argv[]) {
     app.add_option("-o,--output", cfg.output_file, "Write repaired file to OUTPUT (copy mode)");
     app.add_flag("--in-place", cfg.in_place, "Modify input file directly (truncate + append footer)");
     app.add_flag("--backup", cfg.backup, "With --in-place: copy original to FILE.bak first");
-    app.add_flag("--deep", cfg.deep, "Validate packet payload checksums (slower); auto-enabled for --dry-run");
-    app.add_flag("--dry-run", cfg.dry_run, "Analyze only — report damage without modifying anything");
+    app.add_flag("--deep", cfg.deep, "Also decompress and checksum every batch-LZ4 packet, not only the last (slower)");
+    app.add_flag("--dry-run", cfg.dry_run, "Analyze only - report what the repair would write, modify nothing");
     app.add_flag("--json", cfg.json, "Machine-readable JSON output to stdout");
     app.add_flag("-v,--verbose", cfg.verbose, "Print progress (packets scanned, rows counted)");
 
@@ -1189,8 +757,6 @@ int main(int argc, char* argv[]) {
             throw std::runtime_error("-o and --in-place are mutually exclusive.");
         if (cfg.backup && !cfg.in_place)
             throw std::runtime_error("--backup is only valid with --in-place.");
-        if (cfg.dry_run)
-            cfg.deep = true;
 
         if (cfg.verbose) {
             std::cerr << "bcsvRepair: analyzing " << cfg.input_file << " ...\n";
