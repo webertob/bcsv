@@ -88,6 +88,61 @@ jobs:
         run: python -m pytest python/tests/ -v --tb=short
 
   # ────────────────────────────────────────────────────────────────
+  # CMake floor — the minimum declared in the root CMakeLists.txt must
+  # still CONFIGURE and BUILD the default tree. Every CI machine runs a
+  # cmake far newer than the floor, so newer-only syntax slips in
+  # unnoticed: that is how 3.28 became the gate without any feature
+  # requiring it (and it blocked stock Debian bookworm, cmake 3.25.1).
+  # The job pins the floor release itself (CMake 3.20.6, official
+  # binaries) on Ubuntu 24.04's gcc-13 — the two support claims (CMake
+  # version, compiler) are independent and this exercises exactly one
+  # of them at its boundary. jammy's own cmake/gcc pair is NOT used:
+  # its gcc-11 is below the documented compiler floor and cannot build
+  # the tree at all, which would mask CMake regressions as compiler
+  # errors.
+  # ────────────────────────────────────────────────────────────────
+  min-cmake:
+    name: CMake 3.20 floor (noble + cmake binaries)
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:noble
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+
+      - name: Install toolchain (ninja + gcc-13; cmake pinned separately)
+        # noble-apt's cmake (3.28) deliberately NOT used: the job must
+        # exercise the declared floor version exactly. The image itself is
+        # only the carrier for a supported (GCC 13) C++20 compiler — old
+        # distro CMake + modern compiler is what real floor users combine.
+        run: |
+          apt-get update -q
+          DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends \
+            build-essential ninja-build git wget ca-certificates tar \
+            python3 python3-pytest
+
+      - name: Fetch CMake 3.20.6 (the floor)
+        run: |
+          wget -q https://github.com/Kitware/CMake/releases/download/v3.20.6/cmake-3.20.6-linux-x86_64.tar.gz -O /tmp/cmake.tar.gz
+          mkdir -p /opt/min-cmake
+          tar xzf /tmp/cmake.tar.gz -C /opt/min-cmake
+          echo "/opt/min-cmake/cmake-3.20.6-linux-x86_64/bin" >> "$GITHUB_PATH"
+
+      - name: Verify the pinned floor is the cmake in use
+        run: cmake --version | grep -q 'version 3\.20\.6'
+
+      - name: Configure (all build options default ON)
+        run: cmake -S . -B build-mincmake -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build-mincmake --parallel 4
+
+      - name: Test (GTest suite, examples, C API, CLI integration)
+        run: ctest --test-dir build-mincmake --output-on-failure -j4 --timeout 900
+
+  # ────────────────────────────────────────────────────────────────
   # Debug builds — every CI run (manual dispatch / weekly schedule)
   # ────────────────────────────────────────────────────────────────
   build:

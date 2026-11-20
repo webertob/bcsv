@@ -12,6 +12,28 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- **CMake minimum lowered 3.28 → 3.20.** The old floor came in with a CI
+  image, not with a feature that needed it — a Debian bookworm user on stock
+  CMake 3.25.1 had to disable the version check to build. Nothing in the tree
+  needs more than 3.20: the `SYSTEM` keyword on `target_include_directories`
+  (the only construct suspected of being newer) is in the documented v3.20
+  signature and was verified accepted, without a version guard, on the
+  official CMake 3.20.6 binary — in both `src/tools/CMakeLists.txt` and `python/CMakeLists.txt`. `python/CMakeLists.txt`'s own floor rose
+  3.15 → 3.19, the real bound being `execute_process(COMMAND_ERROR_IS_FATAL)`
+  in its nanobind probe (wheel builds never see it: scikit-build-core injects
+  a current CMake). The compiler floor (GCC 13+) is unaffected and separate: a
+  CMake-3.20-era distro build is expected to use a modern toolchain, and distro
+  pairings below it (e.g. bookworm's GCC 12) fail on C++20 library features
+  that arrived with GCC 13. Policy defaults are capped at 3.28
+  (`VERSION 3.20...3.28`), so configure behaviour on current CI is
+  bit-for-bit unchanged. `cmake --preset` additionally requires CMake ≥ 3.21
+  (presets schema v3) — plain `cmake -S . -B build` works on the floor. Guarded
+  by a new `min-cmake` job in `ci.yml`: Ubuntu 24.04 container (gcc-13) with
+  the official CMake 3.20.6 binary, full build + ctest.
+
+
 ## [1.5.25] - 2026-11-15
 
 ### Fixed

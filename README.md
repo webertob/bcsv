@@ -178,7 +178,7 @@ BCSV requires **C++20** with full library support for `<span>`, `<bit>`, `<conce
 | **STM32 (Linux)** | Arm GNU Toolchain | **GCC 13.2+** (CubeIDE 1.14+) | Embedded Linux on STM32MP1/MP2 |
 | **AMD/Xilinx (Linux)** | Vitis / PetaLinux | **2024.1+** (GCC 13+) | Zynq, ZynqMP, Kria, Versal with Linux |
 
-**Build system:** CMake ≥ 3.28, Ninja (recommended) or Make.
+**Build system:** CMake ≥ 3.20 (≥ 3.21 to use the `cmake --preset` workflow), Ninja (recommended) or Make. The floor is the oldest version tested and is re-verified by the weekly `min-cmake` job in `ci.yml`; the 3.28-era gate came from a CI image, not from a feature, and blocked stock Debian bookworm (CMake 3.25.1) users.
 
 > **Embedded baremetal note:** BCSV currently requires `std::fstream` for I/O and uses C++
 > exceptions for logic errors. Baremetal/RTOS targets (STM32 F4/F7/H7, Zynq without Linux)

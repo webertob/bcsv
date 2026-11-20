@@ -1,4 +1,8 @@
-cmake_minimum_required(VERSION 3.15...3.30)
+# Floor 3.19: execute_process(COMMAND_ERROR_IS_FATAL) in the nanobind probe
+# below is a 3.19 addition — the real bound (FindPython's Development.Module
+# is older). The wheel builds never see this number anyway: scikit-build-core
+# injects a current CMake; the floor only bounds direct standalone builds.
+cmake_minimum_required(VERSION 3.19...3.30)
 project(pybcsv LANGUAGES C CXX)
 
 # ── Version from VERSION.txt ────────────────────────────────────────────

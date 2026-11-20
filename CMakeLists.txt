@@ -5,7 +5,22 @@
 # Licensed under the MIT License. See LICENSE file in the project root 
 # for full license information.
 
-cmake_minimum_required(VERSION 3.28)
+# Floor: the oldest CMake that configures and builds this tree — re-verified
+# by the ci.yml `min-cmake` job (weekly/manual; ci.yml runs on-demand only).
+# Nothing in here needs more than 3.20: the vendored-header SYSTEM includes
+# are accepted at the floor (verified on the official 3.20.6 binary, no
+# version guard needed), and FetchContent/PkgConfig/Threads:: all predate it.
+# The old flat 3.28 came in with the then-current CI image, not with a
+# feature, and blocked stock Debian bookworm (3.25.1).
+# 3.20 is not the oldest that might work — it is the oldest we test. Every
+# distro we point users at meets or exceeds it with its stock CMake (Ubuntu
+# 22.04: 3.22, Debian bookworm: 3.25, RHEL 9: 3.26); a floor machine pairs it
+# with a GCC 13+ toolchain (the compiler floor in README.md is an independent
+# claim). The ...3.28 cap keeps policy defaults identical to the old flat
+# requirement on newer CMake.
+# Note: `cmake --preset` needs CMake >= 3.21 (this repo's presets, schema v3);
+# plain `cmake -S . -B build` works on the floor.
+cmake_minimum_required(VERSION 3.20...3.28)
 
 # Extract version from Git tags before project() call
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")

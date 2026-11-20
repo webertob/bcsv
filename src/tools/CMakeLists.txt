@@ -28,6 +28,10 @@
 # for a consistent vendored-dependency layout (like lz4/xxHash) but is excluded
 # from the installed headers (it is only needed to build the CLI tools).
 add_library(cli11 INTERFACE)
+# SYSTEM is in the documented target_include_directories signature at least
+# as far back as our floor (verified on the official 3.20.6 binary, no guard
+# needed): CLI11 must not be judged by the consuming project's
+# -Wall -Wextra -Wpedantic -Werror.
 target_include_directories(cli11 SYSTEM INTERFACE ${CMAKE_SOURCE_DIR}/include/CLI11-2.6.2)
 
 # CSV to BCSV converter
