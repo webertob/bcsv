@@ -19,6 +19,14 @@ import unittest
 
 import pybcsv
 
+# The cibuildwheel test step runs inside manylinux/musllinux containers as
+# root, which defeats permission-style fixtures: Writer::open creates missing
+# parent directories (writer.hpp), so plain absolute paths only fail for
+# unprivileged callers. test_file_not_found_writer sidesteps this with a
+# /proc path (create is refused even for root); a genuine EACCES check cannot
+# root-proof itself, so that one — test_permission_denied — skips instead.
+_AS_ROOT = os.name == "posix" and hasattr(os, "geteuid") and os.geteuid() == 0
+
 
 class TestErrorHandling(unittest.TestCase):
     """Test error handling and edge cases."""
@@ -204,11 +212,17 @@ class TestErrorHandlingEdgeCases(unittest.TestCase):
         if os.name == 'nt':
             bad_path = "Q:\\nonexistent\\dir\\file.bcsv"
         else:
-            bad_path = "/path/that/does/not/exist/file.bcsv"
+            # /proc implements no create operation: mkdir under a /proc/<pid>/
+            # dentry is refused for root too (verified uid 0 in manylinux), so
+            # the fixture fails identically as user and as the container's
+            # root, and stays a real negative test in wheel CI.
+            bad_path = "/proc/self/no_such_dir/file.bcsv"
         with self.assertRaises(RuntimeError):
             writer.open(bad_path)
         self.assertFalse(writer.is_open())
 
+    @unittest.skipIf(_AS_ROOT,
+                     "root is never denied on /root/; see _AS_ROOT comment")
     def test_permission_denied(self):
         if os.name != 'posix':
             self.skipTest("Permission test only on POSIX")

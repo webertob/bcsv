@@ -362,7 +362,11 @@ class TestPandasIntegration(unittest.TestCase):
             bad_write = "Q:\\nonexistent\\dir\\file.bcsv"
             bad_read = "Q:\\nonexistent\\nofile.bcsv"
         else:
-            bad_write = "/invalid/path/file.bcsv"
+            # /proc paths survive the containerized (root) wheel-test runs:
+            # the filesystem implements no create op, so Writer::open's
+            # parent-dir creation cannot succeed — verified uid 0 in manylinux.
+            # (A missing file for the READ side works regardless of uid.)
+            bad_write = "/proc/self/no_such_dir/file.bcsv"
             bad_read = "/path/does/not/exist.bcsv"
         with self.assertRaises((IOError, OSError, RuntimeError)):
             pybcsv.write_dataframe(df, bad_write)

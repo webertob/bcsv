@@ -12,6 +12,28 @@ This project uses [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **Python 3.14 wheels.** `pybcsv` on PyPI stopped at cp313 because the
+  wheel pipeline pins `cibuildwheel` and its `build` list is an explicit
+  allow-list that was never widened when 3.14 shipped. cp314 wheels now
+  build for all matrix platforms (Linux x86_64/aarch64, Windows AMD64,
+  macOS x86_64/arm64). Free-threaded `cp314t` is deliberately excluded:
+  the extension does not carry nanobind's free-threaded marker yet, so
+  CPython 3.14 free-threaded would refuse to import it.
+- **cibuildwheel now actually tests the wheels it builds.** The container
+  test step pointed at `{project}/tests` — the repo-root CLI integration
+  suite, which skips wholesale when no build tree is present, vacuously
+  green for every wheel, on every Python. It now runs the pybcsv binding
+  suite (`{package}/tests`, ~370 tests + subtests) against each freshly
+  installed wheel, every Python and platform. Three wheel-test fixtures
+  assumed an unprivileged caller (`Writer::open` creates parent dirs on
+  every platform, so the old "invalid path" cases succeed as root — the
+  uid inside manylinux/musllinux containers); they now use a `/proc` path
+  that even root cannot create, and `test_permission_denied` skips when euid
+  is 0. Verified green in-container: cp311/cp313/cp314 (manylinux) and
+  cp314 (musllinux).
+
 ### Changed
 
 - **CMake minimum lowered 3.28 → 3.20.** The old floor came in with a CI
@@ -33,6 +55,10 @@ This project uses [Semantic Versioning](https://semver.org/).
   by a new `min-cmake` job in `ci.yml`: Ubuntu 24.04 container (gcc-13) with
   the official CMake 3.20.6 binary, full build + ctest.
 
+- **cibuildwheel pinned version 2.22.0 → 4.3.5** in `build-and-publish.yml`.
+  2.22.0 predates Python 3.14 entirely; cibuildwheel ≥ 3.1.0 builds cp314 by
+  default. 4.x additionally bundles extension DLLs via delvewheel on Windows
+  by default and audits abi3 wheels post-repair.
 
 ## [1.5.25] - 2026-11-15
 

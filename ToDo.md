@@ -324,6 +324,14 @@ Learnings captured from the 1.5.10 release gate (2026-07-12):
   premise — a binding cannot see which configuration the shipped binary used — applies
   equally to pybind; mirror the C API's explicit type check in `python/src/` (raised
   by the 2026-09-14 1.5.20 review).
+- pybcsv free-threaded wheels (`cp314t`): opt in once the extension is built with
+  nanobind's `FREE_THREADED` marker and the binding paths are proven safe without the
+  GIL; then add `cp314t-*` to `[tool.cibuildwheel] build` in `python/pyproject.toml`
+  (the 2026-11-15 cp314 change left the hook and its precondition comment there).
+- CI test-wheel job: installs `pybcsv` under a single 3.12 host python regardless of
+  which wheels the matrix produced — per-interpreter coverage exists today only
+  because cibuildwheel's own (now-real) test step runs per build. Decide whether the
+  standalone job is still wanted or should become a 3.14 spot-check.
 - Code cleanup (was item 19): remove ZoH codec? (evaluate once delta header suppression E1 lands —
   delta then strictly dominates ZoH), condense duplicated docs, API surface review.
 - Platform matrix (was item 27): confirm clean build/tests on MSVC + Apple clang; performance on

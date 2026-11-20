@@ -7,6 +7,7 @@ Minimum toolchains: GCC 13+, Clang 16+/libstdc++13, MSVC 2022 17.4+, Xcode 15.4+
 Arm GNU 13.2+ (STM32 Linux), Vitis/PetaLinux 2024.1+ (AMD/Xilinx Linux).
 CMake 3.20+ (oldest version tested — `cmake --preset` needs 3.21+; verified by the
 `min-cmake` job in ci.yml, which runs weekly/on-demand).
+Python: pybcsv ships cp311–cp314 wheels; free-threaded cp314t is not built yet.
 
 ## Build & Test Commands
 

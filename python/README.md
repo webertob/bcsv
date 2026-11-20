@@ -559,7 +559,7 @@ python/
 
 ## Compatibility
 
-- **Python**: 3.11, 3.12, 3.13
+- **Python**: 3.11, 3.12, 3.13, 3.14 (cp311–cp314 wheels; free-threaded 3.14 not yet supported)
 - **Platforms**: Linux (x86_64, ARM64), macOS (x86_64, ARM64), Windows (AMD64)
 - **Compilers**: GCC 13+, Clang 16+, MSVC 2022 17.4+, Apple Clang (Xcode 15.4+)
 - **C++ Standard**: C++20

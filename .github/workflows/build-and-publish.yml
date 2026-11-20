@@ -25,6 +25,10 @@ permissions:
   contents: read
 
 env:
+  # NOTE: CIBW_* environment variables OVERRIDE the [tool.cibuildwheel] table
+  # entirely, not per-option-merge: this replaces pyproject's skip list (which
+  # therefore only applies to cibuildwheel runs without this env — local devs,
+  # and musllinux wheels DO build+publish here despite the TOML entry).
   CIBW_SKIP: "pp*"  # Skip PyPy builds
 
 jobs:
@@ -162,8 +166,10 @@ jobs:
         with:
           python-version: '3.13'
 
+      # 4.x since cp314 needs it: free-threading and 3.14 became
+      # default-buildable in cibuildwheel 3.1.0; 2.22.0 does not know 3.14.
       - name: Install cibuildwheel
-        run: pip install cibuildwheel==2.22.0 uv
+        run: pip install cibuildwheel==4.3.5 uv
 
       - name: Build wheels
         env:
@@ -195,7 +201,7 @@ jobs:
           python-version: '3.13'
 
       - name: Install cibuildwheel
-        run: pip install cibuildwheel==2.22.0 uv
+        run: pip install cibuildwheel==4.3.5 uv
 
       - name: Build wheels
         env:
@@ -231,7 +237,7 @@ jobs:
           python-version: '3.13'
 
       - name: Install cibuildwheel
-        run: pip install cibuildwheel==2.22.0 uv
+        run: pip install cibuildwheel==4.3.5 uv
 
       - name: Build wheels
         env:

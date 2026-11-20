@@ -26,6 +26,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11", 
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: System :: Archiving :: Compression",
@@ -82,10 +83,21 @@ Repository = "https://github.com/webertob/bcsv"
 
 
 [tool.cibuildwheel]
-build = "cp311-* cp312-* cp313-*"
-skip = "*-musllinux_* *-win32 *-manylinux_i686"
+# Explicit allow-list (cibuildwheel builds *everything* it knows otherwise).
+# cp314 joined with cibuildwheel 3.1.0 (2025-07). cp314t (free-threaded) is
+# deliberately NOT in the list: the extension is not built with nanobind's
+# FREE_THREADED marker yet, so CPython 3.14 free-threaded would refuse to
+# import it — add "cp314t-*" here together with that marker once the
+# bindings are verified thread-safe under the GIL-free runtime.
+build = "cp311-* cp312-* cp313-* cp314-*"
+skip = "*-musllinux_* *-win32 *-manylinux_i686 cp314t-*"
 test-requires = ["pytest", "pandas", "pyarrow"]
-test-command = "pytest {project}/tests/ -x -q --tb=short"
+# {package} = the pybcsv package dir inside the container. {project} resolves
+# to the copied repo root, whose tests/ are the C++ CLI integration tests:
+# without a build tree their conftest skips the whole suite, so the old
+# command was vacuously green for every wheel and never imported the
+# extension it had just built. This runs the real binding suite per Python.
+test-command = "pytest {package}/tests/ -x -q --tb=short"
 
 [tool.cibuildwheel.linux]
 before-build = "pip install nanobind numpy"
